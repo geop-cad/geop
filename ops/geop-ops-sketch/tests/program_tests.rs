@@ -32,12 +32,13 @@ use geop_core_math::{
 };
 use geop_core_sketch::{Constraint, CurveId, PointId};
 use geop_ops_datums::origin_plane;
-use geop_ops_extrude_revolve::examples::parametric_plate;
-use geop_ops_extrude_revolve::testing::{
-    Built, drilled_box, on_face, on_origin, registry, sketch as sketch_step,
+use geop_ops_extrude_revolve::{
+    examples::parametric_plate,
+    testing::{drilled_box, registry},
 };
 use geop_ops_model::{
-    Curve, Line, NamedModel, Path, Plane, Point, element, model, testing::unit_cube,
+    Curve, Line, NamedModel, Path, Plane, Point, element, model,
+    testing::{Built, unit_cube},
 };
 use geop_ops_parameters::{
     DefineParameters, DefineParametersArgs, NumberParameter, ParameterKind, parameters_of,
@@ -45,7 +46,7 @@ use geop_ops_parameters::{
 };
 use geop_ops_sketch::{
     AddSketch, AddSketchArgs, CurveKind, PlacedSketch, Sketch, SketchPlane,
-    figures::n,
+    figures::{n, on_face, on_origin},
     placed::sketch_element,
     references::{Projected, Reference, Source},
     sketch, whole_sketch,
@@ -434,11 +435,10 @@ mod tools {
     use std::f64::consts::PI;
 
     use geop_core_sketch::{copies::Step, offset::Corners};
-    use geop_ops_extrude_revolve::Extents;
+    use geop_ops_extrude_revolve::{Extents, testing::extrusion};
     use geop_ops_model::Combine;
     use geop_ops_sketch::Constraint;
 
-    use geop_ops_extrude_revolve::testing::extrusion;
     use geop_ops_model::testing::check_valid;
     use geop_ops_sketch::figures::{circle, rectangle, solved};
 
@@ -450,7 +450,7 @@ mod tools {
         let mut program = Program::new();
         program.push(
             "outline",
-            sketch_step(on_origin(FrameAxis::Z), solved(sketch)),
+            AddSketchArgs::on(on_origin(FrameAxis::Z), solved(sketch)),
         );
         program.push(
             "body",
@@ -642,7 +642,7 @@ fn sketch_curves_are_projected() {
     let mut floor = Sketch::new();
     let c = floor.add_point(n(1.0), n(1.0));
     let circle = floor.add_circle(c, n(0.5));
-    program.push("floor", sketch_step(on_origin(FrameAxis::Z), floor));
+    program.push("floor", AddSketchArgs::on(on_origin(FrameAxis::Z), floor));
     let part = program.built(registry).unwrap();
     let curve = Projected::SketchCurve(sketch_element("floor", circle));
     let (sketch, reference) = projected(&part, &on_origin(FrameAxis::Z), curve);

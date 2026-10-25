@@ -1,15 +1,58 @@
-//! What tests of operations need of a program (feature `testing`).
-#![allow(clippy::panic, reason = "a test fails by panicking")]
+//! What tests of operations need of a program (feature `testing`): its
+//! steps and their arguments as their types, a runner of it, and that it
+//! builds the same incrementally and after a round trip through its file.
+#![allow(
+    clippy::panic,
+    clippy::expect_used,
+    clippy::indexing_slicing,
+    reason = "a test fails by panicking"
+)]
 
 use std::rc::Rc;
 
+use serde::{Serialize, de::DeserializeOwned};
+
 use crate::{
+    operation::StepArgs,
     operation_registry::OperationRegistry,
     part::Part,
-    program::Program,
+    program::{Program, ProgramStep},
     runner::{RunOutput, Runner},
     workspace::{Location, Workspace},
 };
+
+// ── Steps and their arguments ───────────────────────────────────────────────
+
+/// The step `id`, `args` for the operation they are for.
+pub fn as_step<A: StepArgs>(id: &str, args: A) -> ProgramStep {
+    ProgramStep::of(id, &args).expect("a step's arguments are plain data")
+}
+
+/// The step `id` of `program`.
+#[track_caller]
+pub fn step<'a>(program: &'a mut Program, id: &str) -> &'a mut ProgramStep {
+    let index = program.index_of(id).unwrap_or_else(|e| panic!("{e}"));
+    &mut program.steps[index]
+}
+
+/// The arguments of `step`, as their type `A`.
+#[track_caller]
+pub fn args<A: DeserializeOwned>(step: &ProgramStep) -> A {
+    serde_json::from_value(step.args.clone())
+        .unwrap_or_else(|e| panic!("step {:?} holds no such arguments: {e}", step.id))
+}
+
+/// Changes the arguments of `step`, as their type `A`, by `edit`.
+pub fn edit_args<A: Serialize + DeserializeOwned>(
+    step: &mut ProgramStep,
+    edit: impl FnOnce(&mut A),
+) {
+    let mut args: A = args(step);
+    edit(&mut args);
+    step.args = serde_json::to_value(args).expect("arguments are plain data");
+}
+
+// ── Running programs ────────────────────────────────────────────────────────
 
 /// A runner of the operations of `registry`, running the file `file` of
 /// `workspace`, if one is given.

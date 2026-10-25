@@ -9,8 +9,7 @@ use geop_core_program::{
     operation_registry::OperationRegistry,
     testing::{assert_incremental, assert_round_trips, edit_sequence},
 };
-use geop_ops_extrude_revolve::testing::model_of;
-use geop_ops_model::testing::check_valid;
+use geop_ops_model::testing::{check_valid, model_of};
 
 use crate::{Fillet, examples::rounded_box};
 

@@ -11,7 +11,7 @@ use geop_core_editor::{
     testing::{dialog, drag_gizmo, event, from_above, pointer},
 };
 use geop_core_math::scalars::Scalar;
-use geop_ops_extrude_revolve::testing::args;
+use geop_core_program::testing::args;
 
 /// What these tests edit: SubD bodies, beside the origin.
 fn registry() -> Registry {

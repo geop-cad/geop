@@ -11,7 +11,7 @@ use geop_core_math::{
 use geop_core_program::{
     operation_registry::OperationRegistry,
     program::Program,
-    testing::{assert_incremental, assert_round_trips, edit_sequence},
+    testing::{args, assert_incremental, assert_round_trips, edit_args, edit_sequence, step},
     values::Design,
 };
 use geop_core_topology::{
@@ -20,10 +20,13 @@ use geop_core_topology::{
 };
 use geop_ops_model::{
     NamedModel, PartDescription,
-    testing::{assert_valid, check_valid, classify},
+    testing::{Built, assert_valid, check_valid, classify, error, model_of},
 };
 use geop_ops_parameters::{ParameterKind, parameters_of, set_parameters};
-use geop_ops_sketch::{AddSketchArgs, Constraint};
+use geop_ops_sketch::{
+    AddSketchArgs, Constraint,
+    figures::{disc, n, on_face},
+};
 use geop_ops_sketch3d::{AddSketch3d, AddSketch3dArgs};
 
 use crate::{
@@ -32,7 +35,6 @@ use crate::{
         box_with_drill_hole, bracket, cross_drilled_shaft, edge_part, handle_with_hole, horn,
         luggage_tag, motor_flange, parametric_plate, pipe, pipe_route, revolved_cone_on_box,
     },
-    testing::{Built, args, disc, edit_args, error, model_of, n, on_face, step},
 };
 
 /// The operations the examples are written in.

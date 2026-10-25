@@ -14,12 +14,9 @@ use geop_core_math::{
     scalars::{ScalInF64 as S, Scalar},
     vector::Vector3,
 };
-use geop_core_program::program::Program;
-use geop_ops_extrude_revolve::{
-    examples::box_with_drill_hole,
-    testing::{args, model_of},
-};
-use geop_ops_model::element;
+use geop_core_program::{program::Program, testing::args};
+use geop_ops_extrude_revolve::examples::box_with_drill_hole;
+use geop_ops_model::{element, testing::model_of};
 use geop_ops_sketch3d::testing::route;
 
 /// What these tests edit: sketches, planar and in space, the drilled box's
@@ -105,12 +102,12 @@ fn a_boundary_surface_spans_sketch_lines() {
     let mut base = geop_ops_sketch::Sketch::new();
     let (a, b) = (
         base.add_point(
-            geop_ops_extrude_revolve::testing::n(0.0),
-            geop_ops_extrude_revolve::testing::n(0.0),
+            geop_ops_sketch::figures::n(0.0),
+            geop_ops_sketch::figures::n(0.0),
         ),
         base.add_point(
-            geop_ops_extrude_revolve::testing::n(2.0),
-            geop_ops_extrude_revolve::testing::n(0.0),
+            geop_ops_sketch::figures::n(2.0),
+            geop_ops_sketch::figures::n(0.0),
         ),
     );
     let line = base.add_line(a, b);
@@ -153,7 +150,7 @@ fn a_boundary_surface_spans_sketch_lines() {
 /// `(0, s, s - 0.5)` and `(2, s, s - 0.5)` crossing them, run downwards.
 fn network_lines(across: bool) -> geop_ops_sketch3d::AddSketch3dArgs {
     let mut s = geop_ops_sketch3d::Sketch3d::new();
-    let at = |p: [f64; 3]| Vector3::from_array(p.map(geop_ops_extrude_revolve::testing::n));
+    let at = |p: [f64; 3]| Vector3::from_array(p.map(geop_ops_sketch::figures::n));
     let lines: [[[f64; 3]; 2]; 2] = if across {
         [
             [[0.0, 2.5, 2.0], [0.0, -0.5, -1.0]],

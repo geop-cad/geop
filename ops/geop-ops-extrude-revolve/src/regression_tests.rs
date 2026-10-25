@@ -6,22 +6,21 @@ use geop_core_math::{
     primitives::{DatumComponent, FrameAxis},
     scalars::Scalar,
 };
-use geop_core_program::{operation_registry::OperationRegistry, program::Program};
+use geop_core_program::{operation_registry::OperationRegistry, program::Program, testing::args};
 use geop_ops_datums::{ORIGIN, component_name, datum};
 use geop_ops_model::{
     BooleanOp, Combine, element, solid,
-    testing::{assert_draws_its_trims, assert_valid},
+    testing::{Built, assert_draws_its_trims, assert_valid},
 };
 use geop_ops_parameters::{ParameterKind, parameters_of, set_parameters};
 use geop_ops_reference_geometry::{AddDatum, AddDatumArgs, Construction, Selected};
 use geop_ops_sketch::{
-    AddSketchArgs, Constraint, Sketch, SketchPlane, sketch_element, whole_sketch,
+    AddSketchArgs, Constraint, Sketch, SketchPlane,
+    figures::{n, on_face, on_origin},
+    sketch_element, whole_sketch,
 };
 
-use crate::{
-    Extents, Output, RevolveArgs, RevolveAxis, examples,
-    testing::{Built, args, extrusion, n, on_face, on_origin, sketch},
-};
+use crate::{Extents, Output, RevolveArgs, RevolveAxis, examples, testing::extrusion};
 
 /// The operations these programs are written in.
 fn registry() -> GeopResult<OperationRegistry> {
@@ -229,7 +228,7 @@ fn spline_revolved_then_extruded_and_joined() {
     sketch.constrain(Constraint::Vertical { line: axis });
     program.push(
         "sketch1",
-        crate::testing::sketch(on_origin(FrameAxis::Z), sketch),
+        geop_ops_sketch::AddSketchArgs::on(on_origin(FrameAxis::Z), sketch),
     );
     program.push(
         "revolve1",
@@ -276,7 +275,7 @@ fn ring_revolved_onto_plate() {
     }
     let center = plate.add_point(n(0.0), n(0.0));
     plate.add_circle(center, n(1.4999999999999998));
-    program.push("sketch1", sketch(on_origin(FrameAxis::Z), plate));
+    program.push("sketch1", AddSketchArgs::on(on_origin(FrameAxis::Z), plate));
     program.push(
         "extrude1",
         extrusion("sketch1", Extents::blind(1.0), Combine::NewBody),
@@ -303,7 +302,7 @@ fn ring_revolved_onto_plate() {
     let along = ring.add_point(n(1.0), n(0.0));
     let axis = ring.add_line(origin, along);
     ring.set_construction(axis, true);
-    program.push("sketch2", sketch(on_origin(FrameAxis::X), ring));
+    program.push("sketch2", AddSketchArgs::on(on_origin(FrameAxis::X), ring));
     program.push(
         "revolve1",
         RevolveArgs {

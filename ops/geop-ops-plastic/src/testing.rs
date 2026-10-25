@@ -5,23 +5,25 @@
 use geop_core_math::primitives::FrameAxis;
 use geop_core_program::{element::ElementReference, program::Program};
 use geop_ops_datums::datums;
-use geop_ops_extrude_revolve::{
-    Extents,
-    testing::{extrusion, n, on_origin, rectangle, sketch},
-};
-use geop_ops_model::model;
-use geop_ops_model::{Combine, solid};
+use geop_ops_extrude_revolve::{Extents, testing::extrusion};
+use geop_ops_model::{Combine, model, solid};
 use geop_ops_reference_geometry::{AddDatumArgs, Construction, Selected};
 use geop_ops_shell::ShellArgs;
-use geop_ops_sketch::{Sketch, SketchPlane};
+use geop_ops_sketch::{
+    AddSketchArgs, Sketch, SketchPlane,
+    figures::{n, on_origin, rectangle_outline},
+};
 
 /// The 2 x 2 x 1 box `box`: its walls `extrude(box,outline,c4)` (towards
 /// `-y`), `c5` (`+x`), `c6` (`+y`) and `c7` (`-x`), its bottom
 /// `extrude(box,start)` and top `extrude(box,end)`.
 pub fn boxed() -> Program {
     let mut program = Program::new();
-    let outline = rectangle(0.0, 0.0, 2.0, 2.0);
-    program.push("outline", sketch(on_origin(FrameAxis::Z), outline));
+    let outline = rectangle_outline(0.0, 0.0, 2.0, 2.0);
+    program.push(
+        "outline",
+        AddSketchArgs::on(on_origin(FrameAxis::Z), outline),
+    );
     program.push(
         "box",
         extrusion("outline", Extents::blind(1.0), Combine::NewBody),
@@ -71,7 +73,7 @@ pub fn enclosure_with_rib_sketch() -> Program {
     s.add_line(a, b);
     program.push(
         "rib_sketch",
-        sketch(
+        AddSketchArgs::on(
             SketchPlane::Datum(ElementReference::new(datums(), "middle")),
             s,
         ),

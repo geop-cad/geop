@@ -14,10 +14,14 @@ use geop_core_program::{
     program::Program,
     reader::Reader,
     runner::Runner,
+    testing::{edit_args, step},
     values::{Design, Setting},
 };
 use geop_core_sketch::PointId;
-use geop_ops_model::{NamedModel, PartDescription, Point, read_model};
+use geop_ops_model::{
+    NamedModel, PartDescription, Point, read_model,
+    testing::{Built, runner_of},
+};
 use geop_ops_parameters::{
     COLOR, Parameter, ParameterKind, Parameters, parameter_numbers, parameter_uses, parameters_of,
     read_properties, set_parameters,
@@ -28,7 +32,7 @@ use geop_ops_sketch::{CurveKind, PlacedSketch, sketch_element, whole_sketch};
 use crate::{
     Extents, ExtrudeArgs,
     examples::{box_with_drill_hole, parametric_plate},
-    testing::{Built, edit_args, registry, runner_of, step},
+    testing::registry,
 };
 
 /// A runner of programs, as the file `part.geop` of a workspace of no

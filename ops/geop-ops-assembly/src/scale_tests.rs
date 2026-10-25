@@ -19,8 +19,11 @@ use geop_core_program::{
     values::{Design, StateValue, StateValues, pose_state},
     workspace::{FileStore, FileStoreMut},
 };
-use geop_ops_extrude_revolve::testing::{extrusion, on_origin, sketch};
-use geop_ops_sketch::figures::{circle, rectangle, solved};
+use geop_ops_extrude_revolve::{Extents, testing::extrusion};
+use geop_ops_sketch::{
+    AddSketchArgs, Sketch,
+    figures::{circle, on_origin, rectangle, solved},
+};
 use std::{
     cell::RefCell,
     collections::{BTreeMap, BTreeSet},
@@ -41,11 +44,8 @@ use geop_core_math::{
     vector::Vector3,
 };
 use geop_lib_stdlib::WithStandardParts;
-use geop_ops_extrude_revolve::Extents;
-use geop_ops_model::Combine;
-use geop_ops_model::{element, read_model};
+use geop_ops_model::{Combine, element, read_model};
 use geop_ops_reference_geometry::Selected;
-use geop_ops_sketch::Sketch;
 
 /// A part of one extrusion `height` tall, of a sketch on the origin's Z
 /// plane: its faces are `extrude(<id>,start)` below and `extrude(<id>,end)`
@@ -55,7 +55,7 @@ fn extruded(id: &str, drawn: Sketch, height: f64) -> Program {
     let sketch_id = format!("{id}_sketch");
     program.push(
         sketch_id.clone(),
-        sketch(on_origin(FrameAxis::Z), solved(drawn)),
+        AddSketchArgs::on(on_origin(FrameAxis::Z), solved(drawn)),
     );
     program.push(
         id,

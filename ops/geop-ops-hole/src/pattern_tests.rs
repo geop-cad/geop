@@ -24,18 +24,20 @@ use geop_core_math::{
 use geop_ops_datums::{origin_axis, origin_plane};
 use geop_ops_extrude_revolve::{
     Extent, Extents,
-    testing::{Built, both_ways, disc, extrude_sketch, extrusion, on_face, on_origin, outline},
+    testing::{both_ways, extrude_sketch, extrusion},
 };
-use geop_ops_model::Combine;
 use geop_ops_model::{
-    Face, NamedModel, model,
-    testing::{assert_valid, assert_volume},
+    Combine, Face, NamedModel, model,
+    testing::{Built, assert_valid, assert_volume},
 };
 use geop_ops_pattern::{
     CircularPatternArgs, Direction, FeatureRef, LinearPatternArgs, MirrorArgs, PatternDirection,
     Seeds, Spacing, TurnAxis, body, feature,
 };
-use geop_ops_sketch::{AddSketchArgs, Sketch, SketchPlane};
+use geop_ops_sketch::{
+    AddSketchArgs, Sketch, SketchPlane,
+    figures::{disc, on_face, on_origin, outline},
+};
 
 /// A sketch on the Z plane, and `name` its extrude, as `extent` says, a
 /// new body.

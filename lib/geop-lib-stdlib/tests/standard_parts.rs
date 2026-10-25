@@ -1,5 +1,7 @@
 //! The standard parts: every family builds one valid solid of the size
-//! its table says, with the datums it is mated by.
+//! its table says, with the datums it is mated by. An integration test, as
+//! the parts are placed in assemblies and `geop-ops-assembly` depends on
+//! this crate: a unit test would hold a second copy of it.
 
 use std::{collections::BTreeMap, rc::Rc};
 
@@ -12,20 +14,23 @@ use geop_core_program::{
     part::Part,
     program::Program,
     runner::Runner,
+    testing::{edit_args, step},
     values::{Design, Setting, Settings, StateValue, StateValues, pose_state},
     workspace::{self, Files, Location},
 };
 use geop_core_topology::validation::{ValidationParameters, validate_fast};
 use geop_ops_datums::read_datums;
-use geop_ops_extrude_revolve::testing::{edit_args, model_of, step};
-use geop_ops_model::{NamedModel, RefId, read_model, testing::check_valid};
+use geop_ops_model::{
+    NamedModel, RefId, read_model,
+    testing::{check_valid, model_of},
+};
 use geop_ops_parameters::{
     ParameterKind, parameter_numbers, parameters_of, read_properties, set_parameters,
     steps::{LOOKUP, PARAMETERS, PROPERTIES},
 };
 use geop_ops_pattern::{CircularPatternArgs, Spacing};
 
-use super::{StandardPart, WithStandardParts, drive::TEETH, parts, steps::SIZE};
+use geop_lib_stdlib::{SIZE, StandardPart, TEETH, WithStandardParts, parts};
 
 /// The operations the standard parts are written in, and those placing
 /// them: each crate's `register`, as the editor's registry has them.
@@ -224,7 +229,7 @@ fn built(family: &StandardPart, program: &Program, fully: bool) -> Result<NamedM
 
 /// Checks the family placed from `file` builds, at the size its file has.
 fn assert_family_builds(file: &str) {
-    let part = super::part(file).unwrap();
+    let part = geop_lib_stdlib::part(file).unwrap();
     if let Err(e) = built(part, &part.program, false) {
         panic!("{file} {e}");
     }
@@ -403,7 +408,7 @@ fn every_size_of_every_family_builds_to_its_table() {
 #[test]
 #[ignore = "slow: fifteen gears, up to 80 teeth, half an hour — run with `cargo test -- --ignored`"]
 fn every_spur_gear_builds_to_its_table() {
-    let failures = build_every_size(super::part("std:spur_gear.geop").unwrap());
+    let failures = build_every_size(geop_lib_stdlib::part("std:spur_gear.geop").unwrap());
     assert!(failures.is_empty(), "{}", failures.join("\n\n"));
 }
 
@@ -413,7 +418,7 @@ fn every_spur_gear_builds_to_its_table() {
 #[test]
 #[ignore = "slow: twelve booleans — run with `cargo test -- --ignored`"]
 fn a_12_tooth_spur_gear_builds() {
-    let part = super::part("std:spur_gear.geop").unwrap();
+    let part = geop_lib_stdlib::part("std:spur_gear.geop").unwrap();
     let program = sized(&part.program, TEETH, "z12");
     if let Err(e) = built(part, &program, false) {
         panic!("a 12-tooth spur gear {e}");
@@ -493,7 +498,7 @@ fn drive_and_motion_parts_are_designated_and_made_of_something() {
     ] {
         // Its properties and parameters run on their own, with `values`:
         // what it is designated as. Unset parameters are the family's own.
-        let mut program = super::part(file).unwrap().program.clone();
+        let mut program = geop_lib_stdlib::part(file).unwrap().program.clone();
         (program.steps).retain(|s| [PROPERTIES, PARAMETERS, LOOKUP].contains(&&*s.operation));
         let mut part = Part::default();
         let output = runner.run_with(&mut part, &program, &values, None);
@@ -513,7 +518,7 @@ fn drive_and_motion_parts_are_designated_and_made_of_something() {
         );
     }
     // The SG90's envelope, weighed as its material says: 9 g.
-    let sg90 = super::part("std:servo_sg90.geop").unwrap();
+    let sg90 = geop_lib_stdlib::part("std:servo_sg90.geop").unwrap();
     let density = parameters_of(&sg90.program).material.unwrap().density;
     let volume = 22.8 * 12.2 * (15.9 + 6.8)
         + (32.2 - 22.8) * 12.2 * 2.5
@@ -524,7 +529,7 @@ fn drive_and_motion_parts_are_designated_and_made_of_something() {
 /// One gap of a gear of module 1 and `teeth` cut from its blank, turned
 /// `angle` degrees round: each is one boolean of building the gear.
 fn gaps_cut(teeth: &str, count: usize, angle: f64) -> Result<(), String> {
-    let gear = &super::part("std:spur_gear.geop").unwrap().program;
+    let gear = &geop_lib_stdlib::part("std:spur_gear.geop").unwrap().program;
     let mut program = sized(gear, TEETH, teeth);
     edit_args(
         step(&mut program, "teeth"),

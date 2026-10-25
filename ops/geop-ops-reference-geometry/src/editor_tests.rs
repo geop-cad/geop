@@ -17,13 +17,10 @@ use geop_core_math::{
     scalars::{ScalInF64 as S, Scalar},
     vector::Vector3,
 };
-use geop_core_program::{element::ElementReference, program::Program};
+use geop_core_program::{element::ElementReference, program::Program, testing::args};
 use geop_ops_datums::{AnyDatum, Datums, ORIGIN, component_name, datums};
-use geop_ops_extrude_revolve::{
-    examples::box_with_drill_hole,
-    testing::{args, drilled_box, model_of},
-};
-use geop_ops_model::{Vertex, element, model};
+use geop_ops_extrude_revolve::{examples::box_with_drill_hole, testing::drilled_box};
+use geop_ops_model::{Vertex, element, model, testing::model_of};
 use geop_ops_sketch3d::testing::route;
 
 use crate::{AddDatumArgs, CONSTRUCTIONS, Construction, Selected};

@@ -9,9 +9,9 @@ use geop_core_editor::{
     testing::{click_at, dialog, editor_with, from_above, handled, pointer},
 };
 use geop_core_math::geop_error::GeopResult;
-use geop_ops_extrude_revolve::testing::{args, disc};
+use geop_core_program::testing::args;
 use geop_ops_model::{element, solid};
-use geop_ops_sketch::{AddSketchArgs, SketchPlane, whole_sketch};
+use geop_ops_sketch::{AddSketchArgs, SketchPlane, figures::disc, whole_sketch};
 
 use crate::{EdgeFlangeArgs, FlatPatternArgs, HemArgs, HemKind, SheetCutArgs, edge};
 

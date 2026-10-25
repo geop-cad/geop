@@ -13,8 +13,8 @@ use geop_core_program::{
 };
 use geop_lib_sweep::shapes::v3;
 use geop_ops_datums::{AnyDatum, Datums, ORIGIN, component_name, datums, read_datums};
-use geop_ops_extrude_revolve::testing::{drilled_box as drilled, runner_of};
-use geop_ops_model::model;
+use geop_ops_extrude_revolve::testing::drilled_box as drilled;
+use geop_ops_model::{model, testing::runner_of};
 use geop_ops_sketch::{PlacedSketch, sketch_element, whole_sketch};
 
 fn face(name: &str) -> Selected {
@@ -529,7 +529,7 @@ fn example_round_trips(
 ) -> geop_ops_model::NamedModel<geop_core_program::values::Design> {
     let registry = std::rc::Rc::new(registry().unwrap());
     let built = geop_core_program::testing::assert_round_trips(registry, None, program);
-    let part = geop_ops_extrude_revolve::testing::model_of(&built);
+    let part = geop_ops_model::testing::model_of(&built);
     geop_ops_model::testing::assert_valid(&part);
     part.check_names().unwrap();
     part

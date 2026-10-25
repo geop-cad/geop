@@ -24,5 +24,4 @@ geop-core-program = { workspace = true, features = ["testing"] }
 geop-core-editor = { workspace = true, features = ["testing"] }
 serde_json.workspace = true
 geop-ops-model = { workspace = true, features = ["testing"] }
-geop-ops-extrude-revolve = { workspace = true, features = ["testing"] }
 geop-core-rasterize.workspace = true

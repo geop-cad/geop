@@ -15,6 +15,7 @@ use geop_core_program::{
     program::Program,
     reader::Reader,
     runner::Runner,
+    testing::{edit_args, step},
     values::Design,
 };
 use std::{borrow::Cow, f64::consts::PI};
@@ -28,11 +29,11 @@ use geop_core_math::{
 };
 use geop_core_rasterize::rasterize;
 use geop_core_sketch::Sketch;
-use geop_ops_extrude_revolve::testing::runner_of;
 use geop_ops_model::{
-    ModelOperation, NamedModel, RefId, build_model, model, read_model, testing::assert_valid,
+    ModelOperation, NamedModel, RefId, build_model, model, read_model,
+    testing::{assert_valid, model_of, runner_of},
 };
-use geop_ops_sketch::{PlacedSketch, sketch, whole_sketch};
+use geop_ops_sketch::{AddSketch, PlacedSketch, sketch, whole_sketch};
 use serde::{Deserialize, Serialize};
 
 use crate::{
@@ -165,7 +166,7 @@ impl ModelOperation for Rename {
 
 /// The operations these tests' programs are written in.
 fn registry() -> GeopResult<OperationRegistry> {
-    (geop_ops_extrude_revolve::testing::registry()?)
+    (OperationRegistry::default().with(AddSketch)?)
         .with(BaseFlange)?
         .with(EdgeFlange)?
         .with(Hem)?
@@ -1170,7 +1171,7 @@ fn flat_pattern_dxf_reads_back_by_layer() {
 
 /// What the example's programs are written in: sketches, and sheet metal.
 fn example_registry() -> GeopResult<OperationRegistry> {
-    (geop_ops_extrude_revolve::testing::registry()?)
+    (OperationRegistry::default().with(AddSketch)?)
         .with(BaseFlange)?
         .with(EdgeFlange)?
         .with(Hem)?
@@ -1184,7 +1185,9 @@ fn example_registry() -> GeopResult<OperationRegistry> {
 /// flat body with its bend lines.
 #[test]
 fn bracket_example_builds_and_unfolds() {
-    use geop_ops_extrude_revolve::testing::{Built, model_of};
+    // The trait of programs built on their own: this module's `Built` is a
+    // part built step by step.
+    use geop_ops_model::testing::Built;
 
     let mut program = crate::examples::sheet_metal_bracket();
     let json = serde_json::to_string(&program).unwrap();
@@ -1239,8 +1242,6 @@ fn bracket_example_round_trips() {
 /// scratch.
 #[test]
 fn bracket_example_builds_incrementally() {
-    use geop_ops_extrude_revolve::testing::{edit_args, step};
-
     let original = crate::examples::sheet_metal_bracket();
     let mut longer = original.clone();
     edit_args(step(&mut longer, "back"), |args: &mut EdgeFlangeArgs| {

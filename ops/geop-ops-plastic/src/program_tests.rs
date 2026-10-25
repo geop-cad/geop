@@ -11,18 +11,18 @@ use geop_core_program::{
     element::ElementReference, operation_registry::OperationRegistry, values::Design,
 };
 use geop_ops_datums::datums;
-use geop_ops_extrude_revolve::{
-    Extents,
-    testing::{Built, extrusion, n, on_face, sketch},
-};
+use geop_ops_extrude_revolve::{Extents, testing::extrusion};
 use geop_ops_fillet::{Fillet, FilletArgs};
-use geop_ops_model::{Combine, solid};
 use geop_ops_model::{
-    NamedModel, model,
-    testing::{assert_valid, check_valid},
+    Combine, NamedModel, model, solid,
+    testing::{Built, assert_valid, check_valid},
 };
 use geop_ops_reference_geometry::{AddDatum, AddDatumArgs, Construction, Selected};
-use geop_ops_sketch::{Sketch, SketchPlane, whole_sketch};
+use geop_ops_sketch::{
+    AddSketchArgs, Sketch, SketchPlane,
+    figures::{n, on_face},
+    whole_sketch,
+};
 
 use geop_ops_shell::Shell;
 
@@ -99,7 +99,7 @@ fn enclosure_with_a_port_drafted() {
     // On the +x wall, `u` runs along `y` and `v` along `z`.
     let c = s.add_point(n(1.0), n(0.5));
     s.add_circle(c, n(0.2));
-    program.push("port_sketch", sketch(on_face(&wall("c5")), s));
+    program.push("port_sketch", AddSketchArgs::on(on_face(&wall("c5")), s));
     program.push(
         "port",
         extrusion(
@@ -274,7 +274,7 @@ fn enclosure_rib_normal_to_its_sketch() {
     s.add_line(a, b);
     program.push(
         "rib_sketch",
-        sketch(
+        AddSketchArgs::on(
             SketchPlane::Datum(ElementReference::new(datums(), "level")),
             s,
         ),

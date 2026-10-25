@@ -1036,11 +1036,6 @@ Open follow-ups:
   although they share its key (see
   `geop-ops-assembly`'s `draw_tests.rs`): equal components should be
   drawn once.
-- `geop-ops-assembly` depends on `geop-lib-stdlib` for its
-  `metric_plate` and `bolted_plate` examples, while `geop-lib-stdlib`
-  dev-depends on `geop-ops-assembly`: a dev-dependency cycle of the kind
-  AGENTS.md warns of. The examples that place standard parts belong in a
-  crate above both, or the standard parts' tests in `tests/`.
 - The protocol samples change whenever a dialog changes shape, so a change
   to an operation's form means writing them again; the check covers the
   shapes a session reaches, not every field an operation could show.

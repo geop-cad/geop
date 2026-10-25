@@ -1,19 +1,22 @@
 //! Sweeps along 3-D sketches, run as programs: the solids they build, and
 //! what they refuse.
 
-use crate::{
-    Output, PathRef, SweepArgs,
-    testing::{Built, disc, n, on_origin, sketch},
-};
+use crate::{Output, PathRef, SweepArgs};
 use geop_core_math::{
     geop_error::GeopResult, primitives::FrameAxis, scalars::Scalar, vector::Vector3,
 };
 use geop_core_program::{operation_registry::OperationRegistry, program::Program};
 use geop_core_sketch::space::End;
 use geop_lib_sweep::Orientation;
-use geop_ops_model::Combine;
-use geop_ops_model::testing::assert_valid;
-use geop_ops_sketch::{AddSketchArgs, whole_sketch};
+use geop_ops_model::{
+    Combine,
+    testing::{Built, assert_valid},
+};
+use geop_ops_sketch::{
+    AddSketchArgs,
+    figures::{disc, n, on_origin},
+    whole_sketch,
+};
 use geop_ops_sketch3d::{AddSketch3d, AddSketch3dArgs, Constraint3d, Sketch3d, sketch3d_path};
 
 /// The operations these tests' programs are written in.
@@ -27,7 +30,7 @@ fn v(p: [f64; 3]) -> Vector3<geop_core_program::values::Design> {
 
 /// A circle of radius `r` around the origin, on the origin's `x` plane.
 fn section(r: f64) -> AddSketchArgs {
-    sketch(on_origin(FrameAxis::X), disc([0.0, 0.0], r))
+    AddSketchArgs::on(on_origin(FrameAxis::X), disc([0.0, 0.0], r))
 }
 
 /// The spline through `points`, leaving the first along `x`.

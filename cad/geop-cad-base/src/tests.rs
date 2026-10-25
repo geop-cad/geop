@@ -7,8 +7,7 @@ use std::collections::BTreeMap;
 
 use geop_core_editor::testing::{dialog, handled, pointer};
 use geop_core_math::geop_error::GeopResult;
-use geop_core_program::{part::Part, program::Program};
-use geop_ops_extrude_revolve::testing::args;
+use geop_core_program::{part::Part, program::Program, testing::args};
 
 use crate::{build, workspace};
 

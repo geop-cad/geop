@@ -12,10 +12,10 @@ use geop_core_math::{
     vector::Vector3,
 };
 use geop_core_program::{element::ElementReference, part::Part, values::Design};
-use geop_ops_extrude_revolve::testing::{Built, drilled_box, model_of, registry};
+use geop_ops_extrude_revolve::testing::{drilled_box, registry};
 use geop_ops_model::{
     NamedModel, model,
-    testing::{edge_at, vertex_at},
+    testing::{Built, edge_at, model_of, vertex_at},
 };
 use geop_ops_reference_geometry::Selected;
 

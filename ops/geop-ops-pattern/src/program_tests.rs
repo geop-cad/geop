@@ -16,14 +16,17 @@ use geop_core_math::{geop_error::GeopResult, primitives::FrameAxis, scalars::Sca
 use geop_ops_boolean::Boolean;
 use geop_ops_extrude_revolve::{
     Extents,
-    testing::{Built, both_ways, disc, extrude_sketch, n, on_origin, outline, sketch},
+    testing::{both_ways, extrude_sketch},
 };
-use geop_ops_model::{Combine, solid};
 use geop_ops_model::{
-    NamedModel, model,
-    testing::{assert_valid, assert_volume},
+    Combine, NamedModel, model, solid,
+    testing::{Built, assert_valid, assert_volume},
 };
-use geop_ops_sketch::{Sketch, SketchPlane, sketch_element};
+use geop_ops_sketch::{
+    AddSketchArgs, Sketch, SketchPlane,
+    figures::{disc, n, on_origin, outline},
+    sketch_element,
+};
 
 use geop_ops_datums::{origin_axis, origin_plane};
 use geop_ops_reference_geometry::AddDatum;
@@ -533,7 +536,7 @@ fn holes_patterned_along_sketch_lines() {
         across.add_point(n(-1.0), n(1.0)),
     );
     let line = across.add_line(a, b);
-    program.push("across", sketch(on_origin(FrameAxis::Z), across));
+    program.push("across", AddSketchArgs::on(on_origin(FrameAxis::Z), across));
     program.push(
         "holes",
         LinearPatternArgs {
@@ -572,7 +575,7 @@ fn patterned_plate_round_trips() {
     let registry = std::rc::Rc::new(registry().unwrap());
     let program = crate::examples::patterned_plate();
     let built = geop_core_program::testing::assert_round_trips(registry, None, &program);
-    let part = geop_ops_extrude_revolve::testing::model_of(&built);
+    let part = geop_ops_model::testing::model_of(&built);
     assert_valid(&part);
     assert_eq!(part.solid_names(), ["linear_pattern(holes)"]);
     for (p, expected) in [
@@ -611,7 +614,7 @@ fn drawn_examples_round_trip() {
     ] {
         let registry = std::rc::Rc::new(registry().unwrap());
         let built = geop_core_program::testing::assert_round_trips(registry, None, &program);
-        let part = geop_ops_extrude_revolve::testing::model_of(&built);
+        let part = geop_ops_model::testing::model_of(&built);
         assert_valid(&part);
         assert_eq!(part.solid_names(), solids);
     }

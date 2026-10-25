@@ -5,14 +5,19 @@
 
 use geop_core_math::primitives::FrameAxis;
 use geop_core_program::{program::Program, values::Design};
-use geop_ops_model::{Combine, NamedModel, testing::check_valid};
-use geop_ops_sketch::{Sketch, SketchPlane, sketch_element, whole_sketch};
+use geop_ops_model::{
+    Combine, NamedModel,
+    testing::{Built, check_valid},
+};
+use geop_ops_sketch::{
+    AddSketchArgs, Sketch, SketchPlane,
+    figures::{disc, n, on_face, on_origin, outline, rectangle_outline},
+    sketch_element, whole_sketch,
+};
 
 use crate::{Extents, Output, RevolveArgs, RevolveAxis};
 
-use super::{
-    Built, both_ways, disc, extrude_sketch, n, on_face, on_origin, outline, rectangle, sketch,
-};
+use super::{both_ways, extrude_sketch};
 
 /// The one solid `program` builds, which is valid, and its name.
 pub fn one_solid(program: &Program) -> (NamedModel<Design>, String) {
@@ -40,7 +45,7 @@ pub fn block() -> Program {
         &mut program,
         "body",
         on_origin(FrameAxis::Z),
-        rectangle(0.0, 0.0, 2.0, 2.0),
+        rectangle_outline(0.0, 0.0, 2.0, 2.0),
         Extents::blind(1.0),
         Combine::NewBody,
     );
@@ -71,7 +76,7 @@ pub fn sphere() -> Program {
     s.add_arc(bottom, top, n(std::f64::consts::PI));
     let axis = s.add_line(top, bottom);
     let mut program = Program::new();
-    program.push("body_sketch", sketch(on_origin(FrameAxis::Z), s));
+    program.push("body_sketch", AddSketchArgs::on(on_origin(FrameAxis::Z), s));
     program.push(
         "body",
         RevolveArgs {
@@ -105,7 +110,7 @@ pub fn block_pocketed() -> Program {
         &mut program,
         "pocket",
         top(),
-        rectangle(0.5, 0.5, 1.5, 1.5),
+        rectangle_outline(0.5, 0.5, 1.5, 1.5),
         Extents::blind(-0.4),
         Combine::cut("extrude(body)"),
     );
@@ -119,7 +124,7 @@ pub fn block_stepped() -> Program {
         &mut program,
         "step",
         on_origin(FrameAxis::Z),
-        rectangle(-0.5, 1.5, 1.0, 2.5),
+        rectangle_outline(-0.5, 1.5, 1.0, 2.5),
         Extents::blind(0.5),
         Combine::cut("extrude(body)"),
     );
@@ -161,7 +166,7 @@ pub fn cylinder_with_flat() -> Program {
         &mut program,
         "flat",
         on_origin(FrameAxis::Z),
-        rectangle(0.6, -2.0, 2.0, 2.0),
+        rectangle_outline(0.6, -2.0, 2.0, 2.0),
         Extents::blind(1.5),
         Combine::cut("extrude(body)"),
     );
@@ -231,7 +236,7 @@ pub fn hemisphere() -> Program {
         &mut program,
         "half",
         on_origin(FrameAxis::Z),
-        rectangle(-2.0, -2.0, 2.0, 2.0),
+        rectangle_outline(-2.0, -2.0, 2.0, 2.0),
         Extents::blind(-2.0),
         Combine::cut("revolve(body)"),
     );
@@ -259,7 +264,7 @@ pub fn sphere_with_side_cut_off() -> Program {
         &mut program,
         "side",
         on_origin(FrameAxis::Z),
-        rectangle(0.5, -2.0, 2.0, 2.0),
+        rectangle_outline(0.5, -2.0, 2.0, 2.0),
         both_ways(2.0),
         Combine::cut("revolve(body)"),
     );

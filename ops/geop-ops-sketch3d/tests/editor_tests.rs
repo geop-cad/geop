@@ -12,11 +12,13 @@ use geop_core_math::{
     scalars::{ScalInF64 as S, Scalar},
     vector::Vector3,
 };
-use geop_core_program::{element::ElementReference, program::Program, values::Design};
+use geop_core_program::{
+    element::ElementReference, program::Program, testing::args, values::Design,
+};
 use geop_core_sketch::space::{Constraint3d, CurveKind3d};
-use geop_ops_extrude_revolve::Extents;
-use geop_ops_model::Combine;
-use geop_ops_model::{NamedModel, read_model};
+use geop_ops_extrude_revolve::{Extents, examples::box_with_drill_hole, testing::extrude_sketch};
+use geop_ops_model::{Combine, NamedModel, read_model};
+use geop_ops_sketch::figures::{on_origin, rectangle_outline};
 use geop_ops_sketch3d::{
     AddSketch3dArgs, PlacedSketch3d, PointSource, Reference3d, Sketch3d, Sketch3dEditing,
     Sketch3dSession, Target, Tool, sketch3d,
@@ -31,10 +33,6 @@ use geop_core_editor::{
     },
 };
 use geop_core_math::primitives::Ray;
-use geop_ops_extrude_revolve::{
-    examples::box_with_drill_hole,
-    testing::{args, extrude_sketch, on_origin, rectangle},
-};
 use std::collections::BTreeMap;
 
 /// What a 3-D sketch is drawn among: the model's, the sketches', the
@@ -90,7 +88,7 @@ impl Editor {
     fn on(on_box: bool) -> Self {
         let mut program = Program::new();
         if on_box {
-            let square = rectangle(1.0, 1.0, 2.0, 2.0);
+            let square = rectangle_outline(1.0, 1.0, 2.0, 2.0);
             let (extent, combine) = (Extents::blind(1.0), Combine::NewBody);
             extrude_sketch(
                 &mut program,

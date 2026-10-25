@@ -20,7 +20,6 @@ geop-lib-booleans.workspace = true
 serde.workspace = true
 
 [dev-dependencies]
-geop-core-topology.workspace = true
 geop-core-program = { workspace = true, features = ["testing"] }
 geop-ops-boolean.workspace = true
 geop-ops-model = { workspace = true, features = ["testing"] }

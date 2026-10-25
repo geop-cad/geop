@@ -6,10 +6,13 @@ use geop_core_math::primitives::FrameAxis;
 use geop_core_program::program::Program;
 use geop_ops_extrude_revolve::{
     Extents,
-    testing::{both_ways, disc, extrude_sketch, extrusion, n, on_face, on_origin, outline, sketch},
+    testing::{both_ways, extrude_sketch, extrusion},
 };
 use geop_ops_model::Combine;
-use geop_ops_sketch::{Constraint, Sketch};
+use geop_ops_sketch::{
+    AddSketchArgs, Constraint, Sketch,
+    figures::{disc, n, on_face, on_origin, outline},
+};
 
 /// The plate's size: 60 x 40, 10 thick, its top at `z = 10`.
 pub const PLATE: [f64; 3] = [60.0, 40.0, 10.0];
@@ -39,7 +42,7 @@ pub fn plate(points: &[[f64; 2]]) -> Program {
     let [w, d, t] = PLATE;
     program.push(
         "outline",
-        sketch(
+        AddSketchArgs::on(
             on_origin(FrameAxis::Z),
             outline(&[[0.0, 0.0], [w, 0.0], [w, d], [0.0, d]]),
         ),
@@ -50,7 +53,7 @@ pub fn plate(points: &[[f64; 2]]) -> Program {
     );
     program.push(
         "centres",
-        sketch(on_face("extrude(plate,end)"), points_sketch(points)),
+        AddSketchArgs::on(on_face("extrude(plate,end)"), points_sketch(points)),
     );
     program
 }

@@ -23,13 +23,13 @@ use geop_core_math::{
     vector::Vector3,
 };
 use geop_core_program::{
-    element::PickedElement, operation::Operation, reader::Reader, values::Setting,
+    element::PickedElement, operation::Operation, reader::Reader, testing::args, values::Setting,
 };
 use geop_core_sketch::PointId;
 use geop_ops_datums::origin_axis;
 use geop_ops_model::{
     BooleanOp, Combine, Face, Point, element, read_model,
-    testing::{model_shown, solid_volume},
+    testing::{Built, model_of, model_shown, solid_volume},
 };
 use geop_ops_parameters::{
     DefineParameters, Parameter, ParameterKind, Parameters, ParametersCommand, ParametersPanel,
@@ -37,11 +37,7 @@ use geop_ops_parameters::{
 };
 use geop_ops_sketch::{AddSketchArgs, Constraint, sketch_element, whole_sketch};
 
-use crate::{
-    ExtrudeArgs, Output,
-    examples::parametric_plate,
-    testing::{Built, args, model_of, registry as operations},
-};
+use crate::{ExtrudeArgs, Output, examples::parametric_plate, testing::registry as operations};
 
 /// What these tests edit: sketches — planar and in space — on the origin's
 /// datums, swept into solids, and the parameters their dialogs read: the
@@ -565,7 +561,8 @@ fn editing_an_early_sketch_builds_only_up_to_it() {
             assert!(program.steps.iter().all(|s| !s.runs), "{:?}", program.steps);
         }
     }
-    let dragged: geop_ops_sketch::AddSketchArgs = crate::testing::args(editor.editing().unwrap());
+    let dragged: geop_ops_sketch::AddSketchArgs =
+        geop_core_program::testing::args(editor.editing().unwrap());
     assert_ne!(dragged.sketch, args.sketch, "the drag changed nothing");
     let update = handled(&mut editor, Command::Commit);
     let program = update.program.expect("the program changed");
@@ -819,7 +816,7 @@ fn a_sweep_takes_a_3d_sketch_as_its_rail() {
         [3.0, 0.9, 0.0],
         [4.0, 1.6, 0.0],
     ]
-    .map(|p| flare.add_point(Vector3::from_array(p.map(crate::testing::n))));
+    .map(|p| flare.add_point(Vector3::from_array(p.map(geop_ops_sketch::figures::n))));
     flare.add_spline(points.to_vec());
     program.push(
         "flare",

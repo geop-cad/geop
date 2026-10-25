@@ -7,7 +7,7 @@ use geop_core_editor::{
     registry::Registry,
     testing::{click_at, dialog, editor_with, handled, pointer},
 };
-use geop_ops_extrude_revolve::testing::args;
+use geop_core_program::testing::args;
 use geop_ops_model::element;
 
 /// What these tests edit: plates sketched and extruded, and holes.

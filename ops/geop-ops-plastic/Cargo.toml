@@ -40,9 +40,11 @@ testing = [
 [dev-dependencies]
 geop-ops-model = { workspace = true, features = ["testing"] }
 geop-ops-extrude-revolve = { workspace = true, features = ["testing"] }
+# The optional dependencies of `testing`, for this crate's own tests.
 geop-ops-datums.workspace = true
 geop-ops-reference-geometry.workspace = true
-geop-ops-fillet.workspace = true
 geop-ops-shell.workspace = true
+geop-ops-fillet.workspace = true
+geop-core-program = { workspace = true, features = ["testing"] }
 geop-core-editor = { workspace = true, features = ["testing"] }
 geop-lib-sweep = { workspace = true, features = ["testing"] }

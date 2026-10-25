@@ -1,34 +1,28 @@
 //! What the tests of programs share that start from sketches: the
-//! operations they are written in, drawing outlines, the steps sketching
-//! and extruding them, and building a program as an editor does, and
-//! reading its steps' arguments as their types; and the [`bodies`] the
-//! stress sweeps run over. Only built for tests: with `testing`, or in
-//! this crate's own.
+//! operations they are written in, the steps extruding sketches, and the
+//! bodies a sketch and an extrusion or two build (a block with a post
+//! sketched on it, a drilled box, and the [`bodies`] the stress sweeps run
+//! over). Only built for tests: with `testing`, or in this crate's own.
+//!
+//! The sketches themselves are drawn with `geop_ops_sketch::figures`, a
+//! program's steps are read and run with `geop_core_program::testing`, and
+//! the model it builds with `geop_ops_model::testing`.
 
 // Helpers of tests fail as tests do: by panicking, naming what is wrong.
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
-use geop_core_math::{
-    geop_error::{GeopError, GeopResult},
-    primitives::FrameAxis,
-    scalars::Scalar,
-};
+use geop_core_math::{geop_error::GeopResult, primitives::FrameAxis};
 use geop_core_program::{
-    element::ElementReference,
-    operation::StepArgs,
     operation_registry::OperationRegistry,
-    part::Part,
     program::{Program, ProgramStep},
-    runner::Runner,
-    values::Design,
 };
-use geop_core_sketch::{CurveId, PointId};
-use geop_ops_datums::origin_plane;
 use geop_ops_model::Combine;
-use geop_ops_model::{NamedModel, model, read_model};
 use geop_ops_parameters::{DefineParameters, LookupTable, PartProperties};
-use geop_ops_sketch::{AddSketch, AddSketchArgs, Sketch, SketchPlane, whole_sketch};
-use serde::{Serialize, de::DeserializeOwned};
+use geop_ops_sketch::{
+    AddSketch, AddSketchArgs, Sketch, SketchPlane,
+    figures::{disc, on_face, on_origin, polygon, rectangle_outline},
+    whole_sketch,
+};
 
 pub mod bodies;
 
@@ -46,64 +40,6 @@ pub fn registry() -> GeopResult<OperationRegistry> {
         .with(Revolve)?)
     .with(Sweep)?
     .with(Loft)
-}
-
-/// A number of a test, as design data.
-pub fn n(x: f64) -> Design {
-    Design::from_f64(x)
-}
-
-/// A closed polygon through `corners`, one line per side: its points and
-/// lines.
-pub fn polygon(sketch: &mut Sketch, corners: &[[f64; 2]]) -> (Vec<PointId>, Vec<CurveId>) {
-    let points: Vec<PointId> = corners
-        .iter()
-        .map(|c| sketch.add_point(n(c[0]), n(c[1])))
-        .collect();
-    let lines = (0..points.len())
-        .map(|i| sketch.add_line(points[i], points[(i + 1) % points.len()]))
-        .collect();
-    (points, lines)
-}
-
-/// A sketch of nothing but the closed polygon through `corners` (see
-/// [`polygon`]).
-pub fn outline(corners: &[[f64; 2]]) -> Sketch {
-    let mut sketch = Sketch::new();
-    polygon(&mut sketch, corners);
-    sketch
-}
-
-/// The rectangle from `(x0, y0)` to `(x1, y1)`.
-pub fn rectangle(x0: f64, y0: f64, x1: f64, y1: f64) -> Sketch {
-    outline(&[[x0, y0], [x1, y0], [x1, y1], [x0, y1]])
-}
-
-/// A sketch of nothing but the circle of `radius` around `center`.
-pub fn disc(center: [f64; 2], radius: f64) -> Sketch {
-    let mut sketch = Sketch::new();
-    let c = sketch.add_point(n(center[0]), n(center[1]));
-    sketch.add_circle(c, n(radius));
-    sketch
-}
-
-/// The plane of the origin normal to `normal`, to sketch on.
-pub fn on_origin(normal: FrameAxis) -> SketchPlane {
-    SketchPlane::Datum(origin_plane(normal))
-}
-
-/// The flat face named `face`, to sketch on.
-pub fn on_face(face: &str) -> SketchPlane {
-    SketchPlane::Face(ElementReference::new(model(), face))
-}
-
-/// The step drawing `sketch` on `plane`.
-pub fn sketch(plane: SketchPlane, sketch: Sketch) -> AddSketchArgs {
-    AddSketchArgs {
-        plane: Some(plane),
-        sketch,
-        ..Default::default()
-    }
 }
 
 /// One side only, ending as `side1` says.
@@ -157,13 +93,6 @@ pub fn extrude(sketch: &str, distance: f64, symmetric: bool) -> ExtrudeArgs {
     )
 }
 
-/// The step `id`, `args` for the operation they are for.
-pub fn as_step<A: StepArgs>(id: &str, args: A) -> ProgramStep {
-    let mut program = Program::new();
-    program.push(id, args);
-    program.steps.remove(0)
-}
-
 /// A block, from `z0` to `z1` over `[0, 2]^2`, sketched on the Z plane
 /// (`base`) and extruded both ways from it (`block`), the square
 /// `post_sketch` drawn on the Z plane under its middle, and `steps` after
@@ -174,7 +103,7 @@ pub fn block_and_post(z0: f64, z1: f64, steps: Vec<ProgramStep>) -> Program {
     let mut post = Sketch::new();
     polygon(&mut post, &[[0.5, 0.5], [1.5, 0.5], [1.5, 1.5], [0.5, 1.5]]);
     let mut program = Program::new();
-    program.push("base", sketch(on_origin(FrameAxis::Z), base));
+    program.push("base", AddSketchArgs::on(on_origin(FrameAxis::Z), base));
     program.push(
         "block",
         ExtrudeArgs {
@@ -182,7 +111,10 @@ pub fn block_and_post(z0: f64, z1: f64, steps: Vec<ProgramStep>) -> Program {
             ..extrude("base", 1.0, false)
         },
     );
-    program.push("post_sketch", sketch(on_origin(FrameAxis::Z), post));
+    program.push(
+        "post_sketch",
+        AddSketchArgs::on(on_origin(FrameAxis::Z), post),
+    );
     program.steps.extend(steps);
     program
 }
@@ -198,7 +130,7 @@ pub fn extrude_sketch(
     combine: Combine,
 ) {
     let sketch_name = format!("{name}_sketch");
-    program.push(&sketch_name, sketch(on, drawn));
+    program.push(&sketch_name, AddSketchArgs::on(on, drawn));
     program.push(name, extrusion(&sketch_name, extent, combine));
 }
 
@@ -209,11 +141,14 @@ pub fn extrude_sketch(
 /// way back into it (`hole`) — the drilled box is `extrude(hole)`.
 pub fn drilled_box() -> Program {
     let mut program = Program::new();
-    let outline = sketch(on_origin(FrameAxis::Z), rectangle(0.0, 0.0, 2.0, 2.0));
+    let outline = AddSketchArgs::on(
+        on_origin(FrameAxis::Z),
+        rectangle_outline(0.0, 0.0, 2.0, 2.0),
+    );
     program.push("outline", outline);
     let body = extrusion("outline", Extents::blind(1.0), Combine::NewBody);
     program.push("box", body);
-    let hole = sketch(on_face("extrude(box,end)"), disc([1.0, 1.0], 0.4));
+    let hole = AddSketchArgs::on(on_face("extrude(box,end)"), disc([1.0, 1.0], 0.4));
     program.push("hole_sketch", hole);
     let cut = extrusion(
         "hole_sketch",
@@ -222,76 +157,4 @@ pub fn drilled_box() -> Program {
     );
     program.push("hole", cut);
     program
-}
-
-// ── Programs ────────────────────────────────────────────────────────────────
-
-/// A runner of programs written in the operations `registry` makes, as
-/// the file `part.geop` — of a workspace of no other files.
-pub fn runner_of(registry: OperationRegistry) -> Runner {
-    let mut runner = Runner::new(registry);
-    runner.location.file = "part.geop".into();
-    runner
-}
-
-/// Building a program on its own, written in the operations `registry`
-/// makes.
-pub trait Built {
-    /// The part the program builds.
-    fn built(&self, registry: fn() -> GeopResult<OperationRegistry>) -> GeopResult<Part>;
-
-    /// The model the program builds, or why a step fails.
-    fn build_model(
-        &self,
-        registry: fn() -> GeopResult<OperationRegistry>,
-    ) -> GeopResult<NamedModel<Design>> {
-        Ok(model_of(&self.built(registry)?))
-    }
-}
-
-impl Built for Program {
-    fn built(&self, registry: fn() -> GeopResult<OperationRegistry>) -> GeopResult<Part> {
-        let runner = runner_of(registry()?);
-        let mut part = Part::default();
-        self.run(&runner, &mut part)?;
-        Ok(part)
-    }
-}
-
-/// The model `part` holds: empty if it built no topology.
-pub fn model_of(part: &Part) -> NamedModel<Design> {
-    (read_model(&part.current()).map(|model| model.into_owned())).unwrap_or_default()
-}
-
-/// The arguments of `step`, as their type `A`.
-#[track_caller]
-pub fn args<A: DeserializeOwned>(step: &ProgramStep) -> A {
-    serde_json::from_value(step.args.clone())
-        .unwrap_or_else(|e| panic!("step {:?} holds no such arguments: {e}", step.id))
-}
-
-/// Changes the arguments of `step`, as their type `A`, by `edit`.
-pub fn edit_args<A: Serialize + DeserializeOwned>(
-    step: &mut ProgramStep,
-    edit: impl FnOnce(&mut A),
-) {
-    let mut args: A = args(step);
-    edit(&mut args);
-    step.args = serde_json::to_value(args).expect("arguments are plain data");
-}
-
-/// The step `id` of `program`.
-#[track_caller]
-pub fn step<'a>(program: &'a mut Program, id: &str) -> &'a mut ProgramStep {
-    let index = program.index_of(id).unwrap_or_else(|e| panic!("{e}"));
-    &mut program.steps[index]
-}
-
-/// The error `result` holds, for a test that expects one.
-#[track_caller]
-pub fn error<T>(result: GeopResult<T>) -> GeopError {
-    match result {
-        Ok(_) => panic!("expected an error"),
-        Err(e) => e,
-    }
 }

@@ -36,10 +36,13 @@ use geop_ops_assembly::{AddPart, AddPartArgs, examples::pin};
 use geop_ops_extrude_revolve::{
     Extents,
     examples::{box_with_drill_hole, bracket, cross_drilled_shaft, revolved_cone_on_box},
-    testing::{self as extrude_revolve, disc, extrude_sketch, model_of, on_origin, rectangle},
+    testing::{self as extrude_revolve, extrude_sketch},
 };
-use geop_ops_model::Combine;
-use geop_ops_model::{NamedModel, Namer, read_model, testing::assert_model_valid_sheets};
+use geop_ops_model::{
+    Combine, NamedModel, Namer, read_model,
+    testing::{assert_model_valid_sheets, model_of},
+};
+use geop_ops_sketch::figures::{disc, on_origin, rectangle_outline};
 
 use crate::{ImportStep, ImportStepArgs, add_bodies, read_step, write_part, write_step};
 
@@ -1008,7 +1011,7 @@ fn an_assembly_is_written_as_products_and_occurrences() {
     );
 
     let mut base = Program::new();
-    let plate = rectangle(0.0, 0.0, 10.0, 10.0);
+    let plate = rectangle_outline(0.0, 0.0, 10.0, 10.0);
     let (down, new) = (Extents::blind(-1.0), Combine::NewBody);
     extrude_sketch(&mut base, "base", on_origin(FrameAxis::Z), plate, down, new);
     // About `y` by a quarter turn: the peg's `z` onto `x`.
