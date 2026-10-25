@@ -25,13 +25,18 @@
 //!    further along the very same edge.
 //! 4. For each start point, trace the intersection curve outward from it
 //!    (see [`trace_from_start_point`]) and splice in whatever new edge
-//!    that produces.
+//!    that produces. The march finds which vertex the curve ends at; the
+//!    edge's curve is the exact arc where the two surfaces' shapes name
+//!    their meeting (a plane across a surface of revolution around its
+//!    normal, `circle_through`), and a cubic fitted through the march
+//!    otherwise (see [`fit_traced_branch`]).
 
 use geop_core_geometry::{
     contains::{curve::curve_could_contain, surface::surface_could_contain},
     intersection::{Intersections, curve_surface_intersect, refine_crossing},
     nurb_curve::{NurbCurve, true_point_fractions},
     nurb_surface::NurbSurface3D,
+    shape::circle_through,
 };
 use geop_core_math::{
     geop_error::{GeopError, GeopResult, WithContext},
@@ -1615,135 +1620,25 @@ fn trace_one_side(
     let edge_id = match duplicate {
         Some(id) => id,
         None => {
-            // The edge's curve interpolates the marched points, and must
-            // enclose the intersection branch *between* them too — a later
-            // trace of the same branch from its other end tests its own
-            // points against this curve (the duplicate check above), and
-            // they lie on the branch, not on an interpolant.
-            //
-            // Located with the same corrector the march uses, at a fraction
-            // `frac` of the way along the leg from `from` (whose surface
-            // parameters are `(u_a, v_a, u_b, v_b)`) to `to`.
-            let on_branch = |from: Vector3,
-                             (u_a, v_a, u_b, v_b): OnBoth,
-                             to: Vector3,
-                             frac: Scalar|
-             -> GeopResult<(Vector3, OnBoth)> {
-                let leg_ctx = with_context!("on_branch(from={from:?}, to={to:?}, frac={frac:?})");
-                let chord = to.sub(&from);
-                let step = chord.norm().mul(frac);
-                let (p, na, va, nb, vb) = predictor_corrector_step(
-                    &surf_a,
-                    &surf_b,
-                    from,
-                    chord.normalize().with_context(&leg_ctx)?,
-                    u_a,
-                    v_a,
-                    u_b,
-                    v_b,
-                    step,
-                )
-                .with_context(&leg_ctx)?;
-                Ok((p, (na, va, nb, vb)))
-            };
-            // First every leg is split, on the branch, into `pieces`: the
-            // march's stride leaves a cubic through its points drifting ~1e-5
-            // from the branch, and halving every leg cuts that ~16x for one
-            // corrector per leg. A branch crossed in only a stride or two
-            // needs more than halving, though: it would be left with too few
-            // points for a cubic at all — a single stride, halved, is three,
-            // and a quadratic through three points of an ellipse drifts ~4e-6
-            // from it. That drift is enclosed as width, honestly, but only in
-            // the directions it points in, and a pcurve fitted by projecting
-            // the curve onto a surface tilted against them inherits it as an
-            // offset its own width does not cover. So every branch gets at
-            // least `MIN_TRACED_LEGS` legs.
-            //
-            // The stride follows how sharply the surfaces curve, not how fast
-            // that curvature changes, and a branch whose curvature runs from
-            // gentle to tight along it — the involute flank of a gear tooth
-            // crossing a plane, its curvature radius growing tenfold from
-            // root to tip — leaves the cubic drifting a hundred times the
-            // usual. So the legs are split finer, each time in two, while the
-            // drift enclosed is more than `TRACE_DRIFT`.
-            let strides = points.len() - 1;
-            let first = MIN_TRACED_LEGS.div_ceil(strides).max(2);
-            let marched = (&points, &uvs);
-            // With each step the legs it was split into and the fit before,
-            // to tell whether halving them still halved its width. The cap
-            // ends it: `pieces` doubles each step, so it passes any cap
-            // within as many steps as it has bits.
-            let first: (usize, Option<(NurbCurve<4>, Scalar)>) = (first, None);
-            let refined = refine(
-                first,
-                usize::BITS as usize,
-                |(pieces, best)| -> GeopResult<_> {
-                    let (points, uvs) = marched;
-                    let mut dense = vec![points[0]];
-                    let mut dense_params = vec![uvs[0]];
-                    for i in 0..strides {
-                        for k in 1..pieces {
-                            let frac =
-                                Scalar::from_ratio(k as i64, pieces as i64).with_context(&ctx)?;
-                            let (p, p_params) = on_branch(points[i], uvs[i], points[i + 1], frac)
-                                .with_context(&ctx)?;
-                            dense.push(p);
-                            dense_params.push(p_params);
-                        }
-                        dense.push(points[i + 1]);
-                        dense_params.push(uvs[i + 1]);
-                    }
-                    let (points, uvs) = (dense, dense_params);
-                    // Then the branch inside each of the new legs, which
-                    // `interpolate_enclosing` widens the curve to hold.
-                    let legs = points.len() - 1;
-                    let mut between = Vec::with_capacity(legs);
-                    for i in 0..legs {
-                        let fractions = true_point_fractions(i, legs);
-                        let mut inside = Vec::with_capacity(fractions.len());
-                        for (k, &(a, b)) in fractions.iter().enumerate() {
-                            let frac = Scalar::from_ratio(a, b).with_context(&ctx)?;
-                            let (p, _) = on_branch(points[i], uvs[i], points[i + 1], frac)
-                                .with_context(&ctx)?;
-                            let width = (0..3).map(|c| p[c].width().to_f64()).fold(0.0, f64::max);
-                            if widest_between.as_ref().is_none_or(|w| width > w.3) {
-                                widest_between = Some((i, k, p, width));
-                            }
-                            inside.push(p);
-                        }
-                        between.push(inside);
-                    }
-                    let curve = NurbCurve::<4>::interpolate_enclosing(&points, &between, 3)
-                        .with_context(&ctx)?;
-                    let width = curve
-                        .control_points
-                        .iter()
-                        .flat_map(|p| (0..3).map(move |k| p[k].width()))
-                        .fold(
-                            Scalar::ZERO,
-                            |a, w| if w.definitely_greater(a) { w } else { a },
-                        );
-                    // Finer legs only help while the drift is what makes the
-                    // curve wide: once halving them no longer halves the width,
-                    // the width is the points' own, and the coarser fit is kept.
-                    let halved = best.as_ref().is_none_or(|(_, before)| {
-                        before.definitely_greater(width.mul(Scalar::TWO))
-                    });
-                    if !halved {
-                        return Ok(Refine::Done(best.expect("a fit to compare with").0));
-                    }
-                    if 2 * legs > MAX_REFINED_LEGS
-                        || !width.definitely_greater(Scalar::from_f64(TRACE_DRIFT))
-                    {
-                        return Ok(Refine::Done(curve));
-                    }
-                    Ok(Refine::Finer((pieces * 2, Some((curve, width)))))
-                },
-            )?;
-            let Refined::Done(curve) = refined else {
-                return Err(ctx(GeopError::new(
-                    "the traced curve's legs were split past every cap",
-                )));
+            // Where the two surfaces' shapes say what their branch is — a
+            // plane across a cylinder, a cone, a sphere, a torus turning
+            // around its normal: a circle — the edge is that exact arc, the
+            // kernel's own rational quadratic, from the start vertex to the
+            // one reached, leaving the way the march left. The march found
+            // which vertex the branch ends at; the shapes say where it runs.
+            // An arc the shell, a lip or a reference axis can read as one,
+            // where a curve fitted through the marched points, however
+            // tightly it encloses the circle, is none.
+            let exact = circle_through(&surf_a, &surf_b, &point).with_context(&ctx)?;
+            let curve = match &exact {
+                Some(circle) => circle
+                    .arc_leaving(point, hit_point, &first_dir)
+                    .with_context(&ctx)?
+                    .to_curve()
+                    .with_context(&ctx)?,
+                None => {
+                    fit_traced_branch(&surf_a, &surf_b, &points, &uvs, &mut widest_between, &ctx)?
+                }
             };
             let widest = curve
                 .control_points
@@ -1753,7 +1648,12 @@ fn trace_one_side(
                 .max_by(|a, b| a.1.total_cmp(&b.1))
                 .expect("a curve has control points");
             fitted = format!(
-                "{} control points, the widest {} of them, {:e} wide",
+                "{}{} control points, the widest {} of them, {:e} wide",
+                if exact.is_some() {
+                    "an exact arc of "
+                } else {
+                    ""
+                },
                 curve.control_points.len(),
                 widest.0,
                 widest.1
@@ -1775,7 +1675,7 @@ fn trace_one_side(
 
     let ctx = |e: GeopError| {
         ctx(e).with_context(format!(
-            "the curve fitted through {} marched points is {fitted}; its widest true point between marched ones: {widest_between:?}",
+            "the curve through {} marched points is {fitted}; its widest true point between marched ones: {widest_between:?}",
             points.len()
         ))
     };
@@ -1803,6 +1703,155 @@ fn trace_one_side(
     }
 
     Ok(())
+}
+
+/// The curve of a traced branch whose shape nothing names: a cubic through
+/// the marched `points` (each on both surfaces at its `uvs`), widened to
+/// enclose the branch between them.
+///
+/// `widest_between` is told the widest point of the branch located between
+/// the marched ones — leg, fraction, point, width — of the last attempt to
+/// fit it: the curve is widened to hold it, so one that is wide makes the
+/// whole curve wide, and this says which.
+fn fit_traced_branch(
+    surf_a: &NurbSurface3D,
+    surf_b: &NurbSurface3D,
+    points: &[Vector3],
+    uvs: &[OnBoth],
+    widest_between: &mut Option<(usize, usize, Vector3, f64)>,
+    ctx: &dyn Fn(GeopError) -> GeopError,
+) -> GeopResult<NurbCurve<4>> {
+    // The edge's curve interpolates the marched points, and must
+    // enclose the intersection branch *between* them too — a later
+    // trace of the same branch from its other end tests its own
+    // points against this curve (the duplicate check in
+    // `trace_one_side`), and they lie on the branch, not on an
+    // interpolant.
+    //
+    // Located with the same corrector the march uses, at a fraction
+    // `frac` of the way along the leg from `from` (whose surface
+    // parameters are `(u_a, v_a, u_b, v_b)`) to `to`.
+    let on_branch = |from: Vector3,
+                     (u_a, v_a, u_b, v_b): OnBoth,
+                     to: Vector3,
+                     frac: Scalar|
+     -> GeopResult<(Vector3, OnBoth)> {
+        let leg_ctx = with_context!("on_branch(from={from:?}, to={to:?}, frac={frac:?})");
+        let chord = to.sub(&from);
+        let step = chord.norm().mul(frac);
+        let (p, na, va, nb, vb) = predictor_corrector_step(
+            surf_a,
+            surf_b,
+            from,
+            chord.normalize().with_context(&leg_ctx)?,
+            u_a,
+            v_a,
+            u_b,
+            v_b,
+            step,
+        )
+        .with_context(&leg_ctx)?;
+        Ok((p, (na, va, nb, vb)))
+    };
+    // First every leg is split, on the branch, into `pieces`: the
+    // march's stride leaves a cubic through its points drifting ~1e-5
+    // from the branch, and halving every leg cuts that ~16x for one
+    // corrector per leg. A branch crossed in only a stride or two
+    // needs more than halving, though: it would be left with too few
+    // points for a cubic at all — a single stride, halved, is three,
+    // and a quadratic through three points of an ellipse drifts ~4e-6
+    // from it. That drift is enclosed as width, honestly, but only in
+    // the directions it points in, and a pcurve fitted by projecting
+    // the curve onto a surface tilted against them inherits it as an
+    // offset its own width does not cover. So every branch gets at
+    // least `MIN_TRACED_LEGS` legs.
+    //
+    // The stride follows how sharply the surfaces curve, not how fast
+    // that curvature changes, and a branch whose curvature runs from
+    // gentle to tight along it — the involute flank of a gear tooth
+    // crossing a plane, its curvature radius growing tenfold from
+    // root to tip — leaves the cubic drifting a hundred times the
+    // usual. So the legs are split finer, each time in two, while the
+    // drift enclosed is more than `TRACE_DRIFT`.
+    let strides = points.len() - 1;
+    let first = MIN_TRACED_LEGS.div_ceil(strides).max(2);
+    let marched = (points, uvs);
+    // With each step the legs it was split into and the fit before,
+    // to tell whether halving them still halved its width. The cap
+    // ends it: `pieces` doubles each step, so it passes any cap
+    // within as many steps as it has bits.
+    let first: (usize, Option<(NurbCurve<4>, Scalar)>) = (first, None);
+    let refined = refine(
+        first,
+        usize::BITS as usize,
+        |(pieces, best)| -> GeopResult<_> {
+            let (points, uvs) = marched;
+            let mut dense = vec![points[0]];
+            let mut dense_params = vec![uvs[0]];
+            for i in 0..strides {
+                for k in 1..pieces {
+                    let frac = Scalar::from_ratio(k as i64, pieces as i64).with_context(&ctx)?;
+                    let (p, p_params) =
+                        on_branch(points[i], uvs[i], points[i + 1], frac).with_context(&ctx)?;
+                    dense.push(p);
+                    dense_params.push(p_params);
+                }
+                dense.push(points[i + 1]);
+                dense_params.push(uvs[i + 1]);
+            }
+            let (points, uvs) = (dense, dense_params);
+            // Then the branch inside each of the new legs, which
+            // `interpolate_enclosing` widens the curve to hold.
+            let legs = points.len() - 1;
+            let mut between = Vec::with_capacity(legs);
+            for i in 0..legs {
+                let fractions = true_point_fractions(i, legs);
+                let mut inside = Vec::with_capacity(fractions.len());
+                for (k, &(a, b)) in fractions.iter().enumerate() {
+                    let frac = Scalar::from_ratio(a, b).with_context(&ctx)?;
+                    let (p, _) =
+                        on_branch(points[i], uvs[i], points[i + 1], frac).with_context(&ctx)?;
+                    let width = (0..3).map(|c| p[c].width().to_f64()).fold(0.0, f64::max);
+                    if widest_between.as_ref().is_none_or(|w| width > w.3) {
+                        *widest_between = Some((i, k, p, width));
+                    }
+                    inside.push(p);
+                }
+                between.push(inside);
+            }
+            let curve =
+                NurbCurve::<4>::interpolate_enclosing(&points, &between, 3).with_context(&ctx)?;
+            let width = curve
+                .control_points
+                .iter()
+                .flat_map(|p| (0..3).map(move |k| p[k].width()))
+                .fold(
+                    Scalar::ZERO,
+                    |a, w| if w.definitely_greater(a) { w } else { a },
+                );
+            // Finer legs only help while the drift is what makes the
+            // curve wide: once halving them no longer halves the width,
+            // the width is the points' own, and the coarser fit is kept.
+            let halved = best
+                .as_ref()
+                .is_none_or(|(_, before)| before.definitely_greater(width.mul(Scalar::TWO)));
+            if !halved {
+                return Ok(Refine::Done(best.expect("a fit to compare with").0));
+            }
+            if 2 * legs > MAX_REFINED_LEGS
+                || !width.definitely_greater(Scalar::from_f64(TRACE_DRIFT))
+            {
+                return Ok(Refine::Done(curve));
+            }
+            Ok(Refine::Finer((pieces * 2, Some((curve, width)))))
+        },
+    )?;
+    let Refined::Done(curve) = refined else {
+        return Err(ctx(GeopError::new(
+            "the traced curve's legs were split past every cap",
+        )));
+    };
+    Ok(curve)
 }
 
 #[cfg(test)]

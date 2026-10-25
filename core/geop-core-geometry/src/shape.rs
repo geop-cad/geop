@@ -120,6 +120,55 @@ impl Circle {
         }
     }
 
+    /// Whether `p` could lie on the circle: in its plane, `radius` from
+    /// its center.
+    pub fn could_contain(&self, p: &Vector3) -> bool {
+        let radial = p.sub(&self.center);
+        radial.prod_dot(&self.normal).could_be_equal(Scalar::ZERO)
+            && radial.norm().could_be_equal(self.radius)
+    }
+
+    /// The arc of the circle from `start` to `end`, two of its points,
+    /// that leaves `start` along `direction`: around the circle either way,
+    /// so the arc's normal is this circle's or its opposite. Fails for an
+    /// `end` off the circle, and for a `direction` that does not definitely
+    /// lean one way along the circle at `start`.
+    pub fn arc_leaving(
+        &self,
+        start: Vector3,
+        end: Vector3,
+        direction: &Vector3,
+    ) -> GeopResult<Arc> {
+        if !self.could_contain(&end) {
+            return Err(GeopError::new(format!(
+                "Circle::arc_leaving: {end:?} is not on the circle {self:?}"
+            )));
+        }
+        // Counter-clockwise about `normal`, the arc leaves `start` along
+        // `normal x (start - center)`.
+        let along = self
+            .normal
+            .prod_cross(&start.sub(&self.center))
+            .prod_dot(direction);
+        let normal = if along.definitely_greater(Scalar::ZERO) {
+            self.normal
+        } else if along.definitely_less(Scalar::ZERO) {
+            self.normal.neg()
+        } else {
+            return Err(GeopError::new(format!(
+                "Circle::arc_leaving: {direction:?} leans neither way along the circle {self:?} at {start:?}: {along:?} along it"
+            )));
+        };
+        Ok(Arc {
+            circle: Circle {
+                normal,
+                ..self.clone()
+            },
+            start,
+            end,
+        })
+    }
+
     fn could_be_equal(&self, other: &Circle) -> bool {
         self.center.could_be_equal(&other.center)
             && self.normal.could_be_equal(&other.normal)
@@ -611,6 +660,48 @@ pub struct Cylinder {
     pub radius: Scalar,
 }
 
+/// The circle two surfaces meet in through `point`, a point of both, if
+/// their shapes say they meet in circles: a plane and a surface of
+/// revolution (see [`NurbSurface3D::axis_of_revolution`]) turning around
+/// the plane's normal meet in circles around that axis, in the plane — one
+/// of them through `point`, of the radius `point` is from the axis. Either
+/// may be `a`. `None` for any other pair, and where `point` is on the axis:
+/// the plane then touches the surface at a pole, or passes a cone's apex,
+/// and no circle runs through it.
+///
+/// What the shapes say is read off the control nets, so a circle is found
+/// where rounding cannot rule one out, and never because a branch is
+/// merely close to one. The circle's `normal` is the axis's direction,
+/// either way round: which way a branch runs is for the caller to say.
+pub fn circle_through(
+    a: &NurbSurface3D,
+    b: &NurbSurface3D,
+    point: &Vector3,
+) -> GeopResult<Option<Circle>> {
+    for (flat, turned) in [(a, b), (b, a)] {
+        let Some(plane) = flat.as_plane()? else {
+            continue;
+        };
+        let Some(axis) = turned.axis_of_revolution()? else {
+            continue;
+        };
+        if !axis.direction.could_be_parallel(&plane.normal) {
+            continue;
+        }
+        let center = plane.intersect_axis(&axis)?;
+        let radial = point.sub(&center);
+        if could_be_zero(&radial) {
+            return Ok(None);
+        }
+        return Ok(Some(Circle {
+            center,
+            normal: axis.direction,
+            radius: radial.norm(),
+        }));
+    }
+    Ok(None)
+}
+
 #[cfg(test)]
 mod tests {
     use crate::test_fixtures::knots;
@@ -814,6 +905,85 @@ mod tests {
         }
         assert!(cone.axis_of_revolution().unwrap().is_some());
         assert!(cone.as_cylinder().unwrap().is_none());
+    }
+
+    /// A cylinder across a plane normal to its axis meets it in a circle
+    /// around the axis; across a plane along its axis, or another
+    /// cylinder, in no circle the shapes name.
+    #[test]
+    fn a_plane_and_a_cylinder_meet_in_a_circle() {
+        let cylinder = quarter_cylinder();
+        let flat = |z: f64, tilt: f64| {
+            NurbSurface::<4>::try_new(
+                1,
+                1,
+                vec![
+                    h(-5., -5., z, 1.),
+                    h(-5., 5., z, 1.),
+                    h(5., -5., z + tilt, 1.),
+                    h(5., 5., z + tilt, 1.),
+                ],
+                knots(&[0., 0., 1., 1.]),
+                knots(&[0., 0., 1., 1.]),
+            )
+            .unwrap()
+        };
+        let level = flat(1., 0.);
+        let on_both = v(2. * R2, 2. * R2, 1.);
+        for (a, b) in [(&level, &cylinder), (&cylinder, &level)] {
+            let circle = circle_through(a, b, &on_both).unwrap().expect("a circle");
+            assert!(circle.center.could_be_equal(&v(0., 0., 1.)), "{circle:?}");
+            assert!(
+                circle.normal.could_be_parallel(&v(0., 0., 1.)),
+                "{circle:?}"
+            );
+            assert!(circle.radius.could_be_equal(Scalar::TWO), "{circle:?}");
+        }
+        // The arc from (2, 0, 1) to (0, 2, 1) leaving along +y is the
+        // quarter turn about +z; leaving along -y, three quarters about -z.
+        let circle = circle_through(&level, &cylinder, &v(2., 0., 1.))
+            .unwrap()
+            .expect("a circle");
+        let (start, end) = (v(2., 0., 1.), v(0., 2., 1.));
+        let quarter = circle.arc_leaving(start, end, &v(0., 1., 0.)).unwrap();
+        assert!(quarter.circle.normal.could_be_equal(&v(0., 0., 1.)));
+        assert!((quarter.sweep() - std::f64::consts::FRAC_PI_2).abs() < 1e-12);
+        let rest = circle.arc_leaving(start, end, &v(0., -1., 0.)).unwrap();
+        assert!(rest.circle.normal.could_be_equal(&v(0., 0., -1.)));
+        assert!((rest.sweep() - 1.5 * std::f64::consts::PI).abs() < 1e-12);
+        let curve = rest.to_curve().unwrap();
+        let read = curve.as_arc().unwrap().expect("an arc");
+        assert!(read.circle.could_be_equal(&rest.circle), "{read:?}");
+        assert!(read.start.could_be_equal(&start) && read.end.could_be_equal(&end));
+        // Off the circle, or leaving straight out of it: refused.
+        assert!(
+            circle
+                .arc_leaving(start, v(0., 3., 1.), &v(0., 1., 0.))
+                .is_err()
+        );
+        assert!(circle.arc_leaving(start, end, &v(1., 0., 0.)).is_err());
+        // On the axis: no circle, a point.
+        assert!(
+            circle_through(&level, &cylinder, &v(0., 0., 1.))
+                .unwrap()
+                .is_none()
+        );
+        // Tilted: an ellipse, which is no shape the kernel names.
+        assert!(
+            circle_through(&flat(1., 0.5), &cylinder, &on_both)
+                .unwrap()
+                .is_none()
+        );
+        assert!(
+            circle_through(&cylinder, &cylinder, &on_both)
+                .unwrap()
+                .is_none()
+        );
+        assert!(
+            circle_through(&level, &flat(2., 0.5), &on_both)
+                .unwrap()
+                .is_none()
+        );
     }
 
     #[test]

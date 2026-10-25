@@ -184,21 +184,23 @@ fn hole_wall_moved_onto_the_axis_of_a_revolved_cap_is_refused() {
     }
 }
 
-/// A drill standing out of the caps leaves a traced rim, which is
-/// neither straight nor circular to the shell: refused, naming the edge.
+/// A drill standing out of the caps leaves rims the boolean traced, where
+/// the drill's side crosses the caps. The boolean once fitted a curve
+/// through its march there, which was neither straight nor circular to the
+/// shell; the rim is a circle, a plane across a cylinder around its
+/// normal, and the boolean now splices that arc. Shelled like the flush
+/// drill.
 #[test]
-fn drill_standing_out_leaves_a_traced_rim_the_shell_refuses() {
-    let (mut part, solid) = drilled_revolved_cylinder(0.4, 0.25, true);
-    let namer = Namer::new("shell", "s").unwrap();
-    let error = shell(&mut part, &namer, solid, &[], Scalar::from_f64(0.1)).unwrap_err();
-    assert!(
-        error
-            .root_message()
-            .contains("neither straight nor circular"),
-        "{error:?}"
-    );
-    assert!(
-        format!("{error:?}").contains("the inner copy of edge drilled(d,"),
-        "{error:?}"
-    );
+fn drill_standing_out_leaves_a_traced_rim_the_shell_offsets() {
+    let (part, solid) = drilled_revolved_cylinder(0.4, 0.25, true);
+    let faces = |part: &NamedModel, solid| {
+        part.topology()
+            .body_faces(Body::Solid(solid))
+            .unwrap()
+            .len()
+    };
+    let before = faces(&part, solid);
+    let (part, shelled) = shelled_valid(part, solid, &[]);
+    // Every face and its inner copy.
+    assert_eq!(faces(&part, shelled), 2 * before);
 }
