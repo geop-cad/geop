@@ -58,6 +58,51 @@ fn chord_frame(p: &Vector3, q: &Vector3, normal: &Vector3) -> GeopResult<(Vector
     Ok((p.add(q).prod_scalar(half), out))
 }
 
+/// How often an arc whose half sweep has the cosine `cos` is halved so that
+/// each piece's middle weight stays positive: not at all up to a quarter
+/// turn, once up to a half turn, twice beyond — one, two or four pieces.
+pub(super) fn halvings(cos: Scalar) -> GeopResult<u32> {
+    Ok(
+        if !cos.definitely_less(Scalar::ONE.div(Scalar::TWO)?.sqrt()?) {
+            0
+        } else if !cos.definitely_less(Scalar::ZERO) {
+            1
+        } else {
+            2
+        },
+    )
+}
+
+/// The arc from `from` to `to` about `normal`, `cos` and `sin` of half its
+/// sweep, as rational quadratics: halved `halvings` times, each piece
+/// bisected at its middle, `(L/2) tan(quarter)` out from its chord.
+pub(super) fn arc_pieces(
+    from: &Vector3,
+    to: &Vector3,
+    normal: &Vector3,
+    (cos, sin): (Scalar, Scalar),
+    halvings: u32,
+) -> GeopResult<Vec<NurbCurve3D>> {
+    let mut ends = vec![*from, *to];
+    let (mut cos, mut sin) = (cos, sin);
+    for _ in 0..halvings {
+        let tan_quarter = sin.div(Scalar::ONE.add(cos))?;
+        let mut halved = vec![ends[0]];
+        for w in ends.windows(2) {
+            let (mid, out) = chord_frame(&w[0], &w[1], normal)?;
+            halved.push(mid.add(&out.prod_scalar(tan_quarter)));
+            halved.push(w[1]);
+        }
+        ends = halved;
+        let half_cos = Scalar::ONE.add(cos).div(Scalar::TWO)?.sqrt()?;
+        sin = sin.div(Scalar::TWO.mul(half_cos))?;
+        cos = half_cos;
+    }
+    ends.windows(2)
+        .map(|w| conic(&w[0], &w[1], normal, cos, sin))
+        .collect()
+}
+
 impl Sketch3d {
     /// The curve `curve` as NURBS pieces from its start to its end, each on
     /// `[0, 1]`, built from `geometry`. How many pieces — an arc has one per
@@ -86,43 +131,19 @@ impl Sketch3d {
                     m: self.points[through].at,
                     e: self.points[end].at,
                 };
-                let (cos, _) = drawn.half_sweep().with_context(ctx)?;
-                // Into one, two or four pieces: halved none, once or twice.
-                let halvings = if !cos.definitely_less(Scalar::ONE.div(Scalar::TWO)?.sqrt()?) {
-                    0
-                } else if !cos.definitely_less(Scalar::ZERO) {
-                    1
-                } else {
-                    2
-                };
                 let arc = Arc3 {
                     s: at(start),
                     m: at(through),
                     e: at(end),
                 };
-                let normal = arc.normal().with_context(ctx)?;
-                let (cos, sin) = arc.half_sweep().with_context(ctx)?;
-                // Halve the arc as often: each piece bisected at its
-                // middle, `(L/2) tan(quarter)` out from its chord.
-                let mut ends = vec![arc.s, arc.e];
-                let (mut cos, mut sin) = (cos, sin);
-                for _ in 0..halvings {
-                    let tan_quarter = sin.div(Scalar::ONE.add(cos))?;
-                    let mut halved = vec![ends[0]];
-                    for w in ends.windows(2) {
-                        let (mid, out) = chord_frame(&w[0], &w[1], &normal)?;
-                        halved.push(mid.add(&out.prod_scalar(tan_quarter)));
-                        halved.push(w[1]);
-                    }
-                    ends = halved;
-                    let half_cos = Scalar::ONE.add(cos).div(Scalar::TWO)?.sqrt()?;
-                    sin = sin.div(Scalar::TWO.mul(half_cos))?;
-                    cos = half_cos;
-                }
-                ends.windows(2)
-                    .map(|w| conic(&w[0], &w[1], &normal, cos, sin))
-                    .collect::<GeopResult<_>>()
-                    .with_context(ctx)
+                arc_pieces(
+                    &arc.s,
+                    &arc.e,
+                    &arc.normal().with_context(ctx)?,
+                    arc.half_sweep().with_context(ctx)?,
+                    halvings(drawn.half_sweep().with_context(ctx)?.0)?,
+                )
+                .with_context(ctx)
             }
             CurveKind3d::Spline { points } => {
                 let through: Vec<Vector3> = points.iter().map(at).collect();

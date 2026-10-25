@@ -14,7 +14,6 @@ use geop_core_program::{
 };
 use std::collections::{BTreeMap, BTreeSet};
 
-use geop_core_geometry::nurb_curve::NurbCurve;
 use geop_core_math::{
     geop_error::{GeopError, GeopResult, WithContext},
     vector::Vector3,
@@ -22,7 +21,7 @@ use geop_core_math::{
 };
 use geop_core_sketch::{
     ConstraintId, CurveId, PointId,
-    space::{Constraint3d, CurveKind3d},
+    space::{Constraint3d, CurveKind3d, WireEdge},
 };
 use geop_core_topology::build::{BodySpec, EdgeSpec};
 use geop_ops_model::{
@@ -39,10 +38,16 @@ use crate::editor::{self, Sketch3dSession};
 /// `K` defines the part's 3-D sketch `K` (see [`sketch3d`]),
 /// a path as a whole, and builds it as a wire: an edge for every curve
 /// drawn, construction curves aside, and a vertex for every point a curve
-/// of it ends at or that stands on its own. Points made one by a
-/// coincidence are one vertex, named after the lowest of their ids: the
-/// edge of curve `c3` is named `sketch3d(K,c3)`, the vertex of point `p1`
-/// `sketch3d(K,p1)`.
+/// of it ends at, every point two curves pass through, and every point that
+/// stands on its own. Points made one by a coincidence are one vertex,
+/// named after the lowest of their ids: the edge of curve `c3` is named
+/// `sketch3d(K,c3)`, the vertex of point `p1` `sketch3d(K,p1)`. A curve
+/// passing through a point another curve passes through too — a spline
+/// drawn through it, an arc's middle point — is cut there, into edges named
+/// after the curve and the point each starts at: `sketch3d(K,c3,p0)`,
+/// `sketch3d(K,c3,p1)`. Curves that meet anywhere else, or two points at
+/// one place that are not one, are refused by name (see
+/// [`geop_core_sketch::space::Sketch3d::check_wire`]).
 ///
 /// What it is given from the part — a point at a vertex or a datum point, a
 /// point on an edge, a line parallel to an axis or a straight edge — is
@@ -226,8 +231,8 @@ fn draw(reader: &Reader, (step, args): &(String, AddSketch3dArgs)) -> GeopResult
     let ctx = with_context!("add_sketch3d({step})");
     let sketch = args.build(reader).with_context(ctx)?;
     let namer = Namer::new("sketch3d", step).with_context(ctx)?;
-    let edges = (drawn(&sketch).with_context(ctx)?.iter())
-        .map(|(id, _)| namer.name(&[&id.to_string()]))
+    let edges = (sketch.wire_edges().with_context(ctx)?.iter())
+        .map(|edge| edge_name(&namer, edge))
         .collect();
     Ok(PlacedSketch3d {
         name: step.clone(),
@@ -236,16 +241,16 @@ fn draw(reader: &Reader, (step, args): &(String, AddSketch3dArgs)) -> GeopResult
     })
 }
 
-/// The curves of `sketch` its wire has an edge for — those drawn, but for
-/// construction curves — and their ends.
-fn drawn(sketch: &Sketch3d) -> GeopResult<Vec<(CurveId, (PointId, PointId))>> {
-    (sketch.drawn_curves())
-        .map(|(&id, c)| {
-            let ends = (c.endpoints())
-                .ok_or_else(|| GeopError::new(format!("the drawn curve {id} has no ends")))?;
-            Ok((id, ends))
-        })
-        .collect()
+/// What the wire's edge `edge` is named (see [`AddSketch3d`]): after its
+/// curve, and, for a piece of a curve cut at the points it shares, after
+/// the point it starts at too.
+fn edge_name(namer: &Namer, edge: &WireEdge) -> String {
+    let curve = edge.curve.to_string();
+    if edge.cut {
+        namer.piece(&curve, &edge.start.to_string())
+    } else {
+        namer.name(&[&curve])
+    }
 }
 
 /// The wire `sketch` is built as, and the names of its vertices and edges
@@ -253,51 +258,52 @@ fn drawn(sketch: &Sketch3d) -> GeopResult<Vec<(CurveId, (PointId, PointId))>> {
 fn wire_of(sketch: &Sketch3d, namer: &Namer) -> GeopResult<Option<(BodySpec, BodyNames)>> {
     let class = sketch.point_classes();
     let geometry = sketch.enclose()?;
-    let drawn = drawn(sketch)?;
+    sketch.check_wire(&geometry)?;
+    let edges = sketch.wire_edges()?;
     let used = |p: &PointId| {
         (sketch.curves.values()).any(|c| c.points().iter().any(|q| class[q] == class[p]))
     };
-    let ends = drawn.iter().flat_map(|&(_, (start, end))| [start, end]);
+    let ends = edges.iter().flat_map(|edge| [edge.start, edge.end]);
     let alone = sketch.points.keys().copied().filter(|p| !used(p));
     let points: BTreeSet<PointId> = ends.chain(alone).map(|p| class[&p]).collect();
     if points.is_empty() {
         return Ok(None);
     }
     // A vertex encloses every point of its class.
-    let vertices: BTreeMap<PointId, Vector3> = (points.into_iter())
-        .map(|rep| {
-            let at = (sketch.points.keys())
-                .filter(|p| class[*p] == rep)
-                .map(|p| geometry.points[p])
-                .reduce(|a, b| a.union(&b))
-                .ok_or_else(|| GeopError::new(format!("the point class of {rep} is empty")))?;
-            Ok((rep, at))
-        })
-        .collect::<GeopResult<_>>()?;
+    let enclosures = sketch.point_enclosures(&geometry);
+    let vertices: BTreeMap<PointId, Vector3> =
+        points.into_iter().map(|p| (p, enclosures[&p])).collect();
     let index: BTreeMap<PointId, usize> =
         vertices.keys().enumerate().map(|(i, &p)| (p, i)).collect();
-    let edges = (drawn.iter())
-        .map(|&(id, (start, end))| {
-            Ok(EdgeSpec {
-                curve: NurbCurve::join(&sketch.curve_nurbs(id, &geometry)?)?,
-                start: index[&class[&start]],
-                end: index[&class[&end]],
-            })
+    let mut curves = Vec::new();
+    for (&id, _) in sketch.drawn_curves() {
+        curves.extend(sketch.wire_edge_nurbs(id, &geometry)?);
+    }
+    if curves.len() != edges.len() {
+        return Err(GeopError::new(format!(
+            "the wire has {} edges but {} curves",
+            edges.len(),
+            curves.len()
+        )));
+    }
+    let specs = (edges.iter().zip(curves))
+        .map(|(edge, curve)| EdgeSpec {
+            curve,
+            start: index[&edge.start],
+            end: index[&edge.end],
         })
-        .collect::<GeopResult<_>>()?;
+        .collect();
     let names = BodyNames {
         vertices: (vertices.keys())
             .map(|p| namer.name(&[&p.to_string()]))
             .collect(),
-        edges: (drawn.iter())
-            .map(|(id, _)| namer.name(&[&id.to_string()]))
-            .collect(),
+        edges: edges.iter().map(|edge| edge_name(namer, edge)).collect(),
         faces: Vec::new(),
         solid: None,
     };
     let spec = BodySpec {
         vertices: vertices.into_values().collect(),
-        edges,
+        edges: specs,
         faces: Vec::new(),
         shells: Vec::new(),
         solid: false,

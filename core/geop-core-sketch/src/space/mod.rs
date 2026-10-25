@@ -33,16 +33,22 @@
 //! [`enclose`](Sketch3d::enclose) encloses the exact solution, and
 //! [`chains`](Sketch3d::chains) / [`Chain3d::to_nurbs`] turn the curves into
 //! NURBS in space, chain by chain.
+//! [`wire_edges`](Sketch3d::wire_edges) / [`wire_edge_nurbs`](Sketch3d::wire_edge_nurbs)
+//! turn them into the edges of a wire, cut where curves share a point, and
+//! [`check_wire`](Sketch3d::check_wire) refuses curves meeting anywhere
+//! else.
 
 mod curves;
 mod geometry;
 mod solve;
 #[cfg(test)]
 mod tests;
+mod wire;
 
 pub use curves::{Chain3d, Piece3d};
 pub use geometry::Arc3;
 pub use solve::Solve3dReport;
+pub use wire::WireEdge;
 
 use std::collections::BTreeMap;
 

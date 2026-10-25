@@ -62,6 +62,22 @@ impl<T: Number> Arc3<T> {
         Ok(self.m.add(&v.prod_cross(&n).prod_scalar(k)))
     }
 
+    /// `cos` and `sin` of half the sweep from `p` to `q` along its circle,
+    /// the way it turns — two points of the arc, `q` after `p`: the part of
+    /// the arc between two of its points. The sine is the chord over the
+    /// diameter, `|q - p| / (2 r)`; the cosine is the sine of the whole
+    /// sweep over twice the sine of half of it,
+    /// `n . ((p - c) x (q - c)) / (r |q - p|)`, which carries the sign of a
+    /// sweep past a half turn without a case.
+    pub fn half_sweep_between(&self, p: &Vector3<T>, q: &Vector3<T>) -> GeopResult<(T, T)> {
+        let (c, r, n) = (self.center()?, self.radius()?, self.normal()?);
+        let chord = q.sub(p).try_norm()?;
+        let sin = chord.div(T::TWO.mul(r))?;
+        let turned = p.sub(&c).prod_cross(&q.sub(&c));
+        let cos = n.prod_dot(&turned).div(r.mul(chord))?;
+        Ok((cos, sin))
+    }
+
     /// Its unit tangent at `end`, in its own direction — from `s` to `e`:
     /// the chord's direction turned back (at the start) or on (at the end)
     /// by half the sweep, in the arc's plane.
