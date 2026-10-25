@@ -8,9 +8,13 @@
 
 use std::cmp::Ordering;
 
-use geop_core_math::{scalars::Scalar, vector::Vector3};
+use geop_core_math::{
+    plain::{add, cross, dot, normalize, scale, sub},
+    scalars::Scalar,
+    vector::Vector3,
+};
 
-use super::{Pointer, Shape, Style, Visual};
+use super::{Pointer, Reach, Shape, Style, Visual};
 use geop_core_program::element::PickedElement;
 
 /// A handle's radius, in reaches; its arrows reach three times as far along
@@ -149,6 +153,102 @@ pub fn no_instances(_: &str, _: &Pointer) -> Option<Scalar> {
     None
 }
 
+/// The window a drag from one pointer to another sweeps over the view: the
+/// rectangle between the two on the plane facing the eye, for selecting
+/// everything within it. Its sides run along the world's axes as the view
+/// shows them — the two least along the line of sight — which are the
+/// screen's own in a view along an axis. Seen in perspective it is the
+/// frustum through that rectangle.
+#[derive(Clone, Debug)]
+pub struct Window {
+    /// The eye, or where the first pointer's ray starts.
+    origin: [f64; 3],
+    /// The line of sight, unit.
+    sight: [f64; 3],
+    /// The window's two sides, unit and square to the line of sight.
+    sides: [[f64; 3]; 2],
+    /// Whether the view is in perspective: rays from one eye.
+    perspective: bool,
+    /// The window's corners in its sides' coordinates, low and high.
+    low: [f64; 2],
+    high: [f64; 2],
+}
+
+impl Window {
+    /// The window swept from `from` to `to`.
+    pub fn new(from: &Pointer, to: &Pointer) -> Option<Self> {
+        let sight = normalize(from.ray.dir().to_f64_array())?;
+        // The axis least along the line of sight, made square to it.
+        let axis = [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]]
+            .into_iter()
+            .min_by(|a, b| dot(*a, sight).abs().total_cmp(&dot(*b, sight).abs()))?;
+        let v = normalize(sub(axis, scale(sight, dot(axis, sight))))?;
+        let u = cross(v, sight);
+        let perspective = matches!(from.reach, Reach::Cone { .. });
+        let mut window = Self {
+            origin: from.ray.origin().to_f64_array(),
+            sight,
+            sides: [u, v],
+            perspective,
+            low: [0.0; 2],
+            high: [0.0; 2],
+        };
+        let [x, y] = match perspective {
+            true => window.screen(&to.ray.at(Scalar::ONE).to_f64_array())?,
+            false => window.screen(&to.ray.origin().to_f64_array())?,
+        };
+        window.low = [x.min(0.0), y.min(0.0)];
+        window.high = [x.max(0.0), y.max(0.0)];
+        Some(window)
+    }
+
+    /// Where `p` is on the screen, in the window's sides: `None` behind the
+    /// eye.
+    fn screen(&self, p: &[f64; 3]) -> Option<[f64; 2]> {
+        let r = sub(*p, self.origin);
+        let [u, v] = self.sides;
+        let (x, y) = (dot(r, u), dot(r, v));
+        if !self.perspective {
+            return Some([x, y]);
+        }
+        let depth = dot(r, self.sight);
+        (depth > 0.0).then(|| [x / depth, y / depth])
+    }
+
+    /// Whether `p` is seen within the window.
+    pub fn contains(&self, p: &Vector3) -> bool {
+        let [low_x, low_y] = self.low;
+        let [high_x, high_y] = self.high;
+        self.screen(&p.to_f64_array())
+            .is_some_and(|[x, y]| low_x <= x && x <= high_x && low_y <= y && y <= high_y)
+    }
+
+    /// How far `p` is along the line of sight.
+    pub fn depth(&self, p: &Vector3) -> f64 {
+        dot(sub(p.to_f64_array(), self.origin), self.sight)
+    }
+
+    /// The window's corners, around, `depth` along the line of sight: to
+    /// draw it there.
+    pub fn corners(&self, depth: f64) -> [Vector3; 4] {
+        let [u, v] = self.sides;
+        let size = if self.perspective { depth } else { 1.0 };
+        let centre = add(self.origin, scale(self.sight, depth));
+        let at = |x: f64, y: f64| {
+            let across = add(scale(u, x), scale(v, y));
+            Vector3::from_array(add(centre, scale(across, size)).map(Scalar::from_f64))
+        };
+        let [low_x, low_y] = self.low;
+        let [high_x, high_y] = self.high;
+        [
+            at(low_x, low_y),
+            at(high_x, low_y),
+            at(high_x, high_y),
+            at(low_x, high_y),
+        ]
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use geop_core_math::{primitives::Ray, scalars::Scalar, vector::Vector3};
@@ -233,6 +333,32 @@ mod tests {
         )];
         assert!(hit_visuals(&visuals, &down(0.2, 0.1), no_instances, |_| true).is_some());
         assert!(hit_visuals(&visuals, &down(0.0, 0.0), no_instances, |_| true).is_none());
+    }
+
+    /// A window dragged looking down from `(0, 0)` to `(2, 1)` takes a
+    /// point at `(1, 0.5)` at any depth and not one at `(3, 0.5)`; seen in
+    /// perspective from `z = 10` towards `(1, 1, 0)`, the window widens
+    /// with depth: a point at `(0.5, 0.5, 0)` is within it, one at
+    /// `(0.5, 0.5, 8)`, nearer the eye, is not.
+    #[test]
+    fn windows_take_what_is_seen_within_them() {
+        let window = Window::new(&down(0.0, 0.0), &down(2.0, 1.0)).unwrap();
+        assert!(window.contains(&v(1.0, 0.5, -3.0)));
+        assert!(window.contains(&v(1.0, 0.5, 7.0)));
+        assert!(!window.contains(&v(3.0, 0.5, 0.0)));
+        assert!(!window.contains(&v(1.0, -0.5, 0.0)));
+        let corners = window.corners(10.0);
+        assert!(corners[2].could_be_equal(&v(2.0, 1.0, 0.0)), "{corners:?}");
+
+        let eye = |x: f64, y: f64| Pointer {
+            ray: Ray::try_new(v(0.0, 0.0, 10.0), v(x, y, -10.0)).unwrap(),
+            reach: Reach::Cone {
+                slope: Scalar::from_f64(0.01),
+            },
+        };
+        let window = Window::new(&eye(0.0, 0.0), &eye(1.0, 1.0)).unwrap();
+        assert!(window.contains(&v(0.5, 0.5, 0.0)));
+        assert!(!window.contains(&v(0.5, 0.5, 8.0)));
     }
 
     /// In perspective, what is further away is hit from further off.

@@ -199,4 +199,7 @@ pub struct Presentation {
     pub prompt: Option<Prompt>,
     /// The gizmo to move, turn or scale by, as drawn.
     pub gizmo: Option<GizmoView>,
+    /// Solids and faces of the part, by name, the step asks not to draw
+    /// while it is edited (see [`super::Form::hidden`]).
+    pub hidden: Vec<String>,
 }

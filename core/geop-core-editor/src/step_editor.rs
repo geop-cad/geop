@@ -790,6 +790,7 @@ impl StepEditor {
                 || (tool == InHand::Strokes && !waiting),
             prompt: form.prompt,
             gizmo,
+            hidden: form.hidden,
         })
     }
 }

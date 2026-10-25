@@ -18,6 +18,14 @@
 //!   `(A + 6 V + B) / 8` with `A`, `B` the creased edges' far ends; three or
 //!   more, or a boundary vertex of one face — a *corner* — stays where it
 //!   is.
+//!
+//! A *soft* crease, of sharpness `s` below one (see [`crate::cage::Crease`]),
+//! is semi-sharp: its edge point is `(1 - s)` of the smooth rule's and `s`
+//! of the creased one's, and a vertex with soft creases is moved
+//! `(1 - s̄)` of the way by the rule counting its sharp creases alone and `s̄`
+//! by the rule counting the soft ones too, `s̄` the mean sharpness of its
+//! creases. Its halves are smooth after that: the limit surface rounds
+//! off tighter there, without a corner.
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -77,6 +85,12 @@ pub fn divide(sum: Vector3, count: i64) -> GeopResult<Vector3> {
     ]))
 }
 
+/// `(1 - s) a + s b`: `a` pulled the fraction `s` of the way to `b`.
+fn blend(a: Vector3, b: Vector3, s: f64) -> Vector3 {
+    let s = Scalar::from_f64(s);
+    a.add(&b.sub(&a).prod_scalar(s))
+}
+
 /// `Σ wᵢ pᵢ` for integer weights.
 pub fn weighted(terms: &[(i64, Vector3)]) -> Vector3 {
     terms.iter().fold(Vector3::zero(), |sum, (w, p)| {
@@ -125,9 +139,9 @@ pub fn subdivide(mesh: &Mesh, topology: &Topology) -> GeopResult<Subdivided> {
             )
         })
         .collect::<GeopResult<Vec<_>>>()?;
-    let mut positions = Vec::with_capacity(p.len() + 2 * faces.len());
-    for v in 0..p.len() {
-        let point = match vertex_kind(faces, &mesh.sharp, topology, v) {
+    // The vertex point of `v` with the edges `sharp` counted as creased.
+    let vertex_point = |v: usize, sharp: &BTreeSet<[usize; 2]>| -> GeopResult<Vector3> {
+        Ok(match vertex_kind(faces, sharp, topology, v) {
             VertexKind::Corner => p[v],
             VertexKind::Crease(a, b) => divide(weighted(&[(1, p[a]), (6, p[v]), (1, p[b])]), 8)?,
             VertexKind::Smooth => {
@@ -140,6 +154,28 @@ pub fn subdivide(mesh: &Mesh, topology: &Topology) -> GeopResult<Subdivided> {
                 }
                 divide(weighted(&terms), n * n)?
             }
+        })
+    };
+    // Every crease, soft ones too, for the rule a soft vertex is pulled
+    // towards.
+    let all_creased: BTreeSet<[usize; 2]> =
+        mesh.sharp.iter().chain(mesh.soft.keys()).copied().collect();
+    let mut positions = Vec::with_capacity(p.len() + 2 * faces.len());
+    for v in 0..p.len() {
+        let point = vertex_point(v, &mesh.sharp)?;
+        // The creases at `v`, by sharpness: the mean decides how far it is
+        // pulled towards the rule counting them all.
+        let creases: Vec<f64> = all_creased
+            .iter()
+            .filter(|&&[a, b]| a == v || b == v)
+            .map(|e| mesh.soft.get(e).copied().unwrap_or(1.0))
+            .collect();
+        let soft = creases.iter().any(|&s| s < 1.0);
+        let point = if soft {
+            let mean = creases.iter().sum::<f64>() / creases.len() as f64;
+            blend(point, vertex_point(v, &all_creased)?, mean)
+        } else {
+            point
         };
         positions.push(point);
     }
@@ -147,8 +183,9 @@ pub fn subdivide(mesh: &Mesh, topology: &Topology) -> GeopResult<Subdivided> {
     positions.extend(face_points.iter().copied());
     let mut edge_point = BTreeMap::new();
     for ([a, b], adjacent) in topology.edges() {
+        let middle = || divide(p[a].add(&p[b]), 2);
         let point = if is_sharp(&mesh.sharp, topology, a, b) {
-            divide(p[a].add(&p[b]), 2)?
+            middle()?
         } else {
             let terms = [
                 (1, p[a]),
@@ -156,7 +193,11 @@ pub fn subdivide(mesh: &Mesh, topology: &Topology) -> GeopResult<Subdivided> {
                 (1, face_points[adjacent[0]]),
                 (1, face_points[adjacent[1]]),
             ];
-            divide(weighted(&terms), 4)?
+            let smooth = divide(weighted(&terms), 4)?;
+            match mesh.soft.get(&[a, b]) {
+                Some(&s) => blend(smooth, middle()?, s),
+                None => smooth,
+            }
         };
         edge_point.insert([a, b], positions.len());
         positions.push(point);

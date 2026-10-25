@@ -10,7 +10,7 @@ use geop_core_topology::{
 };
 use geop_ops_model::{NamedModel, testing::assert_valid};
 
-use crate::{Cage, Mirror, SubdArgs, build_subd};
+use crate::{Cage, Mirror, SubdArgs, build_subd, cage::undirected};
 
 /// The model one subd step `s` of `args` builds.
 fn subd(args: &SubdArgs) -> geop_core_math::geop_error::GeopResult<NamedModel> {
@@ -165,7 +165,7 @@ fn normals_turn_little_at_extraordinary_vertices() {
 fn creases_stay_sharp() {
     let mut cage = Cage::cuboid([2.0, 2.0, 2.0]);
     let edges: Vec<[u32; 2]> = cage.edges().into_iter().collect();
-    cage.set_crease(&edges, true);
+    cage.set_sharpness(&edges, 1.0);
     let part = built(cage, Mirror::None);
     assert_valid(&part);
     let corner = part.vertex_id("subd(s,v6)").unwrap();
@@ -182,7 +182,7 @@ fn creases_stay_sharp() {
     assert!(p[2].could_be_equal(Scalar::ONE), "{p:?}");
 
     let mut cage = Cage::cuboid([2.0, 2.0, 2.0]);
-    cage.set_crease(&[[4, 5], [5, 6], [6, 7], [4, 7]], true);
+    cage.set_sharpness(&[[4, 5], [5, 6], [6, 7], [4, 7]], 1.0);
     let part = built(cage, Mirror::None);
     assert_valid(&part);
     // Along the crease between the top (f9, u along v4 -> v5) and the
@@ -212,7 +212,7 @@ fn extruded_face_cage_is_valid() {
     assert_valid(&part);
     assert_eq!(faces(&part), 10);
 
-    cage.insert_loop(0, 4).unwrap();
+    cage.insert_loop(0, 4, 0.5).unwrap();
     assert_eq!(cage.faces.len(), 14);
     let part = built(cage, Mirror::None);
     assert_valid(&part);
@@ -304,7 +304,7 @@ fn bad_cages_are_refused() {
 #[test]
 fn args_round_trip() {
     let mut cage = Cage::cuboid([2.0, 1.0, 3.0]);
-    cage.set_crease(&[[1, 2]], true);
+    cage.set_sharpness(&[[1, 2]], 1.0);
     let args = SubdArgs {
         cage,
         mirror: Mirror::Z,
@@ -320,12 +320,12 @@ fn args_round_trip() {
 #[test]
 fn extruding_across_a_crease_carries_it_along() {
     let mut cage = Cage::cuboid([2.0, 2.0, 2.0]);
-    cage.set_crease(&[[4, 5]], true);
+    cage.set_sharpness(&[[4, 5]], 1.0);
     cage.extrude(&[9, 10].into(), 0.5, Mirror::None).unwrap();
     let edges = cage.edges();
     assert_eq!(cage.creases.len(), 1);
-    assert!(edges.contains(&cage.creases[0]), "{:?}", cage.creases);
-    assert_ne!(cage.creases[0], [4, 5]);
+    assert!(edges.contains(&cage.creases[0].edge), "{:?}", cage.creases);
+    assert_ne!(cage.creases[0].edge, [4, 5]);
     crate::cage::Mesh::new(&cage, Mirror::None)
         .unwrap()
         .topology()
@@ -374,7 +374,7 @@ fn random_edit(cage: &mut Cage, mirror: Mirror, random: &mut Random) -> String {
         2 => {
             let edges: Vec<[u32; 2]> = cage.edges().into_iter().collect();
             let [a, b] = edges[random.below(edges.len())];
-            match cage.insert_loop(a, b) {
+            match cage.insert_loop(a, b, 0.5) {
                 Ok(()) => format!("inserted a loop across e{a}-{b}"),
                 Err(e) => format!("could not insert a loop across e{a}-{b}: {e}"),
             }
@@ -382,9 +382,9 @@ fn random_edit(cage: &mut Cage, mirror: Mirror, random: &mut Random) -> String {
         3 => {
             let edges: Vec<[u32; 2]> = cage.edges().into_iter().collect();
             let [a, b] = edges[random.below(edges.len())];
-            let sharp = !cage.is_crease(a, b);
-            cage.set_crease(&[[a, b]], sharp);
-            format!("creased e{a}-{b}: {sharp}")
+            let sharpness = if cage.is_crease(a, b) { 0.0 } else { 1.0 };
+            cage.set_sharpness(&[[a, b]], sharpness);
+            format!("creased e{a}-{b}: {sharpness}")
         }
         _ => {
             let f = cage.faces[random.below(cage.faces.len())].id;
@@ -430,4 +430,313 @@ fn random_cage_edits_build_valid_solids() {
             panic!("seed {seed}, after {done:#?}:\n{}", messages.join("\n"));
         }
     }
+}
+
+/// A box's top inset: the top shrinks, keeping its id, a ring of four
+/// quads fills the gap, and every corner of the inset top is the
+/// thickness in from both rim edges. Extruded then, it is a boss with a
+/// flat ledge around it — still one valid solid.
+#[test]
+fn inset_face_is_a_ring_inside_the_rim() {
+    let mut cage = Cage::cuboid([2.0, 2.0, 2.0]);
+    cage.inset(&[9].into(), 0.25, Mirror::None).unwrap();
+    assert_eq!(cage.faces.len(), 10);
+    let top = cage.face(9).unwrap();
+    for &v in &top.vertices {
+        let at = cage.vertex(v).unwrap().at;
+        assert!(
+            (at[0].abs() - 0.75).abs() < 1e-12
+                && (at[1].abs() - 0.75).abs() < 1e-12
+                && at[2] == 1.0,
+            "{at:?}"
+        );
+    }
+    assert_valid(&built(cage.clone(), Mirror::None));
+    cage.extrude(&[9].into(), 0.5, Mirror::None).unwrap();
+    assert_valid(&built(cage, Mirror::None));
+}
+
+/// Insetting half a box's top, mirrored: the corners on the mirror plane
+/// stay on it, and no quad is made along the open edge there, so the
+/// mirrored whole is one valid solid with a symmetric inset.
+#[test]
+fn inset_keeps_the_mirror_plane() {
+    let mut cage = Cage::cuboid([2.0, 2.0, 2.0]);
+    cage.halve(0).unwrap();
+    cage.inset(&[9].into(), 0.25, Mirror::X).unwrap();
+    let on_plane = (cage.face(9).unwrap().vertices.iter())
+        .filter(|&&v| cage.vertex(v).unwrap().at[0] == 0.0)
+        .count();
+    assert_eq!(on_plane, 2);
+    assert_valid(&built(cage, Mirror::X));
+}
+
+/// A loop cut a third of the way across a box's vertical ring: four new
+/// vertices at `z = -1/3`, four quads split in two, and a crease on one of
+/// the ring's edges carried by both halves.
+#[test]
+fn loop_cut_at_a_fraction() {
+    let mut cage = Cage::cuboid([2.0, 2.0, 2.0]);
+    cage.set_sharpness(&[[0, 4]], 1.0);
+    cage.insert_loop(0, 4, 1.0 / 3.0).unwrap();
+    assert_eq!(cage.faces.len(), 10);
+    let new: Vec<[f64; 3]> = (cage.vertices.iter())
+        .filter(|v| v.id >= 14)
+        .map(|v| v.at)
+        .collect();
+    assert_eq!(new.len(), 4);
+    for at in &new {
+        assert!((at[2] + 1.0 / 3.0).abs() < 1e-12, "{at:?}");
+    }
+    assert_eq!(cage.creases.len(), 2);
+    assert_valid(&built(cage, Mirror::None));
+}
+
+/// The ring across a box's vertical edge is the four vertical edges,
+/// closed. The box's corners have three edges, so the loop through any of
+/// its edges stops at both ends, as that edge alone; the loop through an
+/// edge of a loop cut across the box runs round its four edges, and on a
+/// cylinder with a loop cut round all eight.
+#[test]
+fn rings_and_loops_follow_the_quads() {
+    let cage = Cage::cuboid([2.0, 2.0, 2.0]);
+    let ring = cage.edge_ring(0, 4).unwrap();
+    assert!(ring.closed);
+    assert_eq!(ring.edges.len(), 4);
+    assert_eq!(ring.quads.len(), 4);
+    let mut edges: Vec<[u32; 2]> = ring.edges.iter().map(|&(a, b)| undirected(a, b)).collect();
+    edges.sort();
+    assert_eq!(edges, [[0, 4], [1, 5], [2, 6], [3, 7]]);
+    assert_eq!(cage.edge_loop(0, 4).unwrap(), [[0, 4]]);
+    assert_eq!(cage.edge_loop(4, 5).unwrap(), [[4, 5]]);
+    let mut cage = cage;
+    cage.insert_loop(0, 4, 0.5).unwrap();
+    let cut = cage.edges().into_iter().find(|&[a, _]| a >= 14).unwrap();
+    assert_eq!(cage.edge_loop(cut[0], cut[1]).unwrap().len(), 4);
+
+    let mut cage = Cage::cylinder(1.0, 2.0, 8);
+    cage.insert_loop(0, 8, 0.5).unwrap();
+    let cut = cage.edges().into_iter().find(|&[a, _]| a >= 42).unwrap();
+    let around = cage.edge_loop(cut[0], cut[1]).unwrap();
+    assert_eq!(around.len(), 8, "{around:?}");
+    assert_valid(&built(cage, Mirror::None));
+}
+
+/// A loop cut's vertices slid a quarter of the way along the box's
+/// vertical edges: all four move alike, and slid back the other way by a
+/// half they end on the other side of where they started. The cage stays
+/// valid.
+#[test]
+fn edge_slide_moves_a_loop_along_its_cross_edges() {
+    let mut cage = Cage::cuboid([2.0, 2.0, 2.0]);
+    cage.insert_loop(0, 4, 0.5).unwrap();
+    let loop_edges: Vec<[u32; 2]> = cage
+        .edges()
+        .into_iter()
+        .filter(|&[a, b]| a >= 14 && b >= 14)
+        .collect();
+    assert_eq!(loop_edges.len(), 4);
+    let heights = |cage: &Cage| -> Vec<f64> {
+        (cage.vertices.iter())
+            .filter(|v| v.id >= 14)
+            .map(|v| v.at[2])
+            .collect()
+    };
+    cage.edge_slide(&loop_edges, 0.25, Mirror::None).unwrap();
+    let after = heights(&cage);
+    assert_eq!(after.len(), 4);
+    let z = after[0];
+    assert!((z.abs() - 0.25).abs() < 1e-12, "{after:?}");
+    assert!(after.iter().all(|&h| (h - z).abs() < 1e-12), "{after:?}");
+    cage.edge_slide(&loop_edges, -0.5, Mirror::None).unwrap();
+    let back = heights(&cage);
+    assert!(back[0] * z < 0.0, "{z} -> {back:?}");
+    assert_valid(&built(cage, Mirror::None));
+}
+
+/// Bevelling all twelve edges of a box: every face shrinks, a strip
+/// replaces each edge and a triangle each corner — 6 + 12 + 8 faces, the
+/// shrunk top's corners `width` in from both of its edges — and the cage is
+/// a valid solid. Bevelling the top's four edges alone makes a chamfered
+/// rim: four strips and no corner faces.
+#[test]
+fn bevel_replaces_edges_by_strips() {
+    let mut cage = Cage::cuboid([2.0, 2.0, 2.0]);
+    let edges: Vec<[u32; 2]> = cage.edges().into_iter().collect();
+    cage.bevel(&edges, 0.2, Mirror::None).unwrap();
+    assert_eq!(cage.faces.len(), 6 + 12 + 8);
+    assert_eq!(cage.vertices.len(), 24);
+    let top = cage.face(9).unwrap();
+    for &v in &top.vertices {
+        let at = cage.vertex(v).unwrap().at;
+        assert!(
+            (at[0].abs() - 0.8).abs() < 1e-12 && (at[1].abs() - 0.8).abs() < 1e-12 && at[2] == 1.0,
+            "{at:?}"
+        );
+    }
+    assert_valid(&built(cage, Mirror::None));
+
+    let mut cage = Cage::cuboid([2.0, 2.0, 2.0]);
+    cage.bevel(&[[4, 5], [5, 6], [6, 7], [4, 7]], 0.3, Mirror::None)
+        .unwrap();
+    assert_eq!(cage.faces.len(), 10);
+    assert_valid(&built(cage, Mirror::None));
+}
+
+/// One edge bevelled on its own is capped: its vertices stay, the strip is
+/// a quad between four new vertices, one `width` into each face at each
+/// end, and a triangle at each end closes it. The top and front keep their
+/// corners and gain one at each end of the edge. A boundary edge cannot be
+/// bevelled.
+#[test]
+fn bevel_of_one_edge_is_capped() {
+    let mut cage = Cage::cuboid([2.0, 2.0, 2.0]);
+    cage.bevel(&[[4, 5]], 0.3, Mirror::None).unwrap();
+    assert_eq!(cage.faces.len(), 6 + 1 + 2);
+    assert_eq!(cage.vertices.len(), 12);
+    assert_eq!(cage.face(9).unwrap().vertices.len(), 6);
+    assert_valid(&built(cage, Mirror::None));
+
+    let mut plane = Cage::plane(2.0, 2);
+    let e = plane.bevel(&[[0, 1]], 0.1, Mirror::None).expect_err("open");
+    assert!(e.to_string().contains("e0-1"), "{e}");
+}
+
+/// A box's top edge collapsed by merging its two vertices: the top and the
+/// front become triangles, the sides keep their four corners, and the
+/// solid is valid. Merging two opposite corners of one face is refused by
+/// name.
+#[test]
+fn merge_collapses_an_edge() {
+    let mut cage = Cage::cuboid([2.0, 2.0, 2.0]);
+    cage.merge_vertices(&[4, 5].into(), Mirror::None).unwrap();
+    assert_eq!(cage.vertices.len(), 7);
+    assert_eq!(cage.face(9).unwrap().vertices.len(), 3);
+    assert_eq!(cage.vertex(4).unwrap().at, [0.0, -1.0, 1.0]);
+    assert_valid(&built(cage, Mirror::None));
+
+    let mut cage = Cage::cuboid([2.0, 2.0, 2.0]);
+    let e = cage
+        .merge_vertices(&[4, 6].into(), Mirror::None)
+        .expect_err("a pinched face");
+    assert!(e.to_string().contains("f9"), "{e}");
+}
+
+/// Dissolving the edge between a box's top and front merges them into one
+/// face — a quad, since the edge's ends are left between two faces and go
+/// with it: a wedge. Dissolving a vertex of the loop cut on a box merges
+/// the four faces at it into one, and the box's two corners along its edge,
+/// left between two faces, go with it; dissolving a corner of the box
+/// merges its three faces, and the three neighbours left along the merged
+/// face's sides go too: a tetrahedron. Each builds a valid solid.
+#[test]
+fn dissolve_merges_the_faces_around() {
+    let mut cage = Cage::cuboid([2.0, 2.0, 2.0]);
+    cage.dissolve_edges(&[[4, 5]]).unwrap();
+    assert_eq!(cage.faces.len(), 5);
+    assert_eq!(cage.vertices.len(), 6);
+    assert_eq!(cage.face(9).unwrap().vertices.len(), 4);
+    assert_valid(&built(cage, Mirror::None));
+
+    let mut cage = Cage::cuboid([2.0, 2.0, 2.0]);
+    cage.insert_loop(0, 4, 0.5).unwrap();
+    let middle = (cage.vertices.iter()).find(|v| v.id >= 14).unwrap().id;
+    cage.dissolve_vertices(&[middle].into()).unwrap();
+    assert_eq!(cage.faces.len(), 7);
+    assert_eq!(cage.vertices.len(), 9);
+    assert!(cage.vertex(middle).is_err());
+    assert_valid(&built(cage, Mirror::None));
+
+    let mut cage = Cage::cuboid([2.0, 2.0, 2.0]);
+    cage.dissolve_vertices(&[6].into()).unwrap();
+    assert_eq!(cage.faces.len(), 4);
+    assert_eq!(cage.vertices.len(), 4);
+    assert_eq!(cage.face(9).unwrap().vertices.len(), 3);
+    assert_valid(&built(cage, Mirror::None));
+}
+
+/// Two opposite faces of a box, inset and bridged, make a tunnel: both go,
+/// four quads join their rims, and the solid is a valid ring.
+#[test]
+fn bridge_makes_a_tunnel() {
+    let mut cage = Cage::cuboid([2.0, 2.0, 2.0]);
+    cage.inset(&[9].into(), 0.4, Mirror::None).unwrap();
+    cage.inset(&[8].into(), 0.4, Mirror::None).unwrap();
+    cage.bridge(9, 8).unwrap();
+    assert_eq!(cage.faces.len(), 4 + 4 + 4 + 4);
+    assert!(cage.face(9).is_err() && cage.face(8).is_err());
+    let part = built(cage.clone(), Mirror::None);
+    assert_valid(&part);
+    assert_eq!(part.solid_names().len(), 1);
+}
+
+/// A box with its top deleted is open; filling the hole closes it again
+/// with a face through the four rim vertices, facing out, and the solid
+/// is valid. The seam of a mirrored half is no hole to fill.
+#[test]
+fn fill_closes_a_hole() {
+    let mut cage = Cage::cuboid([2.0, 2.0, 2.0]);
+    cage.delete_faces(&[9].into());
+    assert!(cage.is_boundary(4, 5));
+    assert_eq!(cage.boundary_run(4, 5).unwrap().len(), 4);
+    let part = built(cage.clone(), Mirror::None);
+    assert!(part.solid_names().is_empty());
+    cage.fill_hole(4, 5, Mirror::None).unwrap();
+    assert_eq!(cage.faces.len(), 6);
+    let part = built(cage, Mirror::None);
+    assert_valid(&part);
+    assert_eq!(part.solid_names().len(), 1);
+
+    let mut half = Cage::cuboid([2.0, 2.0, 2.0]);
+    half.halve(0).unwrap();
+    let seam = half
+        .edges()
+        .into_iter()
+        .find(|&[a, b]| {
+            half.vertex(a).unwrap().at[0] == 0.0 && half.vertex(b).unwrap().at[0] == 0.0
+        })
+        .unwrap();
+    let e = half
+        .fill_hole(seam[0], seam[1], Mirror::X)
+        .expect_err("the seam");
+    assert!(e.to_string().contains("mirror plane"), "{e}");
+}
+
+/// A soft crease pulls the surface towards the edge without a corner: the
+/// top face of a box with its rim creased at a half lies between the smooth
+/// box's and the sharp one's at the rim's middle, and the surface normal
+/// still turns smoothly across the edge. Saved, the sharpness comes back.
+#[test]
+fn soft_creases_pull_without_a_corner() {
+    let rim = [[4, 5], [5, 6], [6, 7], [4, 7]];
+    let height = |sharpness: f64| {
+        let mut cage = Cage::cuboid([2.0, 2.0, 2.0]);
+        if sharpness > 0.0 {
+            cage.set_sharpness(&rim, sharpness);
+        }
+        let part = built(cage, Mirror::None);
+        assert_valid(&part);
+        let top = part.face_id("subd(s,f9)").unwrap();
+        let surface = &part.topology().faces[&top].surface;
+        // The middle of the side from v4 to v5, on the rim.
+        surface
+            .evaluate(Scalar::ONE, Scalar::ZERO)
+            .unwrap()
+            .to_f64_array()
+    };
+    let (smooth, soft, sharp) = (height(0.0), height(0.5), height(1.0));
+    assert!(
+        smooth[2] < soft[2] && soft[2] < sharp[2],
+        "{smooth:?} {soft:?} {sharp:?}"
+    );
+    assert!((sharp[2] - 1.0).abs() < 1e-9, "{sharp:?}");
+
+    let mut cage = Cage::cuboid([2.0, 2.0, 2.0]);
+    cage.set_sharpness(&rim, 0.5);
+    let part = built(cage.clone(), Mirror::None);
+    let (kink, _) = largest_kink(&part);
+    assert!(kink < 15.0, "the normal turns by {kink} degrees");
+    let json = serde_json::to_string(&cage).unwrap();
+    let back: Cage = serde_json::from_str(&json).unwrap();
+    assert_eq!(back.sharpness(4, 5), 0.5);
 }

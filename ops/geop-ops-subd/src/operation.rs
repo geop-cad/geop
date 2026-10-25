@@ -4,18 +4,26 @@
 //!
 //! The step holds the cage itself, not a history of edits: edits are made
 //! in the editor and leave the cage they made behind. Its vertices, edges
-//! and faces are drawn, and picked by clicking them; what is selected is
-//! moved, turned and scaled about its centre with the gizmo there — along
-//! the world's axes, or, for faces, their own — or by typing its centre's
-//! coordinates, a scale and turns; and edited with the actions: extruding
-//! faces, inserting an edge loop across an edge, creasing edges or
-//! smoothing them, deleting faces. An element not selected is dragged on
-//! its own, in the plane facing the eye.
+//! and faces are drawn, and picked by clicking them — an edge's loop by
+//! double-clicking it, its ring with shift held, everything in a window
+//! dragged after `b`; what is selected is moved, turned and scaled about
+//! its centre with the gizmo there — along the world's axes, or, for
+//! faces, their own — or by typing its centre's coordinates, a scale and
+//! turns; and edited with the actions: extruding and insetting faces,
+//! bridging two of them, bevelling edges, cutting a loop across them,
+//! sliding them, dissolving and merging, filling a hole, creasing edges
+//! sharp or soft, deleting. An element not selected is dragged on its
+//! own, in the plane facing the eye. The limit surface is drawn as the
+//! part, the cage over it; "cage only" hides the surface.
 
 use geop_core_editor::{
     edit_form::{Edit, EditForm, FormState, choices, chosen},
     editable::{Context, OperationGroup, OperationInfo, OperationTier},
-    editing::{Action, CanvasEvent, DRAG_SNAP, Gizmo, Number, Shape, Style, Tone, Unit, Visual},
+    editing::{
+        Action, CanvasEvent, DRAG_SNAP, Gizmo, InHand, Number, Pointer, Shape, Style, Tone, Unit,
+        Visual,
+        hit::{Window, hit_visuals, no_instances},
+    },
     part_operation,
     part_operation::PartOperation,
 };
@@ -32,8 +40,8 @@ use geop_ops_model::{ModelOperation, NamedModel, Namer, build_model};
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    brep::limit_body,
-    cage::{Cage, Mesh, Mirror, edge_key, face_key, vertex_key},
+    brep::{face_names, limit_body},
+    cage::{Cage, Mesh, Mirror, edge_key, face_key, undirected, vertex_key},
     edit::Element,
 };
 
@@ -66,18 +74,48 @@ struct Relative {
     angles: [f64; 3],
 }
 
+/// How far each edit goes, as typed; the defaults until set.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Amounts {
+    /// How far an extrude goes.
+    pub distance: f64,
+    /// How far in an inset goes.
+    pub thickness: f64,
+    /// How wide a bevel is.
+    pub width: f64,
+    /// Where across its ring a loop is cut, as a fraction.
+    pub cut: f64,
+    /// How far a loop slides, as a fraction of the edges it slides along.
+    pub slide: f64,
+}
+
+impl Default for Amounts {
+    fn default() -> Self {
+        Self {
+            distance: 0.5,
+            thickness: 0.2,
+            width: 0.2,
+            cut: 0.5,
+            slide: 0.25,
+        }
+    }
+}
+
 /// What editing a subd step keeps besides its arguments and the keys of
 /// the cage elements selected.
 #[derive(Clone, Debug, Default)]
 pub struct SubdSession {
     relative: Option<Relative>,
-    /// How far an extrude goes; [`DEFAULT_DISTANCE`] until set.
-    distance: Option<f64>,
+    pub amounts: Amounts,
+    /// Whether the next drag selects everything within its window.
+    pub box_select: bool,
+    /// The window being dragged, to draw.
+    window: Option<(Pointer, Pointer)>,
+    /// Whether the limit surface is hidden, to see the cage alone.
+    pub cage_only: bool,
     /// Why the last edit could not be made.
     problem: Option<String>,
 }
-
-const DEFAULT_DISTANCE: f64 = 0.5;
 
 /// The primitives a cage starts from, by the value of their action.
 fn primitive(name: &str) -> Option<Cage> {
@@ -112,20 +150,39 @@ fn prune(selection: &mut Vec<String>, cage: &Cage) {
     selection.retain(|key| Element::parse(key).is_some_and(|e| cage.has(e)));
 }
 
-/// The edges and faces `selection` names.
-fn selected(selection: &[String]) -> (Vec<[u32; 2]>, BTreeSet<u32>) {
-    let mut edges = Vec::new();
-    let mut faces = BTreeSet::new();
+/// What `selection` names: the vertices named as such, the edges, and the
+/// faces.
+#[derive(Clone, Debug, Default)]
+struct Selected {
+    vertices: BTreeSet<u32>,
+    edges: Vec<[u32; 2]>,
+    faces: BTreeSet<u32>,
+}
+
+fn selected(selection: &[String]) -> Selected {
+    let mut s = Selected::default();
     for key in selection {
         match Element::parse(key) {
-            Some(Element::Edge(a, b)) => edges.push([a, b]),
-            Some(Element::Face(f)) => {
-                faces.insert(f);
+            Some(Element::Vertex(v)) => {
+                s.vertices.insert(v);
             }
-            _ => {}
+            Some(Element::Edge(a, b)) => s.edges.push([a, b]),
+            Some(Element::Face(f)) => {
+                s.faces.insert(f);
+            }
+            None => {}
         }
     }
-    (edges, faces)
+    s
+}
+
+/// Adds the keys `keys` to `selection`, each once.
+fn extend(selection: &mut Vec<String>, keys: impl IntoIterator<Item = String>) {
+    for key in keys {
+        if !selection.contains(&key) {
+            selection.push(key);
+        }
+    }
 }
 
 /// The cage drawn: every vertex, edge and face of the half the step holds,
@@ -209,6 +266,35 @@ fn cage_visuals(args: &SubdArgs) -> Vec<Visual> {
     visuals
 }
 
+/// The window `from`–`to` drawn where the cage is: a rectangle at the
+/// depth of the cage's centre.
+fn window_visual(args: &SubdArgs, from: &Pointer, to: &Pointer) -> Option<Visual> {
+    let window = Window::new(from, to)?;
+    let all: BTreeSet<u32> = args.cage.vertices.iter().map(|v| v.id).collect();
+    let centre = vector(args.cage.centre(&all)?);
+    let depth = window.depth(&centre);
+    let mut points = window.corners(depth).to_vec();
+    points.push(points[0]);
+    Some(Visual::new(
+        "window",
+        Shape::Polyline { points },
+        Style::Draft,
+    ))
+}
+
+/// The names of what the step `step` builds from `args`, to hide: its
+/// solid, and, for an open cage, each of its faces.
+fn built_names(step: &str, args: &SubdArgs) -> Vec<String> {
+    let Ok(namer) = Namer::new("subd", step) else {
+        return Vec::new();
+    };
+    let mut names = vec![namer.root()];
+    if let Ok(mesh) = Mesh::new(&args.cage, args.mirror) {
+        names.extend(face_names(&mesh, &namer));
+    }
+    names
+}
+
 impl Relative {
     /// The scale and turn the session holds for `selection` on `cage`, or
     /// a fresh one from the cage as it is.
@@ -239,10 +325,109 @@ impl Relative {
     }
 }
 
+/// Makes the edit `f` of the cage: kept if it succeeds, with the selection
+/// pruned to what is left; else its reason is shown.
+fn apply(edit: &mut Edit<'_, SubdArgs, SubdSession>, f: impl FnOnce(&mut Cage) -> GeopResult<()>) {
+    let mut cage = edit.args.cage.clone();
+    match f(&mut cage) {
+        Ok(()) => {
+            edit.args.cage = cage;
+            edit.session.problem = None;
+            edit.session.relative = None;
+            prune(edit.selection, &edit.args.cage);
+        }
+        Err(e) => edit.session.problem = Some(e.root_message().to_string()),
+    }
+}
+
+/// An edit of the cage, ready to make.
+type CageEdit = Box<dyn FnOnce(&mut Cage) -> GeopResult<()>>;
+
+/// The edits by the value of their action: what each does to the cage
+/// for the selection `s` with the amounts `amounts`, or `None` for a value
+/// that is no edit.
+fn edit_action(
+    value: &str,
+    s: &Selected,
+    all_vertices: &BTreeSet<u32>,
+    amounts: Amounts,
+    mirror: Mirror,
+) -> Option<CageEdit> {
+    let s = s.clone();
+    let all_vertices = all_vertices.clone();
+    Some(match value {
+        "extrude" => Box::new(move |cage| cage.extrude(&s.faces, amounts.distance, mirror)),
+        "inset" => Box::new(move |cage| cage.inset(&s.faces, amounts.thickness, mirror)),
+        "bridge" => Box::new(move |cage| {
+            let mut faces = s.faces.iter();
+            match (faces.next(), faces.next(), faces.next()) {
+                (Some(&a), Some(&b), None) => cage.bridge(a, b),
+                _ => Err(geop_core_math::geop_error::GeopError::new(
+                    "bridge: select exactly two faces",
+                )),
+            }
+        }),
+        "loop_cut" => Box::new(move |cage| {
+            (s.edges.iter()).try_for_each(|&[a, b]| cage.insert_loop(a, b, amounts.cut))
+        }),
+        "slide" => Box::new(move |cage| cage.edge_slide(&s.edges, amounts.slide, mirror)),
+        "bevel" => Box::new(move |cage| cage.bevel(&s.edges, amounts.width, mirror)),
+        "dissolve" => Box::new(move |cage| {
+            if !s.edges.is_empty() {
+                cage.dissolve_edges(&s.edges)?;
+            }
+            if !s.vertices.is_empty() {
+                cage.dissolve_vertices(&s.vertices)?;
+            }
+            Ok(())
+        }),
+        "merge" => Box::new(move |cage| cage.merge_vertices(&all_vertices, mirror)),
+        "fill" => Box::new(move |cage| {
+            let open = (s.edges.iter()).find(|&&[a, b]| cage.is_boundary(a, b));
+            match open {
+                Some(&[a, b]) => cage.fill_hole(a, b, mirror),
+                None => Err(geop_core_math::geop_error::GeopError::new(
+                    "fill: select an edge on the hole's rim",
+                )),
+            }
+        }),
+        "delete" => Box::new(move |cage| {
+            let mut faces = s.faces.clone();
+            faces.extend(cage.faces_along(&s.edges));
+            faces.extend(cage.faces_around(&s.vertices));
+            if faces.is_empty() {
+                return Err(geop_core_math::geop_error::GeopError::new(
+                    "delete: nothing selected",
+                ));
+            }
+            cage.delete_faces(&faces);
+            Ok(())
+        }),
+        _ => return None,
+    })
+}
+
+/// The keys of the selected edges' loops, or their rings.
+fn chains(cage: &Cage, edges: &[[u32; 2]], ring: bool) -> GeopResult<Vec<String>> {
+    let mut keys = Vec::new();
+    for &[a, b] in edges {
+        let found: Vec<[u32; 2]> = if ring {
+            (cage.edge_ring(a, b)?.edges.iter())
+                .map(|&(x, y)| undirected(x, y))
+                .collect()
+        } else {
+            cage.edge_loop(a, b)?
+        };
+        keys.extend(found.into_iter().map(|[x, y]| edge_key(x, y)));
+    }
+    Ok(keys)
+}
+
 /// The dialog of a subd step: the cage to start from, the mirror, what is
 /// selected and how to move, turn and scale it, and the edits; the cage
 /// drawn.
 fn form<'a>(
+    step: &str,
     args: &SubdArgs,
     session: &SubdSession,
     selection: &[String],
@@ -313,32 +498,31 @@ fn form<'a>(
             }
         },
     );
+    f.checkbox("cage_only", "cage only", session.cage_only, |edit, on| {
+        edit.session.cage_only = on;
+    });
 
     let vertices = args.cage.vertices_of(selection);
-    let (edges, faces) = selected(selection);
+    let s = selected(selection);
     let count = |n: usize, one: &str, many: &str| match n {
         0 => None,
         1 => Some(format!("1 {one}")),
         n => Some(format!("{n} {many}")),
     };
-    let vertex_count = selection
-        .iter()
-        .filter(|k| matches!(Element::parse(k), Some(Element::Vertex(_))))
-        .count();
     let parts: Vec<String> = [
-        count(vertex_count, "vertex", "vertices"),
-        count(edges.len(), "edge", "edges"),
-        count(faces.len(), "face", "faces"),
+        count(s.vertices.len(), "vertex", "vertices"),
+        count(s.edges.len(), "edge", "edges"),
+        count(s.faces.len(), "face", "faces"),
     ]
     .into_iter()
     .flatten()
     .collect();
     if parts.is_empty() {
         f.form.dialog.text(
-                "selection",
-                "Click vertices, edges and faces of the cage to select them, then move, turn or scale them with the gizmo; drag one to move it alone.",
-                Tone::Hint,
-            );
+            "selection",
+            "Click vertices, edges and faces of the cage to select them; double-click an edge for its loop, with shift for its ring; press b and drag a window around several. Move, turn or scale the selection with the gizmo; drag one element to move it alone.",
+            Tone::Hint,
+        );
     } else {
         f.form.dialog.text(
             "selection",
@@ -349,10 +533,53 @@ fn form<'a>(
     if let Some(problem) = &session.problem {
         f.form.dialog.text("problem", problem.clone(), Tone::Error);
     }
+    let select_action = |value: &str, label: &str, title: &str| {
+        let action = Action::new(value, label).group("Select").title(title);
+        if s.edges.is_empty() && value != "box" {
+            action.disabled("Select an edge first")
+        } else {
+            action
+        }
+    };
+    let select = vec![
+        select_action(
+            "loop",
+            "Loop",
+            "Select the edge loop through each selected edge",
+        ),
+        select_action(
+            "ring",
+            "Ring",
+            "Select the edge ring across each selected edge",
+        ),
+        select_action(
+            "box",
+            "Box",
+            "Drag a window to select what is within it (b)",
+        )
+        .active(session.box_select),
+    ];
+    f.actions("select", select, |edit, value| match value {
+        "box" => {
+            edit.session.box_select = !edit.session.box_select;
+            edit.session.window = None;
+        }
+        "loop" | "ring" => {
+            let s = selected(edit.selection);
+            match chains(&edit.args.cage, &s.edges, value == "ring") {
+                Ok(keys) => {
+                    extend(edit.selection, keys);
+                    edit.session.problem = None;
+                }
+                Err(e) => edit.session.problem = Some(e.root_message().to_string()),
+            }
+        }
+        _ => {}
+    });
 
     if let Some(centre) = args.cage.centre(&vertices) {
         let mut gizmo = Gizmo::new(vector(centre)).translate().rotate().scale();
-        if let Some(axes) = args.cage.frame(&faces) {
+        if let Some(axes) = args.cage.frame(&s.faces) {
             gizmo = gizmo.local(axes.map(vector));
         }
         f.form.gizmo = Some(gizmo);
@@ -397,12 +624,31 @@ fn form<'a>(
         }
     }
 
-    if !faces.is_empty() {
-        let distance = session.distance.unwrap_or(DEFAULT_DISTANCE);
-        let number = Number::new("extrude distance", distance, Unit::Length);
+    let amounts = session.amounts;
+    if !s.faces.is_empty() {
+        let number = Number::new("extrude distance", amounts.distance, Unit::Length);
         f.number("distance", number, |edit, d| {
-            edit.session.distance = Some(d)
+            edit.session.amounts.distance = d
         });
+        let number = Number::new("inset thickness", amounts.thickness, Unit::Length);
+        f.number("thickness", number, |edit, d| {
+            edit.session.amounts.thickness = d
+        });
+    }
+    if !s.edges.is_empty() {
+        let sharpness = args.cage.sharpness(s.edges[0][0], s.edges[0][1]);
+        let number = Number::new("crease sharpness", sharpness, Unit::Fraction).range(0.0, 1.0);
+        f.number("sharpness", number, |edit, sharpness| {
+            let s = selected(edit.selection);
+            edit.args.cage.set_sharpness(&s.edges, sharpness);
+            edit.session.problem = None;
+        });
+        let number = Number::new("bevel width", amounts.width, Unit::Length);
+        f.number("width", number, |edit, w| edit.session.amounts.width = w);
+        let number = Number::new("loop cut at", amounts.cut, Unit::Fraction).range(0.0, 1.0);
+        f.number("cut", number, |edit, t| edit.session.amounts.cut = t);
+        let number = Number::new("slide by", amounts.slide, Unit::Fraction).range(-1.0, 1.0);
+        f.number("slide", number, |edit, t| edit.session.amounts.slide = t);
     }
     let action = |value: &str, label: &str, enabled: bool, why: &str, title: &str| {
         let action = Action::new(value, label).group("Edit");
@@ -412,89 +658,101 @@ fn form<'a>(
             action.disabled(why)
         }
     };
-    let creased = edges
-        .iter()
-        .filter(|&&[a, b]| args.cage.is_crease(a, b))
-        .count();
+    let on_boundary = (s.edges.iter()).any(|&[a, b]| args.cage.is_boundary(a, b));
     let edits = vec![
         action(
             "extrude",
             "Extrude",
-            !faces.is_empty(),
+            !s.faces.is_empty(),
             "Select faces to extrude",
-            "Extrude the selected faces along their normals",
+            "Extrude the selected faces along their normals (e)",
         ),
         action(
-            "insert_loop",
-            "Insert loop",
-            !edges.is_empty(),
-            "Select an edge to insert a loop across",
-            "Insert an edge loop across each selected edge",
+            "inset",
+            "Inset",
+            !s.faces.is_empty(),
+            "Select faces to inset",
+            "Inset the selected faces: a ring of new faces inside their rim (i)",
         ),
         action(
-            "crease",
-            "Crease",
-            creased < edges.len(),
-            "Select smooth edges to crease",
-            "Keep the selected edges sharp",
+            "bridge",
+            "Bridge",
+            s.faces.len() == 2,
+            "Select two faces to bridge",
+            "Join the two selected faces by a tunnel between their rims",
         ),
         action(
-            "smooth",
-            "Smooth",
-            creased > 0,
-            "Select creased edges to smooth",
-            "Make the selected edges smooth again",
+            "loop_cut",
+            "Loop cut",
+            !s.edges.is_empty(),
+            "Select an edge to cut a loop across",
+            "Cut an edge loop across each selected edge, where \"loop cut at\" says",
+        ),
+        action(
+            "slide",
+            "Slide",
+            !s.edges.is_empty(),
+            "Select the edges of a loop to slide",
+            "Slide the selected edges along the edges leaving them, by \"slide by\"",
+        ),
+        action(
+            "bevel",
+            "Bevel",
+            !s.edges.is_empty(),
+            "Select edges to bevel",
+            "Replace each selected edge by a strip \"bevel width\" wide",
+        ),
+        action(
+            "dissolve",
+            "Dissolve",
+            !s.edges.is_empty() || !s.vertices.is_empty(),
+            "Select edges or vertices to dissolve",
+            "Remove the selected edges and vertices, merging the faces around them",
+        ),
+        action(
+            "merge",
+            "Merge",
+            vertices.len() >= 2,
+            "Select at least two vertices to merge",
+            "Merge the vertices of the selection into one at their centre",
+        ),
+        action(
+            "fill",
+            "Fill",
+            on_boundary,
+            "Select an edge on an open rim to fill",
+            "Fill the hole the selected edge is on with one face",
         ),
         action(
             "delete",
             "Delete",
-            !faces.is_empty(),
-            "Select faces to delete",
-            "Delete the selected faces, opening the cage",
+            !selection.is_empty(),
+            "Select what to delete",
+            "Delete the selected faces, and the faces along the selected edges and vertices",
         ),
     ];
-    f.actions("edit", edits, |edit, value| {
-        let Edit {
-            args,
-            session,
-            selection,
-            ..
-        } = edit;
-        let (edges, faces) = selected(selection);
-        let mut cage = args.cage.clone();
-        let done: GeopResult<()> = match value {
-            "extrude" => cage.extrude(
-                &faces,
-                session.distance.unwrap_or(DEFAULT_DISTANCE),
-                args.mirror,
-            ),
-            "insert_loop" => edges.iter().try_for_each(|&[a, b]| cage.insert_loop(a, b)),
-            "crease" => {
-                cage.set_crease(&edges, true);
-                Ok(())
-            }
-            "smooth" => {
-                cage.set_crease(&edges, false);
-                Ok(())
-            }
-            "delete" => {
-                cage.delete_faces(&faces);
-                Ok(())
-            }
-            _ => return,
-        };
-        match done {
-            Ok(()) => {
-                args.cage = cage;
-                session.problem = None;
-                session.relative = None;
-                prune(selection, &args.cage);
-            }
-            Err(e) => session.problem = Some(e.root_message().to_string()),
+    f.actions("edit", edits, move |mut edit, value| {
+        let s = selected(edit.selection);
+        let all = edit.args.cage.vertices_of(edit.selection);
+        let mirror = edit.args.mirror;
+        if let Some(run) = edit_action(value, &s, &all, edit.session.amounts, mirror) {
+            apply(&mut edit, run);
         }
     });
-    f.form.visuals = cage_visuals(args);
+    let mut visuals = cage_visuals(args);
+    if let Some((from, to)) = &session.window {
+        visuals.extend(window_visual(args, from, to));
+    }
+    f.form.visuals = visuals;
     f.form.selection = selection.to_vec();
+    f.form.tool = if session.box_select {
+        InHand::Strokes
+    } else {
+        InHand::Nothing
+    };
+    if session.cage_only {
+        f.form.hidden = built_names(step, args);
+    }
     f
 }
 
@@ -502,16 +760,14 @@ fn form<'a>(
 /// moved as far as the pointer from where it was grabbed, snapped to
 /// [`DRAG_SNAP`] unless shift is held — to the cage as it was then, which
 /// the editor gives each event of the drag (see
-/// [`Visual::from_grab`]). The gizmo dragged: what is selected moved, turned or scaled as the
-/// drag did. Escape clears the selection; Delete deletes the faces
-/// selected.
-fn on_canvas(edit: Edit<'_, SubdArgs, SubdSession>, event: &CanvasEvent) {
-    let Edit {
-        args,
-        session,
-        selection,
-        ..
-    } = edit;
+/// [`Visual::from_grab`]). The gizmo dragged: what is selected moved,
+/// turned or scaled as the drag did. A double click on an edge selects its
+/// loop, with shift its ring. With box select on (`b`), a drag selects
+/// everything within its window, shift adding to the selection, and a click
+/// selects as usual. `e` extrudes and `i` insets the selected faces.
+/// Escape clears the selection and puts box select down; Delete deletes
+/// what is selected.
+fn on_canvas(mut edit: Edit<'_, SubdArgs, SubdSession>, event: &CanvasEvent) {
     match event {
         CanvasEvent::Move {
             key,
@@ -520,8 +776,8 @@ fn on_canvas(edit: Edit<'_, SubdArgs, SubdSession>, event: &CanvasEvent) {
             shift,
             ..
         } => {
-            let keys = if selection.contains(key) {
-                selection.clone()
+            let keys = if edit.selection.contains(key) {
+                edit.selection.clone()
             } else {
                 vec![key.clone()]
             };
@@ -535,23 +791,121 @@ fn on_canvas(edit: Edit<'_, SubdArgs, SubdSession>, event: &CanvasEvent) {
                     (d / DRAG_SNAP).round() * DRAG_SNAP
                 }
             });
-            let vertices = args.cage.vertices_of(&keys);
-            (args.cage).transform(&vertices, args.mirror, |p| [0, 1, 2].map(|c| p[c] + by[c]));
-            session.relative = None;
+            let mirror = edit.args.mirror;
+            let vertices = edit.args.cage.vertices_of(&keys);
+            (edit.args.cage).transform(&vertices, mirror, |p| [0, 1, 2].map(|c| p[c] + by[c]));
+            edit.session.relative = None;
         }
         CanvasEvent::Gizmo { drag, .. } => {
-            let vertices = args.cage.vertices_of(selection);
-            args.cage
-                .transform(&vertices, args.mirror, |p| drag.apply_f64(p));
-            session.relative = None;
+            let mirror = edit.args.mirror;
+            let vertices = edit.args.cage.vertices_of(edit.selection);
+            (edit.args.cage).transform(&vertices, mirror, |p| drag.apply_f64(p));
+            edit.session.relative = None;
         }
         CanvasEvent::Delete => {
-            let (_, faces) = selected(selection);
-            if !faces.is_empty() {
-                args.cage.delete_faces(&faces);
-                session.relative = None;
-                prune(selection, &args.cage);
+            let s = selected(edit.selection);
+            let all = edit.args.cage.vertices_of(edit.selection);
+            if let Some(run) =
+                edit_action("delete", &s, &all, edit.session.amounts, edit.args.mirror)
+            {
+                apply(&mut edit, run);
             }
+        }
+        CanvasEvent::Click {
+            pointer,
+            double,
+            shift,
+        } => {
+            let visuals = cage_visuals(edit.args);
+            let hit = hit_visuals(&visuals, pointer, no_instances, |v| v.selectable)
+                .map(|hit| hit.visual.key.clone());
+            let Some(key) = hit else {
+                return;
+            };
+            if *double {
+                if let Some(Element::Edge(a, b)) = Element::parse(&key) {
+                    match chains(&edit.args.cage, &[[a, b]], *shift) {
+                        Ok(keys) => {
+                            extend(edit.selection, keys);
+                            edit.session.problem = None;
+                        }
+                        Err(e) => edit.session.problem = Some(e.root_message().to_string()),
+                    }
+                }
+            } else if edit.session.box_select {
+                // The editor leaves clicks to a tool in hand: select as it
+                // would.
+                match edit.selection.iter().position(|k| *k == key) {
+                    Some(i) => {
+                        edit.selection.remove(i);
+                    }
+                    None => edit.selection.push(key),
+                }
+            }
+        }
+        CanvasEvent::Stroke {
+            from,
+            to,
+            done,
+            shift,
+        } => {
+            if !edit.session.box_select {
+                return;
+            }
+            if !*done {
+                edit.session.window = Some((*from, *to));
+                return;
+            }
+            edit.session.window = None;
+            edit.session.box_select = false;
+            let Some(window) = Window::new(from, to) else {
+                return;
+            };
+            let cage = &edit.args.cage;
+            let within = |v: u32| cage.vertex(v).is_ok_and(|x| window.contains(&vector(x.at)));
+            let mut keys: Vec<String> = Vec::new();
+            keys.extend(
+                (cage.vertices.iter())
+                    .filter(|v| within(v.id))
+                    .map(|v| vertex_key(v.id)),
+            );
+            keys.extend(
+                (cage.edges().into_iter())
+                    .filter(|&[a, b]| within(a) && within(b))
+                    .map(|[a, b]| edge_key(a, b)),
+            );
+            keys.extend(
+                (cage.faces.iter())
+                    .filter(|f| f.vertices.iter().all(|&v| within(v)))
+                    .map(|f| face_key(f.id)),
+            );
+            if !*shift {
+                edit.selection.clear();
+            }
+            extend(edit.selection, keys);
+            edit.session.relative = None;
+        }
+        CanvasEvent::Key { key } => {
+            let value = match key.as_str() {
+                "b" => {
+                    edit.session.box_select = !edit.session.box_select;
+                    edit.session.window = None;
+                    return;
+                }
+                "e" => "extrude",
+                "i" => "inset",
+                _ => return,
+            };
+            let s = selected(edit.selection);
+            let all = edit.args.cage.vertices_of(edit.selection);
+            if let Some(run) = edit_action(value, &s, &all, edit.session.amounts, edit.args.mirror)
+            {
+                apply(&mut edit, run);
+            }
+        }
+        CanvasEvent::Cancel => {
+            edit.session.box_select = false;
+            edit.session.window = None;
         }
         _ => {}
     }
@@ -596,11 +950,11 @@ impl PartOperation for Subd {
     }
 
     fn form<'a>(
-        _: &'a Context<'a>,
+        ctx: &'a Context<'a>,
         args: &SubdArgs,
         editing: &SubdEditing,
     ) -> EditForm<'a, SubdArgs, SubdSession> {
-        form(args, &editing.session, &editing.selection)
+        form(ctx.step, args, &editing.session, &editing.selection)
     }
 
     fn canvas(_: &Context, edit: Edit<'_, SubdArgs, SubdSession>, event: &CanvasEvent) {

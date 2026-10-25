@@ -184,6 +184,22 @@ fn check_outward(mesh: &Mesh) -> GeopResult<()> {
     }
 }
 
+/// The names of the faces [`limit_body`] builds from `mesh`, in its order:
+/// one per quad, one per corner of any other face.
+pub fn face_names(mesh: &Mesh, namer: &Namer) -> Vec<String> {
+    let mut names = Vec::new();
+    for (f, face) in mesh.faces.iter().enumerate() {
+        if face.len() == 4 {
+            names.push(namer.name(&[&mesh.face_names[f]]));
+        } else {
+            for &v in face {
+                names.push(namer.name(&[&mesh.face_names[f], &mesh.vertex_names[v]]));
+            }
+        }
+    }
+    names
+}
+
 /// The limit surface of `mesh` as a B-rep (see the module docs), named
 /// with `namer`: a solid if the mesh is closed, else a sheet.
 pub fn limit_body(mesh: &Mesh, namer: &Namer) -> GeopResult<(BodySpec, BodyNames)> {
@@ -270,7 +286,6 @@ pub fn limit_body(mesh: &Mesh, namer: &Namer) -> GeopResult<(BodySpec, BodyNames
                 outer,
                 holes: Vec::new(),
             });
-            b.names.faces.push(namer.name(&[&mesh.face_names[f]]));
         } else {
             let centre = sub.face_point[f];
             let spokes = (0..n)
@@ -316,12 +331,10 @@ pub fn limit_body(mesh: &Mesh, namer: &Namer) -> GeopResult<(BodySpec, BodyNames
                     outer,
                     holes: Vec::new(),
                 });
-                b.names
-                    .faces
-                    .push(namer.name(&[&mesh.face_names[f], &mesh.vertex_names[v]]));
             }
         }
     }
+    b.names.faces = face_names(mesh, namer);
     b.spec.shells = vec![(0..b.spec.faces.len()).collect()];
     Ok((b.spec, b.names))
 }

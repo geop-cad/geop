@@ -131,6 +131,7 @@ impl Tool for PickTool {
             grab: false,
             prompt: None,
             gizmo: None,
+            hidden: Vec::new(),
         }
     }
 

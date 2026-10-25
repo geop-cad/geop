@@ -27,7 +27,7 @@ pub fn subd_mouse() -> Program {
         .map(|k| [bottom[k], bottom[(k + 1) % bottom.len()]])
         .filter(|&[a, b]| !(on_plane(a) && on_plane(b)))
         .collect();
-    cage.set_crease(&rim, true);
+    cage.set_sharpness(&rim, 1.0);
     let back = cage
         .vertices
         .iter()
