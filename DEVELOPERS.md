@@ -33,7 +33,6 @@ apart (see Scripts).
 | `lib/geop-lib-shell` | shelling, thickening and offsetting faces, rebuilding a solid face by face |
 | `lib/geop-lib-stdlib` | the standard parts, one program per family, and `WithStandardParts`, the `FileStore` that puts them beside a workspace's files |
 | `ops/geop-ops-model` | the model target: topology with stable names, features, element kinds, threads, solid notes, `Combine` and `Extent`, its drawer |
-| `ops/geop-ops-parameters` | a part's parameters, tables and properties as steps, read and renamed in a program; where placed parts are; the parameters panel |
 | `lib/geop-lib-constraints` | the constraints and unknowns of a part's state, and the solver over them |
 | `ops/geop-ops-sketch` | the sketch operation, its tools, snapping and references |
 | `ops/geop-ops-sketch3d` | the 3-D sketch operation: wires in space, paths and rails |

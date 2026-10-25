@@ -22,8 +22,8 @@ use geop_core_program::{
     values::{Setting, Settings, StateValue, pose_state},
     workspace::{self, Files, Location},
 };
-use geop_ops_parameters::{
-    Material, Parameter, ParameterKind, Parameters, parameters::Row, set_parameters,
+use geop_ops_model::parameters::{
+    Material, Parameter, ParameterKind, Parameters, Row, set_parameters,
 };
 
 use geop_lib_stdlib::WithStandardParts;
@@ -366,7 +366,7 @@ fn registry() -> Registry {
         let r = geop_ops_pattern::register(r)?;
         let r = geop_ops_assembly::register(r)?;
         let r = crate::register(r)?;
-        geop_ops_parameters::register(r)
+        Ok(r)
     })();
     registry.expect("the operations each have a name of their own")
 }

@@ -15,8 +15,8 @@ use geop_core_sketch::CurveId;
 use geop_ops_model::datums::{Datums, datums, origin_axis, origin_plane};
 use geop_ops_extrude_revolve::{Extent, Extents, ExtrudeArgs, Output, RevolveArgs, RevolveAxis};
 use geop_ops_model::Combine;
-use geop_ops_parameters::{
-    Material, Parameter, ParameterKind, Parameters, parameters::Row, set_parameters,
+use geop_ops_model::parameters::{
+    Material, Parameter, ParameterKind, Parameters, Row, set_parameters,
 };
 use geop_ops_reference_geometry::{AddDatumArgs, Construction, Selected};
 use geop_ops_sketch::{SketchPlane, sketch_element, whole_sketch};

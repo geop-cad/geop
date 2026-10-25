@@ -22,7 +22,7 @@ use geop_ops_model::{
     NamedModel, PartDescription,
     testing::{Built, assert_valid, check_valid, classify, error, model_of},
 };
-use geop_ops_parameters::{ParameterKind, parameters_of, set_parameters};
+use geop_ops_model::parameters::{ParameterKind, parameters_of, set_parameters};
 use geop_ops_sketch::{
     AddSketchArgs, Constraint,
     figures::{disc, n, on_face},

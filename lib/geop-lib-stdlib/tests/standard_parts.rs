@@ -24,7 +24,7 @@ use geop_ops_model::{
     NamedModel, RefId, read_model,
     testing::{check_valid, model_of},
 };
-use geop_ops_parameters::{
+use geop_ops_model::parameters::{
     ParameterKind, parameter_numbers, parameters_of, read_properties, set_parameters,
     steps::{LOOKUP, PARAMETERS, PROPERTIES},
 };
@@ -43,7 +43,7 @@ fn registry() -> Registry {
         let r = geop_ops_extrude_revolve::register(r)?;
         let r = geop_ops_pattern::register(r)?;
         let r = geop_ops_assembly::register(r)?;
-        geop_ops_parameters::register(r)
+        Ok(r)
     })();
     registry.expect("the operations each have a name of their own")
 }

@@ -62,7 +62,7 @@ use geop_core_math::{
 use geop_core_program::{reader::Reader, values::Design};
 use geop_ops_assembly::MateEntity;
 use geop_ops_model::Chain;
-use geop_ops_parameters::located;
+use geop_ops_model::parameters::located;
 use geop_ops_reference_geometry::{Selected, Shape};
 
 /// Which way the route is told to run through a [`Waypoint`].

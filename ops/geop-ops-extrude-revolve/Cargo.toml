@@ -12,7 +12,6 @@ geop-core-geometry.workspace = true
 geop-core-topology.workspace = true
 geop-core-sketch.workspace = true
 geop-ops-model.workspace = true
-geop-ops-parameters.workspace = true
 geop-ops-sketch.workspace = true
 geop-ops-sketch3d.workspace = true
 geop-lib-booleans.workspace = true

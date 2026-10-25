@@ -1,5 +1,5 @@
 //! The parameters of a [`Program`], as its steps define them (see
-//! [`crate::steps`]): read, set, renamed, and what reads each.
+//! [`crate::parameters::steps`]): read, set, renamed, and what reads each.
 
 use std::collections::BTreeMap;
 
@@ -16,8 +16,8 @@ use geop_core_program::{
 };
 use serde::Serialize;
 
-use crate::{
-    parameters::{NumberParameter, Parameter, ParameterKind, Parameters, validate_name},
+use crate::parameters::{
+    definition::{NumberParameter, Parameter, ParameterKind, Parameters, validate_name},
     steps::{
         DefineParameters, DefineParametersArgs, LOOKUP, LookupTable, LookupTableArgs, PARAMETERS,
         PROPERTIES, PartPropertiesArgs,
@@ -25,7 +25,7 @@ use crate::{
 };
 
 /// The parameters and properties of `program`, as its steps define them
-/// (see [`crate::steps`]): its tables, as its [`LookupTable`] steps look
+/// (see [`crate::parameters::steps`]): its tables, as its [`LookupTable`] steps look
 /// them up, after its numbers — none, where it has no such step.
 pub fn parameters_of(program: &Program) -> Parameters {
     let args = |kind: &str| program.steps.iter().find(|s| s.operation == kind);
@@ -167,7 +167,7 @@ fn set_step<A: Serialize>(program: &mut Program, kind: &str, args: Option<&A>) {
 /// What the parameters of `program` come to as it defines them, by the names a
 /// formula reads them by: a number by its name, a table's columns as
 /// `table.column` — its steps defining them run on their own (see
-/// [`crate::steps::DefineParameters`], [`LookupTable`]). Fails naming one
+/// [`crate::parameters::steps::DefineParameters`], [`LookupTable`]). Fails naming one
 /// that does not come to anything.
 pub fn parameter_numbers(program: &Program) -> GeopResult<BTreeMap<String, f64>> {
     let steps = (program.steps.iter())

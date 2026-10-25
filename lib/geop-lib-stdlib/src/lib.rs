@@ -62,7 +62,7 @@ use geop_core_program::{
     program::Program,
     workspace::{FileStore, FileStoreMut},
 };
-use geop_ops_parameters::{parameters_of, set_parameters};
+use geop_ops_model::parameters::{parameters_of, set_parameters};
 use std::{
     ops::{Deref, DerefMut},
     sync::OnceLock,
@@ -93,7 +93,7 @@ pub struct StandardPart {
 /// size of it ordered as `designation` and the size: the norm, `ISO 4762`
 /// for `ISO 4762 M4x12`, or the catalogue name. Every consumer of a placed
 /// part reads them from its program (see
-/// [`geop_ops_parameters::Properties`]).
+/// [`geop_ops_model::parameters::Properties`]).
 fn titled(mut program: Program, title: &str, designation: &str) -> Program {
     let mut parameters = parameters_of(&program);
     parameters.title = Some(title.into());

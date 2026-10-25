@@ -113,7 +113,7 @@ from a clone of the part it was, so only what reads what changed is made
 again; the result is a new build. The cache is swept at the end of every
 top-level run of what no part holds any more. Where a placed part goes is
 no concern of its build: its pose is the placing part's state (see
-`geop_ops_parameters::instance`), so dragging it builds nothing.
+`geop_ops_model::parameters::instance`), so dragging it builds nothing.
 
 - An element of a placed part is named by the instance's path before its
   target's name: `/bolt:model`, `/asm/bolt:model` for one of a placed
@@ -233,7 +233,7 @@ without asking the operation. `ParameterValues` is every parameter as it
 came to, a chain every step defining parameters adds to
 (`read_parameter_values`: none, for a part defining none). What
 defines parameters is an operation of
-[geop-ops-parameters](../ops/geop-ops-parameters.md); how a dialog shows a
+[geop-ops-model](../ops/geop-ops-model.md#parameters-and-properties-parameters); how a dialog shows a
 number is [geop-core-editor](./geop-core-editor.md#numbers-as-formulas)'s.
 
 ## Testing

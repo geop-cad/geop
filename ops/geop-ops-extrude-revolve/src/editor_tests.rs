@@ -31,9 +31,9 @@ use geop_ops_model::{
     BooleanOp, Combine, Face, Point, element, read_model,
     testing::{Built, model_of, model_shown, solid_volume},
 };
-use geop_ops_parameters::{
+use geop_ops_model::parameters::{
     DefineParameters, Parameter, ParameterKind, Parameters, ParametersCommand, ParametersPanel,
-    ParametersPanelState, parameters::Row, parameters_of,
+    ParametersPanelState, Row, parameters_of,
 };
 use geop_ops_sketch::{AddSketchArgs, Constraint, sketch_element, whole_sketch};
 
@@ -48,7 +48,6 @@ fn registry() -> Registry {
         .and_then(geop_ops_sketch::register)
         .and_then(geop_ops_sketch3d::register)
         .and_then(crate::register)
-        .and_then(geop_ops_parameters::register)
         .expect("the operations each have a name of their own")
 }
 

@@ -22,7 +22,7 @@ use geop_ops_model::{
     NamedModel, PartDescription, Point, read_model,
     testing::{Built, runner_of},
 };
-use geop_ops_parameters::{
+use geop_ops_model::parameters::{
     COLOR, Parameter, ParameterKind, Parameters, parameter_numbers, parameter_uses, parameters_of,
     read_properties, set_parameters,
     steps::{LOOKUP, PARAMETERS, PROPERTIES},

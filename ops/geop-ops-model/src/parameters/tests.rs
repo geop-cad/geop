@@ -18,9 +18,9 @@ use geop_core_program::{
 };
 use serde::{Deserialize, Serialize};
 
-use crate::{
+use crate::parameters::{
     COLOR, DefineParameters, LookupTable, LookupTableArgs, Parameter, ParameterKind, Parameters,
-    PartProperties, parameter_numbers, parameter_uses, parameters::Row, read_properties,
+    PartProperties, parameter_numbers, parameter_uses, Row, read_properties,
     rename_parameter, set_parameters,
 };
 
@@ -287,7 +287,7 @@ fn a_table_is_a_lookup_step_of_its_own() {
         file.steps.iter().position(|s| s.id == "table_screw"),
         Some(0)
     );
-    let defined = crate::parameters_of(&file);
+    let defined = crate::parameters::parameters_of(&file);
     assert!(matches!(
         defined.get("screw").map(|p| &p.kind),
         Some(ParameterKind::Table { rows, .. }) if rows.len() == 2

@@ -836,7 +836,7 @@ own, `b.pose`, and are located for a placed part's, `/bolt:b.pose`. An
 operation that can only use the part's own reads it with
 `retrieve_element`, which refuses the rest by name; one that can use any
 reads it with `retrieve_placed` (or `resolve_placed`, `Selected::shape`)
-and places it where `geop_ops_parameters::located` says. Instances'
+and places it where `geop_ops_model::parameters::located` says. Instances'
 constraints and unknowns come up through `Constraints::of` and
 `Unknowns::of`; no step writes the state, a solve outside the part does.
 Each crate defines its own targets and draws them (its `Drawer`); the

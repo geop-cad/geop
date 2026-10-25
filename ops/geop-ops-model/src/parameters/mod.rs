@@ -9,25 +9,12 @@
 //! from ([`files`]); the parameters panel of an editor and the colour a
 //! part is drawn in ([`panel`]), which [`register`] offers.
 
-// Library code reports what goes wrong as an error, never by panicking;
-// tests may unwrap.
-#![cfg_attr(
-    not(test),
-    deny(
-        clippy::unwrap_used,
-        clippy::expect_used,
-        clippy::panic,
-        clippy::todo,
-        clippy::unimplemented,
-        clippy::unreachable
-    )
-)]
 
 pub mod files;
 mod icons;
 pub mod instance;
 pub mod panel;
-pub mod parameters;
+pub mod definition;
 pub mod program;
 pub mod steps;
 
@@ -36,7 +23,9 @@ pub use instance::{
     Factor, Instance, Placement, PoseOf, compose, define_instance, instance, instances, located,
     placement,
 };
-pub use parameters::{COLOR, Material, NumberParameter, Parameter, ParameterKind, Parameters};
+pub use definition::{
+    COLOR, Material, NumberParameter, Parameter, ParameterKind, Parameters, Row, validate_color,
+};
 pub use program::{
     parameter_numbers, parameter_uses, parameters_of, rename_parameter, set_parameters,
 };
@@ -45,22 +34,9 @@ pub use steps::{
     PartProperties, PartPropertiesArgs, Properties, read_properties, stem,
 };
 
-use geop_core_editor::registry::Registry;
-use geop_core_math::geop_error::GeopResult;
 pub use panel::{
     ParametersCommand, ParametersPanel, ParametersPanelState, ParametersState, PartColor,
 };
-
-/// Adds what a part's parameters and properties offer an editor to `r`:
-/// the steps defining them, the parameters panel, and the part drawn in
-/// its colour.
-pub fn register(r: Registry) -> GeopResult<Registry> {
-    r.operation(DefineParameters)?
-        .operation(LookupTable)?
-        .operation(PartProperties)?
-        .drawer(PartColor)?
-        .panel(ParametersPanel)
-}
 
 #[cfg(test)]
 mod editor_tests;

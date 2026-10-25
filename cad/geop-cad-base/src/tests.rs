@@ -41,13 +41,18 @@ mod set {
     #[test]
     fn every_operation_is_offered() {
         let registry = registry().unwrap();
-        let infos = registry.infos();
+        let mut infos = registry.infos();
         let operations = registry.operations();
         let kinds: Vec<&str> = infos.iter().map(|i| i.kind).collect();
         assert_eq!(kinds.iter().collect::<HashSet<_>>().len(), kinds.len());
-        assert_eq!(kinds[0], "add_sketch");
-        assert_eq!(infos[0].info.label, "Sketch");
-        assert_eq!(kinds[1], "add_datum");
+        // Offered group by group, as the editor lists them: the part's
+        // parameters first, then the sketch and what it is drawn on.
+        infos.sort_by_key(|listed| (listed.info.group, listed.info.tier));
+        let kinds: Vec<&str> = infos.iter().map(|i| i.kind).collect();
+        assert_eq!(kinds[0], "parameters");
+        assert_eq!(kinds[3], "add_sketch");
+        assert_eq!(infos[3].info.label, "Sketch");
+        assert_eq!(kinds[4], "add_datum");
         let extrude = infos.iter().find(|i| i.kind == "extrude").unwrap();
         assert!(
             extrude.info.doc.starts_with("Sweep a sketch"),
@@ -403,7 +408,7 @@ mod incremental {
         testing::{assert_incremental, edit_sequence},
         workspace::Workspace,
     };
-    use geop_ops_parameters::{ParameterKind, parameters_of, set_parameters};
+    use geop_ops_model::parameters::{ParameterKind, parameters_of, set_parameters};
     use std::{collections::BTreeMap, rc::Rc};
 
     /// A runner that takes steps from what it built before must build what

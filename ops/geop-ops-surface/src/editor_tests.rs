@@ -27,7 +27,6 @@ fn registry() -> Registry {
         .and_then(geop_ops_sketch3d::register)
         .and_then(geop_ops_extrude_revolve::register)
         .and_then(crate::register)
-        .and_then(geop_ops_parameters::register)
         .expect("the operations each have a name of their own")
 }
 

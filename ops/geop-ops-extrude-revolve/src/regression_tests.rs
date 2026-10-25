@@ -12,7 +12,7 @@ use geop_ops_model::{
     BooleanOp, Combine, element, solid,
     testing::{Built, assert_draws_its_trims, assert_valid},
 };
-use geop_ops_parameters::{ParameterKind, parameters_of, set_parameters};
+use geop_ops_model::parameters::{ParameterKind, parameters_of, set_parameters};
 use geop_ops_reference_geometry::{AddDatum, AddDatumArgs, Construction, Selected};
 use geop_ops_sketch::{
     AddSketchArgs, Constraint, Sketch, SketchPlane,

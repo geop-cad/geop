@@ -11,7 +11,6 @@ geop-core-math.workspace = true
 geop-core-geometry.workspace = true
 geop-core-topology.workspace = true
 geop-ops-model.workspace = true
-geop-ops-parameters.workspace = true
 geop-lib-sweep.workspace = true
 geop-lib-booleans.workspace = true
 # The examples: solids extruded from sketches, then rounded.

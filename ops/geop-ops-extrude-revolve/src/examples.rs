@@ -18,9 +18,9 @@ use geop_core_sketch::CurveId;
 use geop_lib_sweep::Orientation;
 use geop_ops_model::datums::origin_plane;
 use geop_ops_model::{Combine, element};
-use geop_ops_parameters::{
+use geop_ops_model::parameters::{
     DefineParameters, LookupTable, Material, Parameter, ParameterKind, Parameters, PartProperties,
-    parameters::Row, set_parameters,
+    Row, set_parameters,
 };
 use geop_ops_sketch::{
     AddSketch, AddSketchArgs, Constraint, Sketch, SketchPlane,

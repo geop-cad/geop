@@ -17,7 +17,6 @@ use geop_core_program::testing::args;
 fn registry() -> Registry {
     (geop_ops_model::register(Registry::default()))
         .and_then(crate::register)
-        .and_then(geop_ops_parameters::register)
         .expect("the operations each have a name of their own")
 }
 

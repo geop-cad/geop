@@ -39,8 +39,8 @@ use geop_core_math::{
     scalars::Scalar,
 };
 use geop_ops_model::Namer;
-use geop_ops_parameters::{
-    COLOR, ParameterKind, file_choices, instance, parameters::validate_color, parameters_of,
+use geop_ops_model::parameters::{
+    COLOR, ParameterKind, file_choices, instance, parameters_of, validate_color,
     read_properties,
 };
 

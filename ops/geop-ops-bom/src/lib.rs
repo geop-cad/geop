@@ -55,7 +55,7 @@ use geop_core_math::{
 };
 use geop_ops_assembly::solids::{Shapes, own_solids};
 use geop_ops_model::notes_of;
-use geop_ops_parameters::{instances, read_properties, stem};
+use geop_ops_model::parameters::{instances, read_properties, stem};
 use serde::{Deserialize, Serialize};
 
 mod icons;
@@ -497,7 +497,7 @@ fn wire_lines(reader: &Reader, level: usize, quantity: u64) -> Vec<(String, Line
 /// The bill of materials of the part `reader` reads, the program of the
 /// file `file`, laid out as `structure` says. A part placed is listed by
 /// its own title and designation, if it has them (see
-/// [`geop_ops_parameters::Properties`]).
+/// [`geop_ops_model::parameters::Properties`]).
 ///
 /// The part's own bodies — those it is modelled with besides what it
 /// places — are a line of their own, named after its file: for a part

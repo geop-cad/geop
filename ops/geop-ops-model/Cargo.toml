@@ -12,6 +12,7 @@ geop-core-program.workspace = true
 geop-core-editor.workspace = true
 geop-core-rasterize.workspace = true
 serde.workspace = true
+serde_json.workspace = true
 # The name registry shares its structure with its copies, as the topology does.
 imbl.workspace = true
 
@@ -21,4 +22,3 @@ testing = ["geop-core-topology/testing"]
 
 [dev-dependencies]
 geop-core-topology = { workspace = true, features = ["testing"] }
-serde_json.workspace = true

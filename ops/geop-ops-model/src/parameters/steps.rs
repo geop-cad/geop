@@ -33,7 +33,7 @@ use geop_core_program::{
 };
 use serde::{Deserialize, Serialize};
 
-use crate::parameters::{COLOR, Material, NumberParameter, Row, validate_color, validate_name};
+use crate::parameters::definition::{COLOR, Material, NumberParameter, Row, validate_color, validate_name};
 
 /// The kind of the step defining a program's parameters, and its id.
 pub const PARAMETERS: &str = "parameters";
@@ -68,7 +68,7 @@ impl PartOperation for DefineParameters {
         OperationGroup::Part,
         OperationTier::Menu,
     )
-    .icon(crate::icons::PARAMETERS);
+    .icon(crate::parameters::icons::PARAMETERS);
     type Args = DefineParametersArgs;
     type Session = ();
 
@@ -225,7 +225,7 @@ impl PartOperation for LookupTable {
         OperationGroup::Part,
         OperationTier::Menu,
     )
-    .icon(crate::icons::LOOKUP_TABLE);
+    .icon(crate::parameters::icons::LOOKUP_TABLE);
     type Args = LookupTableArgs;
     type Session = ();
 
@@ -484,7 +484,7 @@ impl PartOperation for PartProperties {
         OperationGroup::Part,
         OperationTier::Menu,
     )
-    .icon(crate::icons::PROPERTIES);
+    .icon(crate::parameters::icons::PROPERTIES);
     type Args = PartPropertiesArgs;
     type Session = ();
 

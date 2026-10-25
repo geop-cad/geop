@@ -6,7 +6,7 @@ use geop_core_program::{
     program::Program,
     values::Design,
 };
-use geop_ops_parameters::parameter_numbers;
+use geop_ops_model::parameters::parameter_numbers;
 use std::collections::BTreeMap;
 
 use geop_core_geometry::nurb_curve::bezier_knots;

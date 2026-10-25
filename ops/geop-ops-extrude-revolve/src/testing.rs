@@ -17,7 +17,7 @@ use geop_core_program::{
     program::{Program, ProgramStep},
 };
 use geop_ops_model::Combine;
-use geop_ops_parameters::{DefineParameters, LookupTable, PartProperties};
+use geop_ops_model::parameters::{DefineParameters, LookupTable, PartProperties};
 use geop_ops_sketch::{
     AddSketch, AddSketchArgs, Sketch, SketchPlane,
     figures::{disc, on_face, on_origin, polygon, rectangle_outline},

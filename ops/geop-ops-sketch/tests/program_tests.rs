@@ -40,7 +40,7 @@ use geop_ops_model::{
     Curve, Line, NamedModel, Path, Plane, Point, element, model,
     testing::{Built, unit_cube},
 };
-use geop_ops_parameters::{
+use geop_ops_model::parameters::{
     DefineParameters, DefineParametersArgs, NumberParameter, ParameterKind, parameters_of,
     set_parameters,
 };

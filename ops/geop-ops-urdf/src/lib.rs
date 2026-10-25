@@ -72,7 +72,7 @@ use geop_ops_assembly::{
     stl_bytes,
 };
 use geop_ops_model::read_model;
-use geop_ops_parameters::stem;
+use geop_ops_model::parameters::stem;
 use serde::Deserialize;
 
 /// The URDF file's path in an export.

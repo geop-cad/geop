@@ -24,7 +24,7 @@ use geop_core_math::{
 };
 use geop_lib_sweep::shapes::{cube_solid, revolved_cylinder, sphere_solid, v3};
 use geop_ops_model::{NamedModel, model};
-use geop_ops_parameters::{Material, PartProperties, PartPropertiesArgs};
+use geop_ops_model::parameters::{Material, PartProperties, PartPropertiesArgs};
 use geop_ops_reference_geometry::Selected;
 
 use crate::{

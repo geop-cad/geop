@@ -57,6 +57,7 @@ mod mesh;
 mod named_model;
 mod names;
 pub mod notes;
+pub mod parameters;
 pub mod records;
 mod resolve;
 pub mod tangent;
@@ -89,7 +90,15 @@ use geop_core_math::geop_error::GeopResult;
 
 /// Adds what the model offers an editor to `r`: the part's model drawn, and
 /// its solids and faces listed ([`ModelDrawer`]); its datums drawn and
-/// listed ([`datums::DatumsDrawer`]).
+/// listed ([`datums::DatumsDrawer`]); the steps defining its parameters,
+/// tables and properties, the parameters panel, and the part drawn in its
+/// colour (see [`parameters`]).
 pub fn register(r: Registry) -> GeopResult<Registry> {
-    r.drawer(ModelDrawer)?.drawer(datums::DatumsDrawer)
+    r.drawer(ModelDrawer)?
+        .drawer(datums::DatumsDrawer)?
+        .operation(parameters::DefineParameters)?
+        .operation(parameters::LookupTable)?
+        .operation(parameters::PartProperties)?
+        .drawer(parameters::PartColor)?
+        .panel(parameters::ParametersPanel)
 }

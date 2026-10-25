@@ -49,7 +49,7 @@ pub(crate) fn registry() -> Registry {
         let r = geop_ops_subd::register(r)?;
         let r = geop_ops_pattern::register(r)?;
         let r = geop_ops_assembly::register(r)?;
-        geop_ops_parameters::register(r)
+        Ok(r)
     })();
     registry.expect("the operations each have a name of their own")
 }

@@ -12,7 +12,6 @@ geop-core-math.workspace = true
 geop-core-sketch.workspace = true
 geop-core-topology.workspace = true
 geop-ops-model.workspace = true
-geop-ops-parameters.workspace = true
 geop-core-rasterize.workspace = true
 serde.workspace = true
 

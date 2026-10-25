@@ -36,7 +36,7 @@ use geop_core_math::{
 use geop_lib_constraints::{solve::Mobility, unknown::Unknowns};
 use geop_ops_model::datums::read_datums;
 use geop_ops_model::{SolidMeshes, read_model};
-use geop_ops_parameters::{
+use geop_ops_model::parameters::{
     Factor, Instance, Placement, compose, define_instance, instance, instances, placement,
     read_properties,
 };

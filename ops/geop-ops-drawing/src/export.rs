@@ -10,7 +10,7 @@ use geop_core_program::{
     target::{Target, TargetReference},
 };
 use geop_lib_sheet::Format;
-use geop_ops_parameters::{read_properties, stem};
+use geop_ops_model::parameters::{read_properties, stem};
 use serde::Deserialize;
 
 use crate::{DrawingArgs, Projection, SheetSize, ViewKind, compose, parts_list};
@@ -158,7 +158,7 @@ impl Exporter for DrawingExporter {
 
     /// The drawing of the part as the steps before its step built it —
     /// the title block's name and material, where the drawing gives none,
-    /// the program's (see [`geop_ops_parameters::Properties`]).
+    /// the program's (see [`geop_ops_model::parameters::Properties`]).
     fn export(output: &mut Output, format: &str, options: DrawingOptions) -> GeopResult<Export> {
         let format = Format::of_extension(format)
             .ok_or_else(|| GeopError::new(format!("a drawing is no .{format} file")))?;

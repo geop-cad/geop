@@ -14,7 +14,7 @@
 //! is known ([`Bounded`]): an interval enclosure, widened — for the
 //! integrals — by the quadrature's estimate of its truncation error (see
 //! [`geop_core_math::quadrature`]). Lengths are millimetres, masses
-//! kilograms (see [`geop_ops_parameters::Material`]).
+//! kilograms (see [`geop_ops_model::parameters::Material`]).
 
 pub mod interference;
 pub mod mass;

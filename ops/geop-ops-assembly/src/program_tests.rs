@@ -41,7 +41,7 @@ use geop_ops_model::{
     Point, element, read_model,
     testing::{assert_close, model_of},
 };
-use geop_ops_parameters::{COLOR, instances, read_properties};
+use geop_ops_model::parameters::{COLOR, instances, read_properties};
 use geop_ops_pattern::spacing::Spacing;
 use geop_ops_reference_geometry::{AddDatumArgs, Construction, Selected};
 use geop_ops_sketch::{figures::n, sketch_element};
@@ -68,7 +68,7 @@ pub(crate) fn registry() -> Registry {
         let r = geop_ops_fillet::register(r)?;
         let r = geop_ops_pattern::register(r)?;
         let r = crate::register(r)?;
-        geop_ops_parameters::register(r)
+        Ok(r)
     })();
     registry.expect("the operations each have a name of their own")
 }
@@ -1545,8 +1545,8 @@ fn a_part_pattern_is_made_again_only_when_what_it_reads_changes() {
     for k in 1..6 {
         let name = format!("part_pattern(pins,{k})");
         assert_eq!(
-            geop_ops_parameters::located(&reader, &name).unwrap(),
-            geop_ops_parameters::located(&anew, &name).unwrap(),
+            geop_ops_model::parameters::located(&reader, &name).unwrap(),
+            geop_ops_model::parameters::located(&anew, &name).unwrap(),
             "{name} is where building anew puts it"
         );
     }

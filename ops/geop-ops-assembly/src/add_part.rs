@@ -22,7 +22,7 @@ use geop_core_math::{
 };
 use geop_ops_model::datums::{ORIGIN, datums};
 use geop_ops_model::Namer;
-use geop_ops_parameters::{Placement, instances};
+use geop_ops_model::parameters::{Placement, instances};
 use geop_ops_reference_geometry::Selected;
 use serde::{Deserialize, Serialize};
 
@@ -70,7 +70,7 @@ pub struct AddPartArgs {
     #[serde(default)]
     pub mates: BTreeMap<String, Mate>,
     /// The values the part's own parameters (see
-    /// [`geop_ops_parameters::Parameters`]) are given here instead of its
+    /// [`geop_ops_model::parameters::Parameters`]) are given here instead of its
     /// own, by name: a number, a table's row, the colour — the part as this
     /// program places it.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]

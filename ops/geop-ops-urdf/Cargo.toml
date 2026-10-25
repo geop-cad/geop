@@ -10,7 +10,6 @@ geop-core-math.workspace = true
 geop-core-topology.workspace = true
 geop-ops-model.workspace = true
 geop-lib-sheet.workspace = true
-geop-ops-parameters.workspace = true
 # The mechanism it exports.
 geop-ops-assembly.workspace = true
 geop-core-program.workspace = true

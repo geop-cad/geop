@@ -20,7 +20,7 @@ use geop_core_program::{
 };
 use serde::{Deserialize, Serialize};
 
-use crate::{
+use crate::parameters::{
     COLOR, Material, Parameters, parameter_uses, parameters_of, read_properties, rename_parameter,
     set_parameters,
 };
@@ -89,7 +89,7 @@ impl Panel for ParametersPanel {
 }
 
 /// A program's parameters as an editor shows them: what its steps define
-/// them as (see [`crate::steps`]) — numbers, and the tables its lookup
+/// them as (see [`crate::parameters::steps`]) — numbers, and the tables its lookup
 /// steps look up — what each comes to — a number, a table's row and its
 /// columns as `table.column`, the colour — and why those that do not fail.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -141,7 +141,7 @@ impl ParametersState {
 }
 
 /// Draws a part in the colour its properties give it (see
-/// [`crate::PartProperties`]).
+/// [`crate::parameters::PartProperties`]).
 pub struct PartColor;
 
 impl Drawer for PartColor {

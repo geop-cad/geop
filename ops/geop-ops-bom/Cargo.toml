@@ -9,7 +9,6 @@ geop-core-math.workspace = true
 geop-core-program.workspace = true
 geop-core-editor.workspace = true
 geop-ops-model.workspace = true
-geop-ops-parameters.workspace = true
 # The parts placed, and their solids.
 geop-ops-assembly.workspace = true
 serde.workspace = true

@@ -11,7 +11,6 @@ geop-core-math.workspace = true
 geop-core-geometry.workspace = true
 geop-core-topology.workspace = true
 geop-ops-model.workspace = true
-geop-ops-parameters.workspace = true
 geop-ops-sketch3d.workspace = true
 # What the examples' blocks are sketched, extruded and split by.
 geop-ops-sketch.workspace = true

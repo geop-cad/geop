@@ -33,7 +33,6 @@ geop-ops-urdf.workspace = true
 geop-ops-sheetmetal.workspace = true
 geop-ops-inspect.workspace = true
 geop-ops-bom.workspace = true
-geop-ops-parameters.workspace = true
 
 [dev-dependencies]
 # The composition's tests (`tests.rs`): every example drawn, weighed and

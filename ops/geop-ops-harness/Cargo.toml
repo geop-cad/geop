@@ -10,7 +10,6 @@ geop-core-editor.workspace = true
 geop-core-math.workspace = true
 geop-core-geometry.workspace = true
 geop-ops-model.workspace = true
-geop-ops-parameters.workspace = true
 # What a route runs through: an element of the part, or of a part placed in
 # it, or the frame on one.
 geop-ops-reference-geometry.workspace = true

@@ -25,7 +25,7 @@ use geop_core_sketch::{
     geometry::Arc,
     plain::{P2, add, bounds as point_bounds, cross, distance, scale, sub, xy},
 };
-use geop_ops_parameters::{Parameter, Parameters, set_parameters};
+use geop_ops_model::parameters::{Parameter, Parameters, set_parameters};
 use geop_ops_sketch::{
     AddSketchArgs, Constraint, CurveKind, Sketch, SketchPlane,
     editor::SketchSession,
@@ -56,7 +56,6 @@ fn registry() -> Registry {
     (geop_ops_model::register(Registry::default()))
         .and_then(geop_ops_sketch::register)
         .and_then(geop_ops_extrude_revolve::register)
-        .and_then(geop_ops_parameters::register)
         .unwrap()
 }
 

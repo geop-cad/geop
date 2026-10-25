@@ -7,7 +7,7 @@
 //! [`geop_ops_model::notes`]) is read here: a solid only drawn is no body.
 //!
 //! Lengths are millimetres and densities kg/m³ (see
-//! [`geop_ops_parameters::Material`]), so a mass is in kilograms.
+//! [`geop_ops_model::parameters::Material`]), so a mass is in kilograms.
 
 use geop_core_program::{placed::Located, reader::Reader, values::Design};
 use std::collections::HashMap;
@@ -19,7 +19,7 @@ use geop_core_math::{
 };
 use geop_core_topology::{SolidId, mass::MassProperties};
 use geop_ops_model::{NamedModel, notes_of, read_model};
-use geop_ops_parameters::{MaterialOf, read_properties};
+use geop_ops_model::parameters::{MaterialOf, read_properties};
 
 use crate::placed::placed_parts;
 
@@ -49,7 +49,7 @@ impl PlacedSolid<'_> {
     /// What it is made of: its part's material.
     pub fn material(&self) -> MaterialOf {
         (read_properties(&self.reader).map(|properties| properties.material()))
-            .unwrap_or_else(|_| geop_ops_parameters::Properties::default().material())
+            .unwrap_or_else(|_| geop_ops_model::parameters::Properties::default().material())
     }
 
     /// Its mass properties, where it is, of its part's material — its

@@ -52,7 +52,7 @@ region itself.
 ## Dimensions as formulas
 
 A dimension's value can be a formula of the part's parameters (see
-[geop-ops-parameters](./geop-ops-parameters.md#parameters)) — `width / 2`, `screw.clearance` —
+[geop-ops-model](./geop-ops-model.md#parameters)) — `width / 2`, `screw.clearance` —
 kept with the step and evaluated every time it is built, the sketch solved
 anew when that, or what it projects, changed. Angles are in degrees.
 

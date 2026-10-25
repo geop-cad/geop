@@ -12,7 +12,7 @@ use geop_core_program::{
     program::Program,
 };
 
-use crate::{LookupTableArgs, parameters::Row, steps::LOOKUP};
+use crate::parameters::{LookupTableArgs, Row, steps::LOOKUP};
 
 /// An editor of what parameters offer, on an empty program.
 fn editor() -> Editor {

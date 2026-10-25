@@ -45,7 +45,7 @@ fn registry() -> GeopResult<Registry> {
     let r = crate::register(r)?;
     let r = geop_ops_inspect::register(r)?;
     let r = geop_ops_bom::register(r)?;
-    geop_ops_parameters::register(r)
+    Ok(r)
 }
 
 /// An editor of [`registry`] on [`assembly`], saved as `assembly.geop`,

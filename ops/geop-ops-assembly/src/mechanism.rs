@@ -47,7 +47,7 @@ use geop_lib_constraints::{
     constraint::define_constraints,
     unknown::{Unknown, declare_unknowns},
 };
-use geop_ops_parameters::{compose, placement};
+use geop_ops_model::parameters::{compose, placement};
 use geop_ops_reference_geometry::Selected;
 
 use crate::{

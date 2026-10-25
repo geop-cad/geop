@@ -11,7 +11,6 @@ members = [
     "lib/geop-lib-sheet",
     "lib/geop-lib-stdlib",
     "ops/geop-ops-model",
-    "ops/geop-ops-parameters",
     "ops/geop-ops-sketch",
     "ops/geop-ops-reference-geometry",
     "ops/geop-ops-extrude-revolve",
@@ -58,7 +57,6 @@ geop-core-rasterize = { path = "core/geop-core-rasterize" }
 geop-lib-sheet = { path = "lib/geop-lib-sheet" }
 geop-lib-stdlib = { path = "lib/geop-lib-stdlib" }
 geop-ops-model = { path = "ops/geop-ops-model" }
-geop-ops-parameters = { path = "ops/geop-ops-parameters" }
 geop-ops-sketch = { path = "ops/geop-ops-sketch" }
 geop-ops-reference-geometry = { path = "ops/geop-ops-reference-geometry" }
 geop-ops-extrude-revolve = { path = "ops/geop-ops-extrude-revolve" }

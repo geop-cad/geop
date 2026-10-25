@@ -11,7 +11,7 @@ use geop_core_rasterize::stl::{StlFormat, StlTriangle, outward, write_stl};
 use serde::Deserialize;
 
 use geop_core_editor::output::{Content, Export, Exporter, ExporterInfo, Output};
-use geop_ops_parameters::stem;
+use geop_ops_model::parameters::stem;
 
 use crate::placed::solid_meshes;
 

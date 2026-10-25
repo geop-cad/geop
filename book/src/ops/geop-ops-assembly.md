@@ -37,7 +37,7 @@ other step's reference takes an element of a placed part the same way: a
 datum on a placed part's face, a pattern round a placed part's hole. Where the
 part goes is not an argument but the program's state `pin.pose` — a
 position and a rotation quaternion (see
-[geop-ops-parameters](./geop-ops-parameters.md#the-state-state)) — solved
+[geop-ops-model](./geop-ops-model.md#where-instances-are-placed-instance)) — solved
 for (see [below](#solving-the-state)). The step places the part there and
 adds its mates; it solves nothing. So a later step's mates that move it
 move it for every step.
@@ -49,7 +49,7 @@ workspace (see [geop-cad-base](../cad/geop-cad-base.md#the-workspace)),
 its parameters set to the step's `parameters` as its inputs, and run with
 the state under its name. The part placing it keeps its part and carries
 it over whole when nothing it is given changed. Where it is placed is a
-target of its own (`geop_ops_parameters::define_instance`: a `Placement`,
+target of its own (`geop_ops_model::parameters::define_instance`: a `Placement`,
 and the file and inputs it was loaded from). `define_placed` loads it,
 places it and draws it as a part is drawn (`draw`: its model, datums,
 sketches, annotations and the parts placed in it, in its colour; a
@@ -66,7 +66,7 @@ drawn.
 ## Parameters
 
 `parameters` gives the placed part's own parameters (see
-[geop-ops-parameters](./geop-ops-parameters.md#parameters)) other values,
+[geop-ops-model](./geop-ops-model.md#parameters)) other values,
 by name: a number, a table's row, the colour (a
 `geop_core_program::values::Settings`). The part is built with them, and its
 dialog offers each as what it is: the colour to pick, a number on a slider

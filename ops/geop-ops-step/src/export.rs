@@ -35,7 +35,7 @@ use geop_core_topology::{
 };
 use geop_ops_assembly::placed_parts;
 use geop_ops_model::{NamedModel, RefId, read_model};
-use geop_ops_parameters::{read_properties, stem};
+use geop_ops_model::parameters::{read_properties, stem};
 
 use crate::part21::{Exchange, Instance, Record, Value};
 

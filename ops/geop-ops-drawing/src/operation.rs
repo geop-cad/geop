@@ -44,7 +44,7 @@ use geop_core_sketch::plain::{add, sub};
 use geop_lib_sheet::{Anchor, Layer, P, Sheet};
 use geop_ops_assembly::placed_parts;
 use geop_ops_model::{NamedModel, Threads, model, read_model, read_threads, threads};
-use geop_ops_parameters::{Properties, read_properties};
+use geop_ops_model::parameters::{Properties, read_properties};
 use serde::{Deserialize, Serialize};
 
 use crate::{

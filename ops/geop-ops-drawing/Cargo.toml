@@ -13,7 +13,6 @@ geop-core-topology.workspace = true
 # How a dimension is drawn: shared with the sketch editor.
 geop-core-sketch.workspace = true
 geop-ops-model.workspace = true
-geop-ops-parameters.workspace = true
 geop-lib-sheet.workspace = true
 # The parts placed, drawn where they are.
 geop-ops-assembly.workspace = true

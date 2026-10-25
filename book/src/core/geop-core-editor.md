@@ -262,10 +262,10 @@ drawing step is of), the program file it ran (`file_name`), with its state —
 to ask how its parts can move by running it again — the step being edited
 and the date. What the program says of its part (its title, designation,
 colour and material) is read from the part like any element of it
-(`geop_ops_parameters::read_properties`, see
-[geop-ops-parameters](../ops/geop-ops-parameters.md#properties)), and a
+(`geop_ops_model::parameters::read_properties`, see
+[geop-ops-model](../ops/geop-ops-model.md#properties)), and a
 file written from it is named after the program's file
-(`geop_ops_parameters::stem(output.file_name())`).
+(`geop_ops_model::parameters::stem(output.file_name())`).
 
 ### Exporters
 

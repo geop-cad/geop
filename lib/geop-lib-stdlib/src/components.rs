@@ -9,7 +9,7 @@ use geop_core_program::program::Program;
 use geop_ops_model::datums::origin_plane;
 use geop_ops_extrude_revolve::{Extents, ExtrudeArgs, Output};
 use geop_ops_model::Combine;
-use geop_ops_parameters::{Material, Parameter, Parameters, set_parameters};
+use geop_ops_model::parameters::{Material, Parameter, Parameters, set_parameters};
 use geop_ops_sketch::{SketchPlane, whole_sketch};
 
 use super::{

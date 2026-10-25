@@ -50,7 +50,7 @@ fn registry() -> GeopResult<Registry> {
     let r = geop_ops_extrude_revolve::register(r)?;
     let r = geop_ops_assembly::register(r)?;
     let r = crate::register(r)?;
-    geop_ops_parameters::register(r)
+    Ok(r)
 }
 
 /// The files of the workspace example `name`, by path, and its first
