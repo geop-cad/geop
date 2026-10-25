@@ -19,6 +19,9 @@ import {
 import type { Program } from "./geop";
 
 const SITE_KEY = import.meta.env.VITE_TURNSTILE_SITE_KEY as string | undefined;
+
+/** Whether this build offers the hosted assistant: it has the bot check's site key. */
+export const ASSISTANT_CONFIGURED = SITE_KEY != null && SITE_KEY !== "";
 const TURNSTILE_SCRIPT = "https://challenges.cloudflare.com/turnstile/v0/api.js?render=explicit";
 
 /** What the Turnstile script offers (see Cloudflare's docs). */
@@ -55,7 +58,9 @@ export type Entry =
   | { kind: "assistant"; text: string }
   | { kind: "tool"; text: string; error: boolean }
   | { kind: "notice"; text: string; error: boolean }
-  | { kind: "used_up"; text: string };
+  | { kind: "used_up"; text: string }
+  /** Too many requests for now: said with how to run geop locally instead. */
+  | { kind: "rate_limited"; text: string };
 
 /** What the assistant needs of the app. */
 export interface AssistantProps {
@@ -154,7 +159,7 @@ export function useAssistant({ program, idle, runTool, restore }: AssistantProps
       });
     } else if (e instanceof AgentError && e.code === "rate") {
       const wait = e.retryAfter != null ? ` Try again in ${Math.ceil(e.retryAfter)} s.` : "";
-      say({ kind: "notice", text: `Too many requests.${wait}`, error: true });
+      say({ kind: "rate_limited", text: `The free assistant is busy: too many requests.${wait}` });
     } else {
       say({ kind: "notice", text: e instanceof Error ? e.message : String(e), error: true });
     }
@@ -253,7 +258,7 @@ export function useAssistant({ program, idle, runTool, restore }: AssistantProps
 
   const canUndoAnswer = undoable != null && program != null && JSON.stringify(program) === undoable.after;
   return {
-    configured: SITE_KEY != null && SITE_KEY !== "",
+    configured: ASSISTANT_CONFIGURED,
     entries,
     limits,
     verifying,
@@ -261,7 +266,6 @@ export function useAssistant({ program, idle, runTool, restore }: AssistantProps
     idle,
     ask: (prompt: string) => void ask(prompt),
     stop: () => running?.abort(),
-    connect: () => void ensureSession().catch(refused),
     clear,
     canUndoAnswer,
     undoAnswer: () => void undoAnswer(),

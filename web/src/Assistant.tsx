@@ -9,15 +9,27 @@ import type { AssistantState } from "./useAssistant";
 /** How to connect an agent of one's own, the geop CLI's MCP server. */
 const MCP_DOCS = "https://github.com/geop-cad/geop/blob/main/docs/mcp.md";
 
-/** How to use your own agent instead. */
+/** How to run geop on one's own machine instead: no limits, one's own agent. */
 function OwnAgent() {
   return (
-    <p className="hint">
-      Connect your own Claude Code instead: install the geop CLI and run <code>claude mcp add geop -- geop mcp</code>.{" "}
+    <div className="own-agent">
+      <p>Run geop on your own machine instead, with no limits:</p>
+      <ol>
+        <li>
+          Install the geop CLI: <code>curl -fsSL https://geop-cad.dev/install.sh | sh</code> (Windows:{" "}
+          <code>irm https://geop-cad.dev/install.ps1 | iex</code>)
+        </li>
+        <li>
+          Open the editor on a folder: <code>geop open</code>
+        </li>
+        <li>
+          Connect your own Claude Code: <code>claude mcp add geop -- geop mcp</code>
+        </li>
+      </ol>
       <a href={MCP_DOCS} target="_blank" rel="noopener">
-        How
+        More on using geop with an agent
       </a>
-    </p>
+    </div>
   );
 }
 
@@ -40,11 +52,6 @@ export function AssistantPanel({ assistant, onClose }: { assistant: AssistantSta
   const { configured, entries, limits, verifying, running, idle } = assistant;
   const spent = entries.some((e) => e.kind === "used_up") || limits?.turns_left_today === 0;
 
-  useEffect(() => {
-    if (configured) assistant.connect();
-    // Once, when the panel is first shown: the check runs before the first message.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [configured]);
   useEffect(() => {
     log.current?.scrollTo({ top: log.current.scrollHeight });
   }, [entries.length, running]);
@@ -118,6 +125,7 @@ export function AssistantPanel({ assistant, onClose }: { assistant: AssistantSta
                 </p>
               );
             case "used_up":
+            case "rate_limited":
               return (
                 <div key={i} className="chat-used-up">
                   <p>{entry.text}</p>

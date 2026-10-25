@@ -324,8 +324,8 @@ fn new_steps_handles_are_dragged_in_steps() {
     editor.handle(Command::New {
         kind: "extrude".into(),
     });
-    // From the side, in perspective: the hole sketch's extrude ends a unit
-    // above the box's top, at (1, 1, 2).
+    // From the side, in perspective: the hole sketch's extrude ends 10
+    // above the box's top, at (1, 1, 11).
     let side = |z: f64| {
         let v = |p: [f64; 3]| Vector3::from_array(p.map(Scalar::from_f64));
         Pointer {
@@ -337,7 +337,7 @@ fn new_steps_handles_are_dragged_in_steps() {
     };
     let update = editor.handle(Command::Event {
         event: StepEditEvent::Hover {
-            pointer: side(2.0),
+            pointer: side(11.0),
             shift: false,
         },
     });
@@ -345,10 +345,10 @@ fn new_steps_handles_are_dragged_in_steps() {
         update.step.unwrap().presentation.grab,
         "the handle offers a grab"
     );
-    for (z, done) in [(2.1, false), (2.2, false), (2.3, true)] {
+    for (z, done) in [(11.1, false), (11.2, false), (11.3, true)] {
         editor.handle(Command::Event {
             event: StepEditEvent::Drag {
-                from: side(2.0),
+                from: side(11.0),
                 to: side(z),
                 done,
                 shift: false,
@@ -358,7 +358,7 @@ fn new_steps_handles_are_dragged_in_steps() {
     handled(&mut editor, Command::Commit);
     let program = editor.program();
     let extrude: ExtrudeArgs = args(program.steps.last().unwrap());
-    assert_eq!(extrude.extent.side1, crate::Extent::blind(1.3));
+    assert_eq!(extrude.extent.side1, crate::Extent::blind(10.3));
 }
 
 /// A new step whose first input is still empty starts by picking it — a

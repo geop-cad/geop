@@ -1751,6 +1751,27 @@ button,
 .star-link span {
   color: #f5c451;
 }
+.discord-link,
+.bug-link {
+  margin-left: 0;
+}
+.toolbar button.bug-link {
+  height: auto;
+  padding: 0.3rem 0.7rem;
+  border: 1px solid var(--line-strong);
+  border-radius: 999px;
+  background: transparent;
+}
+.bug-link .icon {
+  width: 14px;
+  height: 14px;
+  color: #ff9a7a;
+}
+.discord-link .icon {
+  width: 14px;
+  height: 14px;
+  color: #8c9eff;
+}
 .star-link:hover {
   color: var(--text);
   border-color: var(--accent);
@@ -2304,4 +2325,28 @@ button.danger:hover:not(:disabled) {
   .mobile-tab-content .assistant {
     height: 100%;
   }
+}
+
+/* How to run geop locally: when the free assistant is used up or busy. */
+.own-agent {
+  font-size: 0.8rem;
+  color: var(--text-2);
+  line-height: 1.5;
+}
+.own-agent p {
+  margin: 0.4rem 0 0.3rem;
+}
+.own-agent ol {
+  margin: 0 0 0.4rem;
+  padding-left: 1.2rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+}
+.own-agent code {
+  word-break: break-all;
+  user-select: all;
+}
+.own-agent a {
+  color: var(--accent);
 }

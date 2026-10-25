@@ -108,14 +108,14 @@ impl PartOperation for Extrude {
     type Args = ExtrudeArgs;
     type Session = ();
 
-    /// The newest sketch, a unit up, joined to the newest solid if there is
-    /// one.
+    /// The newest sketch, 10 up — a size that reads in millimetres —
+    /// joined to the newest solid if there is one.
     fn new_args(context: &Context) -> ExtrudeArgs {
         let before = &context.before;
         let newest = before.targets_of::<PlacedSketch>().pop();
         ExtrudeArgs {
             sketch: SketchRef::whole(newest.unwrap_or_else(|| geop_ops_model::sketch::sketch(""))),
-            extent: Extents::blind(1.0),
+            extent: Extents::blind(10.0),
             output: Output::new_for(&read_model(before).unwrap_or_default()),
         }
     }

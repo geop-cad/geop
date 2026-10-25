@@ -208,7 +208,7 @@ mod editor {
         });
         editor.handle(dialog("distance", Value::Number(2.0)));
         // Not in the program until committed.
-        assert_eq!(distance(&editor, "extrude1"), 1.0);
+        assert_eq!(distance(&editor, "extrude1"), 10.0);
         editor.handle(Command::Commit);
         assert_eq!(distance(&editor, "extrude1"), 2.0);
 
@@ -225,7 +225,7 @@ mod editor {
         for _ in 0..3 {
             editor.handle(Command::Undo);
         }
-        assert_eq!(distance(&editor, "extrude1"), 1.0);
+        assert_eq!(distance(&editor, "extrude1"), 10.0);
         let update = editor.handle(Command::Redo);
         assert!(update.program.unwrap().can_redo);
         assert_eq!(distance(&editor, "extrude1"), 2.0);

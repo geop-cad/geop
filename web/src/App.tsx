@@ -52,7 +52,7 @@ import { MobileBottom, type MobileTab } from "./MobileBottom";
 import { useIsMobile } from "./useIsMobile";
 import { scopeTextSelection } from "./selection";
 import { AssistantPanel } from "./Assistant";
-import { useAssistant } from "./useAssistant";
+import { ASSISTANT_CONFIGURED, useAssistant } from "./useAssistant";
 import type { ToolResult } from "./agent";
 
 /** Whether a key press belongs to a field being typed into rather than to the step. */
@@ -62,6 +62,9 @@ function typing(e: KeyboardEvent): boolean {
 }
 
 /** The commands that change the program, for statistics. */
+/** Where it is kept that the assistant was closed, to stay closed. */
+const ASSISTANT_CLOSED = "geop.assistantClosed";
+
 const EDITS: Command["command"][] = ["commit", "remove", "move", "paste", "load", "load_example", "undo", "redo"];
 
 /** Download `data` as the file `name`, of the media type `type`. */
@@ -262,7 +265,28 @@ function App() {
     }
   }
 
-  const [assistantOpen, setAssistantOpen] = useState(false);
+  // Shown by default where the assistant is offered, until closed: the
+  // session (and the check that one is human) starts with the first message,
+  // so a visitor who never asks costs nothing.
+  const [assistantOpen, setAssistantOpenState] = useState(() => {
+    if (!ASSISTANT_CONFIGURED) return false;
+    try {
+      return localStorage.getItem(ASSISTANT_CLOSED) !== "1";
+    } catch {
+      return true;
+    }
+  });
+  const setAssistantOpen = (update: (open: boolean) => boolean) =>
+    setAssistantOpenState((open) => {
+      const next = update(open);
+      try {
+        if (next) localStorage.removeItem(ASSISTANT_CLOSED);
+        else localStorage.setItem(ASSISTANT_CLOSED, "1");
+      } catch {
+        // Without storage it is shown again next time.
+      }
+      return next;
+    });
   const assistant = useAssistant({
     program: program?.program ?? null,
     idle: wasmReady && step == null,
@@ -933,7 +957,7 @@ function App() {
         </div>
         {!host && assistantOpen && (
           <aside className="assistant-bar desktop-only">
-            <AssistantPanel assistant={assistant} onClose={() => setAssistantOpen(false)} />
+            <AssistantPanel assistant={assistant} onClose={() => setAssistantOpen(() => false)} />
           </aside>
         )}
       </div>

@@ -8,6 +8,9 @@ import { Privacy } from "./Privacy";
 import { title } from "./examples";
 import logo from "./assets/logo.svg";
 
+/** The community's Discord server. */
+const DISCORD = "https://discord.gg/btRDgrcwJ5";
+
 interface Props {
   busy: boolean;
   /** Whether the program files are somebody else's (VS Code): saving, loading and reporting are theirs. */
@@ -153,7 +156,7 @@ export function Toolbar({
             label: "Discord community",
             icon: "chat",
             title: "Ask questions and show what you built: discord.gg/btRDgrcwJ5",
-            onSelect: () => window.open("https://discord.gg/btRDgrcwJ5", "_blank", "noopener"),
+            onSelect: () => window.open(DISCORD, "_blank", "noopener"),
           },
           { kind: "item", label: "Privacy", icon: "privacy", onSelect: () => setPrivacyOpen(true) },
         ] as MenuEntry[])),
@@ -214,6 +217,26 @@ export function Toolbar({
         >
           <span aria-hidden="true">★</span> Star on GitHub
         </a>
+      )}
+      {!hosted && (
+        <a
+          className="star-link discord-link desktop-only"
+          href={DISCORD}
+          target="_blank"
+          rel="noopener"
+          title="Ask questions and show what you built on the geop Discord"
+        >
+          <Icon name="chat" /> Discord
+        </a>
+      )}
+      {!hosted && (
+        <button
+          className="star-link bug-link desktop-only"
+          onClick={onBugReportOpen}
+          title="Something went wrong? Send us the part and what happened"
+        >
+          <Icon name="bug" /> Report a bug
+        </button>
       )}
       {assistantOpen != null && (
         <button
