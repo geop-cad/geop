@@ -2,8 +2,7 @@
 //! any placed part as far as the program's mates let it.
 
 use geop_core_editor::{
-    editable::{OperationGroup, OperationTier},
-    editing::{Dialog, Presentation, Pull, Shape, StepEditEvent, Style, Visual},
+    editing::{Dialog, Layout, Presentation, Pull, Shape, StepEditEvent, Style, Visual},
     editor::{Changed, EditorContext},
     tools::{Tool, ToolInfo},
 };
@@ -43,13 +42,11 @@ struct Grabbed {
 }
 
 impl DragTool {
-    /// How a toolbar offers it, and its key.
+    /// How an editor offers it, and its key.
     pub const INFO: ToolInfo = ToolInfo {
         key: "drag",
         label: "Drag",
         doc: "Drag placed parts as far as their mates let them",
-        group: OperationGroup::Assembly,
-        tier: OperationTier::Big,
         icon: Some(icons::DRAG),
     };
 
@@ -128,6 +125,7 @@ impl Tool for DragTool {
         let lit = (self.grab.as_ref().map(|g| &g.name)).or(self.hover.as_ref());
         Presentation {
             dialog: Dialog::new(),
+            layout: Layout::default(),
             visuals: (lit.map(|name| {
                 let shape = Shape::Instance { name: name.clone() };
                 Visual::new("drag", shape, Style::Hover)

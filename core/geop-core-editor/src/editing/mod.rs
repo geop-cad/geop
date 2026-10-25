@@ -12,10 +12,10 @@ pub mod hit;
 mod visual;
 
 pub use dialog::{
-    Action, Choice, Control, Dialog, Field, ListItem, Number, Picked, Reference, Tone, Track, Unit,
-    is_formula,
+    Action, Cell, Choice, Column, ColumnKind, Control, Dialog, Field, Layout, ListItem, Number,
+    Picked, Reference, Table, TableRow, Tone, Track, Unit, is_formula,
 };
-pub use event::{Button, CanvasEvent, DRAG_SNAP, Pointer, Reach, StepEditEvent, Value};
+pub use event::{Button, CanvasEvent, DRAG_SNAP, Pointer, Reach, StepEditEvent, TableEdit, Value};
 pub use form::{Event, Form, InHand, Pull};
 pub use gizmo::{Axis, Change, Gizmo, GizmoDrag, GizmoPart, GizmoView, Orientation};
 pub use visual::{Extent, Presentation, Prompt, Shape, Style, TRIAD, Visual};

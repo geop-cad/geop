@@ -13,7 +13,7 @@
 use geop_core_program::{numeric::NumericInput, reader::Reader};
 
 use crate::{
-    editing::{Action, CanvasEvent, Choice, Event, Form, Number, Value},
+    editing::{Action, CanvasEvent, Choice, Event, Form, Layout, Number, Table, TableEdit, Value},
     selectable::{Selectable, selected},
 };
 
@@ -23,6 +23,17 @@ pub struct Edit<'e, A, T> {
     pub args: &'e mut A,
     pub session: &'e mut T,
     pub selection: &'e mut Vec<String>,
+}
+
+impl<A, T> Edit<'_, A, T> {
+    /// The same edit, to hand to one more setter.
+    pub fn again(&mut self) -> Edit<'_, A, T> {
+        Edit {
+            args: &mut *self.args,
+            session: &mut *self.session,
+            selection: &mut *self.selection,
+        }
+    }
 }
 
 /// What a step edited through an [`EditForm`] keeps while it is edited, as
@@ -99,6 +110,74 @@ impl<'a, A, T> EditForm<'a, A, T> {
     /// one of its items — a list's entries each have their own key.
     pub fn on(&mut self, key: impl Into<String>, setter: impl Fn(Edit<'_, A, T>, Value) + 'a) {
         self.setters.push((key.into(), Box::new(setter)));
+    }
+
+    /// Shown as `layout` says (see [`Layout`]).
+    pub fn layout(&mut self, layout: Layout) -> &mut Self {
+        self.form.layout = layout;
+        self
+    }
+
+    /// Text typed — a name, a title — `set` to what is typed (see
+    /// [`crate::editing::Dialog::input`]).
+    pub fn input(
+        &mut self,
+        key: &str,
+        label: impl Into<String>,
+        value: impl Into<String>,
+        placeholder: Option<&str>,
+        set: impl Fn(Edit<'_, A, T>, &str) + 'a,
+    ) -> &mut Self {
+        self.form.dialog.input(key, label, value, placeholder);
+        self.on(key, move |edit, value| {
+            if let Value::Text(text) = value {
+                set(edit, &text);
+            }
+        });
+        self
+    }
+
+    /// A table edited in place (see [`Table`]): `edit` is run for each
+    /// thing done to it. A block pasted is taken apart here, into a row
+    /// added for each line below the last and the cells set, in reading
+    /// order — so `edit` never sees a [`TableEdit::Paste`], and a cell set
+    /// in a row just added finds the row there.
+    pub fn table(
+        &mut self,
+        key: &str,
+        table: Table,
+        edit: impl Fn(Edit<'_, A, T>, TableEdit) + 'a,
+    ) -> &mut Self {
+        let (rows, columns) = (table.rows.len(), table.columns.len());
+        self.form.dialog.table(key, table);
+        self.on(key, move |mut e, value| {
+            let Value::Table(what) = value else {
+                return;
+            };
+            let TableEdit::Paste {
+                row,
+                column,
+                cells,
+            } = what
+            else {
+                return edit(e, what);
+            };
+            let mut rows = rows;
+            for (r, line) in cells.into_iter().enumerate() {
+                let row = row + r;
+                while row >= rows {
+                    edit(e.again(), TableEdit::AddRow);
+                    rows += 1;
+                }
+                for (c, text) in line.into_iter().enumerate() {
+                    let column = column + c;
+                    if column < columns {
+                        edit(e.again(), TableEdit::Cell { row, column, text });
+                    }
+                }
+            }
+        });
+        self
     }
 
     /// Things to do or choose; pressing one runs `run` with its value.
@@ -278,4 +357,57 @@ pub fn choices<T: PartialEq>(options: &[(T, &str, &str)], chosen: &T) -> (String
 /// has the value `value`.
 pub fn chosen<T: Copy>(options: &[(T, &str, &str)], value: &str) -> Option<T> {
     options.iter().find(|o| o.1 == value).map(|o| o.0)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::editing::{Cell, Column, ColumnKind, TableRow};
+
+    /// A block pasted into a table reaches the operation as the rows added
+    /// below the last and the cells set, in reading order, and never as a
+    /// paste; what runs past the last column is dropped.
+    #[test]
+    fn a_paste_is_taken_apart_into_rows_added_and_cells_set() {
+        let columns = vec![
+            Column::new("a", ColumnKind::Text),
+            Column::new("b", ColumnKind::Text),
+        ];
+        let rows = vec![TableRow::new(vec![Cell::new(""), Cell::new("")])];
+        let table = Table::new(columns, rows, "");
+        let mut form = EditForm::<Vec<TableEdit>>::default();
+        form.table("t", table, |edit, what| edit.args.push(what));
+        let mut seen = Vec::new();
+        let mut state = FormState::<()>::default();
+        let edit = Edit {
+            args: &mut seen,
+            session: &mut state.session,
+            selection: &mut state.selection,
+        };
+        let paste = TableEdit::Paste {
+            row: 0,
+            column: 1,
+            cells: vec![
+                vec!["x".into(), "over".into()],
+                vec!["y".into()],
+                vec!["z".into()],
+            ],
+        };
+        form.set("t", edit, Value::Table(paste));
+        let cell = |row, column, text: &str| TableEdit::Cell {
+            row,
+            column,
+            text: text.into(),
+        };
+        assert_eq!(
+            seen,
+            [
+                cell(0, 1, "x"),
+                TableEdit::AddRow,
+                cell(1, 1, "y"),
+                TableEdit::AddRow,
+                cell(2, 1, "z"),
+            ]
+        );
+    }
 }

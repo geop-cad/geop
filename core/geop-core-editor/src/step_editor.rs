@@ -778,6 +778,7 @@ impl StepEditor {
             .collect();
         Ok(Presentation {
             dialog: form.dialog,
+            layout: form.layout,
             visuals,
             highlights,
             pickable,

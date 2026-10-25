@@ -29,6 +29,164 @@ pub enum Tone {
     Success,
 }
 
+/// Where an editor shows a step's dialog, as the operation asks (see
+/// [`super::Form::layout`]).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Layout {
+    /// Beside the viewport, one field under the other: the part stays in
+    /// reach, for picks and drags.
+    #[default]
+    Sidebar,
+    /// Over the middle of the viewport, wide: for a form of tables, where
+    /// nothing is picked.
+    Popup,
+}
+
+/// What the cells of a [`Table`]'s column hold, which decides how they are
+/// edited.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum ColumnKind {
+    /// A name, a word.
+    Text,
+    /// A number, of `unit`.
+    Number { unit: Unit },
+    /// A number, or a formula of the part's parameters: what it comes to,
+    /// or why it does not, is the cell's [`Cell::detail`].
+    Formula,
+}
+
+/// A column of a [`Table`].
+#[derive(Clone, Debug, PartialEq, Serialize)]
+pub struct Column {
+    pub label: String,
+    pub kind: ColumnKind,
+    /// Whether it is the user's: named by typing in its header
+    /// ([`super::TableEdit::Column`]), and taken out
+    /// ([`super::TableEdit::RemoveColumn`]).
+    pub editable: bool,
+}
+
+impl Column {
+    /// A column of `kind`, headed `label`, that is the operation's.
+    pub fn new(label: impl Into<String>, kind: ColumnKind) -> Self {
+        Self {
+            label: label.into(),
+            kind,
+            editable: false,
+        }
+    }
+
+    /// The user's: renamed and taken out (see [`Column::editable`]).
+    pub fn editable(mut self) -> Self {
+        self.editable = true;
+        self
+    }
+}
+
+/// One cell of a [`Table`]: what it holds, as text, and what is said of it.
+#[derive(Clone, Debug, PartialEq, Serialize)]
+pub struct Cell {
+    /// What it holds, as typed: a name, a number, a formula.
+    pub text: String,
+    /// Said beside it: what a formula comes to, or why it does not.
+    pub detail: Option<String>,
+    pub tone: Tone,
+}
+
+impl Cell {
+    pub fn new(text: impl Into<String>) -> Self {
+        Self {
+            text: text.into(),
+            detail: None,
+            tone: Tone::Normal,
+        }
+    }
+
+    /// A number, as a cell shows it.
+    pub fn number(value: f64) -> Self {
+        Self::new(value.to_string())
+    }
+
+    /// With `detail` said beside it, in `tone`.
+    pub fn detail(mut self, detail: impl Into<String>, tone: Tone) -> Self {
+        self.detail = Some(detail.into());
+        self.tone = tone;
+        self
+    }
+}
+
+/// One row of a [`Table`]: a cell per column.
+#[derive(Clone, Debug, PartialEq, Serialize)]
+pub struct TableRow {
+    pub cells: Vec<Cell>,
+    /// The row chosen, of a table one row of which is
+    /// ([`Table::selectable`]).
+    pub selected: bool,
+    /// Whether it can be taken out ([`super::TableEdit::RemoveRow`]).
+    pub removable: bool,
+}
+
+impl TableRow {
+    pub fn new(cells: Vec<Cell>) -> Self {
+        Self {
+            cells,
+            selected: false,
+            removable: true,
+        }
+    }
+}
+
+/// A table edited in place: columns with headers and kinds, rows of cells,
+/// rows added, taken out and moved, cells typed into one at a time or
+/// pasted as a block. Everything done to it is sent back as one
+/// [`super::Value::Table`] edit (see [`super::TableEdit`]); the operation
+/// holds the data, and says what each edit does.
+#[derive(Clone, Debug, PartialEq, Serialize)]
+pub struct Table {
+    pub columns: Vec<Column>,
+    pub rows: Vec<TableRow>,
+    /// Shown when there are no rows.
+    pub empty: String,
+    /// Whether rows are added, after the last ([`super::TableEdit::AddRow`]),
+    /// and moved ([`super::TableEdit::MoveRow`]).
+    pub rows_editable: bool,
+    /// Whether columns are added ([`super::TableEdit::AddColumn`]); the
+    /// ones that are the user's say so themselves ([`Column::editable`]).
+    pub columns_editable: bool,
+    /// Whether one row is chosen ([`super::TableEdit::SelectRow`],
+    /// [`TableRow::selected`]).
+    pub selectable: bool,
+}
+
+impl Table {
+    /// A table of `columns` and `rows`, saying `empty` without rows, whose
+    /// rows are the user's to add and move.
+    pub fn new(columns: Vec<Column>, rows: Vec<TableRow>, empty: impl Into<String>) -> Self {
+        Self {
+            columns,
+            rows,
+            empty: empty.into(),
+            rows_editable: true,
+            columns_editable: false,
+            selectable: false,
+        }
+    }
+
+    /// With columns the user adds (see [`Table::columns_editable`]).
+    pub fn columns_editable(mut self) -> Self {
+        self.columns_editable = true;
+        self
+    }
+
+    /// With one row chosen (see [`Table::selectable`]).
+    pub fn selectable(mut self) -> Self {
+        self.selectable = true;
+        self
+    }
+}
+
 /// Something to do or to choose, as an [`Control::Actions`] offers it.
 #[derive(Clone, Debug, PartialEq, Serialize)]
 pub struct Action {
@@ -331,6 +489,13 @@ pub enum Control {
         text: String,
         tone: Tone,
     },
+    /// Text typed — a name, a title — sent back as [`super::Value::Text`].
+    Input {
+        label: String,
+        value: String,
+        /// Shown in place of an empty value.
+        placeholder: Option<String>,
+    },
     /// Things to do or choose, as buttons: pressing one sends its value as
     /// [`super::Value::Choice`]. Grouped ones are shown under their group.
     Actions {
@@ -378,6 +543,9 @@ pub enum Control {
         /// Shown when there are no items.
         empty: String,
     },
+    /// A table edited in place, every edit of it sent back as one
+    /// [`super::Value::Table`].
+    Table(Table),
 }
 
 /// A control, and the key the events it sends carry.
@@ -423,6 +591,29 @@ impl Dialog {
                 tone,
             },
         )
+    }
+
+    /// Text typed: a name, a title (see [`Control::Input`]).
+    pub fn input(
+        &mut self,
+        key: &str,
+        label: impl Into<String>,
+        value: impl Into<String>,
+        placeholder: Option<&str>,
+    ) -> &mut Self {
+        self.push(
+            key,
+            Control::Input {
+                label: label.into(),
+                value: value.into(),
+                placeholder: placeholder.map(str::to_string),
+            },
+        )
+    }
+
+    /// A table edited in place (see [`Table`]).
+    pub fn table(&mut self, key: &str, table: Table) -> &mut Self {
+        self.push(key, Control::Table(table))
     }
 
     /// A list of entries, each with a key of its own.
@@ -640,7 +831,16 @@ impl Dialog {
                             _ => format!("{:.2}", n.value),
                         },
                     ),
-                    Control::Color { label, value } => (label, value.clone()),
+                    Control::Color { label, value } | Control::Input { label, value, .. } => {
+                        (label, value.clone())
+                    }
+                    Control::Table(table) => {
+                        return Some(format!(
+                            "{} {}",
+                            table.rows.len(),
+                            if table.rows.len() == 1 { "row" } else { "rows" }
+                        ));
+                    }
                     Control::Select {
                         label,
                         value,
@@ -739,6 +939,65 @@ mod tests {
                     "multiple": false,
                     "required": true,
                     "armed": false,
+                },
+            ])
+        );
+    }
+
+    /// A table is sent whole — its columns by kind, its rows of cells —
+    /// and an input as its text; a table of one row is summarised as such.
+    #[test]
+    fn tables_and_inputs_serialize() {
+        let mut dialog = Dialog::new();
+        dialog.input("name", "Looked up by", "size", Some("size"));
+        let columns = vec![
+            Column::new("Row", ColumnKind::Text),
+            Column::new("d", ColumnKind::Number { unit: Unit::Length }).editable(),
+            Column::new("Value", ColumnKind::Formula),
+        ];
+        let row = TableRow {
+            cells: vec![
+                Cell::new("M4"),
+                Cell::number(4.0),
+                Cell::new("d / 2").detail("= 2", Tone::Hint),
+            ],
+            selected: true,
+            removable: false,
+        };
+        let table = Table::new(columns, vec![row], "No rows").selectable();
+        dialog.table("table", table);
+        assert_eq!(dialog.summary(), "Looked up by=size, 1 row");
+        assert_eq!(
+            serde_json::to_value(&dialog).unwrap(),
+            json!([
+                {
+                    "key": "name",
+                    "type": "input",
+                    "label": "Looked up by",
+                    "value": "size",
+                    "placeholder": "size",
+                },
+                {
+                    "key": "table",
+                    "type": "table",
+                    "columns": [
+                        {"label": "Row", "kind": {"type": "text"}, "editable": false},
+                        {"label": "d", "kind": {"type": "number", "unit": "length"}, "editable": true},
+                        {"label": "Value", "kind": {"type": "formula"}, "editable": false},
+                    ],
+                    "rows": [{
+                        "cells": [
+                            {"text": "M4", "detail": null, "tone": "normal"},
+                            {"text": "4", "detail": null, "tone": "normal"},
+                            {"text": "d / 2", "detail": "= 2", "tone": "hint"},
+                        ],
+                        "selected": true,
+                        "removable": false,
+                    }],
+                    "empty": "No rows",
+                    "rows_editable": true,
+                    "columns_editable": false,
+                    "selectable": true,
                 },
             ])
         );

@@ -723,14 +723,9 @@ fn annotate(
         (f.form.dialog).text("refused", format!("Not added: {why}"), Tone::Error);
     }
     if s.tool == Tool::Note {
-        let mut item = ListItem::new("note_text", "Text");
-        item.text = Some(s.note.clone());
-        f.on("note_text", |edit, value| {
-            if let Value::Text(text) = value {
-                edit.session.note = text;
-            }
+        f.input("note_text", "Text", &s.note, None, |edit, text| {
+            edit.session.note = text.to_string();
         });
-        f.form.dialog.list("note", vec![item], "");
     }
 
     let mut items = Vec::new();
@@ -1119,24 +1114,12 @@ impl PartOperation for Drawing {
             args.bom,
             |Edit { args, .. }, on| args.bom = on,
         );
-        let mut title = Vec::new();
-        for (key, caption, value) in [
-            ("title:name", "Part name", &args.name),
-            ("title:material", "Material", &args.material),
-        ] {
-            f.on(key, move |edit, value| {
-                if let Value::Text(text) = value {
-                    match key {
-                        "title:name" => edit.args.name = text,
-                        _ => edit.args.material = text,
-                    }
-                }
-            });
-            let mut item = ListItem::new(key, caption);
-            item.text = Some(value.clone());
-            title.push(item);
-        }
-        f.form.dialog.list("title", title, "");
+        f.input("title:name", "Part name", &args.name, None, |edit, text| {
+            edit.args.name = text.to_string();
+        });
+        f.input("title:material", "Material", &args.material, None, |edit, text| {
+            edit.args.material = text.to_string();
+        });
         f
     }
 

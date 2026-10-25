@@ -96,6 +96,55 @@ pub enum Value {
     /// What a reference field holds now: all an operation is ever sent for
     /// one (see [`super::Reference`]).
     Elements(Vec<PickedElement>),
+    /// Something done to a table field (see [`super::Table`]).
+    Table(TableEdit),
+}
+
+/// What is done to a [`super::Table`], one thing at a time; rows and
+/// columns are named by their index in the table as it was shown.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "edit", rename_all = "snake_case")]
+pub enum TableEdit {
+    /// The cell at `row`, `column` typed into.
+    Cell {
+        row: usize,
+        column: usize,
+        text: String,
+    },
+    /// A block of text pasted at `row`, `column` — from a spreadsheet, a
+    /// row of cells per line — filling the cells from there on, and adding
+    /// rows below the last for what runs over. An operation never sees
+    /// this: its form takes it apart into the rows added and the cells set
+    /// (see [`crate::edit_form::EditForm::table`]).
+    Paste {
+        row: usize,
+        column: usize,
+        cells: Vec<Vec<String>>,
+    },
+    /// A row added, after the last.
+    AddRow,
+    RemoveRow {
+        row: usize,
+    },
+    /// The row `row` moved to be the row `to`.
+    MoveRow {
+        row: usize,
+        to: usize,
+    },
+    /// The row chosen, of a table one row of which is.
+    SelectRow {
+        row: usize,
+    },
+    /// The header of the column `column` typed into.
+    Column {
+        column: usize,
+        text: String,
+    },
+    /// A column added, after the last.
+    AddColumn,
+    RemoveColumn {
+        column: usize,
+    },
 }
 
 impl Value {

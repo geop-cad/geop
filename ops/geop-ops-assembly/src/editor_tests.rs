@@ -865,3 +865,41 @@ fn a_file_opened_again_is_not_built_again() {
     assert_ne!(deeper.steps[last], part.steps[last], "the hole changed");
     load(&mut editor, &deeper, "part.geop");
 }
+
+/// The drag tool is no operation: an editor offers it among its tools —
+/// where the inspectors are, beside what asks about the part — by its key,
+/// label, doc and icon alone, and not among the operations a step can be.
+#[test]
+fn the_drag_tool_is_offered_among_the_tools_not_the_operations() {
+    let mut editor = editor();
+    let program = handled(&mut editor, Command::Show)
+        .program
+        .expect("the program is sent");
+    let drag = (program.tools.iter())
+        .find(|tool| tool.key == "drag")
+        .expect("the drag tool is offered");
+    assert_eq!(drag.label, "Drag");
+    assert!(drag.icon.is_some());
+    assert_eq!(
+        serde_json::to_value(drag).unwrap(),
+        serde_json::json!({
+            "key": "drag",
+            "label": "Drag",
+            "doc": drag.doc,
+            "icon": drag.icon,
+        }),
+        "a tool says nothing of where a toolbar would put it"
+    );
+    assert!(
+        (program.operations.iter()).all(|op| op.kind != "drag" && op.info.label != "Drag"),
+        "the drag tool is not an operation"
+    );
+    handled(
+        &mut editor,
+        Command::Tool {
+            key: Some("drag".into()),
+        },
+    );
+    let program = handled(&mut editor, Command::Show).program.unwrap();
+    assert_eq!(program.tool.as_deref(), Some("drag"));
+}

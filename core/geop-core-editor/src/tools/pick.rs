@@ -10,7 +10,7 @@ use geop_core_program::element::PickedElement;
 
 use super::Tool;
 use crate::{
-    editing::{Dialog, Presentation, StepEditEvent},
+    editing::{Dialog, Layout, Presentation, StepEditEvent},
     editor::{Changed, EditorContext},
     output::{Inspection, InspectorInfo, Picks},
 };
@@ -121,6 +121,7 @@ impl Tool for PickTool {
         );
         Presentation {
             dialog: Dialog::new(),
+            layout: Layout::default(),
             visuals: (self.answer.iter())
                 .flat_map(|(_, answer)| answer.visuals.iter().cloned())
                 .collect(),
