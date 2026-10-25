@@ -11,7 +11,6 @@ geop-core-math.workspace = true
 geop-lib-booleans.workspace = true
 geop-ops-model.workspace = true
 # The examples: solids extruded from sketches, then split.
-geop-ops-datums.workspace = true
 geop-ops-extrude-revolve.workspace = true
 geop-ops-sketch.workspace = true
 serde.workspace = true

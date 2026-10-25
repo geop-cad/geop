@@ -24,7 +24,6 @@ use geop_ops_sketch3d::testing::route;
 fn registry() -> Registry {
     (geop_ops_model::register(Registry::default()))
         .and_then(geop_ops_sketch::register)
-        .and_then(geop_ops_datums::register)
         .and_then(geop_ops_sketch3d::register)
         .and_then(geop_ops_extrude_revolve::register)
         .and_then(crate::register)
@@ -116,7 +115,7 @@ fn a_boundary_surface_spans_sketch_lines() {
         "base",
         geop_ops_sketch::AddSketchArgs {
             plane: Some(geop_ops_sketch::SketchPlane::Datum(
-                geop_ops_datums::origin_plane(FrameAxis::Z),
+                geop_ops_model::datums::origin_plane(FrameAxis::Z),
             )),
             sketch: base,
             ..Default::default()

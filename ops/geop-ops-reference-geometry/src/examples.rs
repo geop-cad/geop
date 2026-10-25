@@ -6,7 +6,7 @@ use geop_core_editor::registry::ExampleSet;
 use geop_core_math::primitives::{DatumComponent, FrameAxis};
 use geop_core_program::program::Program;
 use geop_core_sketch::PointId;
-use geop_ops_datums::{ORIGIN, component_name, datum, origin_plane};
+use geop_ops_model::datums::{ORIGIN, component_name, datum, origin_plane};
 use geop_ops_extrude_revolve::{Extents, ExtrudeArgs, LoftArgs, Output};
 use geop_ops_model::{Combine, element};
 use geop_ops_sketch::{

@@ -35,7 +35,6 @@ apart (see Scripts).
 | `ops/geop-ops-model` | the model target: topology with stable names, features, element kinds, threads, solid notes, `Combine` and `Extent`, its drawer |
 | `ops/geop-ops-parameters` | a part's parameters, tables and properties as steps, read and renamed in a program; where placed parts are; the parameters panel |
 | `lib/geop-lib-constraints` | the constraints and unknowns of a part's state, and the solver over them |
-| `ops/geop-ops-datums` | the part's datums: the origin and those steps add |
 | `ops/geop-ops-sketch` | the sketch operation, its tools, snapping and references |
 | `ops/geop-ops-sketch3d` | the 3-D sketch operation: wires in space, paths and rails |
 | `ops/geop-ops-reference-geometry` | the datum operation: points, axes, planes and frames from what is picked |

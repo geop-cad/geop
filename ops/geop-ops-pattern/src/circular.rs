@@ -12,7 +12,7 @@ use geop_core_math::{
     primitives::{FrameAxis, Motion},
 };
 use geop_core_program::{numeric::NumericInput, part::StepContext, reader::Reader, values::Design};
-use geop_ops_datums::origin_axis;
+use geop_ops_model::datums::origin_axis;
 use geop_ops_model::{ModelOperation, NamedModel};
 use serde::{Deserialize, Serialize};
 

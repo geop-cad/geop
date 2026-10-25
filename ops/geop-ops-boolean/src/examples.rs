@@ -4,7 +4,7 @@
 use geop_core_editor::registry::ExampleSet;
 use geop_core_math::primitives::FrameAxis;
 use geop_core_program::program::Program;
-use geop_ops_datums::origin_plane;
+use geop_ops_model::datums::origin_plane;
 use geop_ops_extrude_revolve::{Extent, Extents, ExtrudeArgs, Output};
 use geop_ops_model::{Combine, element, solid};
 use geop_ops_sketch::{

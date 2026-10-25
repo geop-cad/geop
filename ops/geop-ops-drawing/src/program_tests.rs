@@ -19,7 +19,7 @@ use geop_core_program::{
 use geop_lib_sheet::to_dxf;
 use geop_lib_stdlib::WithStandardParts;
 use geop_ops_assembly::examples::{metric_plate, pose, workspaces};
-use geop_ops_datums::{ORIGIN, component_name, datum};
+use geop_ops_model::datums::{ORIGIN, component_name, datum};
 use geop_ops_extrude_revolve::examples::{box_with_drill_hole, bracket};
 use geop_ops_hole::examples::hole_plate;
 use geop_ops_model::{NamedModel, RefId, testing::model_of};
@@ -42,7 +42,6 @@ pub(crate) fn registry() -> Registry {
         let r = Registry::default();
         let r = geop_ops_model::register(r)?;
         let r = geop_ops_sketch::register(r)?;
-        let r = geop_ops_datums::register(r)?;
         let r = geop_ops_reference_geometry::register(r)?;
         let r = geop_ops_extrude_revolve::register(r)?;
         let r = geop_ops_hole::register(r)?;

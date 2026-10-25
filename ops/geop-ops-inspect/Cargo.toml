@@ -25,7 +25,6 @@ geop-ops-assembly = { workspace = true, features = ["testing"] }
 geop-ops-model = { workspace = true, features = ["testing"] }
 geop-core-sketch.workspace = true
 geop-ops-sketch.workspace = true
-geop-ops-datums.workspace = true
 # The 3-D sketches whose curves are measured.
 geop-ops-sketch3d.workspace = true
 geop-lib-sweep = { workspace = true, features = ["testing"] }

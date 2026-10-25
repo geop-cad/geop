@@ -7,7 +7,7 @@ use geop_core_math::{
     scalars::Scalar,
 };
 use geop_core_program::{operation_registry::OperationRegistry, program::Program, testing::args};
-use geop_ops_datums::{ORIGIN, component_name, datum};
+use geop_ops_model::datums::{ORIGIN, component_name, datum};
 use geop_ops_model::{
     BooleanOp, Combine, element, solid,
     testing::{Built, assert_draws_its_trims, assert_valid},

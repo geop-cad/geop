@@ -28,7 +28,7 @@ use geop_core_math::{
     scalars::{ScalInF64 as S, Scalar},
     vector::Vector3,
 };
-use geop_ops_datums::{ORIGIN, component_name, datums};
+use geop_ops_model::datums::{ORIGIN, component_name, datums};
 use geop_ops_extrude_revolve::{
     Extents, ExtrudeArgs, examples::box_with_drill_hole, testing::extrude_sketch,
 };

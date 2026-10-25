@@ -12,20 +12,6 @@
 //! step added a datum to has the origin all the same: the target reads as
 //! it where no step made it ([`HasElements::undefined`]).
 
-// Library code reports what goes wrong as an error, never by panicking;
-// tests may unwrap.
-#![cfg_attr(
-    not(test),
-    deny(
-        clippy::unwrap_used,
-        clippy::expect_used,
-        clippy::panic,
-        clippy::indexing_slicing,
-        clippy::todo,
-        clippy::unimplemented,
-        clippy::unreachable
-    )
-)]
 
 use geop_core_program::{
     element::{ElementReference, HasElements, Kind, PickedElement, whole},
@@ -37,7 +23,7 @@ use std::{borrow::Cow, collections::BTreeMap, sync::LazyLock};
 
 use geop_core_editor::view::{PartView, ViewDatum, drawn};
 use geop_core_editor::{
-    registry::{Drawer, Registry, StructureItem},
+    registry::{Drawer, StructureItem},
     selectable::SelectableElement,
 };
 use geop_core_geometry::shape::Axis;
@@ -46,7 +32,7 @@ use geop_core_math::{
     primitives::{CoordinateSystem, Datum, DatumComponent, DatumKind, FrameAxis},
     vector::Vector3,
 };
-use geop_ops_model::{Line, Plane, Point};
+use crate::{Line, Plane, Point};
 
 /// The name of the frame datum every part has: the world's origin and
 /// axes, and the three planes between them.
@@ -365,11 +351,6 @@ impl Drawer for DatumsDrawer {
     }
 }
 
-/// Adds what datums offer an editor to `r`: a part's datums drawn and
-/// listed ([`DatumsDrawer`]).
-pub fn register(r: Registry) -> GeopResult<Registry> {
-    r.drawer(DatumsDrawer)
-}
 
 #[cfg(test)]
 mod tests {
@@ -490,15 +471,13 @@ mod tests {
     #[test]
     fn frames() {
         use geop_core_editor::{registry::Registry, selectable, testing::pointer};
-        use geop_ops_model::{
+        use crate::{
             NamedModel, Solid,
             testing::{given_part, unit_cube},
         };
 
         let part = given_part(&unit_cube()).unwrap();
-        let registry = (geop_ops_model::register(Registry::default()))
-            .and_then(register)
-            .unwrap();
+        let registry = crate::register(Registry::default()).unwrap();
         let view = registry.draw(&part.current()).unwrap();
         let down = |x: f64, y: f64| pointer([x, y, 5.0], [0.0, 0.0, -1.0]);
         let frame = [drawn::DATUM, drawn::VERTEX, drawn::EDGE, drawn::FACE].map(String::from);

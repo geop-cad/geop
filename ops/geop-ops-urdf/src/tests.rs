@@ -46,7 +46,6 @@ fn registry() -> GeopResult<Registry> {
     let r = Registry::default();
     let r = geop_ops_model::register(r)?;
     let r = geop_ops_sketch::register(r)?;
-    let r = geop_ops_datums::register(r)?;
     let r = geop_ops_reference_geometry::register(r)?;
     let r = geop_ops_extrude_revolve::register(r)?;
     let r = geop_ops_assembly::register(r)?;

@@ -28,7 +28,7 @@ use geop_core_sketch::{
     CurveKind, Enclosure, PointId, ProfileJoint, ProfileLoop, Shape, profile::curve_nurbs,
 };
 use geop_core_topology::build::BuiltBody;
-use geop_ops_datums::Datums;
+use geop_ops_model::datums::Datums;
 use geop_ops_model::{Extent, Line, ModelOperation, NamedModel, Namer, build_model, read_model};
 use geop_ops_sketch::{PlacedSketch, SketchRef, chain_of_pieces, sketch_element};
 use serde::{Deserialize, Serialize};

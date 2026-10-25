@@ -22,4 +22,3 @@ serde_json.workspace = true
 geop-lib-sweep = { workspace = true, features = ["testing"] }
 geop-lib-booleans.workspace = true
 geop-core-editor = { workspace = true, features = ["testing"] }
-geop-ops-datums.workspace = true

@@ -2,7 +2,7 @@
 //! point, an axis, a plane or a coordinate system from elements picked in
 //! the part ([`Selected`]), in one of the ways CAD systems commonly offer
 //! (see [`Construction`]), and adds it to the part's datums (see
-//! [`geop_ops_datums`]).
+//! [`geop_ops_model::datums`]).
 //!
 //! [`Selected`] is this crate's public pick vocabulary: one element of a
 //! part, picked in the viewport, with the [`Role`] it plays and the

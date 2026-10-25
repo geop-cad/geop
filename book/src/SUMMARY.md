@@ -25,7 +25,6 @@
 
 - [geop-ops-model](./ops/geop-ops-model.md)
 - [geop-ops-parameters](./ops/geop-ops-parameters.md)
-- [geop-ops-datums](./ops/geop-ops-datums.md)
 - [geop-ops-sketch](./ops/geop-ops-sketch.md)
 - [geop-ops-reference-geometry](./ops/geop-ops-reference-geometry.md)
 - [geop-ops-boolean](./ops/geop-ops-boolean.md)

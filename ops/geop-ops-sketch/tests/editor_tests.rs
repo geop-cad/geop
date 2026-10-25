@@ -42,7 +42,7 @@ use geop_core_editor::{
         Gesture, Stepping, built, click_at, dialog, editor_with, from_above, handled, pointer,
     },
 };
-use geop_ops_datums::origin_plane;
+use geop_ops_model::datums::origin_plane;
 use geop_ops_extrude_revolve::{examples::box_with_drill_hole, testing::drilled_box};
 use geop_ops_model::{
     element,
@@ -55,7 +55,6 @@ use std::collections::BTreeMap;
 fn registry() -> Registry {
     (geop_ops_model::register(Registry::default()))
         .and_then(geop_ops_sketch::register)
-        .and_then(geop_ops_datums::register)
         .and_then(geop_ops_extrude_revolve::register)
         .and_then(geop_ops_parameters::register)
         .unwrap()

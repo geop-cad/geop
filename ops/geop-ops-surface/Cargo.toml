@@ -15,7 +15,6 @@ geop-ops-parameters.workspace = true
 geop-ops-sketch3d.workspace = true
 # What the examples' blocks are sketched, extruded and split by.
 geop-ops-sketch.workspace = true
-geop-ops-datums.workspace = true
 geop-ops-extrude-revolve.workspace = true
 geop-ops-boolean.workspace = true
 geop-lib-booleans.workspace = true

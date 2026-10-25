@@ -34,7 +34,7 @@ use geop_ops_sketch::{
     sketch_element, whole_sketch,
 };
 
-use geop_ops_datums::datums;
+use geop_ops_model::datums::datums;
 use geop_ops_pattern::{CircularPattern, LinearPattern, Mirror};
 use geop_ops_reference_geometry::{AddDatum, AddDatumArgs, Construction, Selected};
 

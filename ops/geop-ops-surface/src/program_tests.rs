@@ -15,7 +15,7 @@ use geop_core_program::{
     values::Design,
 };
 use geop_core_sketch::PointId;
-use geop_ops_datums::{ORIGIN, component_name, datums};
+use geop_ops_model::datums::{ORIGIN, component_name, datums};
 use geop_ops_extrude_revolve::{Extents, ExtrudeArgs, LoftArgs, Output};
 use geop_ops_model::{
     NamedModel,

@@ -44,6 +44,7 @@
 mod build;
 mod combine;
 pub mod curves;
+pub mod datums;
 mod describe;
 mod draw;
 mod edit;
@@ -87,7 +88,8 @@ use geop_core_editor::registry::Registry;
 use geop_core_math::geop_error::GeopResult;
 
 /// Adds what the model offers an editor to `r`: the part's model drawn, and
-/// its solids and faces listed ([`ModelDrawer`]).
+/// its solids and faces listed ([`ModelDrawer`]); its datums drawn and
+/// listed ([`datums::DatumsDrawer`]).
 pub fn register(r: Registry) -> GeopResult<Registry> {
-    r.drawer(ModelDrawer)
+    r.drawer(ModelDrawer)?.drawer(datums::DatumsDrawer)
 }

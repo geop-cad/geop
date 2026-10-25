@@ -14,7 +14,7 @@ use geop_core_math::{
     vector::Vector3,
 };
 use geop_core_program::{numeric::NumericInput, part::StepContext, reader::Reader, values::Design};
-use geop_ops_datums::origin_axis;
+use geop_ops_model::datums::origin_axis;
 use geop_ops_model::{ModelOperation, NamedModel};
 use serde::{Deserialize, Serialize};
 

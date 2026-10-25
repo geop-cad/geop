@@ -18,7 +18,6 @@ use geop_ops_model::element;
 fn registry() -> Registry {
     (geop_ops_model::register(Registry::default()))
         .and_then(geop_ops_sketch::register)
-        .and_then(geop_ops_datums::register)
         .and_then(geop_ops_reference_geometry::register)
         .and_then(geop_ops_extrude_revolve::register)
         .and_then(geop_ops_shell::register)

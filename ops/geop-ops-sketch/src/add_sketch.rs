@@ -19,7 +19,7 @@ use geop_core_math::{
     with_context,
 };
 use geop_core_sketch::ConstraintId;
-use geop_ops_datums::Datums;
+use geop_ops_model::datums::Datums;
 use geop_ops_model::{NamedModel, Plane};
 use serde::{Deserialize, Serialize};
 

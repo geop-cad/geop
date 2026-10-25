@@ -8,7 +8,7 @@ use geop_core_editor::one_of;
 use geop_core_geometry::shape::Axis;
 use geop_core_math::{geop_error::GeopResult, vector::Vector3};
 use geop_core_program::{element::ElementReference, reader::Reader, values::Design};
-use geop_ops_datums::Datums;
+use geop_ops_model::datums::Datums;
 use geop_ops_model::{Line, NamedModel, Plane, Round};
 use geop_ops_sketch::PlacedSketch;
 

@@ -12,7 +12,7 @@ use geop_core_program::{
     element::ElementReference, operation_registry::OperationRegistry, program::Program,
     testing::as_step, values::Design,
 };
-use geop_ops_datums::origin_axis;
+use geop_ops_model::datums::origin_axis;
 use geop_ops_edit::{DeleteBody, DeleteBodyArgs, ExtractFace, ExtractFaceArgs};
 use geop_ops_extrude_revolve::{
     Extent, ExtrudeArgs, Output, RevolveArgs, RevolveAxis,

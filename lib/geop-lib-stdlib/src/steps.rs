@@ -12,7 +12,7 @@
 use geop_core_math::{geop_error::GeopResult, primitives::FrameAxis};
 use geop_core_program::{element::ElementReference, program::Program};
 use geop_core_sketch::CurveId;
-use geop_ops_datums::{Datums, datums, origin_axis, origin_plane};
+use geop_ops_model::datums::{Datums, datums, origin_axis, origin_plane};
 use geop_ops_extrude_revolve::{Extent, Extents, ExtrudeArgs, Output, RevolveArgs, RevolveAxis};
 use geop_ops_model::Combine;
 use geop_ops_parameters::{

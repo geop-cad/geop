@@ -20,7 +20,6 @@ serde.workspace = true
 
 [dev-dependencies]
 geop-ops-sketch.workspace = true
-geop-ops-datums.workspace = true
 geop-ops-reference-geometry.workspace = true
 geop-ops-extrude-revolve.workspace = true
 serde_json.workspace = true

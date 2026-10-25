@@ -29,7 +29,7 @@ use geop_core_program::{
 };
 use geop_core_sketch::CurveId;
 use geop_lib_stdlib::{Drawing, outline_plane};
-use geop_ops_datums::{datum, origin_plane};
+use geop_ops_model::datums::{datum, origin_plane};
 use geop_ops_extrude_revolve::{
     Extent, Extents, Extrude, ExtrudeArgs, Output,
     examples::{box_with_drill_hole, parametric_plate},

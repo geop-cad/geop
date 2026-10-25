@@ -19,7 +19,7 @@ use geop_core_program::{
     workspace::{self, Files, Location},
 };
 use geop_core_topology::validation::{ValidationParameters, validate_fast};
-use geop_ops_datums::read_datums;
+use geop_ops_model::datums::read_datums;
 use geop_ops_model::{
     NamedModel, RefId, read_model,
     testing::{check_valid, model_of},
@@ -39,7 +39,6 @@ fn registry() -> Registry {
         let r = Registry::default();
         let r = geop_ops_model::register(r)?;
         let r = geop_ops_sketch::register(r)?;
-        let r = geop_ops_datums::register(r)?;
         let r = geop_ops_reference_geometry::register(r)?;
         let r = geop_ops_extrude_revolve::register(r)?;
         let r = geop_ops_pattern::register(r)?;
@@ -575,7 +574,7 @@ fn gear_drive() -> Program {
         vector::Vector3,
     };
     use geop_ops_assembly::{AddPartArgs, CouplingKind, JointKind, Mate, MateEntity, Transmission};
-    use geop_ops_datums::{ORIGIN, component_name, datum};
+    use geop_ops_model::datums::{ORIGIN, component_name, datum};
     use geop_ops_reference_geometry::{AddDatumArgs, Construction, Selected};
 
     let n = Design::from_f64;

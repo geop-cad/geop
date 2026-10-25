@@ -23,14 +23,12 @@ serde.workspace = true
 # Only for `testing`: the datums the enclosure's reference plane is built
 # among, the steps building it, and the step shelling the enclosure.
 geop-ops-extrude-revolve = { workspace = true, optional = true }
-geop-ops-datums = { workspace = true, optional = true }
 geop-ops-reference-geometry = { workspace = true, optional = true }
 geop-ops-shell = { workspace = true, optional = true }
 
 [features]
 # The enclosure of `testing`, for other crates' tests.
 testing = [
-    "dep:geop-ops-datums",
     "dep:geop-ops-reference-geometry",
     "dep:geop-ops-extrude-revolve",
     "dep:geop-ops-shell",
@@ -41,7 +39,6 @@ testing = [
 geop-ops-model = { workspace = true, features = ["testing"] }
 geop-ops-extrude-revolve = { workspace = true, features = ["testing"] }
 # The optional dependencies of `testing`, for this crate's own tests.
-geop-ops-datums.workspace = true
 geop-ops-reference-geometry.workspace = true
 geop-ops-shell.workspace = true
 geop-ops-fillet.workspace = true

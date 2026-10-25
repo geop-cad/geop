@@ -822,7 +822,7 @@ every setter.
 A step's arguments refer to what other steps built by typed references
 (`ElementReference<Target, Kind>`), never by bare strings: a face to sketch
 on is `ElementReference<NamedModel<Design>, Plane>`, made with
-`geop_ops_model::element(name)`; a datum with `geop_ops_datums::datum`; a
+`geop_ops_model::element(name)`; a datum with `geop_ops_model::datums::datum`; a
 sketch with `geop_ops_sketch::whole_sketch`. A field that takes one of
 several kinds of thing is an enum made by `one_of!`, which derives how it
 is saved, picked and resolved. An element of a part placed in the part is

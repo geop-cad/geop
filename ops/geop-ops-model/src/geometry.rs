@@ -269,7 +269,9 @@ macro_rules! picked_where_it_has_the_shape {
                 reader: &Reader,
                 hit: &PickedElement,
             ) -> Option<ElementReference<NamedModel<Design>, Self>> {
-                (hit.target == *model().location() && Self::PICKED_FROM.contains(&hit.kind.as_str()))
+                (hit.target == *model().location()
+                    && <Self as SelectableElement<NamedModel<Design>>>::PICKED_FROM
+                        .contains(&hit.kind.as_str()))
                     .then_some(())?;
                 let reference = ElementReference::new(model(), &hit.name);
                 reader.retrieve_element(&reference).ok()?;

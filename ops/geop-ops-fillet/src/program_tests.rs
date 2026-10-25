@@ -10,7 +10,7 @@ use geop_core_math::{
 use geop_core_program::{
     element::ElementReference, operation_registry::OperationRegistry, program::Program,
 };
-use geop_ops_datums::{ORIGIN, component_name, datums};
+use geop_ops_model::datums::{ORIGIN, component_name, datums};
 use geop_ops_extrude_revolve::{
     Extents, LoftArgs, Output,
     testing::{drilled_box, extrusion},

@@ -7,7 +7,7 @@
 use geop_core_math::{primitives::FrameAxis, scalars::Scalar};
 use geop_core_program::{element::ElementReference, values::Design};
 use geop_core_sketch::{CurveId, PointId};
-use geop_ops_datums::origin_plane;
+use geop_ops_model::datums::origin_plane;
 use geop_ops_model::model;
 
 use crate::{Constraint, Sketch, SketchPlane};

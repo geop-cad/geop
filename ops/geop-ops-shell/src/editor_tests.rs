@@ -15,7 +15,6 @@ use geop_ops_extrude_revolve::examples::box_with_drill_hole;
 fn registry() -> Registry {
     (geop_ops_model::register(Registry::default()))
         .and_then(geop_ops_sketch::register)
-        .and_then(geop_ops_datums::register)
         .and_then(geop_ops_extrude_revolve::register)
         .and_then(crate::register)
         .expect("the operations each have a name of their own")

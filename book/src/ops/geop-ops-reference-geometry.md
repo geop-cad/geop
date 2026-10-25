@@ -7,7 +7,7 @@ Reference geometry as an operation (see
 `AddDatum` builds a point, an axis, a plane or a coordinate system from
 elements picked in the part, in one of the ways CAD systems commonly offer
 (`Construction`), and adds it to the part's datums (see
-[geop-ops-datums](./geop-ops-datums.md)) under the step's id:
+[geop-ops-model](./geop-ops-model.md#datums-datums)) under the step's id:
 
 - **points:** offset point, midpoint, point on edge, center, projection onto
   a plane or a line, line meets plane, lines meet, three planes meet;

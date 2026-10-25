@@ -28,7 +28,7 @@ use geop_ops_sketch::{
     sketch_element,
 };
 
-use geop_ops_datums::{origin_axis, origin_plane};
+use geop_ops_model::datums::{origin_axis, origin_plane};
 use geop_ops_reference_geometry::AddDatum;
 use geop_ops_sketch3d::AddSketch3d;
 

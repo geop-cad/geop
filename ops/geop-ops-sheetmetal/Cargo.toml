@@ -15,7 +15,6 @@ geop-ops-model.workspace = true
 geop-ops-parameters.workspace = true
 geop-ops-sketch.workspace = true
 # What the examples sketch on: the origin's planes.
-geop-ops-datums.workspace = true
 geop-lib-sheet.workspace = true
 serde.workspace = true
 

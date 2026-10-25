@@ -26,7 +26,7 @@ use geop_core_math::{
 };
 use geop_lib_sweep::shapes::{block_part, v3};
 use geop_lib_constraints::Constraints;
-use geop_ops_datums::{ORIGIN, component_name, datums, origin_axis, read_datums};
+use geop_ops_model::datums::{ORIGIN, component_name, datums, origin_axis, read_datums};
 use geop_ops_model::{read_model, testing::assert_close};
 use geop_ops_pattern::spacing::Spacing;
 use geop_ops_reference_geometry::Selected;

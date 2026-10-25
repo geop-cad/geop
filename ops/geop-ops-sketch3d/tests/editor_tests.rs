@@ -40,7 +40,6 @@ use std::collections::BTreeMap;
 fn registry() -> Registry {
     (geop_ops_model::register(Registry::default()))
         .and_then(geop_ops_sketch::register)
-        .and_then(geop_ops_datums::register)
         .and_then(geop_ops_sketch3d::register)
         .and_then(geop_ops_extrude_revolve::register)
         .unwrap()

@@ -14,7 +14,7 @@ use geop_core_math::{
     scalars::{ScalInF64 as S, Scalar},
 };
 use geop_core_topology::Body;
-use geop_ops_datums::{datums, read_datums};
+use geop_ops_model::datums::{datums, read_datums};
 use geop_ops_extrude_revolve::{
     Extents,
     testing::{drilled_box, extrude_sketch, extrusion},
@@ -241,8 +241,8 @@ fn hole_through_the_walls_of_a_shelled_box() {
         AddDatumArgs {
             selection: vec![Selected::Datum(ElementReference::new(
                 datums(),
-                geop_ops_datums::component_name(
-                    geop_ops_datums::ORIGIN,
+                geop_ops_model::datums::component_name(
+                    geop_ops_model::datums::ORIGIN,
                     geop_core_math::primitives::DatumComponent::Plane(FrameAxis::Y),
                 ),
             ))],

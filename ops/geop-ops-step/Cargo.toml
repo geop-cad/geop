@@ -24,7 +24,6 @@ geop-lib-sweep = { workspace = true, features = ["testing"] }
 # assemblies, the standard parts beside them.
 geop-core-editor = { workspace = true, features = ["testing"] }
 geop-ops-sketch.workspace = true
-geop-ops-datums.workspace = true
 geop-ops-reference-geometry.workspace = true
 geop-ops-pattern.workspace = true
 geop-lib-stdlib.workspace = true

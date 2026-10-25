@@ -29,7 +29,7 @@ use geop_core_math::{
 use geop_core_sketch::CurveKind;
 use geop_core_topology::SolidId;
 use geop_lib_booleans::{Reach, combine_tools};
-use geop_ops_datums::Datums;
+use geop_ops_model::datums::Datums;
 use geop_ops_model::{Combine, Extent, Tool, hull, reach_past};
 use geop_ops_model::{
     CosmeticThread, Face, ModelOperation, NamedModel, Namer, Plane, Point, Threads, ToolReach,

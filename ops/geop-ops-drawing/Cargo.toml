@@ -38,7 +38,6 @@ geop-ops-hole.workspace = true
 geop-ops-subd.workspace = true
 geop-ops-fillet.workspace = true
 geop-ops-pattern.workspace = true
-geop-ops-datums.workspace = true
 geop-ops-reference-geometry.workspace = true
 geop-lib-stdlib.workspace = true
 geop-core-editor = { workspace = true, features = ["testing"] }

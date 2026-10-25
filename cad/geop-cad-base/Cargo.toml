@@ -13,7 +13,6 @@ geop-lib-stdlib.workspace = true
 # Every operation crate, registered in `registry.rs`, one line each.
 geop-ops-model.workspace = true
 geop-ops-sketch.workspace = true
-geop-ops-datums.workspace = true
 geop-ops-reference-geometry.workspace = true
 geop-ops-sketch3d.workspace = true
 geop-ops-extrude-revolve.workspace = true

@@ -26,7 +26,7 @@ use geop_core_math::{
 use geop_core_program::{numeric::NumericInput, part::StepContext, reader::Reader, values::Design};
 use serde::{Deserialize, Serialize};
 
-use geop_ops_datums::{Datums, datums};
+use geop_ops_model::datums::{Datums, datums};
 use geop_ops_model::frame_along;
 
 use crate::{
@@ -662,7 +662,7 @@ mod tests {
         scalars::ScalInF64 as S,
     };
     use geop_core_program::{element::ElementReference, operation::Operation};
-    use geop_ops_datums::{AnyDatum, ORIGIN, component_name, read_datums};
+    use geop_ops_model::datums::{AnyDatum, ORIGIN, component_name, read_datums};
     use geop_ops_model::model;
 
     use super::*;

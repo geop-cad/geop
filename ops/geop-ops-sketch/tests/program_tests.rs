@@ -31,7 +31,7 @@ use geop_core_math::{
     vector::Vector3,
 };
 use geop_core_sketch::{Constraint, CurveId, PointId};
-use geop_ops_datums::origin_plane;
+use geop_ops_model::datums::origin_plane;
 use geop_ops_extrude_revolve::{
     examples::parametric_plate,
     testing::{drilled_box, registry},

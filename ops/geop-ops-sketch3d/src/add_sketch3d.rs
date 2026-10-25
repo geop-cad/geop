@@ -30,7 +30,7 @@ use geop_core_sketch::{
     space::{Constraint3d, CurveKind3d},
 };
 use geop_core_topology::build::{BodySpec, EdgeSpec};
-use geop_ops_datums::Datums;
+use geop_ops_model::datums::Datums;
 use geop_ops_model::{
     BodyNames, Chain, Curve, Line, ModelOperation, NamedModel, Namer, Point, build_model,
 };

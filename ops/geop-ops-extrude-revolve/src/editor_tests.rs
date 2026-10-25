@@ -26,7 +26,7 @@ use geop_core_program::{
     element::PickedElement, operation::Operation, reader::Reader, testing::args, values::Setting,
 };
 use geop_core_sketch::PointId;
-use geop_ops_datums::origin_axis;
+use geop_ops_model::datums::origin_axis;
 use geop_ops_model::{
     BooleanOp, Combine, Face, Point, element, read_model,
     testing::{Built, model_of, model_shown, solid_volume},
@@ -46,7 +46,6 @@ use crate::{ExtrudeArgs, Output, examples::parametric_plate, testing::registry a
 fn registry() -> Registry {
     (geop_ops_model::register(Registry::default()))
         .and_then(geop_ops_sketch::register)
-        .and_then(geop_ops_datums::register)
         .and_then(geop_ops_sketch3d::register)
         .and_then(crate::register)
         .and_then(geop_ops_parameters::register)
@@ -925,7 +924,6 @@ fn inspectors_are_offered_picked_with_and_asked() {
     // inspectors.
     let registry = (geop_ops_model::register(Registry::default()))
         .and_then(geop_ops_sketch::register)
-        .and_then(geop_ops_datums::register)
         .and_then(crate::register)
         .and_then(|r| r.inspector(Picked))
         .and_then(|r| r.inspector(Solids))
