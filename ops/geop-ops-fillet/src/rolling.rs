@@ -60,18 +60,36 @@
 //! crease is refused: a ball rolling over it would touch the crease's edge
 //! itself, along a stretch where the blend's boundary is that edge, which
 //! no boolean takes. A closed chain's tool breaks at four stations at
-//! least, so that no face of it closes onto itself.
+//! least, so that no face of it closes onto itself; every chain's at its
+//! vertices, where its edges, and the faces either side, are only tangent
+//! (see [`turns`]).
 //!
-//! **Ends.** A closed chain has none. An open one ends as a straight blend
-//! does (see [`crate::blend`]), at a corner of exactly three faces, the
-//! third a plane — run out past it where a cut leaves the solid through it,
-//! flush with it otherwise — but only where the ball's section at the
-//! corner lies in that plane, so that the tool crosses it exactly there.
+//! **Ends.** A closed chain has none. An open one ends at a corner of
+//! exactly three faces (see [`crate::blend::tool_end`]), decided at each
+//! vertex on its own by the third face there:
+//!
+//! - a plane its section at the corner lies in — the faces either side
+//!   standing square to it where the ball touches them: the tool crosses
+//!   it exactly there, run out straight past it where a cut leaves the
+//!   solid through it, and capped in it otherwise;
+//! - any other face — curved, or a plane at an angle: the blend runs on
+//!   past the vertex, rolled on the end link's faces carried on past their
+//!   ends, through the third face, until its section is clear of the
+//!   face's tangent plane there (see [`RunOn`]), and is capped there. A cut
+//!   leaving the solid through the face ends in the air past it; a cut
+//!   running into it, or a fill, is cut off by it — the tool split along a
+//!   sheet on the face carried on, round the vertex (see
+//!   [`Rolled::trims`]) — so that it meets the face where the face is. A
+//!   fill up to a face it leaves the solid through, an outward corner, is
+//!   refused: its end would lie on the corner's other edge.
+//!
 //! Where every edge of a corner is filleted, it ends at the ball rounding
 //! the corner instead, set back from it (see [`crate::corner`]): its last
 //! station that ball's great arc, untilted, the corner's piece of the ball
 //! sharing it. Two blends meeting at an inward corner are only mitred
-//! between straight edges of constant radius.
+//! between straight edges of constant radius. A chain that ends where it
+//! starts — round a face with one corner — has its tool's ends overlap
+//! there, and is built in halves (see [`Rolled::halves`]).
 //!
 //! **Chamfers.** A chamfer of any other edge than a straight one between
 //! planes or a whole circle is rolled the same way (see [`plan_chamfer`]),
@@ -102,9 +120,10 @@ use geop_core_math::{
     with_context,
 };
 use geop_core_topology::{EdgeId, FaceId, Model, VertexId};
+use geop_lib_booleans::RemeshParams;
 use geop_ops_model::NamedModel;
 
-use crate::blend::{Bend, End, bend, check_touch_at, tool_end};
+use crate::blend::{Bend, End, bend, check_touch_at, run_out_length, tool_end};
 use crate::tool::{Cap, Tool, ToolSpan, ToolStation, embed, flatten, flatten_point, wall_surface};
 use geop_ops_model::tangent::{Link, TangentChain as Chain};
 
@@ -311,11 +330,6 @@ impl RadiusLaw {
         Scalar::from_f64(r0 + f * (r1 - r0))
     }
 
-    /// Whether the radius changes along the chain.
-    fn varies(&self) -> bool {
-        self.at_vertices.windows(2).any(|w| w[0] != w[1])
-    }
-
     /// The smallest radius along the chain.
     fn smallest(&self) -> f64 {
         self.at_vertices
@@ -355,6 +369,12 @@ struct Station {
     weight: Scalar,
     apex: Vector3,
     chord: bool,
+    /// Whether the section lies wholly past the third face a blend runs
+    /// on through (see [`RunOn`]): there, in the air past a face it leaves
+    /// the solid through or in what a face it is cut off by cuts away, how
+    /// closely it follows the ball, and where it touches the faces carried
+    /// on, decides nothing.
+    aloof: bool,
 }
 
 /// The ball of signed radius `sr` — `r` along both normals, negative
@@ -432,7 +452,7 @@ fn place(
     for (k, normal) in normals.iter_mut().enumerate() {
         let surface = &model.get_face(own.faces[k])?.surface;
         let seed = match previous {
-            Some(prev) if prev.faces[k] == own.faces[k] => prev.uv[k],
+            Some(prev) if prev.faces[k] == own.faces[k] => sharp_in(surface, prev.uv[k]),
             _ => seed_on(surface, &p)?,
         };
         let (u, v) = foot(surface, &p, seed)?;
@@ -461,7 +481,7 @@ fn place(
             let mut seeds = [(Scalar::ZERO, Scalar::ZERO); 2];
             for k in 0..2 {
                 seeds[k] = match previous {
-                    Some(prev) if prev.faces[k] == pair[k] => prev.uv[k],
+                    Some(prev) if prev.faces[k] == pair[k] => sharp_in(surfaces[k], prev.uv[k]),
                     Some(prev) => seed_on(surfaces[k], &prev.contact[k])?,
                     None => seed_on(surfaces[k], &p)?,
                 };
@@ -519,6 +539,226 @@ fn place(
             sr.abs(),
         ))),
     }
+}
+
+/// Where an open chain's blend runs on past its end vertex, through the
+/// third face there — out of the solid, or into what the face cuts it off
+/// at (see [`Rolled::trims`]) — rolled, where its section at the vertex
+/// does not lie in that face, so that running straight on would leave the
+/// ball (see [`run_ons`]): the ball rolled on along the end
+/// link's edge carried on past its end, touching the link's two faces'
+/// surfaces carried on alike ([`NurbCurve::extended`],
+/// [`NurbSurface3D::extended`]), so that the blend up to the third face is
+/// the ball's on the faces as they go on, and only the part in the air,
+/// past it, is on their continuations. Each goes on as the polynomial it
+/// is, so the sections turn on past the vertex as smoothly as before it,
+/// and the tool's spans need not break there — a station there would put
+/// its corner on the vertex. A position past the chain's end is a fraction
+/// of the end link past it, as along the link.
+#[derive(Clone, Debug)]
+pub(crate) struct RunOn {
+    /// The third face's tangent plane at the vertex, `(point, normal)`, the
+    /// normal along the way the chain runs on: what a section has to be
+    /// wholly past to be aloof (see [`Station::aloof`]).
+    past: (Vector3, Vector3),
+    link: Link,
+    curve: NurbCurve3D,
+    /// The edge's own domain, which the link's fractions are of.
+    domain: (Scalar, Scalar),
+    /// The edge's length: how far a fraction of it is.
+    scale: f64,
+    surfaces: [NurbSurface3D; 2],
+}
+
+impl RunOn {
+    /// The run-on past the end `at_end` of `chain` — or its start — out of
+    /// its end vertex `vertex`, for `reach` on past it.
+    fn new(
+        model: &Model,
+        chain: &Chain,
+        at_end: bool,
+        vertex: VertexId,
+        reach: f64,
+        past: (Vector3, Vector3),
+    ) -> GeopResult<Self> {
+        let link = if at_end {
+            chain.last()?
+        } else {
+            chain.first()?
+        };
+        let edge = &model.get_edge(link.edge)?.curve;
+        let domain = edge.domain();
+        let (length, _) = edge.length()?;
+        let scale = length.midpoint().to_f64();
+        // The edge's end the chain leaves through: its end where the link
+        // runs forward and the chain ends there, or both start.
+        let width = domain.1.sub(domain.0);
+        let by = width.mul(Scalar::from_f64(carried_fraction(reach / scale)));
+        let curve = edge.extended(at_end == link.forward, by.sharpen())?;
+        let at = model.get_vertex(vertex)?.point;
+        let mut surfaces = Vec::new();
+        for face in link.faces {
+            let surface = &model.get_face(face)?.surface;
+            let ctx = with_context!("carrying face {face} on past vertex {vertex}");
+            surfaces.push(carried_on_past(surface, &at, reach).with_context(ctx)?);
+        }
+        let [a, b]: [NurbSurface3D; 2] = surfaces.try_into().expect("two faces");
+        Ok(RunOn {
+            past,
+            link: link.clone(),
+            curve,
+            domain,
+            scale,
+            surfaces: [a, b],
+        })
+    }
+
+    /// The ball `fraction` of the way along the end link — past its end,
+    /// above one, or before its start, below zero — of signed radius `sr`,
+    /// from the station before, `previous` (see [`place`]).
+    fn place(&self, fraction: f64, sr: Scalar, previous: Option<&Station>) -> GeopResult<Station> {
+        let f = Scalar::from_f64(fraction);
+        let along_edge = if self.link.forward {
+            f
+        } else {
+            Scalar::ONE.sub(f)
+        };
+        let t = Scalar::interpolate(self.domain.0, self.domain.1, along_edge);
+        let ctx = with_context!(
+            "edge {} (forward {}), its domain {:?} carried on to {:?}, at {t:?}",
+            self.link.edge,
+            self.link.forward,
+            self.domain,
+            self.curve.domain()
+        );
+        let p = self.curve.evaluate(t).with_context(ctx)?;
+        let along = self.curve.tangent(t).with_context(ctx)?.normalize()?;
+        let along = if self.link.forward {
+            along
+        } else {
+            along.neg()
+        };
+        let faces = self.link.faces;
+        let surfaces = [&self.surfaces[0], &self.surfaces[1]];
+        let mut seeds = [(Scalar::ZERO, Scalar::ZERO); 2];
+        let mut normals = [Vector3::zero(); 2];
+        for k in 0..2 {
+            seeds[k] = match previous {
+                Some(prev) if prev.faces[k] == faces[k] => sharp_in(surfaces[k], prev.uv[k]),
+                _ => seed_on(surfaces[k], &p)?,
+            };
+            let (u, v) = foot(surfaces[k], &p, seeds[k])?;
+            normals[k] = surfaces[k].normal(u, v)?;
+        }
+        let tangent = self.link.tangent(normals, &along, &p)?;
+        let (center, uv) = roll(surfaces, seeds, &p, &tangent, sr)?;
+        let mut contact = [Vector3::zero(); 2];
+        let mut normals = [Vector3::zero(); 2];
+        let mut final_uv = uv;
+        let mut off = 0.0f64;
+        for k in 0..2 {
+            let (u, v) = foot(surfaces[k], &center, uv[k])?;
+            contact[k] = surfaces[k].evaluate(u, v)?;
+            normals[k] = surfaces[k].normal(u, v)?.normalize()?;
+            final_uv[k] = sharp_in(surfaces[k], (u, v));
+            off = off.max(off_foot(&center, &contact[k], &normals[k]));
+        }
+        if off > DEVIATION * sr.abs().upper().to_f64() {
+            return Err(GeopError::new(format!(
+                "the ball rolled on to {fraction} of the way along edge {} touches faces {} and {} carried on only {off:e} off its foot points, beyond where they were carried",
+                self.link.edge, faces[0], faces[1]
+            )));
+        }
+        let mut station = section(center, contact, normals, faces, final_uv, true)?;
+        station.aloof = self.clear_of_past(&station);
+        Ok(station)
+    }
+
+    /// Whether `station`'s control polygon, which holds its section, lies
+    /// wholly past the third face's tangent plane.
+    fn clear_of_past(&self, station: &Station) -> bool {
+        let (point, normal) = &self.past;
+        [
+            station.contact[0],
+            station.corner,
+            station.contact[1],
+            station.apex,
+        ]
+        .iter()
+        .all(|p| {
+            p.sub(point)
+                .prod_dot(normal)
+                .definitely_greater(Scalar::ZERO)
+        })
+    }
+}
+
+/// How much of a curve or surface's domain it is carried on by, to reach
+/// `fraction` of it on: twice as far, and half the domain at least — a
+/// free choice, only ever rounded up.
+fn carried_fraction(fraction: f64) -> f64 {
+    (2.0 * fraction).max(0.5)
+}
+
+/// `surface` carried on ([`NurbSurface3D::extended`]) past every side of
+/// it the point `at` lies on, far enough to reach `reach` on past it (see
+/// [`carried_fraction`]), by how fast it runs there: where a face ending at
+/// `at` would go on.
+fn carried_on_past(surface: &NurbSurface3D, at: &Vector3, reach: f64) -> GeopResult<NurbSurface3D> {
+    let Some((u, v)) = surface.locate(at, MAX_NODES, min_subdivision_size())? else {
+        return Err(GeopError::new(format!(
+            "the point {at:?} does not lie on the face's surface"
+        )));
+    };
+    let (su, sv) = surface.derivatives(u.sharpen(), v.sharpen())?;
+    let mut carried = surface.clone();
+    for (along_u, t, speed) in [(true, u, su), (false, v, sv)] {
+        let (t0, t1) = if along_u {
+            surface.domain_u()
+        } else {
+            surface.domain_v()
+        };
+        let width = t1.sub(t0);
+        // The fraction of the domain `reach` is, at the speed there.
+        let span = speed.norm().mul(width).lower().to_f64();
+        let fraction = if span > 0.0 { reach / span } else { 0.0 };
+        let by = width
+            .mul(Scalar::from_f64(carried_fraction(fraction)))
+            .sharpen();
+        for (at_end, side) in [(false, t0), (true, t1)] {
+            if t.could_be_equal(side) {
+                carried = carried.extended(along_u, at_end, by)?;
+            }
+        }
+    }
+    Ok(carried)
+}
+
+/// The piece of `surface` within about `reach` of its point `at`, by how
+/// fast it runs there, either way along each parameter: where a tool's end
+/// meets the face it is cut off by, and only there — elsewhere the tool may
+/// run along the face (the blade's root fill, along the face it is cut off
+/// by at the trailing edge, beyond it).
+fn around(surface: &NurbSurface3D, at: &Vector3, reach: f64) -> GeopResult<NurbSurface3D> {
+    let Some((u, v)) = surface.locate(at, MAX_NODES, min_subdivision_size())? else {
+        return Err(GeopError::new(format!(
+            "the point {at:?} does not lie on the face's surface"
+        )));
+    };
+    let (u, v) = (u.sharpen(), v.sharpen());
+    let (su, sv) = surface.derivatives(u, v)?;
+    let mut bounds = Vec::new();
+    for (t, speed) in [(u, su), (v, sv)] {
+        let speed = speed.norm().lower().to_f64();
+        if speed <= 0.0 {
+            return Err(GeopError::new(format!(
+                "the face's surface does not run along one of its parameters at {at:?}"
+            )));
+        }
+        let half = Scalar::from_f64(reach / speed);
+        bounds.push((t.sub(half).sharpen(), t.add(half).sharpen()));
+    }
+    surface.sub_surface(bounds[0], bounds[1])
 }
 
 /// The station of the ball centered at `center` touching `faces` at
@@ -589,6 +829,7 @@ fn section(
         weight,
         apex,
         chord: false,
+        aloof: false,
     })
 }
 
@@ -742,6 +983,7 @@ fn chord(
         weight: Scalar::ONE,
         apex: p.prod_scalar(Scalar::TWO).sub(&middle).sharpen(),
         chord: true,
+        aloof: false,
     })
 }
 
@@ -898,12 +1140,18 @@ fn chamfer_crossing(
 /// face to face between two sections — its position as a fraction of the
 /// way, and the section there; the one section where both sides move at
 /// one place, if two such are one; and the positions that need a section
-/// of their own, where the blend changes its rate.
+/// of their own, where the blend changes its rate (see [`turns`]).
 struct Placing<'a> {
     place: Place<'a>,
     cross: Cross<'a>,
     merge: Merge<'a>,
     kinks: Vec<f64>,
+    /// How far, in positions, the blend runs on past the start and the end
+    /// of an open chain (see [`RunOn`]).
+    reach: [f64; 2],
+    /// Where the tool is halved, if it is (see [`Rolled::halves`]): a
+    /// station there, where its spans break.
+    halve: Option<f64>,
 }
 
 /// The section at a position, from the one before (see [`Placing`]).
@@ -977,18 +1225,21 @@ impl Rolling {
 /// both ends of `range`, the part of it blended, and only between them. A
 /// closed one runs round once, not back to its first.
 fn station_positions(chain: &Chain, n: usize, (from, to): (f64, f64)) -> Vec<f64> {
-    let count = n * chain.links.len();
-    let inner = (0..count).map(|k| (k as f64 + 0.5) / n as f64);
     if chain.closed {
-        inner.collect()
-    } else {
-        // Clear of the ends by a quarter step: no span next to one shorter.
-        let clear = 0.25 / n as f64;
-        std::iter::once(from)
-            .chain(inner.filter(|&c| c - from > clear && to - c > clear))
-            .chain(std::iter::once(to))
-            .collect()
+        let count = n * chain.links.len();
+        return (0..count).map(|k| (k as f64 + 0.5) / n as f64).collect();
     }
+    // The range may run on past the chain's ends (see [`RunOn`]), at the
+    // same spacing.
+    let first = (from * n as f64).floor() as i64 - 1;
+    let last = (to * n as f64).ceil() as i64 + 1;
+    let inner = (first..=last).map(|k| (k as f64 + 0.5) / n as f64);
+    // Clear of the ends by a quarter step: no span next to one shorter.
+    let clear = 0.25 / n as f64;
+    std::iter::once(from)
+        .chain(inner.filter(|&c| c - from > clear && to - c > clear))
+        .chain(std::iter::once(to))
+        .collect()
 }
 
 /// The position `c` along `chain` as a link and a fraction of its edge —
@@ -1165,12 +1416,20 @@ fn roll_chain(
 ) -> GeopResult<Rolling> {
     let links = chain.links.len() as f64;
     let place_at = &placing.place;
+    // How near, in model units, the boolean applying the tool tells two
+    // points apart: its searches' tolerance.
+    let resolution = RemeshParams::default()
+        .curve_curve_min_subdivision_size
+        .upper()
+        .to_f64();
 
     // The stations, evenly along the chain — between the corners' balls
     // where it ends at one, which are its first and last.
     let range = (
-        corners[0].as_ref().map_or(0.0, |(c, _)| *c),
-        corners[1].as_ref().map_or(links, |(c, _)| *c),
+        corners[0].as_ref().map_or(-placing.reach[0], |(c, _)| *c),
+        corners[1]
+            .as_ref()
+            .map_or(links + placing.reach[1], |(c, _)| *c),
     );
     let positions = station_positions(chain, n, range);
     let mut regular: Vec<Station> = Vec::with_capacity(positions.len());
@@ -1201,10 +1460,12 @@ fn roll_chain(
         }
         let (a, b) = (&regular[i], &regular[j]);
         let mut found: Vec<(f64, Station)> = Vec::new();
+        let mut sides = Vec::new();
         for k in 0..2 {
             if a.faces[k] != b.faces[k] {
                 let ctx = with_context!("moving from face {} onto face {}", a.faces[k], b.faces[k]);
                 found.push((placing.cross)(k, a, b, (ca, cb)).with_context(ctx)?);
+                sides.push(k);
             }
         }
         // Both sides at once — where the faces either side change at the
@@ -1214,6 +1475,37 @@ fn roll_chain(
             && let Some(merged) = (placing.merge)(s0, s1)?
         {
             found = vec![(*f0, merged)];
+        }
+        // Both sides, apart: the side that moves second does so with the
+        // other side already on its next face — not, as found from the
+        // station before, on the face it has left, which the ball would
+        // touch beyond its edge (by a lofted blade's seam, a hair past it).
+        // So near the first that the boolean applying the tool tells them
+        // apart no better — where a lofted blade's sections cross its sharp
+        // edge nearly square to it, both sides cross the seam a hair apart —
+        // the first alone: a span between them would put the tool's edges
+        // at the seam that close together.
+        if found.len() == 2 {
+            let first = usize::from(found[1].0 < found[0].0);
+            let (k1, k2) = (sides[first], sides[1 - first]);
+            let (f1, station) = found[first].clone();
+            // The first's ball, one side on its new face, the other on the
+            // face it leaves — seeds from the stations either side.
+            let mut moved = station.clone();
+            (moved.faces[k1], moved.uv[k1]) = (b.faces[k1], b.uv[k1]);
+            (moved.faces[k2], moved.uv[k2]) = (a.faces[k2], a.uv[k2]);
+            let from = ca + f1 * (cb - ca);
+            let ctx = with_context!(
+                "moving from face {} onto face {}, after the other side moved",
+                a.faces[k2],
+                b.faces[k2]
+            );
+            let (f2, second) = (placing.cross)(k2, &moved, b, (from, cb)).with_context(ctx)?;
+            found = if distance(&station.center, &second.center) < resolution {
+                vec![(f1, station)]
+            } else {
+                vec![(f1, station), (f1 + f2 * (1.0 - f1), second)]
+            };
         }
         for (f, station) in found {
             let first_end = !chain.closed && i == 0;
@@ -1230,22 +1522,38 @@ fn roll_chain(
             ));
         }
     }
-    // Where the blend changes its rate, a station too, unless a side moves
-    // onto the next face right there.
-    for &c in &placing.kinks {
-        let near = |x: f64| {
-            let d = (x - c).abs();
-            let d = if chain.closed { d.min(links - d) } else { d };
-            d < 0.25 / n as f64
-        };
-        if crossings.iter().any(|(x, _)| near(*x)) {
-            continue;
-        }
+    // Where the blend changes its rate, a station too, where the spans
+    // break, and where the tool is halved — unless a side moves onto the
+    // next face right there, its contact on the edge between them nearer
+    // this station's than the boolean that applies the tool resolves: then
+    // that station is this one's, which would put the tool's edges a hair
+    // from that edge (a loft's seam, a station at the lateral edge's vertex
+    // on it 1.5e-5 off). Near it, the regular stations make way, as for a
+    // crossing.
+    let near = |x: f64, c: f64| {
+        let d = (x - c).abs();
+        let d = if chain.closed { d.min(links - d) } else { d };
+        d < 0.25 / n as f64
+    };
+    for &c in placing.kinks.iter().chain(&placing.halve) {
         let before = positions
             .iter()
             .rposition(|&x| x < c)
             .unwrap_or(positions.len() - 1);
-        crossings.push((c, place_at(c, Some(&regular[before]))?));
+        let station = place_at(c, Some(&regular[before]))?;
+        let there = crossings.iter().any(|(_, crossing)| {
+            (0..2).any(|k| distance(&crossing.contact[k], &station.contact[k]) < resolution)
+        });
+        if there {
+            continue;
+        }
+        for (i, &x) in positions.iter().enumerate() {
+            let end = !chain.closed && (i == 0 || i == m - 1);
+            if near(x, c) && !end {
+                keep[i] = false;
+            }
+        }
+        crossings.push((c, station));
     }
     let mut all: Vec<(f64, Station, bool)> = positions
         .iter()
@@ -1256,6 +1564,42 @@ fn roll_chain(
         .collect();
     all.extend(crossings.into_iter().map(|(c, s)| (c, s, true)));
     all.sort_by(|a, b| a.0.total_cmp(&b.0));
+
+    // Between two breaks closer than the stations' spacing — where the two
+    // sides move onto the next faces a little apart, across a lofted
+    // blade's seam — no station falls, however the spacing is refined: the
+    // span between them gets stations of its own, as many more as the
+    // chain's, so that it is refined with it.
+    let least = (n / FIRST_STATIONS).max(1);
+    let mut filled: Vec<(f64, Station, bool)> = Vec::with_capacity(all.len());
+    let last = all.len() - 1;
+    let is_break = |i: usize, all: &[(f64, Station, bool)]| {
+        all[i].2 || (!chain.closed && (i == 0 || i == last))
+    };
+    let mut from = 0;
+    for i in 0..all.len() {
+        if i > from && is_break(i, &all) {
+            let inside = i - from - 1;
+            if is_break(from, &all) && inside < least {
+                let (a, b) = (all[from].0, all[i].0);
+                let mut previous = all[from].1.clone();
+                for j in 1..=least {
+                    let c = a + (b - a) * j as f64 / (least + 1) as f64;
+                    let station = place_at(c, Some(&previous))?;
+                    previous = station.clone();
+                    filled.push((c, station, false));
+                }
+            } else {
+                filled.extend(all[from + 1..i].iter().cloned());
+            }
+            from = i;
+        }
+        if i == from {
+            filled.push(all[i].clone());
+        }
+    }
+    filled.extend(all[from + 1..].iter().cloned());
+    let mut all = filled;
 
     // Where the spans break: at the crossings, at the ends of an open
     // chain; round a closed one at least at four stations about evenly
@@ -1338,19 +1682,36 @@ fn fillet_placing<'a>(
     chain: &'a Chain,
     law: &'a RadiusLaw,
     side: Scalar,
+    run_on: &'a [Option<(RunOn, f64)>; 2],
 ) -> Placing<'a> {
     let topology = model.topology();
+    let links = chain.links.len() as f64;
+    // Past the chain's ends the radius stays what it is there.
     let radius_at = move |c: f64| {
-        let (link, x) = locate(chain, c);
+        let (link, x) = locate(chain, c.clamp(0.0, links));
         side.mul(law.radius(link, x))
     };
     let place_at = move |c: f64, previous: Option<&Station>| -> GeopResult<Station> {
+        let past = if c < 0.0 {
+            run_on[0].as_ref().map(|(on, _)| (on, c))
+        } else if c > links {
+            run_on[1].as_ref().map(|(on, _)| (on, c - (links - 1.0)))
+        } else {
+            None
+        };
+        if let Some((on, fraction)) = past {
+            let ctx = with_context!(
+                "rolling the ball on to {fraction} of the way along edge {}, past the chain's end",
+                on.link.edge
+            );
+            return on.place(fraction, radius_at(c), previous).with_context(ctx);
+        }
         let (link, x) = locate(chain, c);
         let ctx = with_context!(
             "placing the ball {x} of the way along edge {}",
             chain.links[link].edge
         );
-        place(
+        let placed = place(
             topology,
             chain,
             link,
@@ -1358,7 +1719,25 @@ fn fillet_placing<'a>(
             radius_at(c),
             previous,
         )
-        .with_context(ctx)
+        .with_context(ctx);
+        // In the half of an end link next to an end it runs on past, the
+        // ball may touch one of the link's faces beyond its edge already —
+        // the edge it shares with the third face there — and the face goes
+        // on past it, in the air: the ball touches the link's faces as they
+        // are carried on there, not some other face across a crease. Only
+        // the third face meets them at that vertex.
+        let near_end = if link == 0 && x < 0.5 {
+            run_on[0].as_ref()
+        } else if link + 1 == chain.links.len() && x >= 0.5 {
+            run_on[1].as_ref()
+        } else {
+            None
+        };
+        match (placed, near_end) {
+            (Ok(station), Some(_)) if station.faces == chain.links[link].faces => Ok(station),
+            (_, Some((on, _))) => on.place(x, radius_at(c), previous).with_context(ctx),
+            (placed, None) => placed,
+        }
     };
     let cross = move |k: usize,
                       a: &Station,
@@ -1403,18 +1782,27 @@ fn fillet_placing<'a>(
             true,
         )?))
     };
-    let kinks = if law.varies() {
-        let inner = if chain.closed { 0 } else { 1 };
-        (inner..chain.links.len()).map(|v| v as f64).collect()
-    } else {
-        Vec::new()
-    };
     Placing {
         place: Box::new(place_at),
         cross: Box::new(cross),
         merge: Box::new(merge),
-        kinks,
+        kinks: Vec::new(),
+        reach: run_on
+            .each_ref()
+            .map(|r| r.as_ref().map_or(0.0, |(_, reach)| *reach)),
+        halve: None,
     }
+}
+
+/// The positions of the vertices of `chain` between two links, where the
+/// blend changes its rate: where the radius varies, it does so linearly
+/// between them; and the edges of a chain, and the faces either side, are
+/// only tangent where they meet, so the sections, square to them, turn
+/// there at a rate that jumps — as where a lofted blade's edge passes one
+/// of its sections.
+fn turns(chain: &Chain) -> Vec<f64> {
+    let inner = if chain.closed { 0 } else { 1 };
+    (inner..chain.links.len()).map(|v| v as f64).collect()
 }
 
 /// How a chamfer's chords are placed along `chain` of `model`, `distances`
@@ -1462,6 +1850,8 @@ fn chamfer_placing<'a>(
         cross: Box::new(cross),
         merge: Box::new(merge),
         kinks: Vec::new(),
+        reach: [0.0; 2],
+        halve: None,
     }
 }
 
@@ -1470,6 +1860,14 @@ fn chamfer_placing<'a>(
 /// (see [`check_touches`]).
 #[derive(Clone, Debug)]
 pub(crate) struct Rolled {
+    /// The name of the station the tool is halved at, if it is (see
+    /// [`Rolled::halves`]).
+    halved_at: Option<String>,
+    /// The surfaces the tool is cut off by at its start and its end, if it
+    /// is (see [`run_ons`]): the third face's, carried on past the vertex,
+    /// which the tool runs on through. Only what is on the chain's side of
+    /// it is the blend's.
+    pub trims: [Option<NurbSurface3D>; 2],
     pub chain: Chain,
     pub bend: Bend,
     pub tool: Tool,
@@ -1479,6 +1877,99 @@ pub(crate) struct Rolled {
 }
 
 impl Rolled {
+    /// Whether the tool is built in halves: where its chain is open and
+    /// starts and ends at one vertex, on its own (see [`halving`]) — a
+    /// loop round a face with one corner, a lofted blade's tip round to
+    /// its trailing edge. Its tool's two ends meet there, overlapping —
+    /// both blend the corner — and one solid cannot overlap itself: it is
+    /// built in two halves (see [`Rolled::halves`]), applied one after
+    /// the other as two blends meeting at an outward corner are.
+    pub fn is_halved(&self) -> bool {
+        self.halved_at.is_some()
+    }
+
+    /// The tool in two at the station it is halved at (see [`halving`]),
+    /// where its spans break (see [`roll_chain`]), each half capped there
+    /// in the plane of the section: the first's facing on along the chain,
+    /// the second's back. Both caps hold the same section, to the bit.
+    pub fn halves(&self) -> GeopResult<[Tool; 2]> {
+        let tool = &self.tool;
+        let count = tool.stations.len();
+        let b = (self.halved_at.as_ref())
+            .and_then(|name| tool.stations.iter().position(|s| &s.name == name))
+            .filter(|&b| b > 0 && b + 1 < count)
+            .ok_or_else(|| {
+                GeopError::new(format!(
+                    "the tool has no station of its own to be halved at ({:?})",
+                    self.halved_at
+                ))
+            })?;
+        let station = &tool.stations[b];
+        let [a, e, c] = [0, 1, 2].map(|k| station.points[k].dehomogenized());
+        let (a, e, c) = (a?, e?, c?);
+        let mut m = a.sub(&e).prod_cross(&c.sub(&e)).normalize()?;
+        // Along the chain: from the station before to the one after.
+        let along = tool.stations[b + 1].vertices[0].sub(&tool.stations[b - 1].vertices[0]);
+        let facing = m.prod_dot(&along);
+        if facing.definitely_less(Scalar::ZERO) {
+            m = m.neg();
+        } else if !facing.definitely_greater(Scalar::ZERO) {
+            return Err(GeopError::new(format!(
+                "the tool's section at {:?}, where it is halved, could stand along the chain",
+                station.vertices[0]
+            )));
+        }
+        let towards = a.sub(&e);
+        let e1 = towards
+            .sub(&m.prod_scalar(towards.prod_dot(&m)))
+            .normalize()?;
+        let forward = [e, e1, m.prod_cross(&e1)];
+        // The same plane facing back: `-e1` crossed with `e2` is `-m`, and
+        // a point's coordinates in it are its own with `x` negated — so
+        // that it is embedded back to the very same point.
+        let back = [e, e1.neg(), forward[2]];
+        let flat = station.points.map(|p| flatten(&p, &forward));
+        let points = flat.map(|p| embed(&p, &forward));
+        let vertices = station
+            .vertices
+            .map(|v| embed(&flatten_point(&v, &forward), &forward).head::<3>());
+        let mirrored = flat.map(|p| Vector3::from_array([p[0].neg(), p[1], p[2]]));
+        let mut first = Tool {
+            stations: tool.stations[..=b].to_vec(),
+            spans: tool.spans[..b].to_vec(),
+            ..tool.clone()
+        };
+        let mut second = Tool {
+            stations: tool.stations[b..].to_vec(),
+            spans: tool.spans[b..].to_vec(),
+            ..tool.clone()
+        };
+        let last = first.stations.len() - 1;
+        first.stations[last] = ToolStation {
+            points,
+            vertices,
+            name: station.name.clone(),
+            cap: Some(Cap {
+                plane: forward,
+                flat,
+            }),
+        };
+        second.stations[0] = ToolStation {
+            points,
+            vertices,
+            name: station.name.clone(),
+            cap: Some(Cap {
+                plane: back,
+                flat: mirrored,
+            }),
+        };
+        let rows = &mut first.spans[b - 1].rows;
+        let k = rows.len() - 1;
+        rows[k] = points;
+        second.spans[0].rows[0] = points;
+        Ok([first, second])
+    }
+
     /// The faces the tool's section touches first and second at its last
     /// station, `at_end`, or its first.
     pub fn contact_faces(&self, at_end: bool) -> [FaceId; 2] {
@@ -1523,9 +2014,17 @@ fn span_deviation(
     curves: &[NurbCurve3D; 4],
     between: &[Vec<(Scalar, Station)>],
 ) -> GeopResult<(f64, String)> {
-    if between.iter().flatten().any(|(_, station)| station.chord) {
+    // Past the third face a blend runs on through, it is free (see
+    // [`Station::aloof`]).
+    let between = || {
+        between
+            .iter()
+            .flatten()
+            .filter(|(_, station)| !station.aloof)
+    };
+    if between().any(|(_, station)| station.chord) {
         let mut worst = (0.0f64, String::new());
-        for (s, station) in between.iter().flatten() {
+        for (s, station) in between() {
             for (k, truth) in section_points(station).iter().enumerate() {
                 let (got, truth) = (curves[k].evaluate(*s)?, truth.dehomogenized()?);
                 let d = distance(&got, &truth);
@@ -1559,7 +2058,7 @@ fn span_deviation(
     // Measured from where each lies nearest: a ball placed a little further
     // along — where the edge it was placed by is only known that well — is
     // no deviation.
-    for (s, station) in between.iter().flatten() {
+    for (s, station) in between() {
         for k in [0, 2] {
             let truth = station.contact[k / 2];
             let t = curves[k].closest_parameter_from(&truth, *s)?;
@@ -1571,14 +2070,14 @@ fn span_deviation(
             let (_, across) =
                 blend.derivatives(t, if k == 0 { Scalar::ZERO } else { Scalar::ONE })?;
             let leaving = if k == 0 { across } else { across.neg() };
-            if !leaving
-                .prod_dot(&station.center.sub(&truth))
-                .definitely_greater(Scalar::ZERO)
-            {
+            let towards = leaving.prod_dot(&station.center.sub(&truth));
+            if !towards.definitely_greater(Scalar::ZERO) {
+                // How steeply it leaves, in radians: the tilt it should.
+                let steep = towards.div(leaving.norm().mul(station.center.sub(&truth).norm()));
                 return Ok((
                     f64::INFINITY,
                     format!(
-                        "at {:?} of the span the blend could dip through face {} at {truth:?}",
+                        "at {:?} of the span the blend could dip through face {} at {truth:?}: it leaves the face {steep:?} towards the ball, where it should {TILT:e}",
                         s.midpoint().to_f64(),
                         station.faces[k / 2]
                     ),
@@ -1622,12 +2121,16 @@ fn contact_checks(rolling: &Rolling, span: (usize, usize), k: usize) -> Vec<(Sca
     let params = rolling.params(span);
     let stations = params.into_iter().zip(&rolling.stations[span.0..=span.1]);
     let between = rolling.between(span);
+    // Past the third face a blend runs on through, where it touches the
+    // faces carried on bounds no face (see [`Station::aloof`]).
     stations
+        .filter(|(_, station)| !station.aloof)
         .map(|(s, station)| (s, station.contact[k / 2]))
         .chain(
             between
                 .iter()
                 .flatten()
+                .filter(|(_, station)| !station.aloof)
                 .map(|(s, station)| (*s, station.contact[k / 2])),
         )
         .collect()
@@ -1658,9 +2161,6 @@ fn chain_ends(
         }
         let ctx = with_context!("the blend's end at vertex {vertex}");
         let (kind, face) = tool_end(model, vertex, faces, &out, bend).with_context(ctx)?;
-        if let End::Wall { unless: Some(why) } = &kind {
-            return Err(GeopError::new(why.clone())).with_context(ctx);
-        }
         ends.push((vertex, kind, Some(face), out));
     }
     let [a, b]: [ChainEnd; 2] = ends
@@ -1843,13 +2343,233 @@ pub(crate) fn plan_rolled(
         });
     }
     let decided_ends = chain_ends(topology, &chain, bend, meeting_ends)?;
+    let (run_on, trims) = run_ons(model, &chain, &law, side, &decided_ends)?;
+    let halve = halving(topology, &chain, &corners)?;
     let (rolling, curves) = {
-        let placing = fillet_placing(model, &chain, &law, side);
+        let mut placing = fillet_placing(model, &chain, &law, side, &run_on);
+        placing.kinks = turns(&chain);
+        placing.halve = halve;
         refined(law.smallest(), |n| {
             roll_chain(&chain, n, &at_corners, &placing)
         })?
     };
-    assemble(topology, chain, bend, rolling, curves, decided_ends)
+    let halved_at = halved_at(&rolling, halve)?;
+    let rolled_on = run_on.each_ref().map(Option::is_some);
+    let mut rolled = assemble(
+        topology,
+        chain,
+        bend,
+        rolling,
+        curves,
+        decided_ends,
+        rolled_on,
+    )?;
+    rolled.trims = trims;
+    rolled.halved_at = halved_at;
+    Ok(rolled)
+}
+
+/// The name of the station of the tool `rolling` makes (see [`assemble`])
+/// at the position `halve`, where it is halved, if it is: the one where its
+/// span there starts. An error if no span starts there — a side moving
+/// from face to face right there took the station's place.
+fn halved_at(rolling: &Rolling, halve: Option<f64>) -> GeopResult<Option<String>> {
+    let Some(halve) = halve else {
+        return Ok(None);
+    };
+    let spans = rolling.spans();
+    let j = (spans.iter())
+        .position(|&(a, _)| rolling.positions[a] == halve)
+        .ok_or_else(|| {
+            GeopError::new(format!(
+                "the blend's tool was to be halved at position {halve} along its chain, where no station of its own is: a side moves from face to face right there"
+            ))
+        })?;
+    Ok(Some(format!("st{j}")))
+}
+
+/// Where along `chain` its tool is halved (see [`Rolled::halves`]), if it
+/// ends where it starts, on its own — joined to no corner's ball: the
+/// middle of its longest link, where it runs along one face either side,
+/// clear of where it moves from face to face and of its ends. A section
+/// on the edge between two faces would put the cap between the halves on
+/// that edge's point.
+fn halving(
+    model: &Model,
+    chain: &Chain,
+    corners: &[Option<ChainCorner>; 2],
+) -> GeopResult<Option<f64>> {
+    let vertices = chain.vertices(model)?;
+    if chain.closed || vertices.first() != vertices.last() || corners.iter().any(Option::is_some) {
+        return Ok(None);
+    }
+    let mut longest = (0, f64::NEG_INFINITY);
+    for (i, link) in chain.links.iter().enumerate() {
+        let (length, _) = model.get_edge(link.edge)?.curve.length()?;
+        let length = length.midpoint().to_f64();
+        if length > longest.1 {
+            longest = (i, length);
+        }
+    }
+    Ok(Some(longest.0 as f64 + 0.5))
+}
+
+/// Where the fillet of `chain` runs on, rolled, past its start and its end
+/// (see [`RunOn`]), through the third face there, and is cut off by it:
+/// where its section at the vertex does not lie in that face — a curved
+/// face, or a plane standing at an angle to the faces either side. A cut
+/// running out of the solid through it ends in the air, past it; any other
+/// end is cut off by the face itself (see [`Trim`]). With each, how far, in
+/// positions: as far again as the tool is wide, over how squarely the
+/// chain crosses the face, as a straight blend runs out — doubled until
+/// the last section is clear of the face's tangent plane at the vertex, its
+/// control polygon, which holds it, wholly past it. And the trims.
+#[allow(clippy::type_complexity)]
+fn run_ons(
+    model: &NamedModel,
+    chain: &Chain,
+    law: &RadiusLaw,
+    side: Scalar,
+    ends: &Option<[ChainEnd; 2]>,
+) -> GeopResult<([Option<(RunOn, f64)>; 2], [Option<NurbSurface3D>; 2])> {
+    let mut run_on = [None, None];
+    let mut trims = [None, None];
+    let Some(ends) = ends else {
+        return Ok((run_on, trims));
+    };
+    let topology = model.topology();
+    let links = chain.links.len() as f64;
+    let none = [None, None];
+    let placing = fillet_placing(model, chain, law, side, &none);
+    for (k, (vertex, kind, face, out)) in ends.iter().enumerate() {
+        let (Some(face), trimmed) = (
+            face,
+            match kind {
+                End::RunOut { .. } => false,
+                End::Flush { unless: Some(_) } | End::Wall { unless: Some(_) } => true,
+                _ => continue,
+            },
+        ) else {
+            continue;
+        };
+        let ctx = with_context!("the blend's end through face {face} at vertex {vertex}");
+        let at = if k == 0 { 0.0 } else { links };
+        let sr = side.mul(Scalar::from_f64(law.at_end(k)));
+        let surface = &topology.get_face(*face)?.surface;
+        let point = topology.get_vertex(*vertex)?.point;
+        let mut normal = surface.normal_at(&point, MAX_NODES, min_subdivision_size())?;
+        if normal.prod_dot(out).definitely_less(Scalar::ZERO) {
+            normal = normal.neg();
+        }
+        // At the vertex, the ball may touch a face beyond its edge already,
+        // as carried on past it (see [`fillet_placing`]).
+        let station = match (placing.place)(at, None) {
+            Ok(station) => station,
+            Err(_) => {
+                let reach = 4.0 * law.at_end(k);
+                let on = RunOn::new(topology, chain, k == 1, *vertex, reach, (point, normal))
+                    .with_context(ctx)?;
+                let fraction = if k == 0 { 0.0 } else { 1.0 };
+                on.place(fraction, sr, None).with_context(ctx)?
+            }
+        };
+        if !trimmed
+            && surface.as_plane()?.is_some()
+            && end_plane(topology, &station, *face, out).is_ok()
+        {
+            continue;
+        }
+        let squareness = normal.prod_dot(out);
+        let width = [station.contact[0], station.contact[1], station.apex]
+            .iter()
+            .map(|p| distance(p, &station.corner))
+            .fold(0.0, f64::max);
+        let mut length = run_out_length(width, &squareness).upper().to_f64();
+        // Past a face it leaves nearly along, a blend would run on farther
+        // than its edge is long, and its faces be carried on as far.
+        let link = if k == 0 {
+            chain.first()?
+        } else {
+            chain.last()?
+        };
+        let (edge_length, _) = topology.get_edge(link.edge)?.curve.length()?;
+        if length > edge_length.lower().to_f64() {
+            return Err(GeopError::new(format!(
+                "the edge crosses face {face} at vertex {vertex} so nearly along it (the way it runs on, dotted with the face's normal, is {squareness:?}) that the blend would run on {length} past it, farther than the edge is long: only an edge crossing the third face more squarely is blended there"
+            )))
+            .with_context(ctx);
+        }
+        let mut found = None;
+        // How far past the face's tangent plane each try's section got,
+        // its least control point: what to say if none got clear.
+        let mut tried: Vec<(f64, Scalar)> = Vec::new();
+        for _ in 0..MOST_RUN_OUT_DOUBLINGS {
+            let ctx = with_context!(
+                "{ctx_name}, rolled on {length} (past the face's tangent plane by {tried:?} before)",
+                ctx_name = format!("the blend's end through face {face} at vertex {vertex}")
+            );
+            let on = RunOn::new(topology, chain, k == 1, *vertex, length, (point, normal))
+                .with_context(ctx)?;
+            let reach = length / on.scale;
+            let fraction = if k == 0 { -reach } else { 1.0 + reach };
+            let last = on.place(fraction, sr, Some(&station)).with_context(ctx)?;
+            let past = [last.contact[0], last.corner, last.contact[1], last.apex]
+                .iter()
+                .map(|p| p.sub(&point).prod_dot(&normal))
+                .fold(None, |least: Option<Scalar>, d| {
+                    Some(least.map_or(d, |l| l.min(d)))
+                })
+                .expect("four points");
+            if past.definitely_greater(Scalar::ZERO) {
+                found = Some((on, reach));
+                break;
+            }
+            tried.push((length, past));
+            length *= 2.0;
+        }
+        let Some(found) = found else {
+            return Err(GeopError::new(format!(
+                "the blend runs on through face {face} at vertex {vertex}, but rolled on {length} past it its section is still not clear of the face (past its tangent plane by {tried:?}): the face turns back across it"
+            )))
+            .with_context(ctx);
+        };
+        if trimmed {
+            let ctx = with_context!("carrying face {face} on past vertex {vertex}");
+            let carried = carried_on_past(surface, &point, length).with_context(ctx)?;
+            trims[k] = Some(around(&carried, &point, 2.0 * length).with_context(ctx)?);
+        }
+        run_on[k] = Some(found);
+    }
+    Ok((run_on, trims))
+}
+
+/// How often the length a blend runs on past a face (see [`run_ons`]) is
+/// doubled at most: `2^8` times as far again as the tool is wide is past
+/// any face it leaves the solid through.
+const MOST_RUN_OUT_DOUBLINGS: usize = 8;
+
+/// The plane `station`'s section lies in, oriented along `out`, as a cap's
+/// `(origin, e1, e2)`: where a blend run on past the solid (see [`RunOn`])
+/// is capped, in the air.
+fn own_plane(station: &Station, out: &Vector3) -> GeopResult<[Vector3; 3]> {
+    let mut m = station.normals[0]
+        .prod_cross(&station.normals[1])
+        .normalize()?;
+    let along = m.prod_dot(out);
+    if along.definitely_less(Scalar::ZERO) {
+        m = m.neg();
+    } else if !along.definitely_greater(Scalar::ZERO) {
+        return Err(GeopError::new(format!(
+            "the blend's last section, at {:?}, could stand along the way it runs on",
+            station.center
+        )));
+    }
+    let origin = station.center;
+    let towards = station.contact[0].sub(&origin);
+    let e1 = towards
+        .sub(&m.prod_scalar(towards.prod_dot(&m)))
+        .normalize()?;
+    Ok([origin, e1, m.prod_cross(&e1)])
 }
 
 /// Plans the chamfer of `chain`, `distances` into the faces on its left and
@@ -1873,12 +2593,26 @@ pub(crate) fn plan_chamfer(
     let topology = model.topology();
     let bend = chain_bend(topology, &chain)?;
     let decided_ends = chain_ends(topology, &chain, bend, [None, None])?;
+    let halve = halving(topology, &chain, &[None, None])?;
     let smallest = distances[0].min(distances[1]);
     let (rolling, curves) = {
-        let placing = chamfer_placing(model, &chain, distances);
+        let mut placing = chamfer_placing(model, &chain, distances);
+        placing.kinks = turns(&chain);
+        placing.halve = halve;
         refined(smallest, |n| roll_chain(&chain, n, &[None, None], &placing))?
     };
-    assemble(topology, chain, bend, rolling, curves, decided_ends)
+    let halved_at = halved_at(&rolling, halve)?;
+    let mut rolled = assemble(
+        topology,
+        chain,
+        bend,
+        rolling,
+        curves,
+        decided_ends,
+        [false; 2],
+    )?;
+    rolled.halved_at = halved_at;
+    Ok(rolled)
 }
 
 /// The sections `roll` places along a chain, `n` to an edge, doubled from
@@ -1904,7 +2638,21 @@ fn refined(
             let (d, where_) = span_deviation(&c, &rolling.between(span))?;
             if d > deviation {
                 deviation = d;
-                worst = format!("in span {j}, {where_}");
+                // Which faces its balls touch, from where to where: a span
+                // between two places the ball rolls onto the next faces.
+                let mut touching: Vec<(f64, [FaceId; 2])> = Vec::new();
+                for i in span.0..=span.1 {
+                    let faces = rolling.stations[i].faces;
+                    if touching.last().is_none_or(|(_, f)| *f != faces) {
+                        touching.push((rolling.positions[i], faces));
+                    }
+                }
+                worst = format!(
+                    "in span {j}, from position {} to {} along the chain (its vertices at whole positions), its {} stations touching faces {touching:?} from the positions given, {where_}",
+                    rolling.positions[span.0],
+                    rolling.positions[span.1],
+                    span.1 - span.0 + 1
+                );
             }
             curves.push(c);
         }
@@ -1913,11 +2661,13 @@ fn refined(
         }
         // Doubling the stations of a cubic shrinks its deviation sixteen
         // times over; one that does not even halve is not converging, and
-        // more stations will not help.
-        if n >= MOST_STATIONS
-            || deviation > before / 2.0
-            || before.is_infinite() && deviation.is_infinite() && n >= 64
-        {
+        // more stations will not help. A blend that could dip through a
+        // face strays infinitely, which says nothing of convergence: the
+        // error in its tangent behind that shrinks only as fast as the
+        // stations' spacing, and the blend near a curved face's end (a
+        // lofted blade's tip, rounded) needed 128 to leave it truly. It is
+        // tried up to the cap.
+        if n >= MOST_STATIONS || deviation > before / 2.0 {
             return Err(GeopError::new(format!(
                 "the blend strays {deviation:e} from the rolling ball with {n} stations per edge ({before:e} with half as many), more than the {:e} it may (a {DEVIATION:e} of its radius): {worst}",
                 DEVIATION * smallest
@@ -1983,6 +2733,7 @@ fn assemble(
     rolling: Rolling,
     mut curves: Vec<[NurbCurve3D; 4]>,
     decided_ends: Option<[ChainEnd; 2]>,
+    rolled_on: [bool; 2],
 ) -> GeopResult<Rolled> {
     // One pad for every contact row, so that spans meeting at a station
     // meet in the same control points there.
@@ -2080,14 +2831,30 @@ fn assemble(
                 return Err(GeopError::new("the blend's end has no face to end at"))
                     .with_context(ctx);
             };
-            let plane = end_plane(model, station, face, &out).with_context(ctx)?;
+            let on = rolled_on[usize::from(at_end)];
+            let plane = if on {
+                own_plane(station, &out)
+            } else {
+                end_plane(model, station, face, &out)
+            }
+            .with_context(ctx)?;
             let index = if at_end { stations.len() - 1 } else { 0 };
             let name = if at_end { "end" } else { "start" };
             // The section's control points and vertices in the plane.
             let flat = stations[index].points.map(|p| flatten(&p, &plane));
             let flat_vertices = stations[index].vertices.map(|v| flatten_point(&v, &plane));
             match &kind {
-                End::Flush | End::Wall { .. } => {
+                // Rolled on through the face, the blend is capped where it
+                // ends, past the face: in the air where it leaves the
+                // solid through it, else to be cut off by it (see
+                // [`Rolled::trims`]).
+                _ if on => {
+                    let station = &mut stations[index];
+                    station.points = flat.map(|p| embed(&p, &plane));
+                    station.vertices = flat_vertices.map(|p| embed(&p, &plane).head::<3>());
+                    station.cap = Some(Cap { plane, flat });
+                }
+                End::Flush { .. } | End::Wall { .. } => {
                     let station = &mut stations[index];
                     station.points = flat.map(|p| embed(&p, &plane));
                     station.vertices = flat_vertices.map(|p| embed(&p, &plane).head::<3>());
@@ -2172,6 +2939,8 @@ fn assemble(
         .collect();
     let closed = chain.closed;
     Ok(Rolled {
+        trims: [None, None],
+        halved_at: None,
         chain,
         bend,
         tool: Tool {

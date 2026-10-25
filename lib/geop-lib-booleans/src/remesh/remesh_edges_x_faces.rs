@@ -650,6 +650,15 @@ fn imprint_coincident_edge(
     face_id: FaceId,
     params: &RemeshParams,
 ) -> GeopResult<()> {
+    let names = [
+        model.name_of(edge_id).map(str::to_string),
+        model.name_of(face_id).map(str::to_string),
+    ];
+    let ctx = with_context!(
+        "imprint_coincident_edge(edge={edge_id} ({:?}), face={face_id} ({:?}))",
+        names[0],
+        names[1]
+    );
     let new_face = model
         .splice_edge_into_face(
             edge_id,
@@ -658,9 +667,7 @@ fn imprint_coincident_edge(
             params.curve_curve_min_subdivision_size,
             naming.provisional(),
         )
-        .with_context(with_context!(
-            "imprint_coincident_edge(edge={edge_id}, face={face_id})"
-        ))?;
+        .with_context(ctx)?;
     naming.face_split(face_id, edge_id, new_face)
 }
 

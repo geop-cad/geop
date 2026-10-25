@@ -14,7 +14,7 @@ use std::collections::HashMap;
 
 use serde::{Deserialize, Serialize};
 
-use geop_core_geometry::nurb_surface::NurbSurface3D;
+use geop_core_geometry::{contains::surface::boundary_curve, nurb_surface::NurbSurface3D};
 use geop_core_math::{
     geop_error::{GeopError, GeopResult},
     primitives::Pose,
@@ -193,6 +193,65 @@ impl BodySpec {
             shells: Vec::new(),
             solid,
         }
+    }
+
+    /// A sheet of one face on `surface` over the whole of its domain,
+    /// bounded by the surface's four sides, each its boundary row (see
+    /// [`boundary_curve`]): what cuts a body along a surface, as a split
+    /// does. Fails for a surface not clamped at a side, or one a side of
+    /// which collapses to a point — a pole has no edge.
+    pub fn sheet_on(surface: NurbSurface3D) -> GeopResult<Self> {
+        let ((u0, u1), (v0, v1)) = (surface.domain_u(), surface.domain_v());
+        let corners = [(u0, v0), (u1, v0), (u1, v1), (u0, v1)];
+        let mut spec = BodySpec::new(false);
+        for &(u, v) in &corners {
+            spec.vertices.push(surface.evaluate(u, v)?);
+        }
+        // Counter-clockwise in `(u, v)` from `(u0, v0)`: each side as
+        // `boundary_curve` runs it — along the free parameter, upward — and
+        // whether the loop runs it the other way.
+        let sides = [
+            (false, true, false),
+            (true, false, false),
+            (false, false, true),
+            (true, true, true),
+        ];
+        let mut outer = Vec::new();
+        for (k, &(u_fixed, first, reversed)) in sides.iter().enumerate() {
+            let (from, to) = (k, (k + 1) % 4);
+            if spec.vertices[from].could_be_equal(&spec.vertices[to]) {
+                return Err(GeopError::new(format!(
+                    "a sheet on a surface whose side {k} collapses to a point, {:?}, is not built",
+                    spec.vertices[from]
+                )));
+            }
+            let curve = boundary_curve(&surface, u_fixed, first).ok_or_else(|| {
+                GeopError::new(format!(
+                    "a sheet on a surface not clamped at its side {k} is not built"
+                ))
+            })?;
+            let (start, end) = if reversed { (to, from) } else { (from, to) };
+            spec.edges.push(EdgeSpec { curve, start, end });
+            let corner = |i: usize| Vector2::from_array([corners[i].0, corners[i].1]);
+            outer.push(CoedgeSpec {
+                on: CoedgeOn::Edge(
+                    k,
+                    if reversed {
+                        Sense::Reversed
+                    } else {
+                        Sense::Forward
+                    },
+                ),
+                pcurve: Curve2::line(corner(from), corner(to))?,
+            });
+        }
+        spec.faces.push(FaceSpec {
+            surface,
+            outer,
+            holes: Vec::new(),
+        });
+        spec.shells = vec![vec![0]];
+        Ok(spec)
     }
 
     /// A face on `surface` over the unit square of its parameters (see

@@ -7,8 +7,29 @@ use geop_core_program::{operation_registry::OperationRegistry, program::Program}
 use geop_lib_fixtures::PrimitiveArgs;
 use geop_ops_model::{
     NamedModel,
+    tangent::tangent_chain,
     testing::{Built, assert_valid, edges_with_middle_where},
 };
+
+use geop_core_math::primitives::FrameAxis;
+use geop_core_program::element::ElementReference;
+use geop_lib_fixtures::GivenDatumArgs;
+use geop_ops_extrude_revolve::{
+    Extents, LoftArgs, Output,
+    testing::{extrude, extrusion},
+};
+use geop_ops_model::{
+    Combine,
+    datums::datums,
+    sketch::{
+        Sketch, SketchPlane,
+        figures::{n, on_origin},
+        whole_sketch,
+    },
+};
+use geop_ops_sketch::AddSketchArgs;
+
+use geop_core_topology::contains::shell::PointClassification;
 
 use crate::{Fillet, FilletArgs};
 
@@ -80,20 +101,18 @@ fn fillet_of_an_upright_edge_between_faces_at_169_degrees() {
 
 /// The same prism as [`fillet_of_an_upright_edge_between_faces_at_169_degrees`]
 /// with the back rest leaning 7 over 20 (the faces at 160.7°). The fillet
-/// fails classifying a face of the blend tool:
+/// failed classifying a face of the blend tool:
 ///
 /// > face_interior_point: no point strictly inside face FaceId(58) was
 /// > found, stepping inward from the midpoint of each of its 3 outer
-/// > coedges; that loop spans u=[-2e-9, 0.0012], v=[0.662, 0.671] (a loop
-/// > spanning nothing encloses no area, so the face is degenerate)
+/// > coedges; that loop spans u=[-2e-9, 0.0012], v=[0.662, 0.671]
 ///
-/// The face is a piece of the prism's leaning side cut off by the tool: at
-/// this angle the tool's contact lines on the two faces are far apart
-/// along the faces but the piece between the tool and the top is a thin
-/// triangle. Ruled out: the radius (0.5 fails the same way). At 150° and
-/// 155° the fillet builds.
+/// The face is a piece of the prism's leaning side cut off by the tool, a
+/// thin triangle, 0.0012 across in the side's parameters: thinner than the
+/// margin from its boundary `face_interior_point` asked of a point, the
+/// boolean's resolution in `(u, v)`. That margin is now made finer until a
+/// point is found.
 #[test]
-#[ignore = "bug: the fillet of an edge whose faces meet at 160° fails classifying a thin triangular piece of the leaning face (face_interior_point finds no interior point); 155° builds"]
 fn fillet_of_an_upright_edge_between_faces_at_160_degrees() {
     assert_builds_valid(&prism_with_rounded_upright(
         &[
@@ -151,7 +170,7 @@ fn fillet_of_a_post_joint_whose_contact_runs_off_the_bar() {
 /// A thin plate with a hole (Fusion 360 "Bottle opener" and sheet-like
 /// tutorials: a large plate, a hole, its rim rounded by a small radius): a
 /// plate 100 x 100, a hole of radius 5 through it, the rim rounded by 0.04.
-/// The fillet fails classifying the piece of the top cut off by the tool:
+/// The fillet failed classifying the piece of the top cut off by the tool:
 ///
 /// > face_interior_point: no point strictly inside face FaceId(351) was
 /// > found, stepping inward from the midpoint of each of its 4 outer
@@ -159,13 +178,13 @@ fn fillet_of_a_post_joint_whose_contact_runs_off_the_bar() {
 ///
 /// The loop is the fillet's contact circle (radius 5.04) on the plate's
 /// top, 0.0504 of the surface's domain across; what it bounds is the
-/// annulus between it and the hole's rim, 0.0004 wide in `(u, v)`. Ruled
-/// out: the plate's thickness (1 and 0.1 fail alike) and the absolute size
-/// (the drilled box's rim fillet scaled by 1/20 and by 1000 builds). A
-/// plate 20 x 20 with the same hole and fillet builds: the failure comes
-/// with the fillet's width relative to the face it cuts.
+/// annulus between it and the hole's rim, 0.0004 wide in `(u, v)`: thinner
+/// than the margin from its boundary `face_interior_point` asked of a
+/// point, the boolean's resolution in `(u, v)`. That margin is now made
+/// finer until a point is found. A plate 20 x 20 with the same hole and
+/// fillet built: the failure came with the fillet's width relative to the
+/// face it cuts.
 #[test]
-#[ignore = "bug: a hole-rim fillet 0.04 wide on a 100 x 100 face fails in face_interior_point on the 0.0004-wide (in uv) annulus the tool cuts off; the same fillet on a 20 x 20 face builds"]
 fn fillet_of_a_hole_rim_tiny_against_its_face() {
     let mut program = Program::new();
     program.push(
@@ -197,4 +216,440 @@ fn fillet_of_a_hole_rim_tiny_against_its_face() {
                 .could_be_equal(Scalar::from_f64(5.04 * 5.04))
     });
     assert!(contact);
+}
+
+/// The edges of `part` at its vertex named `vertex`, by name.
+fn edges_at_vertex(part: &NamedModel, vertex: &str) -> Vec<String> {
+    let vertex = part.vertex_id(vertex).unwrap();
+    let mut edges: Vec<String> = (part.topology().edges.iter())
+        .filter(|(_, e)| e.start_vertex == vertex || e.end_vertex == vertex)
+        .map(|(&id, _)| part.name_of(id).unwrap().to_string())
+        .collect();
+    edges.sort();
+    edges
+}
+
+/// A cylinder with a flat cut down its side (the stress sweep's
+/// `cylinder_with_flat`), the three edges at a top corner of the flat
+/// rounded together: the corner rounded by a ball, which joins the tools
+/// of the top rim and the flat's top edge into one. Both run on to the
+/// flat's other top corner, and leave the solid there — the rim through the
+/// flat, the flat's edge through the cylinder — so in that one tool they
+/// would overlap: refused, naming the two edges and the vertex. (Built, the
+/// tool was a solid overlapping itself and the boolean left the cylinder's
+/// top face inside out.) Round that corner too, and both corners are
+/// rounded by balls.
+#[test]
+fn rounding_a_corner_of_a_cylinders_flat() {
+    let (part, _) =
+        geop_lib_fixtures::bodies::one_solid(&geop_lib_fixtures::bodies::cylinder_with_flat());
+    let corner = "combine(flat,block(flat,c3,end),cylinder(body,c0,end),0,1)";
+    let other = "combine(flat,block(flat,c3,end),cylinder(body,c3,end),0,1)";
+    let edges = edges_at_vertex(&part, corner);
+    assert_eq!(edges.len(), 3, "{edges:?}");
+    let refused = geop_ops_model::testing::apply_to_model::<Fillet>(
+        part.clone(),
+        "round",
+        &FilletArgs::constant(edges.clone(), 0.1),
+    );
+    let message = format!("{:?}", geop_ops_model::testing::error(refused));
+    assert!(
+        message.contains("both end on their own at vertex"),
+        "{message}"
+    );
+    let mut both = edges;
+    both.extend(edges_at_vertex(&part, other));
+    both.sort();
+    both.dedup();
+    let rounded = geop_ops_model::testing::apply_to_model::<Fillet>(
+        part,
+        "round",
+        &FilletArgs::constant(both, 0.1),
+    )
+    .unwrap();
+    assert_valid(&rounded);
+}
+
+/// The operations the turbine example is written in, and fillets.
+fn turbine_registry() -> GeopResult<OperationRegistry> {
+    geop_ops_extrude_revolve::testing::registry()?
+        .with(geop_ops_reference_geometry::AddDatum)?
+        .with(geop_ops_pattern::CircularPattern)?
+        .with(Fillet)
+}
+
+/// The edges of the turbine example (`geop_ops_pattern::examples::
+/// turbine_blade`: a revolved hub, a blade lofted through three sketches,
+/// patterned six times round the hub and joined to it) whose names start
+/// with `prefix`.
+fn turbine_edges(part: &NamedModel, prefix: &str) -> Vec<String> {
+    let mut names: Vec<String> = (part.topology().edges.keys())
+        .filter_map(|&e| part.name_of(e))
+        .filter(|n| n.starts_with(prefix))
+        .map(|n| n.to_string())
+        .collect();
+    names.sort();
+    names
+}
+
+/// `program`, its solid `solid` with the edges `edges` rounded by `r` as
+/// the step `round`, as a user rounds them in the editor: built, valid, and
+/// its volume changed the way the blend goes — less, cut, where `cuts`;
+/// more, filled, else — by what a round's corner holds along the chains
+/// blended: between `r^2 / 10` and `10 r^2` per unit of their length (a
+/// right angle's corner holds `0.21 r^2`, the blade's trailing edge, of 25
+/// degrees, `3.2 r^2`).
+fn assert_rounds(
+    mut program: Program,
+    registry: fn() -> GeopResult<OperationRegistry>,
+    solid: &str,
+    edges: Vec<String>,
+    r: f64,
+    cuts: bool,
+) {
+    let before = program.build_model(registry).unwrap();
+    let mut chained: Vec<geop_core_topology::EdgeId> = Vec::new();
+    for edge in &edges {
+        let chain = tangent_chain(before.topology(), before.edge_id(edge).unwrap()).unwrap();
+        chained.extend(chain.edges());
+    }
+    chained.sort_by_key(|e| e.0);
+    chained.dedup();
+    let length: f64 = (chained.iter())
+        .map(|&e| {
+            let curve = &before.topology().get_edge(e).unwrap().curve;
+            curve.length().unwrap().0.to_f64()
+        })
+        .sum();
+    program.push("round", FilletArgs::constant(edges, r));
+    let part = program.build_model(registry).unwrap();
+    assert_valid(&part);
+    // Integrated, not meshed: a mesh's volume is off by more than a round
+    // this small changes it by.
+    let volume = |part: &NamedModel, solid: &str| {
+        let solid = part.solid_id(solid).unwrap();
+        let mass = part.topology().mass_properties(solid).unwrap();
+        mass.volume.midpoint().to_f64()
+    };
+    let (a, b) = (volume(&before, solid), volume(&part, "fillet(round)"));
+    let change = if cuts { a - b } else { b - a };
+    assert!(
+        change > 0.1 * r * r * length && change < 10.0 * r * r * length,
+        "the volume went from {a} to {b}, along {length} of edges"
+    );
+}
+
+/// The turbine example, the edges named by `prefixes` rounded by 0.1 (see
+/// [`assert_rounds`]).
+fn assert_turbine_rounds(prefixes: &[&str], cuts: bool) {
+    let program = geop_ops_pattern::examples::turbine_blade();
+    let before = program.build_model(turbine_registry).unwrap();
+    let mut edges = Vec::new();
+    for prefix in prefixes {
+        let found = turbine_edges(&before, prefix);
+        assert_eq!(found.len(), 1, "{prefix}: {found:?}");
+        edges.extend(found);
+    }
+    let solid = "circular_pattern(circular_pattern1)";
+    assert_rounds(program, turbine_registry, solid, edges, 0.1, cuts);
+}
+
+/// The operations the blade's programs below are written in: sketches,
+/// extrusions and lofts, given solids and datums, and fillets.
+fn blade_registry() -> GeopResult<OperationRegistry> {
+    geop_ops_extrude_revolve::testing::registry()?
+        .with(geop_lib_fixtures::Primitive)?
+        .with(geop_lib_fixtures::GivenDatum)?
+        .with(Fillet)
+}
+
+/// The turbine example's first blade section, a tenth its size: its
+/// points `p5`, `p8` and `p6` (see [`blade_section`]).
+const SECTION: [[f64; 2]; 3] = [[-1.008, -1.593], [1.728, 1.138], [1.008, 1.593]];
+
+/// The blade section [`SECTION`] `scale` times its size, sketched: two
+/// quadratic splines, `p5 p8 p6` and `p6 p10 p5`, meeting tangentially at
+/// `p6` — `p10` as far on past `p6` from `p8` as `p8` is before it — and at
+/// a corner of 25 degrees at `p5`, the trailing edge.
+fn blade_section(scale: f64) -> Sketch {
+    let [p5, p8, p6] = SECTION.map(|[x, y]| [scale * x, scale * y]);
+    let p10 = [2.0 * p6[0] - p8[0], 2.0 * p6[1] - p8[1]];
+    let mut sketch = Sketch::new();
+    let [p5, p8, p6, p10] = [p5, p8, p6, p10].map(|[x, y]| sketch.add_point(n(x), n(y)));
+    sketch.add_spline(vec![p5, p8, p6]);
+    sketch.add_spline(vec![p6, p10, p5]);
+    sketch
+}
+
+/// The edges of `part` whose middles are where `keep` says, by name.
+fn edges_with_middle(part: &NamedModel, keep: impl Fn([f64; 3]) -> bool) -> Vec<String> {
+    let mut edges = edges_with_middle_where(part, keep);
+    edges.sort();
+    edges
+}
+
+/// The blade section's trailing edge `p5`, in its sketch's coordinates,
+/// and the unit direction halving its corner, into the section.
+fn trailing_corner() -> ([f64; 2], [f64; 2]) {
+    let [p5, p8, p6] = SECTION;
+    let p10 = [2.0 * p6[0] - p8[0], 2.0 * p6[1] - p8[1]];
+    let unit = |q: [f64; 2]| {
+        let d = [q[0] - p5[0], q[1] - p5[1]];
+        let l = d[0].hypot(d[1]);
+        [d[0] / l, d[1] / l]
+    };
+    let (a, b) = (unit(p8), unit(p10));
+    let h = [a[0] + b[0], a[1] + b[1]];
+    let l = h[0].hypot(h[1]);
+    (p5, [h[0] / l, h[1] / l])
+}
+
+/// Where the point `p` is in the solid `solid` of `part`.
+fn where_in(part: &NamedModel, solid: &str, p: [f64; 3]) -> PointClassification {
+    geop_ops_model::testing::classify(part, solid, p)
+}
+
+/// The turbine's first blade section extruded 2 up, the edge round its top
+/// rounded by 0.1: the tangent chain runs round both splines' top edges,
+/// past the tangent corner, and starts and ends at the trailing edge's top,
+/// a corner each end leaves the solid at through the other spline's face,
+/// curved. Each end runs on past it, the ball rolled on the faces carried
+/// on, and the tool is built in halves, which would overlap there as one.
+/// The corner's tip is cut away, the section's middle kept. (The volume is
+/// not integrated here: on the rolled faces that takes ten seconds; the
+/// turbine's own tests do, `rounding_a_turbine_blades_tip`.)
+#[test]
+fn rounding_the_top_of_a_blade_section() {
+    let mut program = Program::new();
+    program.push(
+        "section",
+        AddSketchArgs::on(on_origin(FrameAxis::Z), blade_section(1.0)),
+    );
+    program.push("blade", extrude("section", 2.0, false));
+    let before = program.build_model(blade_registry).unwrap();
+    let top = edges_with_middle(&before, |m| near(m[2], 2.0));
+    assert_eq!(top.len(), 2, "{top:?}");
+    program.push("round", FilletArgs::constant(vec![top[0].clone()], 0.1));
+    let part = program.build_model(blade_registry).unwrap();
+    assert_valid(&part);
+    let (p5, into) = trailing_corner();
+    let tip = [p5[0] + 0.05 * into[0], p5[1] + 0.05 * into[1], 1.99];
+    assert_eq!(
+        where_in(&before, "extrude(blade)", tip),
+        PointClassification::Inside
+    );
+    assert_eq!(
+        where_in(&part, "fillet(round)", tip),
+        PointClassification::Outside
+    );
+    assert_eq!(
+        where_in(&part, "fillet(round)", [0.0, 0.0, 1.0]),
+        PointClassification::Inside
+    );
+}
+
+/// The turbine's first blade section lofted into itself twice its size
+/// 7.07 above it and on into itself half its size 18.2 above that, as the
+/// example spaces and sizes its sections, roughly — scaled exactly, so
+/// that the loft matches their curves whole — and the trailing edge, two
+/// edges, one per span of the loft, rounded by 0.1.
+///
+/// Scaled exactly, the sections cross the trailing edge so nearly square
+/// to it that the ball reaches the middle section on both faces within a
+/// millionth of the way along the edge, and at the edge's vertex there.
+/// The stations there are now one — the crossings closer than the boolean
+/// resolves taken as one, the vertex's station dropped by them — and the
+/// rolled tool is built, but the boolean leaves the first span's face
+/// through `c4` straddling the tool (`classify_face`: an intersection curve
+/// not imprinted). The turbine's own sections, not scaled alike, cross it
+/// apart, and its trailing edge is rounded
+/// (`rounding_a_turbine_blades_trailing_edge`).
+#[test]
+#[ignore = "bug: a lofted blade's trailing edge, the sections scaled alike, is rounded but the boolean misses an intersection curve on the first span's face by the middle section (classify_face: straddles); the turbine's own sections round"]
+fn rounding_the_trailing_edge_of_a_lofted_blade() {
+    let mut program = Program::new();
+    let heights = [0.0, 7.07, 25.27];
+    for (k, (scale, z)) in [1.0, 2.0, 0.5].into_iter().zip(heights).enumerate() {
+        let plane = format!("plane{k}");
+        program.push(
+            &plane,
+            GivenDatumArgs::plane([0.0, 0.0, z], [0.0, 0.0, 1.0]),
+        );
+        program.push(
+            format!("section{k}"),
+            AddSketchArgs::on(
+                SketchPlane::Datum(ElementReference::new(datums(), &plane)),
+                blade_section(scale),
+            ),
+        );
+    }
+    program.push(
+        "blade",
+        LoftArgs {
+            profiles: (0..3)
+                .map(|k| whole_sketch(&format!("section{k}")))
+                .collect(),
+            matches: Vec::new(),
+            guides: Vec::new(),
+            output: Output::Solid(Combine::NewBody),
+        },
+    );
+    let before = program.build_model(blade_registry).unwrap();
+    assert_valid(&before);
+    // The lateral edges by the trailing edge, below the middle section and
+    // above it.
+    let trailing = edges_with_middle(&before, |m| {
+        heights.iter().all(|&z| !near(m[2], z)) && m[0] < 0.0 && m[1] < 0.0
+    });
+    assert_eq!(trailing.len(), 2, "{trailing:?}");
+    assert_rounds(program, blade_registry, "loft(blade)", trailing, 0.1, true);
+}
+
+/// The turbine's first blade section extruded 6 along `x` from the
+/// `yz` plane and joined to a cylinder of radius 4 along `z` around the
+/// origin, as a blade stands on a hub, and its trailing edge rounded by 0.1:
+/// it runs into the cylinder at an angle — the trailing edge is no radius of
+/// it — so the blend runs on into it, rolled, and is cut off by it, a
+/// sheet on the cylinder carried on splitting the tool. By the trailing
+/// edge, the blade is cut away down to the hub, and the hub not into.
+#[test]
+fn rounding_the_trailing_edge_of_a_blade_section_on_a_hub() {
+    let mut program = Program::new();
+    program.push("hub", PrimitiveArgs::cylinder_z([0.0, 0.0, -4.0], 4.0, 8.0));
+    program.push(
+        "section",
+        AddSketchArgs::on(on_origin(FrameAxis::X), blade_section(1.0)),
+    );
+    program.push(
+        "blade",
+        extrusion(
+            "section",
+            Extents::blind(6.0),
+            Combine::join("cylinder(hub)"),
+        ),
+    );
+    let before = program.build_model(blade_registry).unwrap();
+    // The trailing edge, on the side of the blade below the line `y = -z`,
+    // standing out of the hub: of the lines along `x`, the one past it.
+    let trailing: Vec<String> =
+        edges_with_middle(&before, |m| m[0] > 4.0 && m[0] < 6.0 && m[1] + m[2] < 0.0)
+            .into_iter()
+            .filter(|e| !e.starts_with("cylinder(hub"))
+            .collect();
+    assert_eq!(trailing.len(), 1, "{trailing:?}");
+    // Where the trailing edge is, in `(y, z)`: the sketch's own coordinates,
+    // or the other way round.
+    let edge = before
+        .topology()
+        .get_edge(before.edge_id(&trailing[0]).unwrap())
+        .unwrap();
+    let m = geop_ops_model::testing::middle(edge).to_f64_array();
+    let (p5, into) = trailing_corner();
+    let swap = !near(m[1], p5[0]);
+    let at = |x: f64| {
+        let (u, v) = (p5[0] + 0.05 * into[0], p5[1] + 0.05 * into[1]);
+        if swap { [x, v, u] } else { [x, u, v] }
+    };
+    let y = if swap { p5[1] } else { p5[0] };
+    let foot = (16.0 - y * y).sqrt();
+    let solid = "extrude(blade)";
+    for x in [5.0, foot + 0.05] {
+        assert_eq!(where_in(&before, solid, at(x)), PointClassification::Inside);
+    }
+    let rounded = {
+        let mut program = program.clone();
+        program.push("round", FilletArgs::constant(trailing.clone(), 0.1));
+        program.build_model(blade_registry).unwrap()
+    };
+    assert_valid(&rounded);
+    for x in [5.0, foot + 0.05] {
+        assert_eq!(
+            where_in(&rounded, "fillet(round)", at(x)),
+            PointClassification::Outside,
+            "{x}"
+        );
+    }
+    assert_eq!(
+        where_in(&rounded, "fillet(round)", at(foot - 0.02)),
+        PointClassification::Inside
+    );
+    assert_rounds(program, blade_registry, solid, trailing, 0.1, true);
+}
+
+/// The blade's trailing edge, a sharp edge of 25 degrees between the
+/// loft's faces through the sketches' curves `c9` and `c11`, rounded by
+/// 0.1 (a user report on the turbine example): both of its pieces, from
+/// the hub, which the blade is joined to, to the blade's tip.
+///
+/// It ends at the tip, through the loft's end cap, a plane its faces do
+/// not stand square to, and at the hub, a cylinder it runs into.
+#[test]
+#[ignore = "slow: 25 s, the turbine's volume integrated twice — run with `cargo test -- --ignored`; `rounding_the_trailing_edge_of_a_blade_section_on_a_hub` is the fast test of its end at the hub"]
+fn rounding_a_turbine_blades_trailing_edge() {
+    assert_turbine_rounds(
+        &[
+            "circular_pattern(circular_pattern1,1,loft(loft1,sketch1,p5,sketch2>sketch3))",
+            "combine(circular_pattern1,1,circular_pattern(circular_pattern1,1,loft(loft1,sketch1,p5,sketch1>sketch2)),combine(",
+        ],
+        true,
+    );
+}
+
+/// The edge round the blade's tip, between the loft's end cap and its face
+/// through `c9`, rounded by 0.1 (a user report on the turbine example).
+/// The tangent chain runs on round the tip's leading edge, where the faces
+/// through `c9` and `c11` meet smoothly, back to the trailing edge: it
+/// starts and ends at one corner, where each end leaves the solid through
+/// the other end's face, curved.
+#[test]
+#[ignore = "slow: 20 s, the turbine's volume integrated twice — run with `cargo test -- --ignored`; `rounding_the_top_of_a_blade_section` is the fast test of the tool in halves"]
+fn rounding_a_turbine_blades_tip() {
+    assert_turbine_rounds(
+        &["circular_pattern(circular_pattern1,1,loft(loft1,sketch1,c9,sketch3))"],
+        true,
+    );
+}
+
+/// The blade's root on the hub, between the loft's face through `c9` and
+/// the revolved hub, rounded by 0.1 (a user report on the turbine
+/// example): a concave edge, filled in. Its chain runs round the root to
+/// the blade's trailing edge, a sharp edge of 25 degrees, where it starts
+/// and ends: an outward corner, which each end leaves the solid at, through
+/// the blade's other face there.
+///
+/// Refused, naming the faces at the corner. Filled up to the other face —
+/// the root filled on along the face through `c9` until it meets the face
+/// through `c11` carried on past the trailing edge, and alike from the
+/// other side — the two ends make a notch whose edge is the trailing edge
+/// itself, below the fill's top: an end of the fill on an edge that exists,
+/// which no boolean can cut (it failed splicing the second end's edge into
+/// the first's, at a corner `6e-5` across in `(u, v)`). What a designer
+/// expects there is the fill rolled round the trailing edge, a ball
+/// touching the hub and the edge itself — rolling over a crease, which the
+/// blend does not do (see `crate::rolling`).
+#[test]
+fn rounding_a_turbine_blades_root_on_the_hub_is_refused_at_the_trailing_edge() {
+    let mut program = geop_ops_pattern::examples::turbine_blade();
+    let before = program.build_model(turbine_registry).unwrap();
+    let root = turbine_edges(
+        &before,
+        "combine(circular_pattern1,1,circular_pattern(circular_pattern1,1,loft(loft1,sketch1,c9,sketch1>sketch2)),revolve(revolve1,sketch4,c10,q0),",
+    );
+    assert_eq!(root.len(), 1, "{root:?}");
+    program.push("round", FilletArgs::constant(root, 0.1));
+    let Err(error) = program.build_model(turbine_registry) else {
+        panic!("the root filled round to the trailing edge is not refused");
+    };
+    let error = format!("{error:?}");
+    assert!(
+        error.contains("the edge leaves the solid there, an outward corner"),
+        "{error}"
+    );
+    // The faces at the corner, by name: the hub and both of the blade's.
+    for face in [
+        "revolve(revolve1,sketch4,c10,q0) (curved)",
+        "circular_pattern(circular_pattern1,1,loft(loft1,sketch1,c9,sketch1>sketch2)) (curved)",
+    ] {
+        assert!(error.contains(face), "{error}");
+    }
 }

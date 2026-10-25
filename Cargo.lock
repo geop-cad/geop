@@ -684,6 +684,8 @@ dependencies = [
  "geop-lib-sweep",
  "geop-ops-extrude-revolve",
  "geop-ops-model",
+ "geop-ops-pattern",
+ "geop-ops-reference-geometry",
  "geop-ops-shell",
  "geop-ops-sketch",
  "geop-ops-subd",
