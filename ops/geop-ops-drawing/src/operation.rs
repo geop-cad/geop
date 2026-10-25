@@ -1117,9 +1117,15 @@ impl PartOperation for Drawing {
         f.input("title:name", "Part name", &args.name, None, |edit, text| {
             edit.args.name = text.to_string();
         });
-        f.input("title:material", "Material", &args.material, None, |edit, text| {
-            edit.args.material = text.to_string();
-        });
+        f.input(
+            "title:material",
+            "Material",
+            &args.material,
+            None,
+            |edit, text| {
+                edit.args.material = text.to_string();
+            },
+        );
         f
     }
 

@@ -154,12 +154,7 @@ impl<'a, A, T> EditForm<'a, A, T> {
             let Value::Table(what) = value else {
                 return;
             };
-            let TableEdit::Paste {
-                row,
-                column,
-                cells,
-            } = what
-            else {
+            let TableEdit::Paste { row, column, cells } = what else {
                 return edit(e, what);
             };
             let mut rows = rows;

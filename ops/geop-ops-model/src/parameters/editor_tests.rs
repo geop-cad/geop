@@ -61,17 +61,50 @@ fn a_table_is_made_in_its_popup_dialog() {
     assert!(!shown.rows[0].removable, "the last row stays");
 
     s.dialog("input", Value::Text("size".into()));
-    s.dialog("table", Value::Table(TableEdit::Column { column: 1, text: "d".into() }));
+    s.dialog(
+        "table",
+        Value::Table(TableEdit::Column {
+            column: 1,
+            text: "d".into(),
+        }),
+    );
     s.dialog("table", Value::Table(TableEdit::AddColumn));
-    s.dialog("table", Value::Table(TableEdit::Column { column: 2, text: "k".into() }));
+    s.dialog(
+        "table",
+        Value::Table(TableEdit::Column {
+            column: 2,
+            text: "k".into(),
+        }),
+    );
     s.dialog("table", Value::Table(TableEdit::AddRow));
-    for (row, column, text) in [(0, 0, "M4"), (0, 1, "4"), (0, 2, "2.8"), (1, 0, "M5"), (1, 1, "5"), (1, 2, "3.5")] {
-        s.dialog("table", Value::Table(TableEdit::Cell { row, column, text: text.into() }));
+    for (row, column, text) in [
+        (0, 0, "M4"),
+        (0, 1, "4"),
+        (0, 2, "2.8"),
+        (1, 0, "M5"),
+        (1, 1, "5"),
+        (1, 2, "3.5"),
+    ] {
+        s.dialog(
+            "table",
+            Value::Table(TableEdit::Cell {
+                row,
+                column,
+                text: text.into(),
+            }),
+        );
     }
     s.dialog("table", Value::Table(TableEdit::SelectRow { row: 1 }));
     let shown = table(&s, "table");
     assert_eq!(cells(&shown), [["M4", "4", "2.8"], ["M5", "5", "3.5"]]);
-    assert_eq!(shown.columns.iter().map(|c| c.label.as_str()).collect::<Vec<_>>(), ["Row", "d", "k"]);
+    assert_eq!(
+        shown
+            .columns
+            .iter()
+            .map(|c| c.label.as_str())
+            .collect::<Vec<_>>(),
+        ["Row", "d", "k"]
+    );
     assert!(!shown.rows[0].selected && shown.rows[1].selected);
     assert!(shown.rows.iter().all(|r| r.removable));
 
@@ -107,7 +140,10 @@ fn a_table_is_made_in_its_popup_dialog() {
     handled(&mut editor, Command::Open { id: step.id });
     handled(&mut editor, edit("table", TableEdit::RemoveRow { row: 1 }));
     handled(&mut editor, edit("table", TableEdit::RemoveRow { row: 0 }));
-    handled(&mut editor, edit("table", TableEdit::RemoveColumn { column: 1 }));
+    handled(
+        &mut editor,
+        edit("table", TableEdit::RemoveColumn { column: 1 }),
+    );
     handled(&mut editor, Command::Commit);
     let args: LookupTableArgs =
         serde_json::from_value(editor.program().steps.last().unwrap().args.clone()).unwrap();
@@ -137,16 +173,31 @@ fn a_table_takes_a_pasted_block_and_moves_rows() {
             cells: block,
         }),
     );
-    assert_eq!(cells(&table(&s, "table")), [["M3", "3"], ["M4", "4"], ["M5", "5"]]);
+    assert_eq!(
+        cells(&table(&s, "table")),
+        [["M3", "3"], ["M4", "4"], ["M5", "5"]]
+    );
     s.dialog("table", Value::Table(TableEdit::MoveRow { row: 2, to: 0 }));
-    assert_eq!(cells(&table(&s, "table")), [["M5", "5"], ["M3", "3"], ["M4", "4"]]);
-    s.dialog("table", Value::Table(TableEdit::Column { column: 0, text: "Name".into() }));
+    assert_eq!(
+        cells(&table(&s, "table")),
+        [["M5", "5"], ["M3", "3"], ["M4", "4"]]
+    );
+    s.dialog(
+        "table",
+        Value::Table(TableEdit::Column {
+            column: 0,
+            text: "Name".into(),
+        }),
+    );
     s.dialog("table", Value::Table(TableEdit::RemoveColumn { column: 0 }));
     let shown = table(&s, "table");
     assert_eq!(shown.columns[0].label, "Row");
     assert_eq!(shown.columns.len(), 2);
     let args: LookupTableArgs = s.args();
-    assert_eq!(args.selected, "M3", "the row chosen stays chosen under its new name");
+    assert_eq!(
+        args.selected, "M3",
+        "the row chosen stays chosen under its new name"
+    );
     assert_eq!(args.rows[1].name, "M3");
 }
 
@@ -160,20 +211,78 @@ fn the_parameters_are_edited_as_a_table() {
     assert_eq!(table(&s, "parameters").rows.len(), 0);
     s.dialog("parameters", Value::Table(TableEdit::AddRow));
     s.dialog("parameters", Value::Table(TableEdit::AddRow));
-    s.dialog("parameters", Value::Table(TableEdit::Cell { row: 0, column: 0, text: "width".into() }));
-    s.dialog("parameters", Value::Table(TableEdit::Cell { row: 0, column: 1, text: "20".into() }));
-    s.dialog("parameters", Value::Table(TableEdit::Cell { row: 0, column: 2, text: "5".into() }));
-    s.dialog("parameters", Value::Table(TableEdit::Cell { row: 0, column: 3, text: "50".into() }));
-    s.dialog("parameters", Value::Table(TableEdit::Cell { row: 1, column: 0, text: "half".into() }));
-    s.dialog("parameters", Value::Table(TableEdit::Cell { row: 1, column: 1, text: "width / 2".into() }));
+    s.dialog(
+        "parameters",
+        Value::Table(TableEdit::Cell {
+            row: 0,
+            column: 0,
+            text: "width".into(),
+        }),
+    );
+    s.dialog(
+        "parameters",
+        Value::Table(TableEdit::Cell {
+            row: 0,
+            column: 1,
+            text: "20".into(),
+        }),
+    );
+    s.dialog(
+        "parameters",
+        Value::Table(TableEdit::Cell {
+            row: 0,
+            column: 2,
+            text: "5".into(),
+        }),
+    );
+    s.dialog(
+        "parameters",
+        Value::Table(TableEdit::Cell {
+            row: 0,
+            column: 3,
+            text: "50".into(),
+        }),
+    );
+    s.dialog(
+        "parameters",
+        Value::Table(TableEdit::Cell {
+            row: 1,
+            column: 0,
+            text: "half".into(),
+        }),
+    );
+    s.dialog(
+        "parameters",
+        Value::Table(TableEdit::Cell {
+            row: 1,
+            column: 1,
+            text: "width / 2".into(),
+        }),
+    );
     let shown = table(&s, "parameters");
-    assert_eq!(cells(&shown), [["width", "20", "5", "50"], ["half", "width / 2", "", ""]]);
+    assert_eq!(
+        cells(&shown),
+        [["width", "20", "5", "50"], ["half", "width / 2", "", ""]]
+    );
     assert_eq!(shown.rows[1].cells[1].detail.as_deref(), Some("= 10"));
     assert_eq!(shown.rows[1].cells[1].tone, Tone::Hint);
-    s.dialog("parameters", Value::Table(TableEdit::Cell { row: 1, column: 1, text: "nothing * 2".into() }));
+    s.dialog(
+        "parameters",
+        Value::Table(TableEdit::Cell {
+            row: 1,
+            column: 1,
+            text: "nothing * 2".into(),
+        }),
+    );
     let shown = table(&s, "parameters");
     assert_eq!(shown.rows[1].cells[1].tone, Tone::Error);
-    assert!(shown.rows[1].cells[1].detail.as_deref().is_some_and(|d| d.contains("nothing")), "{shown:?}");
+    assert!(
+        shown.rows[1].cells[1]
+            .detail
+            .as_deref()
+            .is_some_and(|d| d.contains("nothing")),
+        "{shown:?}"
+    );
     s.dialog("parameters", Value::Table(TableEdit::RemoveRow { row: 1 }));
     let args: DefineParametersArgs = s.args();
     assert_eq!(
