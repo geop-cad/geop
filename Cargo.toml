@@ -38,6 +38,7 @@ members = [
     "lib/geop-lib-booleans",
     "lib/geop-lib-sweep",
     "lib/geop-lib-shell",
+    "lib/geop-lib-fixtures",
 ]
 
 [workspace.package]
@@ -55,6 +56,7 @@ geop-core-sketch = { path = "core/geop-core-sketch" }
 geop-core-rasterize = { path = "core/geop-core-rasterize" }
 geop-lib-sheet = { path = "lib/geop-lib-sheet" }
 geop-lib-stdlib = { path = "lib/geop-lib-stdlib" }
+geop-lib-fixtures = { path = "lib/geop-lib-fixtures" }
 geop-ops-model = { path = "ops/geop-ops-model" }
 geop-ops-sketch = { path = "ops/geop-ops-sketch" }
 geop-ops-reference-geometry = { path = "ops/geop-ops-reference-geometry" }

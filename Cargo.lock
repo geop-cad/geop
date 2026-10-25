@@ -339,6 +339,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "geop-lib-fixtures"
+version = "0.1.0"
+dependencies = [
+ "geop-core-editor",
+ "geop-core-geometry",
+ "geop-core-math",
+ "geop-core-program",
+ "geop-core-topology",
+ "geop-lib-booleans",
+ "geop-lib-sweep",
+ "geop-ops-model",
+ "serde",
+]
+
+[[package]]
 name = "geop-lib-sheet"
 version = "0.1.0"
 dependencies = [

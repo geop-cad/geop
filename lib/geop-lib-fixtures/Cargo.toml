@@ -1,0 +1,23 @@
+[package]
+name = "geop-lib-fixtures"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+# Test-only steps that give a program a solid or a datum at given
+# coordinates (see `lib.rs`): a dev-dependency of the operations' tests,
+# never a dependency of an editor.
+[dependencies]
+geop-core-math.workspace = true
+geop-core-geometry.workspace = true
+geop-core-topology.workspace = true
+geop-core-program.workspace = true
+geop-core-editor.workspace = true
+geop-ops-model = { workspace = true, features = ["testing"] }
+geop-lib-sweep.workspace = true
+geop-lib-booleans.workspace = true
+serde.workspace = true
+
+[dev-dependencies]
+geop-ops-model = { workspace = true, features = ["testing"] }
+geop-core-program = { workspace = true, features = ["testing"] }
