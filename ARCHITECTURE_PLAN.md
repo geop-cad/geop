@@ -778,7 +778,7 @@ tests has to say which and why.
    (they describe where a placed part is) and move them there if so.
 4. Add `Program::validate(&registry)` and call it on `Command::Load`,
    `Paste`, `Commit`. Add `testing::assert_incremental`.
-5. Core tests: rewrite `test/` and `test2/` on the real value types.
+5. Core tests: rewrite `test/` on the real value types.
 
 Acceptance: `geop-core-program` depends on `geop-core-math` only; no crate
 outside core defines a state or input type; `rg 'ProgramFile|BuildPart|
