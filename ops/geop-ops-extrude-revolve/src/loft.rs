@@ -28,13 +28,18 @@ use crate::sweeping::{Output, PathRef};
 /// — between two curves, the ruled surface joining them.
 ///
 /// Two profiles are joined by ruled walls, more by walls running smoothly
-/// through them all (see [`geop_lib_sweep::loft`]);
-/// profiles of different numbers of curves are matched up by halving the
-/// longest curves of the ones with fewer. Sketch points on the profiles'
-/// loops picked among the [`LoftArgs::matches`] are lofted into each other:
-/// each profile's first with the others' first, its second with their
-/// second, and so on — the curve such a point lies on split there, its
-/// second half named `X#P`.
+/// through them all (see [`geop_lib_sweep::loft`]). The profiles' corners
+/// — the sketch points where their curves meet at an angle — are lofted
+/// into each other, in order round the loops, so every profile with
+/// corners needs as many: a D and a triangle are refused, naming both. A
+/// profile without corners, a circle, is lined up as a whole. Between two
+/// corners, the curves are cut alike, each where another profile has a
+/// joint at the same fraction of the way along: a piece `X` cut gives
+/// `X#cut1`, `X#cut2`, ..., with the joints `X@cut1`, .... Sketch points on
+/// the profiles' loops picked among the [`LoftArgs::matches`] say instead
+/// which points are lofted into each other: each profile's first with the
+/// others' first, its second with their second, and so on — the curve such
+/// a point lies on split there, its second half named `X#P`.
 ///
 /// Or guide curves ([`LoftArgs::guides`]) say which points match: sketches
 /// whose one chain of curves runs from a point of the first profile through

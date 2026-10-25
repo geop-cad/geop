@@ -23,7 +23,7 @@ use geop_ops_model::sketch::{
 };
 use geop_ops_model::{
     BooleanOp, Combine, Curve, NamedModel, read_model, solid,
-    testing::{Built, assert_valid, runner_of},
+    testing::{Built, assert_valid, assert_volume, runner_of},
 };
 use geop_ops_sketch::AddSketchArgs;
 use std::f64::consts::PI;
@@ -542,9 +542,13 @@ fn sweep_and_loft_steps_round_trip() {
 
 /// Rebuilt from a part whose loft failed while enclosing its first sketch:
 /// a D — two sides joined by a half circle tangent to both, closed by an
-/// upright side — lofted into a triangle a unit above.
+/// upright side — lofted into a triangle a unit above. The D is enclosed
+/// (that was the failure), and then the loft is refused by name: the D has
+/// two corners, the triangle three, and nothing says which should meet
+/// which — see [`loft_a_d_into_a_triangle_matched_at_two_points`] for the
+/// same loft with the points matched.
 #[test]
-fn loft_a_d_into_a_triangle() {
+fn loft_a_d_into_a_triangle_is_refused_without_matched_points() {
     let mut d = Sketch::new();
     let p = [
         d.add_point(n(-0.8559366928294662), n(0.6532261597610688)),
@@ -575,22 +579,28 @@ fn loft_a_d_into_a_triangle() {
     lifted(&mut program, "above", 1.0);
     program.push("triangle", AddSketchArgs::on(on_datum("above"), triangle));
     program.push("loft", lofted(&["d", "triangle"]));
-    let part = program.build_model(registry).unwrap();
-    assert_valid(&part);
-    assert_eq!(part.solid_names(), ["loft(loft)"]);
+    let error = program.build_model(registry).unwrap_err().to_string();
+    assert!(
+        error.contains("the profile triangle has 3 corners, the profile d has 2"),
+        "{error}"
+    );
 }
 
-/// A rectangle, a triangle a unit above it and a circle a unit above that,
-/// lofted through in turn.
+/// A rectangle, a diamond a unit above it and a circle a unit above that,
+/// lofted through in turn: the rectangle's and the diamond's corners
+/// matched, the circle lined up as a whole.
 #[test]
-fn loft_a_rectangle_through_a_triangle_into_a_circle() {
+fn loft_a_rectangle_through_a_diamond_into_a_circle() {
     let mut rectangle = Sketch::new();
     polygon(
         &mut rectangle,
         &[[-0.6, -0.4], [0.6, -0.4], [0.6, 0.4], [-0.6, 0.4]],
     );
-    let mut triangle = Sketch::new();
-    polygon(&mut triangle, &[[-0.5, -0.4], [0.5, -0.4], [0.0, 0.5]]);
+    let mut diamond = Sketch::new();
+    polygon(
+        &mut diamond,
+        &[[0.0, -0.5], [0.5, 0.0], [0.0, 0.5], [-0.5, 0.0]],
+    );
     let mut program = Program::new();
     program.push(
         "rectangle",
@@ -600,15 +610,120 @@ fn loft_a_rectangle_through_a_triangle_into_a_circle() {
         lifted(&mut program, name, distance);
     }
     let on = on_datum;
-    program.push("triangle", AddSketchArgs::on(on("one"), triangle));
+    program.push("diamond", AddSketchArgs::on(on("one"), diamond));
     program.push(
         "circle",
         AddSketchArgs::on(on("two"), disc([0.0, 0.0], 0.4)),
     );
-    program.push("loft", lofted(&["rectangle", "triangle", "circle"]));
+    program.push("loft", lofted(&["rectangle", "diamond", "circle"]));
     let part = program.build_model(registry).unwrap();
     assert_valid(&part);
     assert_eq!(part.solid_names(), ["loft(loft)"]);
+    assert_eq!(part.topology().faces.len(), 2 * 4 + 2);
+}
+
+/// A triangle lofted into a hexagon above it is refused, naming both and
+/// their corners: three cannot meet six one to one, and nothing says
+/// which should.
+#[test]
+fn loft_a_triangle_into_a_hexagon_is_refused_by_name() {
+    let regular = |n: usize, r: f64| -> Sketch {
+        let mut s = Sketch::new();
+        let corners: Vec<[f64; 2]> = (0..n)
+            .map(|i| {
+                let a = std::f64::consts::TAU * i as f64 / n as f64;
+                [r * a.cos(), r * a.sin()]
+            })
+            .collect();
+        polygon(&mut s, &corners);
+        s
+    };
+    let mut program = Program::new();
+    program.push(
+        "triangle",
+        AddSketchArgs::on(on_origin(FrameAxis::Z), regular(3, 1.0)),
+    );
+    lifted(&mut program, "above", 1.0);
+    program.push(
+        "hexagon",
+        AddSketchArgs::on(on_datum("above"), regular(6, 0.8)),
+    );
+    program.push("loft", lofted(&["triangle", "hexagon"]));
+    let error = program.build_model(registry).unwrap_err().to_string();
+    assert!(
+        error.contains("the profile hexagon has 6 corners, the profile triangle has 3"),
+        "{error}"
+    );
+}
+
+/// Two D sections — a flat bottom and a circular arc over it — lofted along
+/// `x`, the second a scaled copy of the first. Drawn differently: the
+/// first's arc is one arc of 225°, which the kernel draws in three pieces;
+/// the second's is two arcs of 112.5° meeting at the top, two pieces each.
+/// Four curves against five: the loft matches the sections' corners, the
+/// ends of the bottom lines, and cuts the arcs alike by the fraction of
+/// their length run — not the bottom. The bottom is one flat face, and the
+/// body the frustum of a cone cut by a plane through its axis' side: its
+/// volume by hand, `L (A0 + sqrt(A0 A1) + A1) / 3` with the segments'
+/// areas `r^2 (phi - sin phi cos phi)`, `phi` half the arc's angle.
+#[test]
+fn loft_of_two_d_sections_drawn_differently_keeps_the_bottom_flat() {
+    /// A D on the plane `x`, its bottom from `(-w, 0)` to `(w, 0)` and the
+    /// arc through `(0, h)`: as one arc, or two meeting at the top.
+    fn section(program: &mut Program, name: &str, x: f64, w: f64, h: f64, two: bool) {
+        program.push(
+            format!("{name}_plane"),
+            GivenDatumArgs::plane([x, 0.0, 0.0], [1.0, 0.0, 0.0]),
+        );
+        let mut s = Sketch::new();
+        let a = s.add_point(n(-w), n(0.0));
+        let b = s.add_point(n(w), n(0.0));
+        s.add_line(a, b);
+        let r = (w * w + h * h) / (2.0 * h);
+        // Each half arc's angle: twice the half angle its chord subtends.
+        let half = 2.0 * ((w * w + h * h).sqrt() / (2.0 * r)).asin();
+        if two {
+            let top = s.add_point(n(0.0), n(h));
+            s.add_arc(b, top, n(half));
+            s.add_arc(top, a, n(half));
+        } else {
+            s.add_arc(b, a, n(2.0 * half));
+        }
+        program.push(
+            name,
+            AddSketchArgs::on(on_datum(&format!("{name}_plane")), s),
+        );
+    }
+    let (w, h, scale, length) = (1.0, 1.5, 1.4, 2.0);
+    let mut program = Program::new();
+    section(&mut program, "s0", 0.0, w, h, false);
+    section(&mut program, "s1", length, scale * w, scale * h, true);
+    program.push("body", lofted(&["s0", "s1"]));
+    let part = program.build_model(registry).unwrap();
+    assert_valid(&part);
+    let model = part.topology();
+    // The faces from the bottom line `c2`: one, in `z = 0`.
+    let bottoms: Vec<_> = model
+        .faces
+        .keys()
+        .filter(|&&id| part.name_of(id).unwrap().contains(",c2"))
+        .collect();
+    assert_eq!(bottoms.len(), 1, "{bottoms:?}");
+    for c in model.iterate_face_coedges(*bottoms[0]) {
+        let p = model.coedge_start_vertex(c).unwrap().point;
+        assert!(
+            p[2].could_be_equal(Scalar::ZERO),
+            "the bottom reaches {p:?}"
+        );
+    }
+    // Six arc pieces to a section: the five cuts of both, united.
+    assert_eq!(model.faces.len(), 1 + 6 + 2);
+    let r = (w * w + h * h) / (2.0 * h);
+    let phi = 2.0 * ((w * w + h * h).sqrt() / (2.0 * r)).asin();
+    let a0 = r * r * (phi - phi.sin() * phi.cos());
+    let a1 = scale * scale * a0;
+    let expected = length * (a0 + (a0 * a1).sqrt() + a1) / 3.0;
+    assert_volume(&part, "loft(body)", expected, 1e-3 * expected);
 }
 
 /// A square's corner matched with a point a third of the way round a
