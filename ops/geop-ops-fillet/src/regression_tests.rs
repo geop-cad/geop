@@ -147,3 +147,54 @@ fn fillet_of_a_post_joint_whose_contact_runs_off_the_bar() {
     program.push("round", FilletArgs::constant(arcs, 1.5));
     assert_builds_valid(&program);
 }
+
+/// A thin plate with a hole (Fusion 360 "Bottle opener" and sheet-like
+/// tutorials: a large plate, a hole, its rim rounded by a small radius): a
+/// plate 100 x 100, a hole of radius 5 through it, the rim rounded by 0.04.
+/// The fillet fails classifying the piece of the top cut off by the tool:
+///
+/// > face_interior_point: no point strictly inside face FaceId(351) was
+/// > found, stepping inward from the midpoint of each of its 4 outer
+/// > coedges; that loop spans u=[0.4496, 0.5504], v=[0.4496, 0.5504]
+///
+/// The loop is the fillet's contact circle (radius 5.04) on the plate's
+/// top, 0.0504 of the surface's domain across; what it bounds is the
+/// annulus between it and the hole's rim, 0.0004 wide in `(u, v)`. Ruled
+/// out: the plate's thickness (1 and 0.1 fail alike) and the absolute size
+/// (the drilled box's rim fillet scaled by 1/20 and by 1000 builds). A
+/// plate 20 x 20 with the same hole and fillet builds: the failure comes
+/// with the fillet's width relative to the face it cuts.
+#[test]
+#[ignore = "bug: a hole-rim fillet 0.04 wide on a 100 x 100 face fails in face_interior_point on the 0.0004-wide (in uv) annulus the tool cuts off; the same fillet on a 20 x 20 face builds"]
+fn fillet_of_a_hole_rim_tiny_against_its_face() {
+    let mut program = Program::new();
+    program.push(
+        "plate",
+        PrimitiveArgs::block([0.0, 0.0, 0.0], [100.0, 100.0, 1.0]),
+    );
+    program.push(
+        "hole",
+        PrimitiveArgs::cylinder_z([50.0, 50.0, -1.0], 5.0, 3.0).cut("block(plate)"),
+    );
+    let before = program.build_model(registry).unwrap();
+    let rim = edges_with_middle_where(&before, |m| {
+        near(m[2], 1.0) && (m[0] - 50.0).abs() < 5.01 && (m[1] - 50.0).abs() < 5.01
+    });
+    assert_eq!(rim.len(), 4, "{rim:?}");
+    program.push("round", FilletArgs::constant(rim, 0.04));
+    let part = program.build_model(registry).unwrap();
+    assert_valid(&part);
+    // The rim moved out to 5.04 on the top.
+    let contact = part.topology().vertices.values().any(|v| {
+        let (dx, dy) = (
+            v.point[0].sub(Scalar::from_f64(50.0)),
+            v.point[1].sub(Scalar::from_f64(50.0)),
+        );
+        v.point[2].could_be_equal(Scalar::from_f64(1.0))
+            && dx
+                .mul(dx)
+                .add(dy.mul(dy))
+                .could_be_equal(Scalar::from_f64(5.04 * 5.04))
+    });
+    assert!(contact);
+}
