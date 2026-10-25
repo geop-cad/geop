@@ -64,7 +64,7 @@ jobs:
         include:
           - target: x86_64-unknown-linux-gnu
             os: ubuntu-latest
-            cross: false
+            cross: true
           - target: aarch64-unknown-linux-gnu
             os: ubuntu-latest
             cross: true
@@ -91,8 +91,11 @@ jobs:
         with:
           targets: ${{ matrix.target }}
 
-      # The Linux aarch64 build runs in cross's container, which brings the
-      # cross linker; every other target builds on a runner of its own kind.
+      # The Linux builds run in cross's containers: they bring the aarch64
+      # linker, and link against an old glibc, so the binary runs on every
+      # distribution still in use — built on the runner itself it needed the
+      # runner's glibc 2.39 and failed on Ubuntu 22.04. Every other target
+      # builds on a runner of its own kind.
       - name: Install cross
         if: matrix.cross
         run: cargo install cross --locked
@@ -104,6 +107,21 @@ jobs:
             cross build --release --locked -p geop-cad-cli --features frontend --target ${{ matrix.target }}
           else
             cargo build --release --locked -p geop-cad-cli --features frontend --target ${{ matrix.target }}
+          fi
+
+      # A Linux binary must not need a newer glibc than the oldest
+      # distribution we support has (Ubuntu 20.04, Debian 11: 2.31).
+      - name: Check the glibc it needs
+        if: contains(matrix.target, 'linux')
+        shell: bash
+        run: |
+          set -euo pipefail
+          newest="$(readelf --dyn-syms -W "target/${{ matrix.target }}/release/geop" 2>/dev/null \
+            | grep -o 'GLIBC_2\.[0-9]*' | sort -t. -k2 -n -u | tail -1)"
+          echo "needs ${newest:-no versioned glibc}"
+          if [ -n "$newest" ] && [ "${newest#GLIBC_2.}" -gt 31 ]; then
+            echo "geop needs ${newest}, newer than 2.31" >&2
+            exit 1
           fi
 
       - name: Package
