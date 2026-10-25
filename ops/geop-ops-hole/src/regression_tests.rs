@@ -70,24 +70,20 @@ fn hole_at(face: &str, point: &str, kind: HoleKind, standard: Standard) -> HoleA
 /// at `(28 * 0.866, 28 * 0.5)` on the disc's top — 30° from the `x` axis,
 /// as drawn, to a thousandth — patterned six times at 60° around `z`.
 ///
-/// The pattern panics (not an error) in the booleans' remesh:
-///
-/// > remesh: about to insert a new vertex at (-2e-12, 28.0, 6.0), only
-/// > 0.00071 away from existing vertex VertexId(475) at (-0.000356,
-/// > 27.99938, 6.0) (threshold=0.001) — likely a spurious near-duplicate
-/// > from an under-resolved intersect
-///
-/// at `remesh_edges_x_edges.rs:256`. The new vertex lies on the cap's
-/// quarter seam `x = 0` at radius 28, where the third copy's centre lands
-/// to within a thousandth; the existing one 0.0007 off is on the copy's
-/// tool. Ruled out, each building valid: the same with the bolt exactly at
-/// 30° (`cos`, `sin` of 30°) or at 45°; five copies instead of six; the
-/// bolt without the bore; a plain disc instead of the flange, bored and
-/// patterned alike; a hole centred on the seam itself, drilled directly.
-/// What remains is a copy's centre a thousandth off a seam, met by the
-/// sixth copy's boolean.
+/// The pattern panicked in the booleans' remesh: "about to insert a new
+/// vertex at (0, 28, 6), only 0.00071 away from existing vertex
+/// (-0.000356, 27.99938, 6)". The seed's angle is `atan(0.5 / 0.866)`,
+/// 30.0007°, so the second copy's centre lands at 90.0007°, `3.56e-4`
+/// beside the cap's quarter seam `x = 0` (`revolve(flange,profile,c8,a0)`).
+/// The copy's own cap is flush with the ring, and its quarter seam
+/// `hole(bolt,b0,top,a0)`, a radial line from the centre pole at 60°,
+/// crosses the flange's seam at `(0, 28)`, `7.1e-4` along it: one genuine
+/// transversal crossing of two straight edges, `7.1e-4` from the pole. The
+/// remesh refused the new vertex by a distance threshold standing in for a
+/// decision; the crossing is legitimate, and a `7e-4` long edge piece is
+/// legitimate topology. The minimal geometry is in `geop-lib-booleans`
+/// (`blind_hole_whose_cap_seam_crosses_the_caps_seam_beside_its_centre`).
 #[test]
-#[ignore = "bug: six M6 holes patterned around a bored flange panic in remesh_edges_x_edges (near-duplicate vertex 7e-4 from a copy's centre on the cap's seam); five copies, an exact 30° seed, or no bore build valid"]
 fn bolt_circle_of_a_bored_flange() {
     let mut program = Program::new();
     let mut section = Sketch::new();
