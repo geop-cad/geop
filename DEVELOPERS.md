@@ -167,7 +167,9 @@ File menu, opens and cancels every operation, sketches and extrudes a
 part by clicks, weighs it, and downloads every export; `npm run
 e2e:vscode` opens generated example workspaces in the VS Code
 extension's page against a real `geop serve` and checks that edits are
-written back. Logic of the front end that needs no browser lives in a
+written back; `npm run demo` records the README's `docs/demo.gif` the same
+way (a rectangle sketched, extruded, filleted and resized, a screenshot
+per state, assembled by `ffmpeg`). Logic of the front end that needs no browser lives in a
 module of its own and is unit tested with `npm test` in `web/` (Node's
 own runner, `web/test/`), as the click and double-click rules are
 (`web/src/gestures.ts`). A bug they find in Rust gets a Rust test as well,
@@ -182,7 +184,28 @@ tests; on a push to `main` the whole suite; and every night the whole
 suite with the ignored sweeps (`cargo test --workspace -- --ignored`).
 Every run is capped with `timeout` and `prlimit`, as `AGENTS.md` asks.
 
+### Releases
+
+`scripts/release.sh <version>` sets the workspace version, commits, tags
+`v<version>` and pushes the tag. The tag runs
+`.github/workflows/release.yml`, which builds the `geop` CLI for Linux
+(x86_64, aarch64 through `cross`), macOS (x86_64, aarch64) and Windows
+(x86_64), zips the web app's static build (`web/dist`), writes
+`SHA256SUMS` and publishes them as a GitHub release with generated notes.
+A version with a `-` (`0.2.0-rc1`) is published as a pre-release.
+
+### The command line and MCP
+
+`cad/geop-cad-cli` is the `geop` binary: `compile` builds a program and
+writes it with an exporter, `examples` writes every built-in example,
+`serve` runs the editor for a front end over stdin/stdout (the VS Code
+extension), and `mcp` runs it as a Model Context Protocol server for an
+agent — `claude mcp add geop -- geop mcp`, tools in `docs/mcp.md`, the
+protocol in `src/mcp.rs`, the end-to-end session in `tests/mcp.rs`.
+
 ### Scripts
+
+- `scripts/release.sh <version>` cuts a release (see Releases).
 
 - `scripts/test-affected.sh [--dry-run] [base-ref] [-- args]` tests only
   what a change can affect: the files changed against `base-ref` (default

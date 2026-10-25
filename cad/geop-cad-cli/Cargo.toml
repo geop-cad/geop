@@ -14,6 +14,13 @@ geop-core-editor.workspace = true
 geop-core-program.workspace = true
 geop-core-math.workspace = true
 geop-ops-assembly.workspace = true
+geop-ops-inspect.workspace = true
 geop-cad-base.workspace = true
 clap = { version = "4", features = ["derive"] }
 serde_json.workspace = true
+
+[dev-dependencies]
+# `tests/mcp.rs` models the drilled box the testing helpers describe,
+# through the MCP server, step by step.
+geop-ops-extrude-revolve = { workspace = true, features = ["testing"] }
+geop-ops-model.workspace = true

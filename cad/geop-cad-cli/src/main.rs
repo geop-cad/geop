@@ -10,7 +10,10 @@
 //!
 //! `geop serve` is the other way in: the same editor the web app runs, as a
 //! process a front end spawns and talks to over stdin/stdout (see
-//! [`serve`]).
+//! [`serve`]). `geop mcp` is that editor as a Model Context Protocol server,
+//! for an agent to drive (see [`mcp`]).
+
+mod mcp;
 
 use clap::{Parser, Subcommand};
 use geop_cad_base::{BuiltPart, editor, outputs, workspace};
@@ -46,10 +49,17 @@ enum Command {
     /// front end: one JSON command per line on stdin, one JSON update per
     /// line on stdout. This is how the VS Code extension drives the kernel.
     Serve(ServeArgs),
+    /// Run the editor as a Model Context Protocol server over stdin/stdout,
+    /// for an agent to drive: `claude mcp add geop -- geop mcp`. See
+    /// docs/mcp.md.
+    Mcp(McpArgs),
 }
 
 #[derive(clap::Args)]
 struct ServeArgs {}
+
+#[derive(clap::Args)]
+struct McpArgs {}
 
 #[derive(clap::Args)]
 struct CompileArgs {
@@ -331,6 +341,7 @@ fn main() -> ExitCode {
     let cli = Cli::parse();
     let result = match cli.command {
         Command::Serve(args) => serve(&args),
+        Command::Mcp(McpArgs {}) => mcp::serve(),
         Command::Compile(args) => compile(&args).map(|c| {
             if !c.solved_for.is_empty() {
                 eprintln!(

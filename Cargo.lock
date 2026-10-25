@@ -251,6 +251,9 @@ dependencies = [
  "geop-core-math",
  "geop-core-program",
  "geop-ops-assembly",
+ "geop-ops-extrude-revolve",
+ "geop-ops-inspect",
+ "geop-ops-model",
  "serde_json",
 ]
 
