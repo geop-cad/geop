@@ -41,7 +41,6 @@ use geop_core_math::{
     geop_error::{GeopError, GeopResult, WithContext},
     plain::diagonal,
     scalars::Scalar,
-    solvers::probe::first_success,
     vector::{Vector2, Vector3},
 };
 use geop_core_topology::{
@@ -575,18 +574,21 @@ pub fn project_view<S: Scalar>(
             // its search to settle — as one does from where an edge
             // crosses the silhouette of a face it bounds, the ray leaving
             // tangent to that face.
-            let outcome = first_success([0.5, 0.25, 0.75], |f| {
-                let decide = || -> GeopResult<bool> {
-                    let t = S::fraction(a, b, S::from_f64(f));
-                    let mut point = source.curve3.evaluate(t)?;
-                    if let Some(silhouette) = &source.silhouette {
-                        point = silhouette.exact_point(model, &d, &point)?;
-                    }
-                    seen(model, &occluders, point, &toward_eye, length)
-                };
-                decide().map_err(ctx)
-            })
-            .map_err(|e| e.unwrap_or_else(|| GeopError::new("no point tried")));
+            let decide = |f: f64| -> GeopResult<bool> {
+                let t = S::fraction(a, b, S::from_f64(f));
+                let mut point = source.curve3.evaluate(t)?;
+                if let Some(silhouette) = &source.silhouette {
+                    point = silhouette.exact_point(model, &d, &point)?;
+                }
+                seen(model, &occluders, point, &toward_eye, length)
+            };
+            let mut outcome = Err(GeopError::new("no point tried"));
+            for f in [0.5, 0.25, 0.75] {
+                outcome = decide(f).map_err(ctx);
+                if outcome.is_ok() {
+                    break;
+                }
+            }
             pieces.push((index, a, b, outcome));
         }
     }

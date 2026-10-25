@@ -53,7 +53,6 @@ use geop_core_math::{
         bisect::{Bracket, bisect},
         iterate::{Repeat, Step, iterate},
         linear::solve_symmetric2,
-        minimize::GoldenSection,
         refine::{Refine, Refined, refine},
         repeat::{self, repeat},
         walk::{Walked, walk},
@@ -3366,6 +3365,70 @@ const NEAREST_ITERATIONS: usize = 80;
 /// midpoints in `f64`.
 const NEAREST_ON_ENCLOSURE: usize = 12;
 
+/// A golden-section search for the least of a unimodal merit on `[a, b]`,
+/// in plain numbers. Its bracket and the two points inside it carry over
+/// from one call of [`GoldenSection::narrow`] to the next, so the search
+/// can go on with a finer merit for its last steps.
+#[derive(Clone, Copy, Debug)]
+struct GoldenSection {
+    a: f64,
+    b: f64,
+    x: f64,
+    y: f64,
+}
+
+impl GoldenSection {
+    /// The ratio the bracket shrinks by each step, `(√5 - 1) / 2`.
+    fn ratio() -> f64 {
+        (5f64.sqrt() - 1.0) / 2.0
+    }
+
+    fn new(a: f64, b: f64) -> Self {
+        let ratio = Self::ratio();
+        GoldenSection {
+            a,
+            b,
+            x: b - ratio * (b - a),
+            y: a + ratio * (b - a),
+        }
+    }
+
+    /// `steps` steps on `merit`, which is asked at both points inside the
+    /// bracket first: nothing, for no steps.
+    fn narrow(
+        &mut self,
+        steps: usize,
+        mut merit: impl FnMut(f64) -> GeopResult<f64>,
+    ) -> GeopResult<()> {
+        if steps == 0 {
+            return Ok(());
+        }
+        let ratio = Self::ratio();
+        let GoldenSection {
+            mut a,
+            mut b,
+            mut x,
+            mut y,
+        } = *self;
+        let (mut fx, mut fy) = (merit(x)?, merit(y)?);
+        for _ in 0..steps {
+            if fx <= fy {
+                b = y;
+                (y, fy) = (x, fx);
+                x = b - ratio * (b - a);
+                fx = merit(x)?;
+            } else {
+                a = x;
+                (x, fx) = (y, fy);
+                y = a + ratio * (b - a);
+                fy = merit(y)?;
+            }
+        }
+        *self = GoldenSection { a, b, x, y };
+        Ok(())
+    }
+}
+
 /// How far, per coordinate, the points a pcurve puts on its surface lie
 /// from the edge's curve `curve` — sampled, each against the curve's
 /// nearest point: how far the point's midpoint, the pcurve's own best
@@ -3421,11 +3484,11 @@ fn edge_gap<S: Scalar>(
         // decide its last bits, where the two differ by roundings.
         let mut search = GoldenSection::new((seed - step).max(c0f), (seed + step).min(c1f));
         search.narrow(NEAREST_ITERATIONS - NEAREST_ON_ENCLOSURE, |t| {
-            Ok::<_, GeopError>(distance(midpoints.point(t), target))
+            Ok(distance(midpoints.point(t), target))
         })?;
         // The last steps on the enclosure.
         search.narrow(NEAREST_ON_ENCLOSURE, |t| {
-            Ok::<_, GeopError>(distance(super::geometry::point_at(curve, t)?, target))
+            Ok(distance(super::geometry::point_at(curve, t)?, target))
         })?;
         let GoldenSection { a, b, .. } = search;
         // The ends are the domain's own. The pcurve's own ends are pinned

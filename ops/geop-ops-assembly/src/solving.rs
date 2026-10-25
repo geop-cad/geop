@@ -28,7 +28,6 @@ use geop_core_math::{
     primitives::Pose,
     scalars::{Ring, Scalar},
     solvers::{
-        continuation::continuation,
         least_squares::{Rows, Stop},
         system::{Phase, Variable, tolerance},
     },
@@ -559,8 +558,11 @@ pub fn solve(
             scale,
         }
     }
-    // A held angle driven there in steps, the rest following each; the
-    // pulls pull in the last.
+    // A held angle driven there in stages, the rest following each. Where
+    // each stage lies is a free choice — any values between serve — so the
+    // stages are equal fractions of the way, as few as keep every angle's
+    // move per stage within `TURN_STEP`. The last stage, at the values
+    // themselves, is solved below, with the pulls.
     let (driven, ranges): (Vec<String>, Vec<(f64, f64)>) = (set.iter())
         .filter(|(name, _)| turns.contains(*name))
         .filter_map(|(name, to)| match start.get(name) {
@@ -568,13 +570,17 @@ pub fn solve(
             _ => None,
         })
         .unzip();
-    continuation(&ranges, TURN_STEP, |at| {
-        for (name, at) in driven.iter().zip(at) {
-            start.insert(name.clone(), StateValue::Number(Design::from_f64(*at)));
+    let stages = (ranges.iter())
+        .map(|(from, to)| ((to - from).abs() / TURN_STEP).ceil() as usize)
+        .max()
+        .unwrap_or(0);
+    for k in 1..stages {
+        for (name, (from, to)) in driven.iter().zip(&ranges) {
+            let at = from + (to - from) * k as f64 / stages as f64;
+            start.insert(name.clone(), StateValue::Number(Design::from_f64(at)));
         }
         start = solve::solve(run(rerun), &start, &problem(&free, Vec::new(), scale))?.state;
-        Ok::<_, GeopError>(())
-    })?;
+    }
     for (name, value) in &set {
         start.insert(name.clone(), StateValue::Number(*value));
     }
