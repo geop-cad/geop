@@ -43,18 +43,18 @@ fn face_name(part: &NamedModel, solid: &str, normal: [f64; 3]) -> String {
 /// > fillet(corner,block(box,p0),block(box,end),...)
 ///
 /// That edge is where a cylinder (the blend, around a vertical axis) meets
-/// a horizontal plane: a quarter circle. The fillet's boolean traced it as
-/// a fitted curve instead of recognising the arc, so the shell cannot
-/// offset it. Ruled out: the open face (opening a side instead of the top,
-/// with a top edge rounded, fails on the same kind of edge), the number of
-/// fillets (all four uprights fail alike), the size (the 100 x 60 x 30
-/// enclosure with radius 5 and walls 2 fails alike).
+/// a horizontal plane: a quarter circle. The fillet's boolean traced it,
+/// and fitted a curve through its march instead of recognising the arc, so
+/// the shell could not offset it. Ruled out: the open face (opening a side
+/// instead of the top, with a top edge rounded, failed on the same kind of
+/// edge), the number of fillets (all four uprights failed alike), the size
+/// (the 100 x 60 x 30 enclosure with radius 5 and walls 2 failed alike).
+/// The boolean now splices the exact arc where a plane crosses a surface
+/// of revolution around its normal (`geop_core_geometry::shape::circle_through`).
 ///
 /// Shelling a filleted body is the first thing every enclosure tutorial
-/// does; today a fillet must come after the shell, and then it rounds only
-/// the outside.
+/// does.
 #[test]
-#[ignore = "bug: shelling a block whose upright edge was filleted refuses the blend's run-out edge on the bottom as 'neither straight nor circular' though it is a quarter circle (the fillet's boolean traced it); shell before fillet works"]
 fn shell_of_a_block_with_a_rounded_upright_edge() {
     let mut program = Program::new();
     program.push(
@@ -74,15 +74,18 @@ fn shell_of_a_block_with_a_rounded_upright_edge() {
         "s",
         ShellArgs {
             solid: solid("fillet(corner)"),
-            faces: vec![ElementReference::new(model(), top)],
+            faces: vec![ElementReference::new(model(), top.clone())],
             thickness: 0.3.into(),
         },
     );
     let part = program.build_model(registry).unwrap();
     assert_valid(&part);
-    // The outside's faces, their inner copies less the top, and the rim.
+    // The outside's faces less the top, their inner copies, and the rim: a
+    // ring around the walls, the blend's quarter among them.
     let id = part.solid_id("shell(s)").unwrap();
     let outside = rounded.solid_id("fillet(corner)").unwrap();
     let faces = |part: &NamedModel, id| part.topology().body_faces(Body::Solid(id)).unwrap().len();
-    assert_eq!(faces(&part, id), 2 * faces(&rounded, outside) - 1 + 1);
+    assert_eq!(faces(&part, id), 2 * (faces(&rounded, outside) - 1) + 1);
+    let rim = part.face_id(&format!("shell(s,{top})")).unwrap();
+    assert_eq!(part.topology().get_face(rim).unwrap().holes.len(), 1);
 }

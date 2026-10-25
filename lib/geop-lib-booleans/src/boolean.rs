@@ -1105,6 +1105,57 @@ mod tests {
         check_op("box_cylinder_drilled_hole_through", BooleanOp::Difference);
     }
 
+    /// A bore through a block leaves rims where its side meets the block's
+    /// top and bottom: circles, whether the bore's caps lie in those faces
+    /// (the rims are the caps' own edges, imprinted) or stand out of them
+    /// (the rims are traced where the side crosses the faces). Either way
+    /// every curved edge of the result is an arc the kernel reads as one,
+    /// a quarter of the bore's circle on the face it is cut from, and the
+    /// volume is the block's less the bore's. A rim traced as a fitted
+    /// curve, however tightly it encloses the circle, is no arc: the shell
+    /// could not offset it, and refused the fillet-then-shell of every
+    /// enclosure tutorial on the blend's run-out.
+    #[test]
+    fn rims_of_a_bore_are_arcs_whether_flush_or_standing_out() {
+        use geop_core_topology::Body;
+        let radius = 0.3;
+        for (base, height) in [(0.0, 1.0), (-0.5, 2.0)] {
+            let mut model = M::new();
+            let block = cube(&mut model, [0., 0., 0.], [1., 1., 1.]);
+            let bore = cylinder(&mut model, [0.5, 0.5, base], radius, height, Axis::Z);
+            let result = op(&mut model, block, bore, BooleanOp::Difference);
+            let topology = model.topology();
+            let mut arcs = 0;
+            for edge_id in topology.iter_body_edges(Body::Solid(result)).unwrap() {
+                let edge = topology.get_edge(edge_id).unwrap();
+                if edge.curve.as_line().unwrap().is_some() {
+                    continue;
+                }
+                let arc = edge.curve.as_arc().unwrap().unwrap_or_else(|| {
+                    panic!(
+                        "base {base}: edge {} is neither straight nor circular: {:?}",
+                        model.name_of(edge_id).unwrap(),
+                        edge.curve
+                    )
+                });
+                let on = |z: f64| arc.circle.center.could_be_equal(&v3(0.5, 0.5, z));
+                assert!(on(0.) || on(1.), "base {base}: {arc:?}");
+                assert!(arc.circle.radius.could_be_equal(Scalar::from_f64(radius)));
+                assert!(
+                    (arc.sweep() - std::f64::consts::FRAC_PI_2).abs() < 1e-9,
+                    "base {base}: {arc:?}"
+                );
+                arcs += 1;
+            }
+            // Four quarters on each rim.
+            assert_eq!(arcs, 8, "base {base}");
+            let r = Scalar::from_f64(radius);
+            let expected = Scalar::ONE.sub(Scalar::PI.mul(r).mul(r));
+            let volume = topology.mass_properties(result).unwrap().volume;
+            assert!(volume.could_be_equal(expected), "base {base}: {volume:?}");
+        }
+    }
+
     // ── Chained booleans on the basic shapes, as the CAD front end builds them ──
     //
     // Each solid is created just before the boolean that uses it: every step

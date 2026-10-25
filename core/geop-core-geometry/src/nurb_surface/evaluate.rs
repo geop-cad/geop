@@ -16,8 +16,16 @@ pub(super) fn corner_nearest(
     (span_v, v): (usize, Scalar),
 ) -> usize {
     let (p, q) = (surface.degree_u, surface.degree_v);
-    let i = if nearer_end(&surface.knot_vector_u, span_u, u) { p } else { 0 };
-    let j = if nearer_end(&surface.knot_vector_v, span_v, v) { q } else { 0 };
+    let i = if nearer_end(&surface.knot_vector_u, span_u, u) {
+        p
+    } else {
+        0
+    };
+    let j = if nearer_end(&surface.knot_vector_v, span_v, v) {
+        q
+    } else {
+        0
+    };
     i * (q + 1) + j
 }
 
