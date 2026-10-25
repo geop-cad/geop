@@ -43,7 +43,11 @@ impl<const D: usize> NurbCurve<D> {
                 ))
             };
             let mut derivatives = at(local)?;
-            let near = if nearer_end(&self.knot_vector, span, piece) { p } else { 0 };
+            let near = if nearer_end(&self.knot_vector, span, piece) {
+                p
+            } else {
+                0
+            };
             let relative = at(&centered(local, near).0)?;
             for (d, r) in derivatives.iter_mut().zip(&relative).skip(1) {
                 for c in 0..C {

@@ -192,7 +192,9 @@ fn drill_standing_out_leaves_a_traced_rim_the_shell_refuses() {
     let namer = Namer::new("shell", "s").unwrap();
     let error = shell(&mut part, &namer, solid, &[], Scalar::from_f64(0.1)).unwrap_err();
     assert!(
-        error.root_message().contains("neither straight nor circular"),
+        error
+            .root_message()
+            .contains("neither straight nor circular"),
         "{error:?}"
     );
     assert!(
