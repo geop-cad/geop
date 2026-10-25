@@ -95,3 +95,37 @@ fn subd_mouse_sole_rim_filleted() {
     let part = apply::<Fillet>(model, "round", &FilletArgs::constant(rim, 0.05)).unwrap();
     assert_valid(&model_of(&part));
 }
+
+/// The SubD mouse with its top sliced off flat at `z = 0.5` by a block cut
+/// away, and the rim of the flat top filleted by 0.05 — the way a tutorial
+/// flattens a SubD body for a button and rounds the cut. The rim is the
+/// two traced curves where the slice meets the hump, `combine(slice,
+/// block(slice,start), subd(mouse,f9), ...)` and its mirror image.
+///
+/// Fails with `the blend strays inf from the rolling ball with 64 stations
+/// per edge (inf with half as many), more than the 5e-8 it may: in span 0,
+/// at 0.523 of the span the blend could dip through face FaceId(39)` — an
+/// infinite deviation, so an enclosure in the blend's check diverged
+/// (`distance` is the midpoint of an interval norm), not a blend that
+/// strays. Each of the two rim edges fails alike on its own, and so does a
+/// radius of 0.02. Sliced lower, at `z = 0.3`, the rim is refused by name
+/// instead (`the third face could run along the edge`).
+#[test]
+#[ignore = "bug: filleting the rim of a SubD mouse sliced flat at z = 0.5 refuses with `the blend strays inf from the rolling ball`: the deviation check's enclosure diverged to infinity (each rim edge alone, radius 0.02 alike)"]
+fn sliced_subd_mouse_rim_filleted() {
+    let mut program = Program::new();
+    program.push("mouse", mouse());
+    program.push(
+        "slice",
+        PrimitiveArgs::block([-2.0, -2.0, 0.5], [2.0, 2.0, 2.0]).cut("subd(mouse)"),
+    );
+    let part = program.build_model(registry).unwrap();
+    assert_valid(&part);
+    let top = faces_at_z(&part, 0.5);
+    assert_eq!(top.len(), 1, "{top:?}");
+    let rim = perimeter_of(&part, &[&top[0]]);
+    assert_eq!(rim.len(), 2, "{rim:?}");
+    program.push("round", FilletArgs::constant(rim, 0.05));
+    let part = program.build_model(registry).unwrap();
+    assert_valid(&part);
+}
