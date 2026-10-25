@@ -213,7 +213,12 @@ export function withPrompt(messages: MessageParam[], text: string, context: Cont
   return [...messages, { role: "user", content: blocks }];
 }
 
-/** The longest program sent along as it is; a longer one is only described, and the model asks the tools. */
+/**
+ * The longest program sent along as it is; a longer one is only described,
+ * and the model asks the tools. Within the server's limit on a user text
+ * block (`MAX_USER_TEXT_CHARS` in cloudflare-functions), with room for the
+ * framing around it.
+ */
 const LONGEST_PROGRAM = 20000;
 
 /** The program `program` (a `.geop` file's JSON) as context for the model. */

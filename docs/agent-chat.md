@@ -50,7 +50,7 @@ tests).
 
 What a turn may contain (anything else is `400 invalid`): only the key
 `messages`; at most 80 messages, user and assistant alternating, first and
-last the user; user blocks `text` (at most 4000 characters) and
+last the user; user blocks `text` (at most 24 000 characters: the program sent as context fits; the chat box caps a typed prompt at 4000) and
 `tool_result` (text, or one png/jpeg base64 image of at most 300 KB per
 request); assistant blocks `text`, `tool_use` of a tool in `tools.json`,
 and `thinking` / `redacted_thinking` as the model returned them; every

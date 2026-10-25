@@ -168,6 +168,7 @@ export function AssistantPanel({ assistant, onClose }: { assistant: AssistantSta
           <textarea
             value={prompt}
             rows={3}
+            maxLength={4000}
             placeholder={
               spent
                 ? "The free assistant is used up for today."

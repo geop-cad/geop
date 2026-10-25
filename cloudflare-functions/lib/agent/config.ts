@@ -28,7 +28,14 @@ export const MAX_BODY_BYTES = 256 * 1024;
 export const MAX_IMAGE_BASE64_BYTES = 300 * 1024;
 export const MAX_IMAGES_PER_REQUEST = 1;
 export const MAX_MESSAGES = 80;
-export const MAX_USER_TEXT_CHARS = 4000;
+/**
+ * A user text block: room for the program the browser sends as context
+ * with a prompt (at most 20 000 characters, `LONGEST_PROGRAM` in
+ * web/src/agent.ts, and its framing). The prompt typed is capped at 4000
+ * by the chat box; the cost of a request is bounded by its counted tokens
+ * either way (`MAX_INPUT_TOKENS`, the reservation).
+ */
+export const MAX_USER_TEXT_CHARS = 24_000;
 /**
  * Input tokens a request may have, counted before it is sent. Keeps every
  * request in its model's base price band (Haiku 5.5 charges more above
