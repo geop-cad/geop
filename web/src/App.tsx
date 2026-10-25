@@ -3,6 +3,7 @@ import "./App.css";
 import {
   applyScene,
   loadGeop,
+  runTool,
   send,
   type Command,
   type EditEvent,
@@ -19,7 +20,7 @@ import {
   type Update,
   type Value,
 } from "./geop";
-import { host, onRestart } from "./backend";
+import { host, onRestart, store } from "./backend";
 import { KernelCrashed } from "./crash";
 import { DEFAULT_POSE, headOnPose, wantsFraming, type CameraPose, type Drawn, type Projection } from "./camera";
 import { DialogView } from "./DialogView";
@@ -31,7 +32,6 @@ import {
   loadWorkspace,
   parseProgram,
   programText,
-  saveWorkspace,
   type Workspace,
   dataExtensions,
   isData,
@@ -51,6 +51,9 @@ import { trackEdit, trackExample, trackFailures, trackFile } from "./analytics";
 import { MobileBottom, type MobileTab } from "./MobileBottom";
 import { useIsMobile } from "./useIsMobile";
 import { scopeTextSelection } from "./selection";
+import { AssistantPanel } from "./Assistant";
+import { useAssistant } from "./useAssistant";
+import type { ToolResult } from "./agent";
 
 /** Whether a key press belongs to a field being typed into rather than to the step. */
 function typing(e: KeyboardEvent): boolean {
@@ -124,8 +127,8 @@ function App() {
   const [bugReportHost, setBugReportHost] = useState<HTMLDivElement | null>(null);
   const [bugReportOpen, setBugReportOpen] = useState(false);
 
-  /** The browser's program files; unused in VS Code, whose workspace they are. */
-  const [workspace, setWorkspace] = useState<Workspace>(loadWorkspace);
+  /** The program files, kept where the backend keeps them (`store`); unused in VS Code, whose workspace they are. */
+  const [workspace, setWorkspace] = useState<Workspace>(() => loadWorkspace(store));
   const workspaceRef = useRef(workspace);
   workspaceRef.current = workspace;
   /**
@@ -135,7 +138,7 @@ function App() {
    */
   const editingFile = useRef(false);
   useEffect(() => {
-    if (!host) saveWorkspace(workspace);
+    if (!host) store.save(workspace);
   }, [workspace]);
 
   const [focus, setFocus] = useState<CameraPose | null>(null);
@@ -157,55 +160,65 @@ function App() {
   /** Where the camera was before it turned to face the plane being worked in, to come back to. */
   const beforePlaneRef = useRef<CameraPose | null>(null);
 
+  /**
+   * Show `update`, the kernel's answer to a command of the kind `kind` — or
+   * to one an agent's tool sent (`agent`), whose errors and answers are the
+   * assistant's to show.
+   */
+  function show(update: Update, kind: Command["command"] | "agent") {
+    if (update.program) {
+      setProgram(update.program);
+      trackFailures(update.program.steps);
+    }
+    // A placed part's step committed: its file is kept where files are.
+    for (const file of update.written ?? []) {
+      if (host) host.fileChanged(file.path, file.program);
+      else setWorkspace((w) => ({ ...w, files: { ...w.files, [file.path]: programText(file.program) } }));
+    }
+    if (!host && update.files) {
+      const added = Object.fromEntries(update.files.map((f) => [f.path, programText(f.program)]));
+      setWorkspace((w) => ({ ...w, files: { ...w.files, ...added } }));
+    }
+    // The program edited is the file the kernel says it is in: kept as
+    // the kernel has it, with every change.
+    const edited = update.program;
+    if (!host && edited?.path != null && editingFile.current) {
+      const { path } = edited;
+      const text = programText(edited.program);
+      setWorkspace((w) =>
+        w.files[path] === text && w.active === path ? w : { files: { ...w.files, [path]: text }, active: path },
+      );
+    }
+    if (update.scene) {
+      setScene(update.scene);
+      // The answers were about the part as it was.
+      setAnswers({});
+      placedRef.current = applyScene(placedRef.current, update.scene);
+      setPlaced(placedRef.current);
+      const drawn = {
+        extent: update.scene.part.extent,
+        solids: update.scene.part.solids.length + placedRef.current.instances.size,
+      };
+      if (drawnRef.current && wantsFraming(drawnRef.current, drawn, poseRef.current)) frameRef.current = true;
+      drawnRef.current = drawn;
+    }
+    setStep(update.step);
+    setTool(update.tool);
+    if (kind === "agent") return;
+    // An answer asked for is kept; the pick tool's comes with every update.
+    const inspection = update.inspection;
+    if (kind === "inspect") {
+      if (inspection) setAnswers((answers) => ({ ...answers, [inspection.kind]: inspection }));
+    } else setPicked(inspection);
+    setError(update.error);
+  }
+
   /** Send `command` to the kernel, and show what comes back. */
   async function dispatch(command: Command): Promise<Update | null> {
     setPending((n) => n + 1);
     try {
       const update = await send(command);
-      if (update.program) {
-        setProgram(update.program);
-        trackFailures(update.program.steps);
-      }
-      // A placed part's step committed: its file is kept where files are.
-      for (const file of update.written ?? []) {
-        if (host) host.fileChanged(file.path, file.program);
-        else setWorkspace((w) => ({ ...w, files: { ...w.files, [file.path]: programText(file.program) } }));
-      }
-      if (!host && update.files) {
-        const added = Object.fromEntries(update.files.map((f) => [f.path, programText(f.program)]));
-        setWorkspace((w) => ({ ...w, files: { ...w.files, ...added } }));
-      }
-      // The program edited is the file the kernel says it is in: kept as
-      // the kernel has it, with every change.
-      const edited = update.program;
-      if (!host && edited?.path != null && editingFile.current) {
-        const { path } = edited;
-        const text = programText(edited.program);
-        setWorkspace((w) =>
-          w.files[path] === text && w.active === path ? w : { files: { ...w.files, [path]: text }, active: path },
-        );
-      }
-      if (update.scene) {
-        setScene(update.scene);
-        // The answers were about the part as it was.
-        setAnswers({});
-        placedRef.current = applyScene(placedRef.current, update.scene);
-        setPlaced(placedRef.current);
-        const drawn = {
-          extent: update.scene.part.extent,
-          solids: update.scene.part.solids.length + placedRef.current.instances.size,
-        };
-        if (drawnRef.current && wantsFraming(drawnRef.current, drawn, poseRef.current)) frameRef.current = true;
-        drawnRef.current = drawn;
-      }
-      setStep(update.step);
-      setTool(update.tool);
-      // An answer asked for is kept; the pick tool's comes with every update.
-      const inspection = update.inspection;
-      if (command.command === "inspect") {
-        if (inspection) setAnswers((answers) => ({ ...answers, [inspection.kind]: inspection }));
-      } else setPicked(inspection);
-      setError(update.error);
+      show(update, command.command);
       if (!update.error && EDITS.includes(command.command)) {
         trackEdit(command, command.command === "commit" ? (step?.kind ?? undefined) : undefined);
       }
@@ -227,6 +240,37 @@ function App() {
       setPending((n) => n - 1);
     }
   }
+
+  /** Run the assistant's tool `name` on the kernel, showing every update it causes as they come. */
+  async function agentTool(name: string, input: unknown): Promise<ToolResult> {
+    setPending((n) => n + 1);
+    try {
+      const answer = await runTool(name, input);
+      for (const update of answer.updates) show(update, "agent");
+      return { text: answer.text, isError: answer.is_error };
+    } catch (e) {
+      if (e instanceof KernelCrashed) {
+        await dispatch({ command: "show" });
+        return {
+          text: `${name} crashed the kernel (${e.message}); it was restarted with the program as it was before the call`,
+          isError: true,
+        };
+      }
+      return { text: `${name} failed: ${String(e)}`, isError: true };
+    } finally {
+      setPending((n) => n - 1);
+    }
+  }
+
+  const [assistantOpen, setAssistantOpen] = useState(false);
+  const assistant = useAssistant({
+    program: program?.program ?? null,
+    idle: wasmReady && step == null,
+    runTool: agentTool,
+    restore: async (before) => {
+      await dispatch({ command: "load", program: before });
+    },
+  });
 
   // Any command, run as the app runs it: for the end-to-end checks
   // (`e2e/`) and the browser's console.
@@ -792,6 +836,8 @@ function App() {
           setBugReportOpen(true);
           setMobileTab("bug");
         }}
+        assistantOpen={host ? null : assistantOpen}
+        onAssistant={() => setAssistantOpen((open) => !open)}
         onBugReportClose={() => {
           setBugReportOpen(false);
           setMobileTab((tab) => (tab === "bug" ? "buttons" : tab));
@@ -885,6 +931,11 @@ function App() {
             <div className="desktop-only">{detailPanel}</div>
           </main>
         </div>
+        {!host && assistantOpen && (
+          <aside className="assistant-bar desktop-only">
+            <AssistantPanel assistant={assistant} onClose={() => setAssistantOpen(false)} />
+          </aside>
+        )}
       </div>
       <MobileBottom
         tab={mobileTab}
@@ -896,6 +947,7 @@ function App() {
         structurePanel={structurePanel}
         detailPanel={detailPanel}
         filesPanel={explorer || null}
+        assistantPanel={host ? null : <AssistantPanel assistant={assistant} />}
         onBugReportHost={setBugReportHost}
       />
     </div>

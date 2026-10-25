@@ -38,10 +38,15 @@
 ## Try it
 
 - **In the browser:** [app.geop-cad.dev](https://app.geop-cad.dev). Nothing to install; files stay in your browser. Or open an example straight away: [turbine blade](https://app.geop-cad.dev/?example=turbine_blade), [flange](https://app.geop-cad.dev/?example=cool_flange), [press assembly](https://app.geop-cad.dev/?example=press), [edge part](https://app.geop-cad.dev/?example=edge_part).
-- **On the command line:**
+- **On the command line:** install `geop` with one line *(available from the first release)*:
   ```sh
-  cargo install --path cad/geop-cad-cli
-  geop examples --out-dir examples   # every built-in example as a .geop program and its STL
+  curl -fsSL https://geop-cad.dev/install.sh | sh          # macOS, Linux
+  irm https://geop-cad.dev/install.ps1 | iex               # Windows (PowerShell)
+  ```
+  It downloads the release for your machine, checks its SHA-256 and puts `geop` in `~/.local/bin` (`%LOCALAPPDATA%\geop\bin` on Windows) — no sudo. Or build it from source: `cargo install --path cad/geop-cad-cli` (add `--features frontend` after `npm --prefix web ci && npm --prefix web run build:open` for `geop open`). Then:
+  ```sh
+  geop open my-project                # edit a folder's .geop files in your browser, on the native kernel
+  geop examples --out-dir examples    # every built-in example as a .geop program and its STL
   geop compile part.geop -o part.step
   ```
 - **From Claude Code (or any MCP client):**
@@ -49,7 +54,7 @@
   claude mcp add geop -- geop mcp
   ```
   Then ask for a part: the agent sketches, extrudes, fillets, inspects and exports through the same editor the web app runs. See [docs/mcp.md](docs/mcp.md).
-- **In VS Code:** the extension in [`vscode-extension/`](vscode-extension/README.md) opens any `.geop` file as the editor, with the kernel running natively.
+- **In VS Code:** `geop vscode` installs the extension of your `geop`'s release (into VS Code, Cursor or VSCodium); it opens any `.geop` file as the editor, with the kernel running natively. See [`vscode-extension/`](vscode-extension/README.md).
 
 ## Coming from Fusion 360 or Onshape?
 

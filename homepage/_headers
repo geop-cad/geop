@@ -1,0 +1,13 @@
+# Cloudflare Pages' response headers (https://developers.cloudflare.com/pages/configuration/headers/).
+# The installers are piped into a shell (`curl … | sh`, `irm … | iex`):
+# served as text, so that PowerShell's Invoke-RestMethod reads a string,
+# and never cached for long, so a fixed installer reaches everyone.
+/install.sh
+  Content-Type: text/plain; charset=utf-8
+  Cache-Control: public, max-age=300
+  X-Content-Type-Options: nosniff
+
+/install.ps1
+  Content-Type: text/plain; charset=utf-8
+  Cache-Control: public, max-age=300
+  X-Content-Type-Options: nosniff

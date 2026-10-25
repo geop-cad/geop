@@ -309,6 +309,15 @@ export class GeopEditorProvider implements vscode.CustomTextEditorProvider {
         `no geop kernel at ${bundled}: build it with \`npm run build:server\`, or set geop.serverPath`,
       );
     }
+    // A `.vsix` is a zip, and not every way of unpacking one keeps the
+    // kernel executable.
+    if (process.platform !== "win32") {
+      try {
+        fs.accessSync(bundled, fs.constants.X_OK);
+      } catch {
+        fs.chmodSync(bundled, 0o755);
+      }
+    }
     return bundled;
   }
 

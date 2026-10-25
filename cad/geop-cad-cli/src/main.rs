@@ -11,12 +11,18 @@
 //! `geop serve` is the other way in: the same editor the web app runs, as a
 //! process a front end spawns and talks to over stdin/stdout (see
 //! [`serve`]). `geop mcp` is that editor as a Model Context Protocol server,
-//! for an agent to drive (see [`mcp`]).
+//! for an agent to drive (see [`mcp`]). `geop open` serves that editor to
+//! a browser, editing a folder of files (see [`open`]), and `geop vscode`
+//! installs the VS Code extension of this release (see [`vscode`]).
 
 mod mcp;
+mod open;
+mod release;
+mod session;
+mod vscode;
 
 use clap::{Parser, Subcommand};
-use geop_cad_base::{BuiltPart, editor_with, outputs, workspace_with};
+use geop_cad_base::{BuiltPart, outputs, workspace_with};
 use geop_core_editor::editor::Rerun;
 use geop_core_editor::output::Output;
 use geop_core_math::geop_error::{GeopError, GeopResult};
@@ -26,6 +32,7 @@ use geop_core_program::{
     workspace::FileStore,
 };
 use geop_ops_assembly::solving::{check as check_mates, solve};
+use session::Session;
 use std::{
     io::{BufRead, Write},
     path::{Path, PathBuf},
@@ -57,6 +64,13 @@ enum Command {
     /// for an agent to drive: `claude mcp add geop -- geop mcp`. See
     /// docs/mcp.md.
     Mcp(McpArgs),
+    /// Edit the files of a folder in the web editor, in your browser, on
+    /// the kernel running here: `geop open my-project`. The files stay on
+    /// disk, written as they are edited.
+    Open(open::OpenArgs),
+    /// Install the VS Code extension of this version of geop into VS Code
+    /// (or Cursor, or VSCodium), downloaded from its GitHub release.
+    Vscode(vscode::VscodeArgs),
 }
 
 #[derive(clap::Args)]
@@ -364,28 +378,14 @@ fn export_examples(args: &ExamplesArgs) -> GeopResult<Vec<Compiled>> {
     Ok(compiled)
 }
 
-/// Run one [`geop_core_editor::editor::Editor`] until stdin closes: every line is a command, and the
-/// answer is one line — the update as JSON, or `{"fatal": "..."}` if the
-/// command could not be read at all. A panic inside the kernel is answered
-/// `{"crashed": "<what panicked, where>"}`, and the process ends: the editor
-/// is then in an unknown state. The front end starts another with the
-/// program it holds (`vscode-extension/src/server.ts`), rather than waiting
-/// for an answer that never comes.
+/// Run one [`Session`] until stdin closes: every line is a command, and the
+/// answer is one line (see [`session`]). After a panic the process ends:
+/// the front end starts another with the program it holds
+/// (`vscode-extension/src/server.ts`), rather than waiting for an answer
+/// that never comes.
 fn serve(args: &ServeArgs) -> GeopResult<()> {
     let io_err = |e: std::io::Error| GeopError::new(format!("serving: {e}"));
-    // What panicked and where, as the default hook prints it to stderr.
-    let panicked = std::sync::Arc::new(std::sync::Mutex::new(String::new()));
-    let default_hook = std::panic::take_hook();
-    let noted = panicked.clone();
-    std::panic::set_hook(Box::new(move |info| {
-        if let Ok(mut message) = noted.lock() {
-            *message = info.to_string();
-        }
-        default_hook(info);
-    }));
-    let mut editor = editor_with(DiskCache::cache(
-        args.cache_root.clone().and_then(DiskCache::of),
-    ));
+    let mut session = Session::new(args.cache_root.clone());
     let stdin = std::io::stdin().lock();
     let mut stdout = std::io::stdout().lock();
     for line in stdin.lines() {
@@ -393,20 +393,11 @@ fn serve(args: &ServeArgs) -> GeopResult<()> {
         if line.trim().is_empty() {
             continue;
         }
-        let answer =
-            std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| editor.handle_json(&line)));
-        let (reply, alive) = match answer {
-            Ok(Ok(update)) => (update, true),
-            Ok(Err(message)) => (serde_json::json!({ "fatal": message }).to_string(), true),
-            Err(_) => {
-                let message = panicked.lock().map(|m| m.clone()).unwrap_or_default();
-                (serde_json::json!({ "crashed": message }).to_string(), false)
-            }
-        };
-        writeln!(stdout, "{reply}")
+        let answer = session.answer(&line);
+        writeln!(stdout, "{}", answer.reply)
             .and_then(|()| stdout.flush())
             .map_err(io_err)?;
-        if !alive {
+        if answer.crashed {
             return Err(GeopError::new("the kernel panicked"));
         }
     }
@@ -418,6 +409,8 @@ fn main() -> ExitCode {
     let result = match cli.command {
         Command::Serve(args) => serve(&args),
         Command::Mcp(McpArgs {}) => mcp::serve(),
+        Command::Open(args) => open::open(&args),
+        Command::Vscode(args) => vscode::install(&args),
         Command::Compile(args) => compile(&args).map(|c| {
             if !c.solved_for.is_empty() {
                 eprintln!(
@@ -586,6 +579,38 @@ mod tests {
         })
         .unwrap_err();
         assert!(err.to_string().contains("luggage_tag"), "{err}");
+    }
+
+    #[test]
+    fn open_and_vscode_take_their_arguments() {
+        let parse = |args: &[&str]| Cli::try_parse_from([&["geop"], args].concat());
+        let Command::Open(open) = parse(&["open"]).unwrap().command else {
+            panic!("not open")
+        };
+        assert_eq!(
+            (open.path, open.port, open.no_browser),
+            (PathBuf::from("."), None, false)
+        );
+        let Command::Open(open) = parse(&["open", "proj", "--port", "8080", "--no-browser"])
+            .unwrap()
+            .command
+        else {
+            panic!("not open")
+        };
+        assert_eq!(
+            (open.path, open.port, open.no_browser),
+            (PathBuf::from("proj"), Some(8080), true)
+        );
+        assert!(parse(&["open", "--port", "70000"]).is_err());
+        let Command::Vscode(vscode) = parse(&["vscode"]).unwrap().command else {
+            panic!("not vscode")
+        };
+        assert_eq!(vscode.editor, None);
+        let Command::Vscode(vscode) = parse(&["vscode", "--editor", "cursor"]).unwrap().command
+        else {
+            panic!("not vscode")
+        };
+        assert_eq!(vscode.editor.as_deref(), Some("cursor"));
     }
 
     #[test]

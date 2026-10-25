@@ -4,7 +4,7 @@
 use std::{collections::BTreeMap, rc::Rc};
 
 use geop_core_math::geop_error::{GeopError, GeopResult};
-use geop_core_program::program::Program;
+use geop_core_program::{element::PickedElement, program::Program};
 use serde::{Deserialize, Serialize};
 
 use crate::{
@@ -126,13 +126,16 @@ pub enum Command {
     Tool {
         key: Option<String>,
     },
-    /// Ask the inspector `inspector` about the part as drawn, told
-    /// `options` (its own, see [`crate::output::Inspector::Options`]):
-    /// answered once, in [`Update::inspection`]. Changes nothing.
+    /// Ask the inspector `inspector` about the part as drawn — of the
+    /// elements `picked`, for one that picks — told `options` (its own,
+    /// see [`crate::output::Inspector::Options`]): answered once, in
+    /// [`Update::inspection`]. Changes nothing.
     Inspect {
         inspector: String,
         #[serde(default)]
         options: serde_json::Value,
+        #[serde(default)]
+        picked: Vec<PickedElement>,
     },
     /// Write what the program builds — as far as it runs, the parts it
     /// places included — with the exporter `exporter`, in `format` (its

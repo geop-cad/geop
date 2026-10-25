@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # Cut a release: set the workspace version, commit, tag `v<version>` and
 # push the tag. The tag starts .github/workflows/release.yml, which builds
-# the `geop` CLI for every platform and the web app, and publishes them.
+# the `geop` CLI for every platform (with the page `geop open` serves), the
+# VS Code extension for every platform and the web app, and publishes them.
 #
 #   scripts/release.sh 0.2.0
 #
@@ -41,7 +42,11 @@ sed -i '/^\[workspace\.package\]/,/^\[/{s/^version = ".*"/version = "'"$version"
 timeout 1800 prlimit --as=16000000000 cargo build --release --locked -p geop-cad-cli 2> /dev/null \
   || timeout 1800 prlimit --as=16000000000 cargo build --release -p geop-cad-cli
 
-git add Cargo.toml Cargo.lock
+# The extension carries the same version: `geop vscode` installs the
+# extension of its own.
+(cd vscode-extension && npm version "$version" --no-git-tag-version --allow-same-version > /dev/null)
+
+git add Cargo.toml Cargo.lock vscode-extension/package.json vscode-extension/package-lock.json
 git commit -m "Release v$version"
 git tag -a "v$version" -m "geop v$version"
 git push origin main "v$version"

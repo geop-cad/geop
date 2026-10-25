@@ -1,0 +1,158 @@
+[
+  {
+    "description": "Start a new, empty part. Every part has the coordinate-system datum `origin`, whose planes a sketch is drawn on, as `add_sketch`'s `plane`: {\"datum\": \"origin:xy\"}, {\"datum\": \"origin:yz\"} or {\"datum\": \"origin:zx\"}.",
+    "input_schema": {
+      "additionalProperties": false,
+      "properties": {},
+      "required": [],
+      "type": "object"
+    },
+    "name": "new_part"
+  },
+  {
+    "description": "Every operation a step can be: its kind (what `add_step` takes), label, group and what it does. Given a `kind`, that operation alone, with the arguments a new step starts with (`default_args`, the JSON `add_step` takes) and the form the editor shows for it (`form`: each field's key, control, label, value and, for a reference, the kinds of elements it accepts).",
+    "input_schema": {
+      "additionalProperties": false,
+      "properties": {
+        "kind": {
+          "description": "The operation to describe in full, e.g. `extrude`.",
+          "type": "string"
+        }
+      },
+      "required": [],
+      "type": "object"
+    },
+    "name": "list_operations"
+  },
+  {
+    "description": "Add a step of the operation `kind` with `args` (its saved JSON, see `list_operations` with `kind`) at the end of the program, or before the step `before`. A step whose arguments do not read is refused and not added; one that reads but does not build is added, and its error says why. Answers with every step's status: an error names the step and what went wrong.",
+    "input_schema": {
+      "additionalProperties": false,
+      "properties": {
+        "args": {
+          "description": "The step's arguments as saved in a .geop file.",
+          "type": "object"
+        },
+        "before": {
+          "description": "The step to add it before; the end of the program if left out.",
+          "type": "string"
+        },
+        "id": {
+          "description": "The step's id (letters, digits, `_`, `-`, `.`); chosen from the operation's label if left out. Later steps refer to what this one builds by it, e.g. `extrude(<id>)`.",
+          "type": "string"
+        },
+        "kind": {
+          "description": "The operation, e.g. `add_sketch`, `extrude`, `fillet`.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "kind",
+        "args"
+      ],
+      "type": "object"
+    },
+    "name": "add_step"
+  },
+  {
+    "description": "Change the step `id`: the keys of `args` replace those of its arguments (the others stay), so one dimension can be changed alone. The program is rebuilt from that step on.",
+    "input_schema": {
+      "additionalProperties": false,
+      "properties": {
+        "args": {
+          "description": "The arguments to set.",
+          "type": "object"
+        },
+        "id": {
+          "description": "The step to change.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "args"
+      ],
+      "type": "object"
+    },
+    "name": "edit_step"
+  },
+  {
+    "description": "Remove the step `id`. Steps that referred to what it built then fail, and say so.",
+    "input_schema": {
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "description": "The step to remove.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "id"
+      ],
+      "type": "object"
+    },
+    "name": "delete_step"
+  },
+  {
+    "description": "Run the whole program and report every step: its summary, whether it ran, and its error with the kernel's context if it failed; and the solids the part has.",
+    "input_schema": {
+      "additionalProperties": false,
+      "properties": {},
+      "required": [],
+      "type": "object"
+    },
+    "name": "run"
+  },
+  {
+    "description": "The names of the part's elements as they are now, for typed references: solids, faces (with their solid), edges (with their faces), vertices, sketches, datums and what else the part lists (threads, placed parts). A face is referred to by its name, as a sketch's plane {\"face\": ...}; an edge by its name, as in a fillet's `edges`.",
+    "input_schema": {
+      "additionalProperties": false,
+      "properties": {},
+      "required": [],
+      "type": "object"
+    },
+    "name": "list_elements"
+  },
+  {
+    "description": "Ask about the part: `mass_properties` (volume, area and centroid of every solid; its mass and inertia if its part has a material, null if not), `interference` (which solids overlap), or `measure` with `elements` (a point, a length, an area, a radius; the distance and angle between two).",
+    "input_schema": {
+      "additionalProperties": false,
+      "properties": {
+        "elements": {
+          "description": "For `measure`: one or two elements, each {\"kind\": \"vertex\"|\"edge\"|\"face\"|\"datum\", \"name\": ...}.",
+          "items": {
+            "properties": {
+              "kind": {
+                "description": "vertex, edge, face or datum",
+                "type": "string"
+              },
+              "name": {
+                "description": "Its name, from list_elements",
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind",
+              "name"
+            ],
+            "type": "object"
+          },
+          "type": "array"
+        },
+        "inspector": {
+          "enum": [
+            "mass_properties",
+            "interference",
+            "measure"
+          ],
+          "type": "string"
+        }
+      },
+      "required": [
+        "inspector"
+      ],
+      "type": "object"
+    },
+    "name": "inspect"
+  }
+]

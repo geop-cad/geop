@@ -7,8 +7,10 @@
 //! answers ([`output`]); the interaction every step shares
 //! ([`step_editor`]) and the whole of editing a program ([`editor`]), over
 //! what a [`registry::Registry`] offers — operations, drawers, panels,
-//! tools ([`tools`]), a settler, examples — none of which it names. A
-//! program runs without any of it (see [`geop_core_program`]).
+//! tools ([`tools`]), a settler, examples — none of which it names; and
+//! the editor driven by an agent's tools ([`agent`]), which every front end
+//! an agent talks to offers. A program runs without any of it (see
+//! [`geop_core_program`]).
 
 // Library code reports what goes wrong as an error, never by panicking;
 // tests may unwrap.
@@ -25,6 +27,7 @@
     )
 )]
 
+pub mod agent;
 pub mod edit_form;
 pub mod editable;
 pub mod editing;

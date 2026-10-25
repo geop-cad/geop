@@ -32,6 +32,23 @@ VS Code ── webview (web/, built with `--mode vscode`)
   `.geopc` file is a cache: delete it freely, and keep it out of source
   control (`*.geopc` in `.gitignore`).
 
+## Install
+
+With the `geop` command line tool installed (see the main README), run
+
+```sh
+geop vscode
+```
+
+It downloads the extension of the same release as the `geop` running it,
+for this platform, checks its SHA-256 against the release's `SHA256SUMS`,
+and installs it with `code --install-extension` (or `cursor`, `codium`, or
+`--editor <cmd>`). Each release carries one `.vsix` per platform,
+`geop-vscode-<version>-<target>.vsix` (`linux-x64`, `linux-arm64`,
+`darwin-x64`, `darwin-arm64`, `win32-x64`), with that platform's kernel in
+its `bin/`: the extension needs nothing else on the machine, and its page
+and its kernel always speak the same protocol.
+
 ## Build
 
 Needs Node, Rust and the repo's `web/` dependencies (`npm install` there).
@@ -42,8 +59,11 @@ npm run build        # page -> media/, kernel -> bin/, TypeScript -> out/
 ```
 
 Then press F5 in this folder to start an Extension Development Host, or
-`npm run package` for a `.vsix`. The kernel is native code, so a `.vsix`
-runs only on the platform it was built on.
+`npm run package` for a `.vsix` (which builds the page and the kernel
+first; `vsce package` alone only compiles the TypeScript, and packs what
+`media/` and `bin/` hold). The kernel is native code, so a `.vsix` runs
+only on the platform it was built on; the release builds one per platform
+(`vsce package --target`, see `.github/workflows/release.yml`).
 
 `geop.serverPath` points the extension at a different `geop` executable
 (e.g. `target/debug/geop` while working on the kernel).

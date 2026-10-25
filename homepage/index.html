@@ -462,6 +462,21 @@ header.site {
 .agent-demo-preview .example-canvas.ready {
   opacity: 1;
 }
+.install {
+  margin-top: 1.5rem;
+  max-width: 44rem;
+}
+.install .terminal-body {
+  min-height: 0;
+  padding: 0.85rem 1.1rem;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.install-note {
+  margin-top: 0.5rem;
+  font-size: 0.78rem;
+  color: var(--ink-faint);
+}
 .inline-ctas {
   display: flex;
   flex-wrap: wrap;
@@ -803,6 +818,25 @@ footer.site {
           <div class="example-canvas" id="agent-demo-canvas"></div>
           <p class="agent-demo-caption mono">part.stl</p>
         </div>
+      </div>
+      <div class="install">
+        <div class="terminal">
+          <div class="terminal-bar">
+            <span class="terminal-dot"></span>
+            <span class="terminal-dot"></span>
+            <span class="terminal-dot"></span>
+            <span class="terminal-title">install the geop CLI</span>
+          </div>
+<pre class="terminal-body"><span class="tl-agent"># macOS, Linux</span>
+<span class="tl-prompt">$</span> curl -fsSL https://geop-cad.dev/install.sh | sh
+<span class="tl-agent"># Windows (PowerShell)</span>
+<span class="tl-prompt">&gt;</span> irm https://geop-cad.dev/install.ps1 | iex
+<span class="tl-agent"># then</span>
+<span class="tl-prompt">$</span> geop open                         <span class="tl-agent"># this folder's parts, in your browser</span>
+<span class="tl-prompt">$</span> claude mcp add geop -- geop mcp   <span class="tl-agent"># for Claude Code</span>
+<span class="tl-prompt">$</span> geop vscode                       <span class="tl-agent"># the VS Code extension</span></pre>
+        </div>
+        <p class="install-note mono">Available from the first release · checks every download's SHA-256 · no sudo</p>
       </div>
       <div class="inline-ctas">
         <a class="btn btn-ghost" href="https://github.com/geop-cad/geop/blob/main/docs/mcp.md" target="_blank" rel="noopener">Use with Claude Code (MCP) ↗</a>

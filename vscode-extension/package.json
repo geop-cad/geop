@@ -60,8 +60,8 @@
     "compile": "tsc -p .",
     "watch": "tsc -watch -p .",
     "build": "npm run build:web && npm run build:server && npm run compile",
-    "vscode:prepublish": "npm run build",
-    "package": "vsce package"
+    "vscode:prepublish": "npm run compile",
+    "package": "npm run build:web && npm run build:server && vsce package"
   },
   "devDependencies": {
     "@types/node": "^24.13.3",

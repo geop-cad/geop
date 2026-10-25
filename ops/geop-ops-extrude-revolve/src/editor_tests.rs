@@ -987,6 +987,7 @@ fn inspectors_are_offered_picked_with_and_asked() {
     let update = editor.handle(Command::Inspect {
         inspector: "mass".into(),
         options: serde_json::Value::Null,
+        picked: Vec::new(),
     });
     assert!(
         update

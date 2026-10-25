@@ -14,13 +14,28 @@ geop-core-editor.workspace = true
 geop-core-program.workspace = true
 geop-core-math.workspace = true
 geop-ops-assembly.workspace = true
-geop-ops-inspect.workspace = true
 geop-cad-base.workspace = true
 clap = { version = "4", features = ["derive"] }
 serde_json.workspace = true
+# `geop open`: the editor served to a browser on 127.0.0.1, over HTTP and
+# a WebSocket — blocking, a thread per connection, no async runtime.
+tiny_http = "0.12.0"
+tungstenite = "0.30.0"
+getrandom = "0.4.3"
+# `geop vscode`: the extension downloaded from the release, and checked.
+ureq = "3.5.0"
+sha2 = "0.11.1"
+# `geop open`'s page (`web/dist-open`), built in with the feature
+# `frontend`; embedded in debug builds too, so any build runs alike.
+rust-embed = { version = "8.13.0", features = ["debug-embed"], optional = true }
 
 [dev-dependencies]
 # `tests/mcp.rs` models the drilled box the testing helpers describe,
 # through the MCP server, step by step.
 geop-ops-extrude-revolve = { workspace = true, features = ["testing"] }
 geop-ops-model.workspace = true
+
+[features]
+# The page `geop open` serves, embedded: build it first with
+# `npm --prefix web run build:open`. The release builds with it.
+frontend = ["dep:rust-embed"]

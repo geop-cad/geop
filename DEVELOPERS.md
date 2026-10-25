@@ -193,12 +193,25 @@ Every run is capped with `timeout` and `prlimit`, as `AGENTS.md` asks.
 ### Releases
 
 `scripts/release.sh <version>` sets the workspace version, commits, tags
-`v<version>` and pushes the tag. The tag runs
-`.github/workflows/release.yml`, which builds the `geop` CLI for Linux
-(x86_64, aarch64 through `cross`), macOS (x86_64, aarch64) and Windows
-(x86_64), zips the web app's static build (`web/dist`), writes
-`SHA256SUMS` and publishes them as a GitHub release with generated notes.
-A version with a `-` (`0.2.0-rc1`) is published as a pre-release.
+`v<version>` and pushes the tag (the VS Code extension's
+`package.json` is set to the same version). The tag runs
+`.github/workflows/release.yml`: it builds the two pages for a native
+kernel once (`web` in modes `open` and `vscode`), the `geop` CLI with the
+`open` page built in (feature `frontend`) for Linux (x86_64, aarch64
+through `cross`), macOS (x86_64, aarch64) and Windows (x86_64), one VS
+Code extension per platform with that platform's `geop` in its `bin/`
+(`geop-vscode-<version>-<linux-x64|linux-arm64|darwin-x64|darwin-arm64|win32-x64>.vsix`),
+zips the web app's static build (`web/dist`), writes `SHA256SUMS` and
+publishes them as a GitHub release with generated notes. A version with
+a `-` (`0.2.0-rc1`) is published as a pre-release.
+
+Users install from a release with `homepage/install.sh` and
+`homepage/install.ps1`, served at `geop-cad.dev/install.sh` and
+`/install.ps1` (as text, see `homepage/_headers`) by the landing page's
+deploy. Both, like `geop vscode`, refuse any file whose SHA-256 does not
+match `SHA256SUMS`. To try them without a release, point
+`GEOP_RELEASE_BASE_URL` at a folder laid out like one
+(`file:///…/v<version>/SHA256SUMS`, …) and set `GEOP_VERSION`.
 
 ### The command line and MCP
 
@@ -208,6 +221,30 @@ writes it with an exporter, `examples` writes every built-in example,
 extension), and `mcp` runs it as a Model Context Protocol server for an
 agent — `claude mcp add geop -- geop mcp`, tools in `docs/mcp.md`, the
 protocol in `src/mcp.rs`, the end-to-end session in `tests/mcp.rs`.
+
+`geop open [DIR | program.geop]` serves the web editor to a browser, its
+kernel the `geop` process and its workspace `DIR` (`src/open.rs`). The
+page is the web app built with `npm --prefix web run build:open`
+(`web/dist-open`, its backend `web/src/backend.local.ts`), embedded with
+`cargo build -p geop-cad-cli --features frontend`; without the feature
+`geop open` says how to build it. The browser speaks the protocol of
+`geop serve` over a WebSocket (`/ws`, one command per message, answered
+in order by one update; both run a `src/session.rs` `Session`), and
+reads and writes the folder's programs and data files through
+`GET /api/files`, `PUT`/`DELETE /api/file?path=` — written as they are
+edited, a `.geopc` cache beside each like `serve --cache-root`. It binds
+127.0.0.1 only; every request must give `127.0.0.1:<port>` or
+`localhost:<port>` as its `Host` (no DNS rebinding) and, if it has an
+`Origin`, that origin; the WebSocket and the file API take a token made
+afresh each run and given only in the printed URL's fragment; and a file
+path must be relative, of an extension the explorer shows, and resolve
+(links followed) inside `DIR`. One editor session serves every
+connection (`SessionHandle`): `geop mcp --attach` would be another sender
+of commands to it.
+
+`geop vscode [--editor CMD]` installs the extension of the CLI's own
+version and platform from its release (`src/vscode.rs`, file names and
+checksums in `src/release.rs`) with `code`, `cursor` or `codium`.
 
 ### Scripts
 

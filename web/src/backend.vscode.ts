@@ -55,6 +55,9 @@ window.addEventListener("message", (e: MessageEvent<FromHost>) => {
   else pending.reject(message.crashed ? new KernelCrashed(message.message) : new Error(message.message));
 });
 
+/** Unused: the files are VS Code's workspace's (`host`). */
+export { browserStore as store } from "./files";
+
 export const host: Host = {
   onDocument(callback) {
     onText = callback;
@@ -100,4 +103,11 @@ export function call(command: string): Promise<string> {
     waiting.set(id, { resolve, reject });
     vscode.postMessage({ type: "command", id, command });
   });
+}
+
+/** The hosted assistant is the browser's: in VS Code the user has their own agent (`geop mcp`). */
+export function callTool(_name: string, _input: string): Promise<string> {
+  return Promise.reject(
+    new Error("the assistant runs in the browser only: in VS Code, connect your own agent with `geop mcp`"),
+  );
 }

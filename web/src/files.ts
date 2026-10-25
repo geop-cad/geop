@@ -37,32 +37,46 @@ function fresh(): Workspace {
   return { files: { "part.geop": programText(EMPTY) }, active: "part.geop" };
 }
 
-/** The workspace kept in this browser, or a fresh one. */
-export function loadWorkspace(): Workspace {
-  try {
-    const stored = localStorage.getItem(STORAGE_KEY);
-    if (stored) {
-      const workspace = JSON.parse(stored) as Workspace;
-      if (Object.keys(workspace.files).length > 0) {
-        if (!(workspace.active in workspace.files) || !isProgram(workspace.active))
-          workspace.active = Object.keys(workspace.files).filter(isProgram).sort()[0] ?? "part.geop";
-        if (!(workspace.active in workspace.files)) workspace.files[workspace.active] = programText(EMPTY);
-        return workspace;
-      }
-    }
-  } catch {
-    // Storage blocked or unreadable: start afresh, in memory only.
-  }
-  return fresh();
+/**
+ * Where the files are kept between visits: this browser's storage
+ * ([[browserStore]]), or a folder on disk, which `geop open` serves (see
+ * `backend.local.ts`). Each backend says which (its `store`).
+ */
+export interface WorkspaceStore {
+  /** The workspace kept, if one is. */
+  load(): Workspace | null;
+  /** Keep `workspace`: called with every change of it. */
+  save(workspace: Workspace): void;
 }
 
-/** Keep `workspace` in this browser, where storage allows. */
-export function saveWorkspace(workspace: Workspace) {
-  try {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(workspace));
-  } catch {
-    // Storage blocked or full: the files still live for this page.
-  }
+/** The files kept in this browser's storage, where storage allows. */
+export const browserStore: WorkspaceStore = {
+  load() {
+    try {
+      const stored = localStorage.getItem(STORAGE_KEY);
+      return stored ? (JSON.parse(stored) as Workspace) : null;
+    } catch {
+      // Storage blocked or unreadable: start afresh, in memory only.
+      return null;
+    }
+  },
+  save(workspace) {
+    try {
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(workspace));
+    } catch {
+      // Storage blocked or full: the files still live for this page.
+    }
+  },
+};
+
+/** The workspace `store` keeps, a program in it to edit, or a fresh one. */
+export function loadWorkspace(store: WorkspaceStore): Workspace {
+  const workspace = store.load();
+  if (!workspace || Object.keys(workspace.files).length === 0) return fresh();
+  if (!(workspace.active in workspace.files) || !isProgram(workspace.active))
+    workspace.active = Object.keys(workspace.files).filter(isProgram).sort()[0] ?? "part.geop";
+  if (!(workspace.active in workspace.files)) workspace.files[workspace.active] = programText(EMPTY);
+  return workspace;
 }
 
 /** Whether `path` names a program: a `.geop` file. Every other file is data a program reads. */

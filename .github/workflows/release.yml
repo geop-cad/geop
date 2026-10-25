@@ -1,9 +1,12 @@
 name: Release
 
 # A tag `v*` (made by scripts/release.sh) builds the `geop` command line
-# tool for every platform and the web app's static build, and publishes
-# them as a GitHub release with their SHA-256 sums. Nothing here is capped:
-# a runner is its own machine.
+# tool for every platform, with the page `geop open` serves built in, the
+# VS Code extension for every platform (each with that platform's `geop`
+# in it), and the web app's static build, and publishes them as a GitHub
+# release with their SHA-256 sums — which `homepage/install.sh` and
+# `geop vscode` check every download against. Nothing here is capped: a
+# runner is its own machine.
 
 on:
   push:
@@ -17,8 +20,42 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
+  # The pages whose kernel is a native `geop`: the one `geop open` serves
+  # (built into the CLI), and the VS Code extension's. Built once, for
+  # every platform; neither needs the wasm module.
+  pages:
+    name: Pages for the native kernel
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Build
+        working-directory: web
+        run: |
+          npm ci
+          npm run build:open
+          npm run build:vscode
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: page-open
+          path: web/dist-open
+          if-no-files-found: error
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: page-vscode
+          path: vscode-extension/media
+          if-no-files-found: error
+
   cli:
     name: geop (${{ matrix.target }})
+    needs: [pages]
     runs-on: ${{ matrix.os }}
     timeout-minutes: 90
     strategy:
@@ -43,6 +80,12 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # Embedded by the feature `frontend` (see cad/geop-cad-cli/src/open.rs).
+      - uses: actions/download-artifact@v4
+        with:
+          name: page-open
+          path: web/dist-open
+
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
         with:
@@ -58,9 +101,9 @@ jobs:
         shell: bash
         run: |
           if [ "${{ matrix.cross }}" = "true" ]; then
-            cross build --release --locked -p geop-cad-cli --target ${{ matrix.target }}
+            cross build --release --locked -p geop-cad-cli --features frontend --target ${{ matrix.target }}
           else
-            cargo build --release --locked -p geop-cad-cli --target ${{ matrix.target }}
+            cargo build --release --locked -p geop-cad-cli --features frontend --target ${{ matrix.target }}
           fi
 
       - name: Package
@@ -87,6 +130,72 @@ jobs:
         with:
           name: cli-${{ matrix.target }}
           path: dist/*
+          if-no-files-found: error
+
+  # One extension per platform, `vsce package --target`, each with that
+  # platform's `geop` in its `bin/`: the extension then needs nothing else
+  # installed, and its page and kernel are of one release. `geop vscode`
+  # picks the one of its own platform.
+  vscode:
+    name: VS Code extension
+    needs: [pages, cli]
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: page-vscode
+          path: vscode-extension/media
+
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: cli-*
+          path: cli
+          merge-multiple: true
+
+      - name: Package
+        working-directory: vscode-extension
+        run: |
+          set -euo pipefail
+          version="${GITHUB_REF_NAME#v}"
+          npm ci
+          npm version "$version" --no-git-tag-version --allow-same-version
+          mkdir -p ../dist
+          for pair in \
+            x86_64-unknown-linux-gnu:linux-x64 \
+            aarch64-unknown-linux-gnu:linux-arm64 \
+            x86_64-apple-darwin:darwin-x64 \
+            aarch64-apple-darwin:darwin-arm64 \
+            x86_64-pc-windows-msvc:win32-x64; do
+            target="${pair%%:*}"
+            vscode="${pair##*:}"
+            name="geop-${version}-${target}"
+            rm -rf bin unpacked && mkdir -p bin unpacked
+            case "$target" in
+              *windows*)
+                unzip -q "../cli/${name}.zip" -d unpacked
+                cp "unpacked/${name}/geop.exe" bin/
+                ;;
+              *)
+                tar -xzf "../cli/${name}.tar.gz" -C unpacked
+                cp "unpacked/${name}/geop" bin/
+                chmod 755 bin/geop
+                ;;
+            esac
+            rm -rf unpacked
+            npx vsce package --target "$vscode" --out "../dist/geop-vscode-${version}-${vscode}.vsix"
+          done
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: vscode
+          path: dist/*.vsix
           if-no-files-found: error
 
   web:
@@ -129,14 +238,27 @@ jobs:
 
   publish:
     name: Publish the release
-    needs: [cli, web]
+    needs: [cli, vscode, web]
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
+      # What is released: not the pages, which are inside the CLI and the
+      # extensions.
       - uses: actions/download-artifact@v4
         with:
+          pattern: cli-*
           path: artifacts
           merge-multiple: true
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: vscode
+          path: artifacts
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: web
+          path: artifacts
 
       - name: Checksums
         working-directory: artifacts

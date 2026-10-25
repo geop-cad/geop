@@ -902,3 +902,128 @@ mod examples {
         assert!(failures.is_empty(), "{failures:#?}");
     }
 }
+
+/// The agent's tools ([`geop_core_editor::agent`]) on the editor of
+/// everything: each tool the browser offers, run on the drilled box; and
+/// those that take a path refused where there are no files.
+mod agent {
+    use geop_core_editor::agent::{Session, ToolAnswer, tools};
+    use geop_ops_extrude_revolve::testing::drilled_box;
+    use serde_json::{Value, json};
+
+    /// Calls `name`, which must succeed: its answer as JSON, and how many
+    /// updates it sent.
+    fn ok(session: &mut Session, name: &str, input: Value) -> (Value, usize) {
+        let ToolAnswer {
+            text,
+            is_error,
+            updates,
+        } = session.call(name, &input, None);
+        assert!(!is_error, "{name} failed: {text}");
+        let answer = serde_json::from_str(&text)
+            .unwrap_or_else(|e| panic!("{name} answered no JSON ({e}): {text}"));
+        (answer, updates.len())
+    }
+
+    #[test]
+    fn the_browser_is_offered_every_tool_but_those_taking_a_path() {
+        let offered: Vec<&str> = (tools().into_iter())
+            .filter(|tool| !tool.files)
+            .map(|tool| tool.name)
+            .collect();
+        assert_eq!(
+            offered,
+            [
+                "new_part",
+                "list_operations",
+                "add_step",
+                "edit_step",
+                "delete_step",
+                "run",
+                "list_elements",
+                "inspect"
+            ]
+        );
+        let mut session = Session::new(crate::editor());
+        for name in ["save", "load_program", "export"] {
+            let answer = session.call(name, &json!({ "path": "part.geop" }), None);
+            assert!(answer.is_error, "{name}: {}", answer.text);
+            assert!(answer.text.contains("path"), "{}", answer.text);
+            assert!(answer.updates.is_empty());
+        }
+    }
+
+    /// Every tool the browser offers, on the drilled box: built step by
+    /// step, run, listed, weighed, measured, edited and taken apart — each
+    /// tool that changes the program sending the updates that show it.
+    #[test]
+    fn every_browser_tool_runs_on_the_drilled_box() {
+        let mut session = Session::new(crate::editor());
+        let (status, _) = ok(&mut session, "new_part", json!({}));
+        assert_eq!(status["steps"], json!([]));
+
+        let (operations, sent) = ok(&mut session, "list_operations", json!({}));
+        assert_eq!(sent, 0, "listing the operations changes nothing");
+        assert!(
+            (operations["operations"].as_array().unwrap().iter()).any(|op| op["kind"] == "extrude")
+        );
+        let (extrude, _) = ok(
+            &mut session,
+            "list_operations",
+            json!({ "kind": "extrude" }),
+        );
+        assert!(extrude["default_args"].is_object(), "{extrude}");
+        assert!(
+            session.editor().editing().is_none(),
+            "the step opened is cancelled"
+        );
+
+        for step in drilled_box().steps {
+            let (status, sent) = ok(
+                &mut session,
+                "add_step",
+                json!({ "kind": step.operation, "args": step.args, "id": step.id }),
+            );
+            assert_eq!(status["failed"], 0, "{status}");
+            assert!(sent > 0);
+        }
+        let (status, _) = ok(&mut session, "run", json!({}));
+        assert_eq!(status["solids"], json!(["extrude(hole)"]), "{status}");
+
+        let (elements, _) = ok(&mut session, "list_elements", json!({}));
+        let faces = elements["faces"].as_array().unwrap();
+        assert!(
+            faces.iter().any(|f| f["name"] == "extrude(box,end)"),
+            "{elements}"
+        );
+
+        let (mass, _) = ok(
+            &mut session,
+            "inspect",
+            json!({ "inspector": "mass_properties" }),
+        );
+        let volume = mass["total"]["volume"]["value"].as_f64().unwrap();
+        let expected = 4.0 - std::f64::consts::PI * 0.4 * 0.4 * 0.5;
+        assert!((volume - expected).abs() < 1e-6, "volume {volume}");
+        let (measured, _) = ok(
+            &mut session,
+            "inspect",
+            json!({ "inspector": "measure", "elements": [{ "kind": "face", "name": "extrude(box,end)" }] }),
+        );
+        assert!(
+            measured.to_string().contains("rea"),
+            "no area in {measured}"
+        );
+
+        let distance = serde_json::to_value(geop_ops_extrude_revolve::Extents::blind(2.0)).unwrap();
+        let (status, _) = ok(
+            &mut session,
+            "edit_step",
+            json!({ "id": "box", "args": { "extent": distance } }),
+        );
+        assert_eq!(status["failed"], 0, "{status}");
+        let (status, _) = ok(&mut session, "delete_step", json!({ "id": "hole" }));
+        assert_eq!(status["solids"], json!(["extrude(box)"]), "{status}");
+        assert_eq!(session.editor().program().steps.len(), 3);
+    }
+}

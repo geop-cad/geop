@@ -55,6 +55,7 @@ fn ask(editor: &mut Editor, kind: &str) -> serde_json::Value {
     let update = editor.handle(Command::Inspect {
         inspector: kind.into(),
         options: serde_json::Value::Null,
+        picked: Vec::new(),
     });
     assert!(update.error.is_none(), "{kind}: {:?}", update.error);
     let inspection = update.inspection.expect("an answer");
@@ -194,6 +195,7 @@ fn measure_tool_measures_what_is_clicked() {
     let update = editor.handle(Command::Inspect {
         inspector: "mass_properties".into(),
         options: serde_json::Value::Null,
+        picked: Vec::new(),
     });
     assert!(update.error.is_none(), "{:?}", update.error);
     let report = update.inspection.unwrap().report;
@@ -208,6 +210,7 @@ fn measure_tool_measures_what_is_clicked() {
     let update = editor.handle(Command::Inspect {
         inspector: "interference".into(),
         options: serde_json::Value::Null,
+        picked: Vec::new(),
     });
     let report = update.inspection.unwrap().report;
     assert_eq!(report["solids"], 1);

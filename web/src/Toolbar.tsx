@@ -50,6 +50,9 @@ interface Props {
   reducedMode: boolean;
   onReducedMode: (on: boolean) => void;
   onBugReportClose: () => void;
+  /** Whether the assistant's panel is open; `null` where there is no assistant (VS Code, whose user has their own agent). */
+  assistantOpen: boolean | null;
+  onAssistant: () => void;
 }
 
 /**
@@ -87,6 +90,8 @@ export function Toolbar({
   reducedMode,
   onReducedMode,
   onBugReportClose,
+  assistantOpen,
+  onAssistant,
 }: Props) {
   const fileInput = useRef<HTMLInputElement>(null);
   const [privacyOpen, setPrivacyOpen] = useState(false);
@@ -209,6 +214,16 @@ export function Toolbar({
         >
           <span aria-hidden="true">★</span> Star on GitHub
         </a>
+      )}
+      {assistantOpen != null && (
+        <button
+          className={`assistant-toggle desktop-only${assistantOpen ? " active" : ""}`}
+          onClick={onAssistant}
+          title="Ask the assistant to model or change the part"
+          aria-pressed={assistantOpen}
+        >
+          <Icon name="chat" /> Assistant
+        </button>
       )}
       {help.length > 0 && (
         <Menu label={<Icon name="help" />} title="Help" entries={help} align="right" className="help-menu" arrow={false} />

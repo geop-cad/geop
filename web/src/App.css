@@ -2145,3 +2145,163 @@ button.danger:hover:not(:disabled) {
   font-variant-numeric: tabular-nums;
   white-space: nowrap;
 }
+
+/* The assistant: a chat docked at the right of the viewport, as the
+   sidebar is at its left. */
+.assistant-bar {
+  width: 340px;
+  flex-shrink: 0;
+  background: var(--surface);
+  border-left: 1px solid var(--line);
+  display: flex;
+  min-height: 0;
+}
+.assistant {
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+.assistant-head {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.6rem 0.85rem 0.5rem;
+  border-bottom: 1px solid var(--line);
+}
+.assistant-head h2 {
+  font-size: 0.68rem;
+  font-weight: 650;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--text-dim);
+  margin: 0;
+  flex: 1;
+}
+.assistant-limits {
+  font-size: 0.7rem;
+  color: var(--text-faint);
+}
+.assistant-log {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 0.75rem 0.85rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  scrollbar-width: thin;
+  scrollbar-color: var(--line-strong) transparent;
+}
+.assistant-log .hint {
+  color: var(--text-dim);
+  font-size: 0.8rem;
+  margin: 0;
+  line-height: 1.45;
+}
+.assistant code {
+  font-family: var(--font-mono);
+  font-size: 0.92em;
+  background: var(--control);
+  border-radius: 4px;
+  padding: 0 0.25em;
+}
+.chat-user,
+.chat-assistant {
+  font-size: 0.85rem;
+  line-height: 1.45;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+.chat-user {
+  align-self: flex-end;
+  max-width: 88%;
+  background: var(--accent-soft);
+  border-radius: var(--radius) var(--radius) var(--radius-sm) var(--radius);
+  padding: 0.4rem 0.6rem;
+}
+.chat-assistant {
+  color: var(--text-2);
+}
+.chat-tool {
+  font-size: 0.75rem;
+  color: var(--text-dim);
+  background: var(--surface-2);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  padding: 0.25rem 0.5rem;
+  word-break: break-word;
+}
+.chat-tool.error-card {
+  color: #ff8080;
+  border-color: rgba(255, 107, 107, 0.4);
+}
+.chat-notice {
+  font-size: 0.75rem;
+  color: var(--text-faint);
+  margin: 0;
+}
+.chat-used-up {
+  font-size: 0.8rem;
+  background: var(--surface-2);
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius);
+  padding: 0.5rem 0.65rem;
+}
+.chat-used-up p {
+  margin: 0 0 0.35rem;
+}
+.chat-working {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  font-size: 0.75rem;
+  color: var(--text-dim);
+}
+.chat-undo {
+  align-self: flex-start;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+}
+.assistant-input {
+  display: flex;
+  gap: 0.4rem;
+  align-items: flex-end;
+  padding: 0.6rem 0.85rem 0.75rem;
+  border-top: 1px solid var(--line);
+}
+.assistant-input textarea {
+  flex: 1;
+  resize: none;
+  font: inherit;
+  font-size: 0.85rem;
+  color: var(--text);
+  background: var(--control);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  padding: 0.4rem 0.5rem;
+}
+.assistant-input textarea:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+.assistant-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+}
+/* Turnstile's check: invisible unless it needs the user, then over the
+   assistant's corner. */
+.turnstile-host {
+  position: fixed;
+  right: 1rem;
+  bottom: 1rem;
+  z-index: 1100;
+}
+@media (max-width: 860px) {
+  .mobile-tab-content .assistant {
+    height: 100%;
+  }
+}

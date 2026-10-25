@@ -7,7 +7,9 @@
     "types": ["@cloudflare/workers-types"],
     "strict": true,
     "noEmit": true,
+    "allowImportingTsExtensions": true,
+    "resolveJsonModule": true,
     "skipLibCheck": true
   },
-  "include": ["functions"]
+  "include": ["functions", "lib", "budget-worker/src"]
 }

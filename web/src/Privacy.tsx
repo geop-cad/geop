@@ -25,7 +25,9 @@ export function Privacy({ open, onClose }: { open: boolean; onClose: () => void 
         <h2>Privacy</h2>
         <p className="hint">
           Your parts stay in your browser. They are only sent anywhere if you send a bug report, which attaches the
-          current file.
+          current file, or use the assistant: then your messages to it and the program open are sent to geop's server
+          and to Anthropic, which runs the model, to answer them. Opening the assistant runs Cloudflare Turnstile, to
+          check that you are human, and sets a session cookie.
         </p>
         <p className="hint">
           To learn which features are used and which fail, the app counts anonymous usage statistics: which kind of

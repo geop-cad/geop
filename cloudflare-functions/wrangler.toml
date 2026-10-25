@@ -1,0 +1,31 @@
+# The Pages project geop-cad-app (app.geop-cad.dev): the web app's static
+# build and the Pages Functions in functions/. Deployed only by
+# .github/workflows/deploy-app.yml. With this file, the project's bindings
+# and vars come from here, not from the dashboard: every binding the
+# functions use must be listed. Secrets (ANTHROPIC_API_KEY, SESSION_SECRET,
+# TURNSTILE_SECRET) stay set on the project and are not listed here.
+name = "geop-cad-app"
+pages_build_output_dir = "../web/dist"
+compatibility_date = "2026-10-01"
+
+# The agent chat's budget (docs/agent-chat.md): the Durable Object class
+# of the worker in budget-worker/, which must be deployed first. The money
+# caps are that worker's vars (budget-worker/wrangler.toml).
+[[durable_objects.bindings]]
+name = "AGENT_BUDGET"
+class_name = "AgentBudget"
+script_name = "geop-agent-budget"
+
+[vars]
+AGENT_MODEL = "claude-sonnet-5-5"
+AGENT_EFFORT = "medium"
+# "1" switches the assistant off.
+AGENT_DISABLED = "0"
+
+# Bug reports (functions/api/bug-report.ts). These were dashboard bindings;
+# this file replaces them, so they must be here. Its optional RATE_LIMIT KV
+# namespace was never bound in production, and the function runs without
+# it; bind one here to switch its per-address limits on.
+[[r2_buckets]]
+binding = "BUG_REPORTS"
+bucket_name = "geop-bug-reports"

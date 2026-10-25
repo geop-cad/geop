@@ -9,7 +9,7 @@
 // that comes back. Which operations exist, what their dialogs hold, what a
 // click picks or snaps to, what runs and what is drawn: all of it is
 // decided there, none of it here.
-import { call, loadBackend } from "./backend";
+import { call, callTool, loadBackend } from "./backend";
 
 export type Vec3 = [number, number, number];
 
@@ -621,8 +621,12 @@ export type Command =
    * the tool's.
    */
   | { command: "tool"; key: string | null }
-  /** Ask the inspector `inspector` about the part as drawn, told its own `options`: answered in [[Update]] `inspection`; changes nothing. */
-  | { command: "inspect"; inspector: string; options?: unknown }
+  /**
+   * Ask the inspector `inspector` about the part as drawn — of the elements
+   * `picked`, for one that picks — told its own `options`: answered in
+   * [[Update]] `inspection`; changes nothing.
+   */
+  | { command: "inspect"; inspector: string; options?: unknown; picked?: PickedElement[] }
   /**
    * Write the part shown with the exporter `exporter` — in `format`, else
    * its first — told its own `options` and dated `date` (`YYYY-MM-DD`): the
@@ -892,4 +896,16 @@ export interface Inspection {
 /** Apply `command` in the kernel, and get back what to show now. */
 export async function send(command: Command): Promise<Update> {
   return JSON.parse(await call(JSON.stringify(command))) as Update;
+}
+
+/** What an agent's tool answered (see `geop_core_editor::agent::ToolAnswer`): its result as text, and every update it caused, to show in order. */
+export interface ToolAnswer {
+  text: string;
+  is_error: boolean;
+  updates: Update[];
+}
+
+/** Run the agent's tool `name` with `input` on the kernel's editor. */
+export async function runTool(name: string, input: unknown): Promise<ToolAnswer> {
+  return JSON.parse(await callTool(name, JSON.stringify(input ?? {}))) as ToolAnswer;
 }

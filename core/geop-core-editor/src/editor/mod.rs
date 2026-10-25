@@ -225,7 +225,7 @@ pub struct Editor {
     tool: Option<InHand>,
     /// The inspector the last command asked, and what it told it: to answer
     /// once it has run.
-    asked: Option<(String, serde_json::Value)>,
+    asked: Option<(String, serde_json::Value, Vec<PickedElement>)>,
     /// The part as last drawn: what a tool picks from.
     drawn: Option<Rc<PartView>>,
     /// The last parts drawn, by what they were made of (see
@@ -593,10 +593,10 @@ impl Editor {
     /// — else, `idle` (no step edited), the tool in hand's (see
     /// [`Tool::inspection`]).
     fn answer(&mut self, idle: bool) -> GeopResult<Option<Inspection>> {
-        if let Some((kind, options)) = self.asked.take() {
+        if let Some((kind, options, picked)) = self.asked.take() {
             return self.ask("", |outputs, output| {
                 let inspector = outputs.get_inspector(&kind)?;
-                inspector.inspect(output, &[], &options).map(Some)
+                inspector.inspect(output, &picked, &options).map(Some)
             });
         }
         let Some(mut in_hand) = self.tool.take().filter(|_| idle) else {
@@ -1041,8 +1041,12 @@ impl Editor {
                 };
                 Changed::Run
             }
-            Command::Inspect { inspector, options } => {
-                self.asked = Some((inspector, options));
+            Command::Inspect {
+                inspector,
+                options,
+                picked,
+            } => {
+                self.asked = Some((inspector, options, picked));
                 Changed::Nothing
             }
             Command::Undo | Command::Redo if self.open.is_some() => {

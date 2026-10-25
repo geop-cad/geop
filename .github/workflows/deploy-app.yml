@@ -52,6 +52,22 @@ jobs:
           # *variable*, not a secret). Unset means the build has no usage
           # statistics at all; see web/src/analytics.ts.
           VITE_POSTHOG_KEY: ${{ vars.VITE_POSTHOG_KEY }}
+          # The Turnstile widget's site key (public, like the PostHog key):
+          # the hosted assistant's bot check (see docs/agent-chat.md). Its
+          # secret is the Pages secret TURNSTILE_SECRET.
+          VITE_TURNSTILE_SITE_KEY: 0x4AAAAAAFlnEJQiD_GIxiZ-
+
+      # The Pages Functions bundle @anthropic-ai/sdk (the hosted assistant,
+      # docs/agent-chat.md), so they need their own dependencies.
+      - name: Install and check the Pages Functions
+        working-directory: cloudflare-functions
+        run: |
+          if grep -n '= "fill-in-' wrangler.toml; then
+            echo "::error::cloudflare-functions/wrangler.toml still has placeholders: fill in the bug report's R2 bucket and KV namespace (docs/agent-chat.md)"
+            exit 1
+          fi
+          npm ci
+          npm run typecheck
 
       - name: Ensure Cloudflare Pages project exists
         uses: cloudflare/wrangler-action@v3
@@ -61,10 +77,22 @@ jobs:
           accountId: 9f1c6a47335dac47c8e580e269b0ae8d
           command: pages project create geop-cad-app --production-branch main
 
+      # The agent chat's budget: the Durable Object the Pages project binds
+      # (cloudflare-functions/wrangler.toml, script_name), so it deploys
+      # first. Its vars are the money caps (budget-worker/wrangler.toml).
+      - name: Deploy the agent chat's budget worker
+        uses: cloudflare/wrangler-action@v3
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_PAGES_TOKEN }}
+          accountId: 9f1c6a47335dac47c8e580e269b0ae8d
+          wranglerVersion: "4.152.0"
+          workingDirectory: cloudflare-functions/budget-worker
+          command: deploy
+
       # Run from cloudflare-functions/ so Wrangler finds its functions/
       # (Pages Functions are discovered relative to the working directory,
-      # not the output dir) and picks up their R2 binding — see
-      # cloudflare-functions/functions/api/bug-report.ts.
+      # not the output dir) and its wrangler.toml, which holds every binding
+      # and var of the project (the secrets stay set on the project).
       - name: Deploy to app.geop-cad.dev
         uses: cloudflare/wrangler-action@v3
         with:

@@ -1,6 +1,6 @@
 import type { ReactNode } from "react";
 
-export type MobileTab = "buttons" | "files" | "program" | "part" | "detail" | "bug";
+export type MobileTab = "buttons" | "files" | "program" | "part" | "detail" | "assistant" | "bug";
 
 interface Props {
   tab: MobileTab;
@@ -14,6 +14,8 @@ interface Props {
   detailPanel: ReactNode;
   /** The program files, where they are the app's own; `null` in VS Code. */
   filesPanel: ReactNode;
+  /** The assistant's chat; `null` where there is none (VS Code). */
+  assistantPanel: ReactNode;
   /**
    * The "Bug" pane's DOM node, once mounted (or null once unmounted) — the
    * bug-report form (opened from the toolbar's "Report bug" button)
@@ -42,6 +44,7 @@ export function MobileBottom({
   structurePanel,
   detailPanel,
   filesPanel,
+  assistantPanel,
   onBugReportHost,
 }: Props) {
   return (
@@ -66,6 +69,11 @@ export function MobileBottom({
             Edit
           </button>
         )}
+        {assistantPanel && (
+          <button className={tab === "assistant" ? "active" : ""} onClick={() => onTab("assistant")}>
+            Assistant
+          </button>
+        )}
         {bugReportOpen && (
           <button className={tab === "bug" ? "active" : ""} onClick={() => onTab("bug")}>
             Bug
@@ -78,6 +86,7 @@ export function MobileBottom({
         {tab === "program" && programPanel}
         {tab === "part" && structurePanel}
         {tab === "detail" && detailPanel}
+        {tab === "assistant" && assistantPanel}
         {bugReportOpen && <div className="panel-host" hidden={tab !== "bug"} ref={onBugReportHost} />}
       </div>
     </div>

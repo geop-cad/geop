@@ -4,13 +4,14 @@
 // with why the command could not be read — or, if the kernel panicked,
 // with what panicked. A panic leaves the module unusable, so the page then
 // ends this worker and starts another.
-import init, { handle, init_panic_hook } from "./wasm/pkg/geop.js";
+import init, { agent_call, handle, init_panic_hook } from "./wasm/pkg/geop.js";
 
-/** What the page sends: a command (`geop_cad_base::Command` as JSON). */
-export interface ToKernel {
-  id: number;
-  command: string;
-}
+/**
+ * What the page sends: a command (`geop_cad_base::Command` as JSON), or an
+ * agent's tool to run on the same editor, its input as JSON (see
+ * `geop_core_editor::agent`).
+ */
+export type ToKernel = { id: number; command: string } | { id: number; tool: string; input: string };
 
 /** What the worker says: whether it loaded, then an answer per command — the update, a command it could not read, or a crash. */
 export type FromKernel =
@@ -41,10 +42,12 @@ ready.then(
 
 // Commands that come before the module has loaded wait for it, in order.
 scope.onmessage = async (e) => {
-  const { id, command } = e.data;
+  const message = e.data;
+  const { id } = message;
   try {
     await ready;
-    scope.postMessage({ id, update: handle(command) });
+    const update = "tool" in message ? agent_call(message.tool, message.input) : handle(message.command);
+    scope.postMessage({ id, update });
   } catch (error) {
     // `handle` throws the text of a command it could not read; anything
     // else is the module trapping — a panic, or memory run out.

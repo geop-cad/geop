@@ -4,10 +4,16 @@
   "version": "0.0.0",
   "type": "module",
   "scripts": {
-    "typecheck": "tsc"
+    "typecheck": "tsc",
+    "test": "node --test test/*.test.ts",
+    "gen-tools": "node scripts/gen-tools.mjs"
   },
   "devDependencies": {
     "@cloudflare/workers-types": "^5.20260927.1",
-    "typescript": "~6.0.2"
+    "typescript": "~6.0.2",
+    "wrangler": "^4.152.0"
+  },
+  "dependencies": {
+    "@anthropic-ai/sdk": "^1.3.0"
   }
 }

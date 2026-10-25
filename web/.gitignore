@@ -10,6 +10,8 @@ lerna-debug.log*
 node_modules
 dist
 dist-ssr
+# the page `geop open` embeds (`npm run build:open`)
+dist-open
 *.local
 
 # Editor directories and files

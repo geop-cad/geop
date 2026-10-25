@@ -1,0 +1,27 @@
+# The agent chat's budget: one Durable Object holding every spend, quota
+# and rate counter, so the caps are enforced with strong consistency.
+# Deployed by .github/workflows/deploy-app.yml, before the Pages project
+# that binds it. See docs/agent-chat.md.
+name = "geop-agent-budget"
+main = "src/index.ts"
+compatibility_date = "2026-10-01"
+# No public URL: the Pages project reaches the object through its binding.
+# (The owner's ledger view, GET /ledger with the secret LEDGER_TOKEN, is
+# reached by turning workers_dev on.)
+workers_dev = false
+
+[[durable_objects.bindings]]
+name = "AGENT_BUDGET"
+class_name = "AgentBudget"
+
+[[migrations]]
+tag = "v1"
+new_sqlite_classes = ["AgentBudget"]
+
+[vars]
+# USD. Read on every request: raising one is editing it here and pushing
+# to main, which deploys this worker again. The total is a lifetime cap: what was spent
+# is never reset, so once it is reached the assistant stays paused until
+# this number is raised. A missing or unreadable value closes the endpoint.
+AGENT_DAILY_BUDGET_USD = "20"
+AGENT_TOTAL_BUDGET_USD = "100"

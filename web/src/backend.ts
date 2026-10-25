@@ -5,8 +5,9 @@
 // The app talks to the kernel through this module only (see `geop.ts`), so
 // where the kernel lives is one build-time choice: `backend.vscode.ts`
 // replaces this file in the VS Code extension's build (see `vite.config.ts`),
-// where the kernel is a native process on the host. Both export the same
-// things.
+// where the kernel is a native process on the host, and `backend.local.ts`
+// in the page `geop open` serves, where it is the process serving the page.
+// All export the same things.
 import { KernelCrashed } from "./crash";
 import type { ExportedFile } from "./geop";
 import type { FromKernel, ToKernel } from "./kernel.worker";
@@ -45,6 +46,9 @@ export interface Host {
 }
 
 export const host: Host | null = null;
+
+/** The files are kept in this browser (see `files.ts`). */
+export { browserStore as store } from "./files";
 
 /** One worker running the kernel, and the commands it has not answered yet. */
 interface Kernel {
@@ -120,11 +124,13 @@ function crashed(dead: Kernel, reason: string) {
   });
 }
 
-function request(to: Kernel, command: string): Promise<string> {
+/** Sends `command` — or a tool to run — to `to`, and waits for the answer. */
+function request(to: Kernel, command: string | { tool: string; input: string }): Promise<string> {
   const id = nextId++;
   return new Promise((resolve, reject) => {
     to.waiting.set(id, { resolve, reject });
-    to.worker.postMessage({ id, command } satisfies ToKernel);
+    const message: ToKernel = typeof command === "string" ? { id, command } : { id, ...command };
+    to.worker.postMessage(message);
   });
 }
 
@@ -139,4 +145,15 @@ export async function call(command: string): Promise<string> {
   if (stopped) throw stopped;
   kernel ??= start();
   return request(kernel, command);
+}
+
+/**
+ * Run an agent's tool `name` with `input` (JSON) on the kernel's editor
+ * (see `geop_core_editor::agent`); the answer is a `ToolAnswer` as JSON,
+ * with every update the tool caused.
+ */
+export async function callTool(name: string, input: string): Promise<string> {
+  if (stopped) throw stopped;
+  kernel ??= start();
+  return request(kernel, { tool: name, input });
 }
