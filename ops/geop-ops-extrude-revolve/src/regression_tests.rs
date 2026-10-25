@@ -8,7 +8,7 @@ use geop_ops_model::datums::datum;
 use geop_ops_model::parameters::{ParameterKind, parameters_of, set_parameters};
 use geop_ops_model::sketch::{
     Constraint, Sketch, SketchPlane,
-    figures::{n, on_face, on_origin},
+    figures::{disc, n, on_face, on_origin, rectangle_outline},
     sketch_element, whole_sketch,
 };
 use geop_ops_model::{
@@ -17,7 +17,7 @@ use geop_ops_model::{
 };
 use geop_ops_sketch::AddSketchArgs;
 
-use crate::{Extents, Output, RevolveArgs, RevolveAxis, examples, testing::extrusion};
+use crate::{Extent, Extents, Output, RevolveArgs, RevolveAxis, examples, testing::extrusion};
 
 /// The operations these programs are written in. The datums the reports
 /// built from faces and edges are given at the frames those constructions
@@ -735,4 +735,58 @@ fn wide_plate_with_an_m6_hole() {
     *selected = "M6".into();
     set_parameters(&mut plate, parameters);
     assert_builds_valid(&plate);
+}
+
+/// A 2 x 2 x 1 block with a round hole of radius 0.5 cut through it around
+/// `(1, 1.5)`: the hole's wall touches the block's side `y = 2` along a
+/// line. From the SolidWorks "zero-thickness geometry" lesson: every
+/// tutorial of a boss or a cut tangent to a wall warns that the kernel must
+/// refuse it, since the result's boundary touches itself along the line of
+/// tangency and is no solid.
+///
+/// The cut builds without complaint, and `assert_valid` then fails with
+/// "edge .. has 4 coedge(s) (expected exactly 2 for a manifold shell)" on
+/// the edge where the hole's wall meets the side. Expected: a refusal
+/// naming the tangent faces (the cylinder's wall and the block's side), or
+/// a solid that is valid. Ruled out: the hole's ends (the tool stands out
+/// of both caps by 1) and the sketch (the disc is the sketch's own circle).
+#[test]
+#[ignore = "bug: a cut tangent to a side face builds a non-manifold solid (an edge with 4 coedges where the hole's wall touches the side) instead of being refused by name"]
+fn cut_tangent_to_a_side_face_is_not_refused() {
+    let mut program = Program::new();
+    program.push(
+        "outline",
+        AddSketchArgs::on(
+            on_origin(FrameAxis::Z),
+            rectangle_outline(0.0, 0.0, 2.0, 2.0),
+        ),
+    );
+    program.push(
+        "block",
+        extrusion("outline", Extents::blind(1.0), Combine::NewBody),
+    );
+    program.push(
+        "hole_sketch",
+        AddSketchArgs::on(on_origin(FrameAxis::Z), disc([1.0, 1.5], 0.5)),
+    );
+    program.push(
+        "hole",
+        extrusion(
+            "hole_sketch",
+            Extents {
+                side1: Extent::blind(2.0),
+                symmetric: false,
+                side2: Some(Extent::blind(1.0)),
+                reversed: false,
+            },
+            Combine::cut("extrude(block)"),
+        ),
+    );
+    match program.build_model(registry) {
+        Ok(part) => assert_valid(&part),
+        Err(e) => {
+            let text = e.to_string();
+            assert!(text.contains("tangent"), "{text}");
+        }
+    }
 }
