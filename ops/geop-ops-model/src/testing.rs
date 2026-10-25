@@ -25,7 +25,7 @@ use geop_core_topology::{
     Body, Edge, FaceId, Model, SolidId,
     boundary::BoundaryType,
     contains::shell::{PointClassification, shell_contains},
-    loop_sampling::sample_loop_to_polygon,
+    uv_loop::sample_loop_to_polygon,
     validation::{ValidationParameters, validate, validate_manifold},
 };
 

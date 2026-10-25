@@ -66,9 +66,7 @@ use geop_core_math::{
     solvers::refine::{Refine, refine},
     vector::{Vector2, Vector3},
 };
-use geop_core_topology::{
-    Face, Model, boundary::BoundaryType, loop_sampling::sample_loop_to_polygon,
-};
+use geop_core_topology::{Face, Model, boundary::BoundaryType, uv_loop::sample_loop_to_polygon};
 
 use crate::clip::{Point, clip_to_rect, is_convex, subtract_convex};
 

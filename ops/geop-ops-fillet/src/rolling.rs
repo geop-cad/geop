@@ -209,10 +209,6 @@ impl Radii {
     }
 }
 
-/// Samples per edge its length is measured by, to lay a varying radius
-/// out along a chain.
-const LENGTH_SAMPLES: usize = 32;
-
 /// A fillet's radius along one chain (see [`Radii`]): at every vertex of
 /// the chain, linear in the length along it between the vertices given a
 /// radius — lengths measured in plain numbers, since the law is the
@@ -238,18 +234,12 @@ impl RadiusLaw {
         radii: &Radii,
     ) -> GeopResult<Self> {
         let topology = model.topology();
-        // The length along the chain to each of its vertices.
+        // The length along the chain to each of its vertices: each edge's
+        // integrated, which way it runs makes no difference.
         let mut lengths = vec![0.0];
         for link in &chain.links {
-            let mut last = link.at(topology, S::ZERO)?.0;
-            let mut length = *lengths.last().expect("a length");
-            for i in 1..=LENGTH_SAMPLES {
-                let f = S::from_ratio(i as i64, LENGTH_SAMPLES as i64)?;
-                let p = link.at(topology, f)?.0;
-                length += p.sub(&last).norm().midpoint().to_f64();
-                last = p;
-            }
-            lengths.push(length);
+            let (length, _) = topology.get_edge(link.edge)?.curve.length()?;
+            lengths.push(lengths.last().expect("a length") + length.midpoint().to_f64());
         }
         let mut vertices = chain.vertices(topology)?;
         if chain.closed {

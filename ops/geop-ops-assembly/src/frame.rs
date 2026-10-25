@@ -5,7 +5,10 @@
 
 use geop_core_editor::selectable::Selectable;
 use geop_core_editor::view::{FramePick, drawn};
-use geop_core_geometry::shape::Axis;
+use geop_core_geometry::{
+    search::{MAX_NODES, min_subdivision_size},
+    shape::Axis,
+};
 use geop_core_math::{
     geop_error::{GeopError, GeopResult, WithContext},
     primitives::CoordinateSystem,
@@ -18,9 +21,6 @@ use geop_core_topology::{CoedgeGeometry, FaceId};
 use geop_ops_model::{NamedModel, frame_along};
 use geop_ops_reference_geometry::{Selected, Shape};
 use serde::{Deserialize, Serialize};
-
-/// How many points of each of a face's edges its middle is measured from.
-const SAMPLES: i64 = 8;
 
 /// What a mate holds by: the element `on`, of the part itself or of a part
 /// placed in it, however deep (see [`geop_core_program::instance`]) — and,
@@ -177,36 +177,28 @@ fn middle_of(reader: &Reader, element: &Selected) -> GeopResult<Vector3<Design>>
         .with_context(ctx)
 }
 
-/// The middle of the box round the edges of `face`, sampled: the point of a
-/// bare vertex face. In the part's own frame.
+/// The middle of the box round the edges of `face` — each edge's own
+/// extremes, not its control points' — or the point of a bare vertex face.
+/// In the part's own frame.
 fn face_middle<S: Scalar>(named: &NamedModel<S>, face: FaceId) -> GeopResult<Vector3<S>> {
     let model = named.topology();
-    let mut points = Vec::new();
+    let mut bounds: Option<[S; 3]> = None;
     for coedge in model.iterate_face_coedges(face) {
-        match model.get_coedge(coedge)?.geometry {
-            CoedgeGeometry::Edge(edge) => {
-                let curve = &model.get_edge(edge)?.curve;
-                let (t0, t1) = curve.domain();
-                for k in 0..=SAMPLES {
-                    let t = S::interpolate(t0, t1, S::from_ratio(k, SAMPLES)?);
-                    points.push(curve.evaluate(t)?);
-                }
-            }
-            CoedgeGeometry::Vertex(vertex) => points.push(model.get_vertex(vertex)?.point),
-        }
+        let spans = match model.get_coedge(coedge)?.geometry {
+            CoedgeGeometry::Edge(edge) => model
+                .get_edge(edge)?
+                .curve
+                .bounds(MAX_NODES, min_subdivision_size())?,
+            CoedgeGeometry::Vertex(vertex) => model.get_vertex(vertex)?.point.to_array(),
+        };
+        bounds = Some(match bounds {
+            Some(b) => std::array::from_fn(|k| b[k].union(spans[k])),
+            None => spans,
+        });
     }
-    let [first, rest @ ..] = points.as_slice() else {
-        return Err(GeopError::new(format!(
-            "face {face} has no edge to measure"
-        )));
-    };
-    let (lo, hi) = rest.iter().fold((*first, *first), |(lo, hi), p| {
-        (
-            Vector3::from_array([0, 1, 2].map(|k| lo[k].min(p[k]))),
-            Vector3::from_array([0, 1, 2].map(|k| hi[k].max(p[k]))),
-        )
-    });
-    Ok(lo.add(&hi).prod_scalar(S::ONE.div(S::TWO)?).sharpen())
+    let bounds =
+        bounds.ok_or_else(|| GeopError::new(format!("face {face} has no edge to measure")))?;
+    Ok(Vector3::from_array(bounds.map(|axis| axis.midpoint())))
 }
 
 /// A mate's element is picked from what the editor draws of the part and

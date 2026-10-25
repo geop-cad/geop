@@ -1,6 +1,5 @@
 use geop_core_math::{
     geop_error::GeopError,
-    polygon::polygon_signed_area,
     scalars::Scalar,
     solvers::probe::{Probe, halve},
     vector::Vector3,
@@ -13,7 +12,7 @@ use crate::{
         face::face_interior_point,
         shell::{Classified, PointClassification, solid_contains},
     },
-    loop_sampling::sample_loop_to_polygon,
+    uv_loop::loop_signed_area,
     validation::ValidationParameters,
 };
 
@@ -22,11 +21,6 @@ use crate::{
 /// their answers are seed-independent; a constant keeps validation
 /// reproducible run to run.
 const SEED: u64 = 0x0F1E_0D1E_0000_0001;
-
-/// Samples per coedge when measuring a loop's signed area. Only the *sign*
-/// is used, and a curved trim loop needs a few samples per coedge for that
-/// sign to be right; this bounds effort, not correctness.
-const LOOP_AREA_SAMPLES: usize = 8;
 
 /// How many times [`check_normals_point_outward`] may halve its probe
 /// distance. Bounds effort only: every halving is more local than the last,
@@ -77,16 +71,15 @@ pub fn check_loop_winding<S: Scalar>(
             if traverses_each_edge_twice(model, anchor) {
                 continue;
             }
-            let polygon = match sample_loop_to_polygon(model, anchor, LOOP_AREA_SAMPLES) {
-                Ok(p) => p,
+            let area = match loop_signed_area(model, anchor) {
+                Ok(area) => area,
                 Err(e) => {
                     errors.push(e.with_context(format!(
-                        "face {face_id}'s {which} boundary, sampling it to measure its winding"
+                        "face {face_id}'s {which} boundary, measuring its winding"
                     )));
                     continue;
                 }
             };
-            let area = polygon_signed_area(&polygon);
             let ok = if want_positive {
                 area.definitely_greater(S::ZERO)
             } else {

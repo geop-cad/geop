@@ -37,13 +37,12 @@ use geop_core_editor::{
     part_operation::PartOperation,
 };
 use geop_core_geometry::{
-    nurb_curve::{NurbCurve, NurbCurve2D, NurbCurve3D, flatten_point},
+    nurb_curve::{NurbCurve, NurbCurve2D, NurbCurve3D, flatten_point, loop_signed_area},
     nurb_surface::{FlatPatch, NurbSurface3D},
     shape::Plane,
 };
 use geop_core_math::{
     geop_error::{GeopError, GeopResult},
-    polygon::polygon_signed_area,
     scalars::Scalar,
     vector::{Vector3, Vector4},
 };
@@ -53,7 +52,6 @@ use geop_core_program::{
 use geop_core_topology::{
     Curve3, Sense,
     build::{BodySpec, CoedgeOn, CoedgeSpec, EdgeSpec, FaceSpec},
-    loop_sampling::sample_pcurves_to_polygon,
 };
 use geop_ops_model::{
     BodyNames, Chain, Edge, ModelOperation, NamedModel, Namer, build_model, read_model,
@@ -62,10 +60,6 @@ use geop_ops_sketch3d::CurveSource;
 use serde::{Deserialize, Serialize};
 
 use crate::{NamedCurve, SheetSpec};
-
-/// Samples per side when telling which way the loop runs round from its
-/// area: only the sign is used.
-const AREA_SAMPLES: usize = 8;
 
 /// Spans a face standing on its own between the curves `edges` — two of
 /// them ruled, a closed loop of them filled, see the module docs — for the
@@ -615,7 +609,7 @@ fn flat_face<S: Scalar>(sides: &[Side<S>], plane: &Plane<S>) -> GeopResult<FaceS
             NurbCurve::try_new(curve.degree, control_points, curve.knot_vector.clone())
         })
         .collect::<GeopResult<Vec<NurbCurve2D<S>>>>()?;
-    let area = polygon_signed_area(&sample_pcurves_to_polygon(&local, AREA_SAMPLES)?);
+    let area = loop_signed_area(&local)?;
     let swapped = if area.definitely_greater(S::ZERO) {
         false
     } else if area.definitely_less(S::ZERO) {

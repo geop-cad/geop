@@ -255,8 +255,7 @@ mod tests {
             let BoundaryType::Loop(anchor) = model.get_face(face_id).unwrap().outer else {
                 unreachable!()
             };
-            let polygon = crate::loop_sampling::sample_loop_to_polygon(model, anchor, 8).unwrap();
-            geop_core_math::polygon::polygon_signed_area(&polygon)
+            crate::uv_loop::loop_signed_area(model, anchor).unwrap()
         };
 
         let before = area(&model);

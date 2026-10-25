@@ -12,6 +12,13 @@ pub const MAX_NODES: usize = 20_000;
 /// "Subdivide to isolate, then Newton to refine").
 pub const MIN_SUBDIVISION_SIZE: f64 = 1e-7;
 
+/// Where a nearest-point search hands over to Newton, as a fraction of the
+/// size of what it searches (`NurbCurve::closest_point`,
+/// `NurbSurface::closest_point`). Bounds effort only: every piece left at
+/// the handoff that could hold a nearer point is refined, so a coarser
+/// handoff only leaves Newton more pieces to start from.
+pub const NEAREST_HANDOFF: f64 = 1e-3;
+
 /// Newton steps projecting a point onto a surface.
 pub const PROJECT_ITERATIONS: usize = 20;
 

@@ -30,6 +30,7 @@
 //! along an edge). An angle so large that an edge turns around is refused.
 
 use geop_core_geometry::{
+    intersection::{Intersections, curve_curve_intersect},
     meet::{Offset, meet, tangent_groups},
     nurb_curve::NurbCurve3D,
     nurb_surface::NurbSurface3D,
@@ -38,7 +39,6 @@ use geop_core_geometry::{
 };
 use geop_core_math::{
     geop_error::{GeopError, GeopResult, WithContext},
-    polygon::polygons_contain,
     scalars::Scalar,
     vector::{Vector2, Vector3, Vector4},
     with_context,
@@ -46,6 +46,7 @@ use geop_core_math::{
 use geop_core_topology::{
     Curve3, FaceId, SolidId,
     build::{BodySpec, CoedgeOn, CoedgeSpec, EdgeSpec, FaceSpec},
+    contains::face::{PointClassification, pcurves_contain},
 };
 use geop_lib_shell::{extended, pcurve, surface_missed};
 use geop_ops_model::{BodyNames, NamedModel, Namer};
@@ -419,18 +420,16 @@ impl<'a, S: Scalar> Drafted<'a, S> {
                     holes: face.holes.iter().map(lp).collect::<GeopResult<_>>()?,
                 };
                 // Drafted so far that a wall's two sides cross, the face
-                // between them — a shelled rim — runs into its own hole.
-                let outline = |lp: &[CoedgeSpec<S>]| -> GeopResult<Vec<Vector2<S>>> {
-                    lp.iter().map(|c| Ok(c.pcurve.ends()?.0)).collect()
-                };
-                let outer = outline(&drafted_face.outer)?;
-                for hole in &drafted_face.holes {
-                    if !outline(hole)?.iter().all(|p| polygons_contain(std::slice::from_ref(&outer), p)) {
-                        return Err(GeopError::new(format!(
-                            "the draft is too steep: face {} runs into its own hole — the sides of a wall would cross",
-                            self.names.faces[f]
-                        )));
-                    }
+                // between them — a shelled rim — runs into its own hole: a
+                // hole's pcurves cross the outer loop's, or the hole has
+                // left it altogether.
+                if !drafted_face.holes.iter().try_fold(true, |inside, hole| {
+                    Ok::<_, GeopError>(inside && hole_inside(&drafted_face.surface, &drafted_face.outer, hole)?)
+                })? {
+                    return Err(GeopError::new(format!(
+                        "the draft is too steep: face {} runs into its own hole — the sides of a wall would cross",
+                        self.names.faces[f]
+                    )));
                 }
                 Ok(drafted_face)
             })
@@ -613,4 +612,38 @@ fn section<S: Scalar>(
     }
     lifted.recompute_aabb();
     Ok(lifted)
+}
+
+/// Seed of the ray casting that tells whether a hole lies inside its
+/// face's outer loop: any gives the same answer (see `pcurves_contain`).
+const SEED: u64 = 0xD4AF_0000_0000_0001;
+
+/// Whether the loop `hole` lies inside the loop `outer` on `surface`: no
+/// pcurve of the one meets one of the other, and a point of the hole is
+/// inside the outer loop.
+fn hole_inside<S: Scalar>(
+    surface: &NurbSurface3D<S>,
+    outer: &[CoedgeSpec<S>],
+    hole: &[CoedgeSpec<S>],
+) -> GeopResult<bool> {
+    for h in hole {
+        for o in outer {
+            match curve_curve_intersect(&h.pcurve, &o.pcurve, 1, MAX_NODES, min_subdivision_size())?
+            {
+                Intersections::Found(found) if found.is_empty() => {}
+                _ => return Ok(false),
+            }
+        }
+    }
+    let first = &hole[0].pcurve;
+    let point = first.evaluate(first.mid_parameter()?)?;
+    let pcurves: Vec<_> = outer.iter().map(|c| &c.pcurve).collect();
+    Ok(pcurves_contain(
+        surface,
+        &pcurves,
+        point,
+        MAX_NODES,
+        min_subdivision_size(),
+        SEED,
+    )? == PointClassification::Inside)
 }

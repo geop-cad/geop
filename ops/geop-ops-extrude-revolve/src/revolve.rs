@@ -13,7 +13,10 @@ use geop_core_program::{
 };
 use std::collections::BTreeSet;
 
-use geop_core_geometry::shape::Axis;
+use geop_core_geometry::{
+    search::{MAX_NODES, min_subdivision_size},
+    shape::Axis,
+};
 use geop_core_math::{
     geop_error::{GeopError, GeopResult, WithContext},
     primitives::CoordinateSystem,
@@ -22,7 +25,7 @@ use geop_core_math::{
     with_context,
 };
 use geop_core_sketch::{
-    CurveKind, Enclosure, PointId, ProfileJoint, ProfileLoop, Shape, profile::curve_polyline,
+    CurveKind, Enclosure, PointId, ProfileJoint, ProfileLoop, Shape, profile::curve_nurbs,
 };
 use geop_core_topology::build::BuiltBody;
 use geop_ops_datums::Datums;
@@ -301,11 +304,14 @@ impl ModelOperation for Revolve {
             Shape::Chain(chain) => (vec![chain], false),
         };
 
-        // Which side of the axis the profile lies on, from its curves as
-        // drawn; it must not cross. The points the constraints put on the
-        // axis are on it — known, not measured — so they and the edges
-        // between two of them say nothing; every other point of a curve must
-        // lie definitely on one side, and all on the same.
+        // Which side of the axis the profile lies on; it must not cross. The
+        // points the constraints put on the axis are on it — known, not
+        // measured — so they and the edges between two of them say nothing;
+        // every other point of a curve must lie definitely on one side, and
+        // all on the same. A curve is furthest to either side at its ends or
+        // where it runs parallel to the axis
+        // ([`NurbCurve::stationary_parameters`] across it): there are its
+        // extremes, so they say on which sides it lies.
         let mut left = false;
         let mut right = false;
         for edge in loops.iter().flat_map(|l| &l.edges) {
@@ -318,15 +324,23 @@ impl ModelOperation for Revolve {
             {
                 continue;
             }
-            let samples = curve_polyline(sketch, edge.curve)?;
-            let last = samples.len().saturating_sub(1);
-            for (k, q) in samples.iter().enumerate() {
-                if (k == 0 && start_on) || (k == last && end_on) {
-                    continue;
+            let pieces = curve_nurbs(sketch, &geometry, edge.curve)?;
+            let last = pieces.len().saturating_sub(1);
+            for (k, piece) in pieces.iter().enumerate() {
+                let (t0, t1) = piece.domain();
+                let mut extremes =
+                    piece.stationary_parameters(&dir.perp(), MAX_NODES, min_subdivision_size())?;
+                if !(k == 0 && start_on) {
+                    extremes.push(t0);
                 }
-                let side = dir.prod_cross(&q.map(|c| c.cast::<S>()).sub(&a));
-                left |= side.definitely_greater(S::ZERO);
-                right |= side.definitely_less(S::ZERO);
+                if !(k == last && end_on) {
+                    extremes.push(t1);
+                }
+                for t in extremes {
+                    let side = dir.prod_cross(&piece.evaluate(t)?.sub(&a));
+                    left |= side.definitely_greater(S::ZERO);
+                    right |= side.definitely_less(S::ZERO);
+                }
             }
         }
         if left && right {

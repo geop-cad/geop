@@ -20,7 +20,7 @@ impl<S: Scalar, const D: usize> NurbCurve<S, D> {
     /// second costs a rounding that near it is the wider one.
     ///
     /// Over every knot span `t` reaches, united (see [`find_spans`]).
-    fn cartesian_derivatives<const C: usize>(
+    pub(super) fn cartesian_derivatives<const C: usize>(
         &self,
         t: S,
         n: usize,

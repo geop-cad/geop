@@ -915,23 +915,6 @@ fn map_derivatives(maps: &[Mat]) -> Vec<Mat> {
         .collect()
 }
 
-/// The length of `curve`, near enough to share out sections by: its chord
-/// polygon through many points.
-fn rough_length<S: Scalar>(curve: &NurbCurve3D<S>) -> GeopResult<f64> {
-    let n = 64 * knot_spans(curve);
-    let points = (0..=n)
-        .map(|i| {
-            Ok(curve
-                .evaluate(S::from_f64(i as f64 / n as f64))?
-                .to_f64_array())
-        })
-        .collect::<GeopResult<Vec<P3>>>()?;
-    Ok(points
-        .windows(2)
-        .map(|w| dot(sub(w[1], w[0]), sub(w[1], w[0])).sqrt())
-        .sum())
-}
-
 /// The frame `start` carried along curve `k` of the path at `fine + 1`
 /// evenly spaced parameters of its span, the way the plain path carries it
 /// (see [`carry`] and [`translated`]): moved straight along a line, turned
@@ -1146,7 +1129,7 @@ fn controlled<S: Scalar>(
     let lengths = chain
         .curves
         .iter()
-        .map(rough_length)
+        .map(|curve| Ok(curve.length()?.0.midpoint().to_f64()))
         .collect::<GeopResult<Vec<f64>>>()?;
     let total: f64 = lengths.iter().sum();
     let rail_sections = rails

@@ -6,19 +6,14 @@ use geop_core_math::{
 };
 
 use super::NurbCurve;
-
-/// Samples per polynomial piece the search starts from. Bounds effort only:
-/// every sample is a point of the curve, and Newton takes the best of them
-/// to the nearest point around it.
-const SAMPLES_PER_PIECE: usize = 8;
+use crate::{
+    nearest::{CurveSpan, PointPiece, least_distance},
+    search::{MAX_NODES, NEAREST_HANDOFF},
+};
 
 /// Newton steps from a seed. Bounds effort only: what is returned is a
 /// point of the curve, however many steps it took.
 const NEWTON_STEPS: usize = 30;
-
-/// How many of the nearest samples are refined: neighbouring local minima
-/// of the distance are told apart by refining more than one.
-const SEEDS: usize = 3;
 
 /// How often a step that does not bring the point nearer is halved before
 /// the search stops.
@@ -27,42 +22,30 @@ const HALVINGS: usize = 10;
 impl<S: Scalar> NurbCurve<S, 4> {
     /// The point of the curve nearest `target`, with its parameter.
     ///
-    /// Subdivision isolates, Newton refines: the curve is sampled across
-    /// every polynomial piece, and the nearest few samples are refined by
-    /// Newton on `(C(t) - target) · C'(t) = 0`, kept inside the domain —
-    /// which also reaches an end of the curve, where the nearest point is
-    /// one. The parameter is a free choice of which point of the curve is
-    /// returned, so every iterate is sharpened: the point returned lies on
-    /// the curve, its distance to `target` is attained, and it is the least
-    /// distance found — a narrow dip between samples could still be missed,
-    /// which more samples, not a tolerance, would fix.
+    /// Subdivision isolates, Newton refines: [`least_distance`] bounds the
+    /// distance over every span of the curve, so no dip of it is missed,
+    /// and Newton on `(C(t) - target) · C'(t) = 0` refines each span left
+    /// at the handoff, kept inside the domain — which also reaches an end
+    /// of the curve, where the nearest point is one. The parameter is a
+    /// free choice of which point of the curve is returned, so every
+    /// iterate is sharpened: the point returned lies on the curve, and its
+    /// distance to `target` is attained.
     pub fn closest_point(&self, target: &Vector3<S>) -> GeopResult<(S, Vector3<S>)> {
-        let breaks = self.breakpoints();
-        let (_, t1) = self.domain();
-        let mut samples = Vec::new();
-        for w in breaks.windows(2) {
-            for i in 0..SAMPLES_PER_PIECE {
-                let alpha = S::from_ratio(i as i64, SAMPLES_PER_PIECE as i64)?;
-                samples.push(S::interpolate(w[0], w[1], alpha).sharpen());
-            }
-        }
-        samples.push(t1);
+        let nearest = least_distance(
+            vec![PointPiece(*target)],
+            vec![CurveSpan(self.clone())],
+            self.size()?.mul(S::from_f64(NEAREST_HANDOFF)),
+            MAX_NODES,
+        )?;
         let distance = |p: &Vector3<S>| p.sub(target).norm_sq().to_f64();
-        let mut scored = samples
-            .into_iter()
-            .map(|t| Ok((distance(&self.evaluate(t)?), t)))
-            .collect::<GeopResult<Vec<_>>>()?;
-        scored.sort_by(|a, b| a.0.total_cmp(&b.0));
-        let mut best: Option<(f64, S, Vector3<S>)> = None;
-        for &(_, seed) in scored.iter().take(SEEDS) {
-            let t = self.closest_parameter_from(target, seed)?;
-            let p = self.evaluate(t)?;
-            let d = distance(&p);
-            if best.as_ref().is_none_or(|(b, ..)| d < *b) {
-                best = Some((d, t, p));
+        let (mut t, mut p) = nearest.b;
+        for ((), seed) in nearest.candidates {
+            let refined = self.closest_parameter_from(target, seed)?;
+            let q = self.evaluate(refined)?;
+            if distance(&q) < distance(&p) {
+                (t, p) = (refined, q);
             }
         }
-        let (_, t, p) = best.expect("a curve has samples");
         Ok((t, p))
     }
 

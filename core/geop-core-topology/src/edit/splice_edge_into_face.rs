@@ -1,6 +1,5 @@
 use geop_core_math::{
     geop_error::{GeopError, GeopResult, WithContext},
-    polygon::polygon_signed_area,
     scalars::Scalar,
     solvers::bisect::bisect,
     vector::Vector2,
@@ -10,7 +9,7 @@ use crate::{
     Coedge, CoedgeGeometry, CoedgeId, Curve2, EdgeId, Face, FaceId, Model, Sense, VertexId,
     boundary::{BoundaryIndex, BoundaryType},
     contains::face::{PointClassification, face_contains},
-    loop_sampling::sample_loop_to_polygon,
+    uv_loop::loop_signed_area,
 };
 
 impl<S: Scalar> Model<S> {
@@ -255,7 +254,7 @@ impl<S: Scalar> Model<S> {
                         // would surface much later as a face nothing can be
                         // classified against.
                         for ring in [fwd, rev] {
-                            let area = signed_area(model, ring).with_context(&ctx)?;
+                            let area = loop_signed_area(model, ring).with_context(&ctx)?;
                             if !area.abs().definitely_greater(S::ZERO) {
                                 let widest = widest_pcurve(model, ring).with_context(&ctx)?;
                                 return Err(ctx(GeopError::new(format!(
@@ -283,7 +282,7 @@ impl<S: Scalar> Model<S> {
                     // the same edge, so no purely topological test can tell
                     // them apart.
                     (BoundaryIndex::Hole(i), BoundaryIndex::Hole(j)) if i == j => {
-                        let area = signed_area(model, fwd).with_context(&ctx)?;
+                        let area = loop_signed_area(model, fwd).with_context(&ctx)?;
                         let (material, void) = if area.definitely_greater(S::ZERO) {
                             (fwd, rev)
                         } else if area.definitely_less(S::ZERO) {
@@ -788,22 +787,13 @@ fn new_face_from_ring<S: Scalar>(
     Ok(new_face_id)
 }
 
-/// The signed area, in `(u, v)`, of the ring anchored at `anchor`: positive
-/// counter-clockwise, negative clockwise.
-///
-/// Sampled through the same `sample_loop_to_polygon` the rasterizer uses, so
-/// there is one notion of "what polygon does this loop trace" rather than two
-/// that could drift apart.
-fn signed_area<S: Scalar>(model: &Model<S>, anchor: CoedgeId) -> GeopResult<S> {
-    let polygon = sample_loop_to_polygon(model, anchor, LOOP_AREA_SAMPLES)?;
-    Ok(polygon_signed_area(&polygon))
-}
-
-/// Which coedge of the ring anchored at `anchor` has the widest pcurve, as
-/// sampled for [`signed_area`], and how wide: what an area too uncertain to
-/// be told from zero comes from — a ring that really encloses nothing, or a
-/// pcurve carrying too much uncertainty to say.
+/// Which coedge of the ring anchored at `anchor` has the widest pcurve, at
+/// `WIDTH_SAMPLES` points along each, and how wide: what an area too
+/// uncertain to be told from zero comes from — a ring that really encloses
+/// nothing, or a pcurve carrying too much uncertainty to say. Only for the
+/// error message, never for a decision.
 fn widest_pcurve<S: Scalar>(model: &Model<S>, anchor: CoedgeId) -> GeopResult<String> {
+    const WIDTH_SAMPLES: usize = 8;
     let width = |uv: &geop_core_math::vector::Vector2<S>| {
         uv[0].width().to_f64().max(uv[1].width().to_f64())
     };
@@ -812,9 +802,9 @@ fn widest_pcurve<S: Scalar>(model: &Model<S>, anchor: CoedgeId) -> GeopResult<St
     for coedge_id in ring_coedges(model, anchor)? {
         let coedge = model.get_coedge(coedge_id)?;
         let (t0, t1) = coedge.pcurve.domain();
-        let mut samples = Vec::with_capacity(LOOP_AREA_SAMPLES);
-        for i in 0..LOOP_AREA_SAMPLES {
-            let frac = S::from_ratio(i as i64, (LOOP_AREA_SAMPLES - 1) as i64)?;
+        let mut samples = Vec::with_capacity(WIDTH_SAMPLES);
+        for i in 0..WIDTH_SAMPLES {
+            let frac = S::from_ratio(i as i64, (WIDTH_SAMPLES - 1) as i64)?;
             let uv = coedge.pcurve.evaluate(t0.add(t1.sub(t0).mul(frac)))?;
             if width(&uv) > widest.0 {
                 widest = (width(&uv), Some((coedge_id, coedge.geometry, uv)));
@@ -893,12 +883,6 @@ fn widest_pcurve<S: Scalar>(model: &Model<S>, anchor: CoedgeId) -> GeopResult<St
         None => "every sample sharp".into(),
     })
 }
-
-/// Samples per coedge for [`signed_area`]. Only the *sign* is used, and a
-/// curved trim loop needs a few samples per coedge for that sign to be right;
-/// this bounds effort, not correctness — an undecidable sign is reported as
-/// an error rather than guessed.
-const LOOP_AREA_SAMPLES: usize = 8;
 
 /// Every coedge of the ring anchored at `anchor`, erroring rather than
 /// spinning if the `next` chain never returns to it.

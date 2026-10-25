@@ -9,10 +9,10 @@ use geop_core_math::{
 };
 
 use super::NurbSurface;
-
-/// Samples per polynomial piece and direction the search starts from.
-/// Bounds effort only, as for curves.
-const SAMPLES_PER_PIECE: usize = 6;
+use crate::{
+    nearest::{PointPiece, SurfacePatch, least_distance},
+    search::{MAX_NODES, NEAREST_HANDOFF},
+};
 
 /// Newton steps from a seed, at most. Bounds effort only: every iterate is
 /// a point of the surface nearer than the one before.
@@ -22,70 +22,33 @@ const NEWTON_STEPS: usize = 40;
 /// the search stops.
 const HALVINGS: usize = 10;
 
-/// How many of the nearest samples are refined.
-const SEEDS: usize = 3;
-
 impl<S: Scalar> NurbSurface<S, 4> {
-    /// A grid of parameters across every polynomial piece, `n` per piece
-    /// and direction, ends included — sharp: where to sample is a free
-    /// choice.
-    pub fn sample_parameters(&self, n: usize) -> GeopResult<Vec<(S, S)>> {
-        let along = |breaks: Vec<S>| -> GeopResult<Vec<S>> {
-            let mut out = Vec::new();
-            for w in breaks.windows(2) {
-                for i in 0..n {
-                    let alpha = S::from_ratio(i as i64, n as i64)?;
-                    out.push(S::interpolate(w[0], w[1], alpha).sharpen());
-                }
-            }
-            out.push(*breaks.last().expect("a domain has two ends"));
-            Ok(out)
-        };
-        let (us, vs) = (along(self.breakpoints_u())?, along(self.breakpoints_v())?);
-        Ok(us
-            .iter()
-            .flat_map(|&u| vs.iter().map(move |&v| (u, v)))
-            .collect())
-    }
-
     /// The point of the (untrimmed) surface nearest `target`, with its
-    /// parameters: the nearest few of a grid of samples, each refined by
-    /// damped Newton (see [`NurbSurface::closest_point_from`]).
-    pub fn closest_point(&self, target: &Vector3<S>) -> GeopResult<(S, S, Vector3<S>)> {
-        let seeds = self.sample_parameters(SAMPLES_PER_PIECE)?;
-        self.closest_point_from(target, &seeds)
-    }
-
-    /// [`NurbSurface::closest_point`], starting from the nearest few of
-    /// `seeds` rather than a grid of its own.
+    /// parameters.
     ///
-    /// Subdivision isolates, Newton refines. The parameters are a free
-    /// choice of which point of the surface is returned, so every iterate
-    /// is sharp: the point returned lies on the surface, its distance to
-    /// `target` is attained, and it is the least found.
-    pub fn closest_point_from(
-        &self,
-        target: &Vector3<S>,
-        seeds: &[(S, S)],
-    ) -> GeopResult<(S, S, Vector3<S>)> {
+    /// Subdivision isolates, Newton refines: [`least_distance`] bounds the
+    /// distance over every patch of the surface, so no dip of it is missed,
+    /// and each patch left at the handoff is refined by damped Newton (see
+    /// [`NurbSurface::refine_closest`]). The parameters are a free choice
+    /// of which point of the surface is returned, so every iterate is
+    /// sharp: the point returned lies on the surface, and its distance to
+    /// `target` is attained.
+    pub fn closest_point(&self, target: &Vector3<S>) -> GeopResult<(S, S, Vector3<S>)> {
+        let nearest = least_distance(
+            vec![PointPiece(*target)],
+            vec![SurfacePatch(self.clone())],
+            self.size()?.mul(S::from_f64(NEAREST_HANDOFF)),
+            MAX_NODES,
+        )?;
         let distance = |p: &Vector3<S>| p.sub(target).norm_sq().to_f64();
-        let mut scored = seeds
-            .iter()
-            .map(|&(u, v)| Ok((distance(&self.evaluate(u, v)?), u, v)))
-            .collect::<GeopResult<Vec<_>>>()?;
-        scored.sort_by(|a, b| a.0.total_cmp(&b.0));
-        let mut best: Option<(f64, S, S, Vector3<S>)> = None;
-        for &(_, u, v) in scored.iter().take(SEEDS) {
-            let (u, v) = self.refine_closest(target, u, v)?;
-            let p = self.evaluate(u, v)?;
-            let d = distance(&p);
-            if best.as_ref().is_none_or(|b| d < b.0) {
-                best = Some((d, u, v, p));
+        let ((mut u, mut v), mut p) = nearest.b;
+        for ((), (su, sv)) in nearest.candidates {
+            let (ru, rv) = self.refine_closest(target, su, sv)?;
+            let q = self.evaluate(ru, rv)?;
+            if distance(&q) < distance(&p) {
+                (u, v, p) = (ru, rv, q);
             }
         }
-        let (_, u, v, p) = best.ok_or_else(|| {
-            geop_core_math::geop_error::GeopError::new("closest_point_from: no seeds")
-        })?;
         Ok((u, v, p))
     }
 
@@ -98,7 +61,7 @@ impl<S: Scalar> NurbSurface<S, 4> {
     /// one parameter that still moves the point. A step that does not
     /// bring the point nearer is halved, and the search stops once halving
     /// does not help. Every iterate is clamped into the domain.
-    fn refine_closest(&self, target: &Vector3<S>, u: S, v: S) -> GeopResult<(S, S)> {
+    pub fn refine_closest(&self, target: &Vector3<S>, u: S, v: S) -> GeopResult<(S, S)> {
         let ((u_lo, u_hi), (v_lo, v_hi)) = (self.domain_u(), self.domain_v());
         let positive = |a: S, b: S, c: S| {
             a.definitely_greater(S::ZERO) && a.mul(c).sub(b.mul(b)).definitely_greater(S::ZERO)

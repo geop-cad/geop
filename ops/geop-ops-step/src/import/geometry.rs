@@ -794,25 +794,12 @@ fn trim<S: Scalar>(
     curve.sub_curve(a, b)
 }
 
-/// Where on `curve` the point `p` is: the parameter of its nearest point,
-/// found by sampling and polished by Newton. A free choice of where to cut
-/// the curve, so sharp.
+/// Where on `curve` the point `p` is: the parameter of its nearest point
+/// ([`NurbCurve3D::closest_point`]). A free choice of where to cut the
+/// curve, so sharp.
 pub fn parameter_of<S: Scalar>(curve: &NurbCurve3D<S>, p: P3) -> GeopResult<S> {
-    let (lo, hi) = curve.domain();
-    let (lo_f, hi_f) = (lo.to_f64(), hi.to_f64());
-    let samples = 16 * curve.control_points.len().max(4);
-    let mut best = (f64::INFINITY, lo_f);
-    for i in 0..=samples {
-        let t = lo_f + (hi_f - lo_f) * i as f64 / samples as f64;
-        let d = distance(point_at(curve, t)?, p);
-        if d < best.0 {
-            best = (d, t);
-        }
-    }
     let target = Vector3::from_array(p.map(S::from_f64));
-    let step = (hi_f - lo_f) / samples as f64;
-    let seed = S::from_f64((best.1 - step).max(lo_f)).union(S::from_f64((best.1 + step).min(hi_f)));
-    Ok(curve.refine_parameter_at_point(seed, &target).sharpen())
+    Ok(curve.closest_point(&target)?.0.sharpen())
 }
 
 impl SurfaceDef {

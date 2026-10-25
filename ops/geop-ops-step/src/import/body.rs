@@ -42,13 +42,12 @@
 use std::collections::HashMap;
 
 use geop_core_geometry::{
-    nurb_curve::{NurbCurve, NurbCurve2D, NurbCurve3D},
+    nurb_curve::{NurbCurve, NurbCurve2D, NurbCurve3D, loop_signed_area},
     nurb_surface::NurbSurface3D,
 };
 use geop_core_math::{
     geop_error::{GeopError, GeopResult, WithContext},
     plain::{P3, add, cross, distance, dot, norm, normalize, scale, sub, unwrap_angle},
-    polygon::polygon_signed_area,
     scalars::Scalar,
     solvers::{
         bisect::{Bracket, bisect},
@@ -64,7 +63,6 @@ use geop_core_math::{
 use geop_core_topology::{
     Sense,
     build::{BodySpec, CoedgeOn, CoedgeSpec, EdgeSpec, FaceSpec},
-    loop_sampling::sample_pcurves_to_polygon,
 };
 
 use super::{
@@ -1986,16 +1984,14 @@ impl<S: Scalar> Builder<'_, S> {
                 None => {
                     // The signed area each loop encloses in the patch:
                     // positive counter-clockwise.
-                    let areas: Vec<f64> = loops
+                    let areas: Vec<S> = loops
                         .iter()
-                        .map(|lp| {
-                            let pcurves = lp.iter().map(|(_, pcurve)| pcurve);
-                            let polygon = sample_pcurves_to_polygon(pcurves, LOOP_SAMPLES)?;
-                            Ok(polygon_signed_area(&polygon).to_f64())
-                        })
+                        .map(|lp| loop_signed_area(lp.iter().map(|(_, pcurve)| pcurve)))
                         .collect::<GeopResult<_>>()
                         .map_err(&ctx)?;
-                    let ccw: Vec<usize> = (0..areas.len()).filter(|&k| areas[k] > 0.0).collect();
+                    let ccw: Vec<usize> = (0..areas.len())
+                        .filter(|&k| areas[k].definitely_greater(S::ZERO))
+                        .collect();
                     match ccw.as_slice() {
                         [k] => *k,
                         _ => {

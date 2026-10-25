@@ -49,16 +49,15 @@
 use std::collections::HashMap;
 
 use geop_core_geometry::{
-    contains::surface::surface_could_contain,
+    intersection::curve_surface_overlaps,
     meet::{Offset, meet, tangent_groups},
-    nurb_curve::{NurbCurve2D, NurbCurve3D},
+    nurb_curve::{NurbCurve2D, NurbCurve3D, loop_signed_area},
     nurb_surface::NurbSurface3D,
     search::{MAX_NODES, PROJECT_ITERATIONS, min_subdivision_size},
     shape::{Arc, Circle},
 };
 use geop_core_math::{
     geop_error::{GeopError, GeopResult, WithContext},
-    polygon::{polygon_signed_area, polygons_contain},
     scalars::Scalar,
     solvers::walk::{Walked, walk},
     vector::{Vector, Vector2, Vector3},
@@ -67,13 +66,14 @@ use geop_core_math::{
 use geop_core_topology::{
     Body, Curve2, Curve3, FaceId, Sense, ShellId, SolidId,
     build::{BodySpec, BuiltBody, CoedgeOn, CoedgeSpec, EdgeSpec, FaceSpec},
-    loop_sampling::sample_pcurves_to_polygon,
+    contains::face::{PointClassification, pcurves_contain},
 };
 use geop_ops_model::{BodyNames, NamedModel, Namer};
 
-/// Samples per coedge when telling a loop's sense from its area: only the
-/// sign is used.
-const AREA_SAMPLES: usize = 8;
+/// Seed of the ray casting that finds which outer loop a hole lies in:
+/// any gives the same answer (see `pcurves_contain`), a constant keeps it
+/// reproducible.
+const SEED: u64 = 0x5E11_0000_0000_0001;
 
 /// Hollows the solid `solid` of `part` out to walls `thickness` thick,
 /// open where its faces `open` were — see the module docs — and returns
@@ -932,16 +932,14 @@ impl<'a, S: Scalar> Hollow<'a, S> {
 
         // Outer loops run counter-clockwise in `(u, v)`, holes clockwise;
         // each hole lies in one outer loop.
-        let mut outers: Vec<(Vec<usize>, Vec<Vector2<S>>, S)> = Vec::new();
-        let mut holes: Vec<(Vec<usize>, Vec<Vector2<S>>)> = Vec::new();
+        let mut outers: Vec<(Vec<usize>, S)> = Vec::new();
+        let mut holes: Vec<Vec<usize>> = Vec::new();
         for lp in loops {
-            let polygon =
-                sample_pcurves_to_polygon(lp.iter().map(|&i| &coedges[i].0.pcurve), AREA_SAMPLES)?;
-            let area = polygon_signed_area(&polygon);
+            let area = loop_signed_area(lp.iter().map(|&i| &coedges[i].0.pcurve))?;
             if area.definitely_greater(S::ZERO) {
-                outers.push((lp, polygon, area));
+                outers.push((lp, area));
             } else if area.definitely_less(S::ZERO) {
-                holes.push((lp, polygon));
+                holes.push(lp);
             } else {
                 return Err(GeopError::new(format!(
                     "cannot tell which way a loop of what is left of face {} runs",
@@ -951,7 +949,7 @@ impl<'a, S: Scalar> Hollow<'a, S> {
         }
         let mut faces: Vec<FaceSpec<S>> = outers
             .iter()
-            .map(|(lp, _, _)| FaceSpec {
+            .map(|(lp, _)| FaceSpec {
                 surface: surface.clone(),
                 outer: lp.iter().map(|&i| coedges[i].0.clone()).collect(),
                 holes: Vec::new(),
@@ -959,13 +957,34 @@ impl<'a, S: Scalar> Hollow<'a, S> {
             .collect();
         // A part of the rim may lie inside another's outer loop — the ring
         // around a hole inside the ring around the walls — so a hole is the
-        // innermost one's: of the outer loops around it, the smallest.
-        for (lp, polygon) in &holes {
+        // innermost one's: of the outer loops around it, the smallest. Which
+        // one a hole lies in is asked of a point in the middle of one of its
+        // pcurves, by ray casting against the outer loop's pcurves.
+        for lp in &holes {
+            let first = &coedges[lp[0]].0.pcurve;
+            let point = first.evaluate(first.mid_parameter()?)?;
             let mut owner: Option<usize> = None;
-            for (i, (_, outer, area)) in outers.iter().enumerate() {
-                if polygons_contain(std::slice::from_ref(outer), &polygon[0])
-                    && owner.is_none_or(|o| area.definitely_less(outers[o].2))
-                {
+            for (i, (outer, area)) in outers.iter().enumerate() {
+                let pcurves: Vec<&Curve2<S>> =
+                    outer.iter().map(|&k| &coedges[k].0.pcurve).collect();
+                let inside = match pcurves_contain(
+                    surface,
+                    &pcurves,
+                    point,
+                    MAX_NODES,
+                    min_subdivision_size(),
+                    SEED,
+                )? {
+                    PointClassification::Inside => true,
+                    PointClassification::Outside => false,
+                    PointClassification::OnVertex | PointClassification::OnCoedge => {
+                        return Err(GeopError::new(format!(
+                            "a hole of what is left of face {} meets one of its parts' outer loops",
+                            self.names.faces[f]
+                        )));
+                    }
+                };
+                if inside && owner.is_none_or(|o| area.definitely_less(outers[o].1)) {
                     owner = Some(i);
                 }
             }
@@ -1054,20 +1073,41 @@ fn shaped_like<S: Scalar>(
 }
 
 /// The first of the faces `faces`, indices into `surfaces`, whose surface
-/// `curve` does not lie on, with the point that shows it: the curve's
-/// midpoint. `None` if the curve could lie on all of them. A curve built
-/// for an edge between moved faces is only right if it does.
+/// `curve` does not lie on all along, with a point that shows it: the
+/// middle of the first stretch of the curve that is off the surface. `None`
+/// if the curve could lie on all of them. A curve built for an edge between
+/// moved faces is only right if it does.
+///
+/// Whether it lies on a surface is what [`curve_surface_overlaps`] finds:
+/// a stretch of it on the surface runs between two points where the curve
+/// or the surface ends, so all of the curve lies on it if one stretch runs
+/// from the curve's start to its end.
 pub fn surface_missed<S: Scalar>(
     curve: &NurbCurve3D<S>,
     faces: impl IntoIterator<Item = usize>,
     surfaces: &[NurbSurface3D<S>],
 ) -> GeopResult<Option<(usize, Vector3<S>)>> {
-    let middle = curve.evaluate(curve.mid_parameter()?)?;
+    let (t0, t1) = curve.domain();
     for f in faces {
-        let on = surface_could_contain(&surfaces[f], &middle, MAX_NODES, min_subdivision_size())?;
-        if on.is_none() {
-            return Ok(Some((f, middle)));
+        let overlaps =
+            curve_surface_overlaps(curve, &surfaces[f], MAX_NODES, min_subdivision_size())?;
+        if overlaps
+            .iter()
+            .any(|o| o.start.t.could_be_equal(t0) && o.end.t.could_be_equal(t1))
+        {
+            continue;
         }
+        // The first stretch off it: up to the first overlap, or after it.
+        let (from, to) = match overlaps.first() {
+            Some(o) if o.start.t.could_be_equal(t0) => (
+                o.end.t.upper(),
+                overlaps.get(1).map_or(t1, |n| n.start.t.lower()),
+            ),
+            Some(o) => (t0, o.start.t.lower()),
+            None => (t0, t1),
+        };
+        let off = curve.evaluate(from.add(to).div(S::TWO)?.sharpen())?;
+        return Ok(Some((f, off)));
     }
     Ok(None)
 }

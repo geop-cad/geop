@@ -1,13 +1,26 @@
-//! Sample a loop's pcurves into a closed `(u, v)` polygon.
+//! A face's loop in its surface's parameter plane: the signed area it
+//! encloses, integrated exactly from its pcurves ([`loop_signed_area`]),
+//! and a polygon sampled along them, for the rasterizer to triangulate
+//! ([`sample_loop_to_polygon`]).
 //!
-//! Lives in `geop-core-topology` rather than `geop-core-rasterize` (which
-//! also uses it, for triangulation) because `geop-core-topology`'s own edit
-//! code (`splice_edge_into_face`'s loop-orientation check) needs it too,
-//! and topology sits below rasterize in the dependency order.
+//! Ask the area which way a loop runs, never a sampled polygon: the gap
+//! between a polygon and the pcurves is part of no enclosure (see
+//! [`geop_core_geometry::nurb_curve::loop_signed_area`]).
 
+use geop_core_geometry::nurb_curve;
 use geop_core_math::{geop_error::GeopResult, scalars::Scalar, vector::Vector2};
 
 use crate::{CoedgeId, Curve2, Model};
+
+/// The signed area, in `(u, v)`, of the loop anchored at `first`: positive
+/// counter-clockwise, negative clockwise.
+pub fn loop_signed_area<S: Scalar>(model: &Model<S>, first: CoedgeId) -> GeopResult<S> {
+    let pcurves = model
+        .iterate_loop_coedges(first)
+        .map(|coedge| Ok(&model.get_coedge(coedge)?.pcurve))
+        .collect::<GeopResult<Vec<_>>>()?;
+    nurb_curve::loop_signed_area(pcurves)
+}
 
 /// Sample the pcurves of the loop anchored at `first` (in traversal order)
 /// into a closed `(u, v)` polygon, `n` samples per coedge (the last sample of

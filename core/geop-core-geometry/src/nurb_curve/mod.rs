@@ -1,3 +1,5 @@
+mod area;
+pub use area::loop_signed_area;
 mod closest;
 mod compatible;
 mod construct;
@@ -149,6 +151,17 @@ impl<S: Scalar, const D: usize> NurbCurve<S, D> {
         let p = self.degree;
         let n = self.control_points.len() - 1;
         (self.knot_vector[p], self.knot_vector[n + 1])
+    }
+
+    /// The diagonal of the box around the control points: by the convex
+    /// hull property, a length the whole curve fits within (see
+    /// `NurbSurface::size`).
+    pub fn size(&self) -> GeopResult<S> {
+        self.aabb
+            .iter()
+            .take(D - 1)
+            .fold(S::ZERO, |sum, axis| sum.add(axis.width().mul(axis.width())))
+            .sqrt()
     }
 
     /// The middle of [`Self::domain`], sharp: a parameter inside the curve

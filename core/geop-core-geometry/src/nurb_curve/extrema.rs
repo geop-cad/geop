@@ -144,6 +144,27 @@ impl<S: Scalar, const D: usize> NurbCurve<S, D> {
     }
 }
 
+impl<S: Scalar> NurbCurve<S, 4> {
+    /// The box the curve itself spans, per axis: the union of its
+    /// coordinate at both ends and at every stationary parameter along that
+    /// axis ([`NurbCurve::stationary_parameters`]) — its extremes, each
+    /// enclosed, where the control points' box is only a bound.
+    pub fn bounds(&self, max_nodes: usize, min_subdivision_size: S) -> GeopResult<[S; 3]> {
+        let (t0, t1) = self.domain();
+        let mut out = [S::ZERO; 3];
+        for (k, axis) in out.iter_mut().enumerate() {
+            let mut direction = Vector::<S, 3>::zero();
+            direction[k] = S::ONE;
+            let mut extent = self.evaluate(t0)?[k].union(self.evaluate(t1)?[k]);
+            for t in self.stationary_parameters(&direction, max_nodes, min_subdivision_size)? {
+                extent = extent.union(self.evaluate(t)?[k]);
+            }
+            *axis = extent;
+        }
+        Ok(out)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use crate::{nurb_curve::NurbCurve, shape::Arc, shape::Circle};

@@ -1,80 +1,79 @@
 //! [`closest_points`]: the least distance between two points, curves or
-//! faces of models — each where a pose puts it — and the two points that
+//! faces of models — each where a pose puts it — and two points that
 //! attain it.
+//!
+//! A branch and bound over pieces of the two ([`least_distance`]): spans
+//! of curves, patches of a face's surface and spans of its edges. A patch
+//! the face's trim definitely leaves out is dropped, and a patch only
+//! known to meet the trim attains a point where its middle is on the face.
+//! The least distance of a face is either at a point inside it or on its
+//! boundary, which its edges' spans attain.
 
-use geop_core_geometry::search::{MAX_NODES, min_subdivision_size};
+use geop_core_geometry::{
+    nearest::{CurveSpan, Piece, SurfacePatch, least_distance},
+    search::{MAX_NODES, min_subdivision_size},
+};
 use geop_core_math::{
     geop_error::{GeopError, GeopResult, WithContext},
     primitives::Pose,
     scalars::Scalar,
-    solvers::minimize::alternate,
     vector::Vector3,
 };
 
 use crate::{
-    Curve3, FaceId, Model,
+    Curve3, EdgeId, FaceId, Model,
     contains::face::{PointClassification, face_contains},
 };
 
-/// Samples per polynomial piece of a surface taken as seeds — and, those
-/// inside the face, as the face's samples. Bounds effort only.
-const FACE_SAMPLES: usize = 4;
-
-/// Samples per polynomial piece of a curve, for the initial search.
-const CURVE_SAMPLES: usize = 8;
-
-/// How often the nearest points are moved, each onto the other feature, at
-/// most. Bounds effort only: each move can only shorten the distance, and
-/// what is returned is attained whenever the moves stop.
-const MAX_ALTERNATIONS: usize = 64;
-
 const SEED: u64 = 0xD157_A1CE_0000_0001;
 
-/// A face of a model, where `pose` puts it — or where it is, without one —
-/// with what a distance search starts from: samples of it, and its edges.
+/// How often the two points are refined, each by Newton towards the other,
+/// at most. Bounds effort only: each refinement keeps the point on its
+/// feature and is kept only if it brings the two nearer.
+const MAX_ALTERNATIONS: usize = 64;
+
+/// A face of a model, where `pose` puts it — or where it is, without one.
+#[derive(Clone)]
 pub struct PlacedFace<'m, S: Scalar> {
     model: &'m Model<S>,
     face: FaceId,
     pose: Option<Pose<S>>,
-    /// Parameters of the surface's sample grid, all of them: seeds for a
-    /// projection.
-    seeds: Vec<(S, S)>,
-    /// Where those of them inside the face are, placed.
-    inside: Vec<Vector3<S>>,
-    /// The curves of its edges, in the model's own frame.
-    edges: Vec<Curve3<S>>,
 }
 
 impl<'m, S: Scalar> PlacedFace<'m, S> {
     pub fn new(model: &'m Model<S>, face: FaceId, pose: Option<Pose<S>>) -> GeopResult<Self> {
-        let ctx = |e: GeopError| e.with_context(format!("PlacedFace::new(face={face})"));
-        let surface = &model.get_face(face).with_context(&ctx)?.surface;
-        let seeds = surface.sample_parameters(FACE_SAMPLES).with_context(&ctx)?;
-        let mut inside = Vec::new();
-        for &(u, v) in &seeds {
-            if contains(model, face, u, v).with_context(&ctx)? {
-                inside.push(place(&pose, surface.evaluate(u, v)?));
-            }
-        }
-        let edges = model
-            .face_edges(face)
-            .map(|edge| Ok(model.get_edge(edge)?.curve.clone()))
-            .collect::<GeopResult<_>>()?;
-        Ok(Self {
-            model,
-            face,
-            pose,
-            seeds,
-            inside,
-            edges,
-        })
+        model.get_face(face).with_context(&|e: GeopError| {
+            e.with_context(format!("PlacedFace::new(face={face})"))
+        })?;
+        Ok(Self { model, face, pose })
     }
-}
 
-/// Whether `(u, v)` lies on `face`: inside its trim, or on its boundary.
-fn contains<S: Scalar>(model: &Model<S>, face: FaceId, u: S, v: S) -> GeopResult<bool> {
-    let class = face_contains(model, face, u, v, MAX_NODES, min_subdivision_size(), SEED)?;
-    Ok(class != PointClassification::Outside)
+    /// Where `(u, v)` — a point, or a box of them — is against the face's
+    /// trim.
+    fn classify(&self, u: S, v: S) -> GeopResult<PointClassification> {
+        face_contains(
+            self.model,
+            self.face,
+            u,
+            v,
+            MAX_NODES,
+            min_subdivision_size(),
+            SEED,
+        )
+    }
+
+    /// `p` where the pose puts it.
+    fn place(&self, p: Vector3<S>) -> Vector3<S> {
+        place(&self.pose, p)
+    }
+
+    /// `p` in the face's own frame, where it is without the pose.
+    fn local(&self, p: &Vector3<S>) -> Vector3<S> {
+        match &self.pose {
+            Some(pose) => pose.inverse().apply(p),
+            None => *p,
+        }
+    }
 }
 
 /// `p` where `pose` puts it.
@@ -93,123 +92,237 @@ pub enum Feature<'m, S: Scalar> {
     Face(PlacedFace<'m, S>),
 }
 
-/// The least distance found between two features, and where on each it is
-/// attained.
+/// The least distance between two features, and two points of them
+/// attaining as little as the search could tell apart from it.
 #[derive(Clone, Copy, Debug)]
 pub struct Closest<S: Scalar> {
+    /// An enclosure of the least distance: from what the search proved no
+    /// two points are nearer than, to the distance between `a` and `b`.
     pub distance: S,
     pub a: Vector3<S>,
     pub b: Vector3<S>,
 }
 
+/// Where on a feature a point of it is.
+#[derive(Clone, Copy, Debug)]
+enum Spot<S: Scalar> {
+    Point,
+    /// On a [`Feature::Curve`], at this parameter.
+    Curve(S),
+    /// On an edge of a face, at this parameter of its curve.
+    Edge(EdgeId, S),
+    /// On a face, at these parameters of its surface.
+    Face(S, S),
+}
+
 impl<S: Scalar> Feature<'_, S> {
-    /// Points of it the search starts from.
-    fn samples(&self) -> GeopResult<Vec<Vector3<S>>> {
-        Ok(match self {
-            Feature::Point(p) => vec![*p],
-            Feature::Curve(curve) => curve_samples(curve)?,
+    /// From `spot`, Newton's point of the feature nearest `target` around
+    /// it — or `spot` itself where the step would leave the face — and
+    /// where it is. Which point of the feature is a free choice; it stays
+    /// one of its points.
+    fn refine(&self, spot: Spot<S>, target: &Vector3<S>) -> GeopResult<(Spot<S>, Vector3<S>)> {
+        match (self, spot) {
+            (Feature::Point(p), _) => Ok((Spot::Point, *p)),
+            (Feature::Curve(curve), Spot::Curve(t)) => {
+                let t = curve.closest_parameter_from(target, t)?;
+                Ok((Spot::Curve(t), curve.evaluate(t)?))
+            }
+            (Feature::Face(face), Spot::Edge(edge, t)) => {
+                let curve = &face.model.get_edge(edge)?.curve;
+                let t = curve.closest_parameter_from(&face.local(target), t)?;
+                Ok((Spot::Edge(edge, t), face.place(curve.evaluate(t)?)))
+            }
+            (Feature::Face(face), Spot::Face(u, v)) => {
+                let surface = &face.model.get_face(face.face)?.surface;
+                let (ru, rv) = surface.refine_closest(&face.local(target), u, v)?;
+                let (u, v) = match face.classify(ru, rv)? {
+                    PointClassification::Outside => (u, v),
+                    _ => (ru, rv),
+                };
+                Ok((Spot::Face(u, v), face.place(surface.evaluate(u, v)?)))
+            }
+            (_, spot) => Err(GeopError::new(format!(
+                "Feature::refine: {spot:?} is not on this feature"
+            ))),
+        }
+    }
+}
+
+/// A piece of a [`Feature`], for [`least_distance`].
+#[derive(Clone)]
+enum FeaturePiece<'m, S: Scalar> {
+    Point(Vector3<S>),
+    /// A span of a curve — of `edge`, if it is a face's — where `pose`
+    /// puts it.
+    Curve {
+        span: CurveSpan<S>,
+        edge: Option<EdgeId>,
+        pose: Option<Pose<S>>,
+    },
+    /// A patch of a face's surface; `inside` once it is known to lie
+    /// inside the trim.
+    Patch {
+        face: PlacedFace<'m, S>,
+        patch: SurfacePatch<S>,
+        inside: bool,
+    },
+}
+
+impl<'m, S: Scalar> FeaturePiece<'m, S> {
+    /// The pieces `feature` starts as.
+    fn roots(feature: &Feature<'m, S>) -> GeopResult<Vec<Self>> {
+        Ok(match feature {
+            Feature::Point(p) => vec![FeaturePiece::Point(*p)],
+            Feature::Curve(curve) => vec![FeaturePiece::Curve {
+                span: CurveSpan(curve.clone()),
+                edge: None,
+                pose: None,
+            }],
             Feature::Face(face) => {
-                let mut points = face.inside.clone();
-                for edge in &face.edges {
-                    points.extend(
-                        curve_samples(edge)?
-                            .into_iter()
-                            .map(|p| place(&face.pose, p)),
-                    );
+                let surface = &face.model.get_face(face.face)?.surface;
+                let mut pieces: Vec<Self> =
+                    Self::patch(face, SurfacePatch(surface.clone()), false)?
+                        .into_iter()
+                        .collect();
+                for edge in face.model.face_edges(face.face) {
+                    pieces.push(FeaturePiece::Curve {
+                        span: CurveSpan(face.model.get_edge(edge)?.curve.clone()),
+                        edge: Some(edge),
+                        pose: face.pose,
+                    });
                 }
-                points
+                pieces
             }
         })
     }
 
-    /// Its point nearest `target`. Of a face, the nearest of the foot point
-    /// on its surface — if that lies inside the trim — and the nearest
-    /// points of its edges: where the nearest point of a face is not a foot
-    /// point inside it, it is on its boundary.
-    pub fn closest_to(&self, target: &Vector3<S>) -> GeopResult<Vector3<S>> {
-        match self {
-            Feature::Point(p) => Ok(*p),
-            Feature::Curve(curve) => Ok(curve.closest_point(target)?.1),
-            Feature::Face(face) => {
-                let local = match &face.pose {
-                    Some(pose) => pose.inverse().apply(target),
-                    None => *target,
+    /// `patch` of `face`, unless the trim definitely leaves all of it out.
+    /// A patch inside its parent is inside too.
+    fn patch(
+        face: &PlacedFace<'m, S>,
+        patch: SurfacePatch<S>,
+        inside: bool,
+    ) -> GeopResult<Option<Self>> {
+        let inside = inside || {
+            let ((u0, u1), (v0, v1)) = (patch.0.domain_u(), patch.0.domain_v());
+            match face.classify(u0.union(u1), v0.union(v1))? {
+                PointClassification::Outside => return Ok(None),
+                PointClassification::Inside => true,
+                PointClassification::OnVertex | PointClassification::OnCoedge => false,
+            }
+        };
+        Ok(Some(FeaturePiece::Patch {
+            face: face.clone(),
+            patch,
+            inside,
+        }))
+    }
+}
+
+impl<S: Scalar> Piece<S> for FeaturePiece<'_, S> {
+    type At = Spot<S>;
+
+    fn hull(&self) -> GeopResult<Vec<Vector3<S>>> {
+        Ok(match self {
+            FeaturePiece::Point(p) => vec![*p],
+            FeaturePiece::Curve { span, pose, .. } => {
+                span.hull()?.into_iter().map(|p| place(pose, p)).collect()
+            }
+            FeaturePiece::Patch { face, patch, .. } => {
+                patch.hull()?.into_iter().map(|p| face.place(p)).collect()
+            }
+        })
+    }
+
+    fn point(&self) -> GeopResult<Option<(Spot<S>, Vector3<S>)>> {
+        Ok(match self {
+            FeaturePiece::Point(p) => Some((Spot::Point, *p)),
+            FeaturePiece::Curve { span, edge, pose } => span.point()?.map(|(t, p)| {
+                let spot = match edge {
+                    Some(edge) => Spot::Edge(*edge, t),
+                    None => Spot::Curve(t),
                 };
-                let surface = &face.model.get_face(face.face)?.surface;
-                let mut candidates = Vec::new();
-                let (u, v, foot) = surface.closest_point_from(&local, &face.seeds)?;
-                if contains(face.model, face.face, u, v)? {
-                    candidates.push(foot);
-                }
-                for edge in &face.edges {
-                    candidates.push(edge.closest_point(&local)?.1);
-                }
-                let nearest = candidates
+                (spot, place(pose, p))
+            }),
+            FeaturePiece::Patch {
+                face,
+                patch,
+                inside,
+            } => {
+                let (u, v) = patch.middle()?;
+                let on = *inside || face.classify(u, v)? != PointClassification::Outside;
+                on.then(|| {
+                    Ok::<_, GeopError>((Spot::Face(u, v), face.place(patch.0.evaluate(u, v)?)))
+                })
+                .transpose()?
+            }
+        })
+    }
+
+    fn split(&self, handoff: S) -> GeopResult<Option<Vec<Self>>> {
+        Ok(match self {
+            FeaturePiece::Point(_) => None,
+            FeaturePiece::Curve { span, edge, pose } => span.split(handoff)?.map(|halves| {
+                halves
                     .into_iter()
-                    .min_by(|a, b| distance(a, &local).total_cmp(&distance(b, &local)))
-                    .ok_or_else(|| {
-                        GeopError::new(format!(
-                            "face {}: the foot point is outside it, and it has no edges",
-                            face.face
-                        ))
-                    })?;
-                Ok(place(&face.pose, nearest))
-            }
-        }
+                    .map(|span| FeaturePiece::Curve {
+                        span,
+                        edge: *edge,
+                        pose: *pose,
+                    })
+                    .collect()
+            }),
+            FeaturePiece::Patch {
+                face,
+                patch,
+                inside,
+            } => match patch.split(handoff)? {
+                None => None,
+                Some(halves) => {
+                    let mut kept = Vec::new();
+                    for half in halves {
+                        kept.extend(Self::patch(face, half, *inside)?);
+                    }
+                    Some(kept)
+                }
+            },
+        })
     }
 }
 
-/// Samples of `curve`: [`CURVE_SAMPLES`] per polynomial piece, and its end.
-fn curve_samples<S: Scalar>(curve: &Curve3<S>) -> GeopResult<Vec<Vector3<S>>> {
-    let breaks = curve.breakpoints();
-    let mut points = Vec::new();
-    for w in breaks.windows(2) {
-        for i in 0..CURVE_SAMPLES {
-            let alpha = S::from_ratio(i as i64, CURVE_SAMPLES as i64)?;
-            points.push(curve.evaluate(S::interpolate(w[0], w[1], alpha).sharpen())?);
-        }
-    }
-    points.push(curve.evaluate(curve.domain().1)?);
-    Ok(points)
-}
-
-/// The squared distance's midpoint: what the search compares candidates by
-/// — which of two points to keep is a free choice, never an answer.
-fn distance<S: Scalar>(a: &Vector3<S>, b: &Vector3<S>) -> f64 {
-    a.sub(b).norm_sq().to_f64()
-}
-
-/// The least distance between `a` and `b`, and the points attaining it.
+/// The least distance between `a` and `b`, and two points attaining it
+/// (see the module docs).
 ///
-/// The nearest pair of their samples is moved in turns, each point onto the
-/// other feature's point nearest it ([`Feature::closest_to`]), until a move
-/// no longer shortens the distance. Every point the search holds lies on
-/// its feature, so the distance returned is attained by the two points
-/// returned: it is never less than the least distance, and it is the least
-/// one wherever the samples found the right neighbourhood. The distance is
-/// the enclosure of `|a - b|` for those two points.
+/// The search encloses the least distance, but the points attaining it
+/// only as sharply as the square root of that: the distance is flat where
+/// it is least. So the two points are then refined in turns, each by
+/// Newton towards the other, as long as that brings them nearer.
 pub fn closest_points<S: Scalar>(a: &Feature<S>, b: &Feature<S>) -> GeopResult<Closest<S>> {
-    let (sa, sb) = (a.samples()?, b.samples()?);
-    let mut best: Option<(f64, Vector3<S>, Vector3<S>)> = None;
-    for pa in &sa {
-        for pb in &sb {
-            let d = distance(pa, pb);
-            if best.as_ref().is_none_or(|(e, ..)| d < *e) {
-                best = Some((d, *pa, *pb));
-            }
+    let nearest = least_distance(
+        FeaturePiece::roots(a)?,
+        FeaturePiece::roots(b)?,
+        min_subdivision_size(),
+        MAX_NODES,
+    )?;
+    let ((mut sa, mut pa), (mut sb, mut pb)) = (nearest.a, nearest.b);
+    // Which of two attained pairs to keep is a free choice.
+    let apart = |p: &Vector3<S>, q: &Vector3<S>| p.sub(q).norm_sq().to_f64();
+    for _ in 0..MAX_ALTERNATIONS {
+        let before = apart(&pa, &pb);
+        let (nb, qb) = b.refine(sb, &pa)?;
+        if apart(&pa, &qb) < apart(&pa, &pb) {
+            (sb, pb) = (nb, qb);
+        }
+        let (na, qa) = a.refine(sa, &pb)?;
+        if apart(&qa, &pb) < apart(&pa, &pb) {
+            (sa, pa) = (na, qa);
+        }
+        if apart(&pa, &pb) >= before {
+            break;
         }
     }
-    let (_, pa, pb) =
-        best.ok_or_else(|| GeopError::new("closest_points: a feature has no points"))?;
-    let (pa, pb) = alternate(
-        (pa, pb),
-        MAX_ALTERNATIONS,
-        |pa, pb| Ok::<_, GeopError>(distance(pa, pb)),
-        |pa| b.closest_to(pa),
-        |pb| a.closest_to(pb),
-    )?;
     Ok(Closest {
-        distance: pa.sub(&pb).norm(),
+        distance: nearest.distance.lower().union(pa.sub(&pb).norm()),
         a: pa,
         b: pb,
     })

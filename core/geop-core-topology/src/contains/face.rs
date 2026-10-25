@@ -5,7 +5,7 @@ use geop_core_geometry::{
     nurb_surface::NurbSurface3D,
 };
 use geop_core_math::{
-    geop_error::{GeopError, GeopResult},
+    geop_error::{GeopError, GeopResult, WithContext},
     scalars::Scalar,
     solvers::probe::{Probe, attempts, halve},
     vector::{Vector2, Vector3},
@@ -87,19 +87,41 @@ pub fn loops_contain<S: Scalar>(
     epsilon: S,
     seed: u64,
 ) -> GeopResult<PointClassification> {
+    let pcurves: Vec<&NurbCurve2D<S>> = coedges
+        .iter()
+        .map(|c| Ok(&model.get_coedge(*c)?.pcurve))
+        .collect::<GeopResult<_>>()?;
+    pcurves_contain(surface, &pcurves, query, max_nodes, epsilon, seed).with_context(
+        &|e: GeopError| {
+            e.with_context(format!(
+                "loops_contain(coedges={coedges:?}, pcurve k is coedge k)"
+            ))
+        },
+    )
+}
+
+/// The classification of [`loops_contain`], against the closed loops that
+/// `pcurves` run around on `surface` — for loops not in a model yet, being
+/// built. `pcurve k` in an error is `pcurves[k]`.
+pub fn pcurves_contain<S: Scalar>(
+    surface: &NurbSurface3D<S>,
+    pcurves: &[&NurbCurve2D<S>],
+    query: Vector2<S>,
+    max_nodes: usize,
+    epsilon: S,
+    seed: u64,
+) -> GeopResult<PointClassification> {
     // Is the query point itself a vertex, or on some coedge's pcurve?
     // Checked as two full passes (all vertices, then all curves) so
     // `OnVertex` always takes priority over `OnCoedge` regardless of
     // coedge iteration order.
-    for &coedge_id in coedges {
-        let pcurve = &model.coedges[&coedge_id].pcurve;
+    for pcurve in pcurves {
         let vertex_pt = pcurve.evaluate(pcurve.domain().0)?;
         if vertex_pt.could_be_equal(&query) {
             return Ok(PointClassification::OnVertex);
         }
     }
-    for &coedge_id in coedges {
-        let pcurve = &model.coedges[&coedge_id].pcurve;
+    for pcurve in pcurves {
         if curve_could_contain(pcurve, &query, max_nodes, epsilon)?.is_some() {
             return Ok(PointClassification::OnCoedge);
         }
@@ -137,20 +159,17 @@ pub fn loops_contain<S: Scalar>(
             vec![S::ZERO, S::ZERO, S::ONE, S::ONE],
         )?;
 
-        for &coedge_id in coedges {
-            let pcurve = &model.coedges[&coedge_id].pcurve;
+        for (k, pcurve) in pcurves.iter().enumerate() {
             let vertex_pt = pcurve.evaluate(pcurve.domain().0)?;
             if curve_could_contain(&ray, &vertex_pt, max_nodes, epsilon)?.is_some() {
-                last_rejection = format!(
-                    "ray {ray:?} could pass through coedge {coedge_id}'s start {vertex_pt:?}"
-                );
+                last_rejection =
+                    format!("ray {ray:?} could pass through pcurve {k}'s start {vertex_pt:?}");
                 return Ok(Probe::Next);
             }
         }
 
         let mut count = 0usize;
-        for &coedge_id in coedges {
-            let pcurve = &model.coedges[&coedge_id].pcurve;
+        for (k, pcurve) in pcurves.iter().enumerate() {
             let (d0, d1) = pcurve.domain();
             // An `Err` here means the search exhausted its node budget
             // before converging — the same ambiguous signal as a vertex/edge
@@ -162,8 +181,7 @@ pub fn loops_contain<S: Scalar>(
             let hits = match curve_curve_intersect(&ray, pcurve, max_nodes, max_nodes, epsilon) {
                 Ok(hits) => hits.into_vec(),
                 Err(e) => {
-                    last_rejection =
-                        format!("ray {ray:?} x coedge {coedge_id} pcurve {pcurve:?}: {e:?}");
+                    last_rejection = format!("ray {ray:?} x pcurve {k} pcurve {pcurve:?}: {e:?}");
                     return Ok(Probe::Next);
                 }
             };
@@ -200,7 +218,7 @@ pub fn loops_contain<S: Scalar>(
                         return Ok(Probe::Found(PointClassification::OnCoedge));
                     }
                     last_rejection = format!(
-                        "ray {ray:?} meets coedge {coedge_id} at t={t:?}, which cannot be told from the query point"
+                        "ray {ray:?} meets pcurve {k} at t={t:?}, which cannot be told from the query point"
                     );
                     return Ok(Probe::Next);
                 }
@@ -216,7 +234,7 @@ pub fn loops_contain<S: Scalar>(
                     // slop right at the boundary) — retry with a fresh
                     // direction rather than risk mis-counting it.
                     last_rejection = format!(
-                        "ray {ray:?} grazes coedge {coedge_id}'s end at t={mid:?} (domain {d0:?}..{d1:?})"
+                        "ray {ray:?} grazes pcurve {k}'s end at t={mid:?} (domain {d0:?}..{d1:?})"
                     );
                     return Ok(Probe::Next);
                 }

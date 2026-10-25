@@ -781,26 +781,9 @@ impl<S: Scalar> Seg<S> {
                     chord.sub(segment)
                 }
             }
-            Seg::Other => {
-                // A polygon through points of it: its area's sign is what
-                // a loop's orientation is decided by, and that sign is far
-                // from in doubt for anything but a sliver, which is refused.
-                let (t0, t1) = curve.domain();
-                let n = 64;
-                let mut area = S::ZERO;
-                let mut prev = curve.evaluate(t0)?;
-                for k in 1..=n {
-                    let t = if k == n {
-                        t1
-                    } else {
-                        S::fraction(t0, t1, S::from_ratio(k, n)?)
-                    };
-                    let p = curve.evaluate(t)?;
-                    area = area.add(prev.prod_cross(&p).mul(half));
-                    prev = p;
-                }
-                area
-            }
+            // Integrated along the curve itself, from the same origin as
+            // the lines and arcs.
+            Seg::Other => curve.area_term(&Vector2::zero())?,
         })
     }
 

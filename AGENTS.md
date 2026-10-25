@@ -383,6 +383,41 @@ interval computation on a wide input, check that its answer still means
 something for every point in that input. Parity counting does not:
 counting crossings only makes sense for a ray from a single point.
 
+## Do not decide from samples
+
+A fixed number of samples along a curve or over a surface proves nothing
+about what lies between them. An enclosure computed from samples encloses
+the samples, not the geometry, and a "definitely" from it is a guess said
+with confidence. Which way a loop runs was decided from a polygon of eight
+points per pcurve, in five places with five sample counts: a pcurve fitted
+in fifty spans was looked at in eight of them. It is now integrated from
+the pcurves themselves (`nurb_curve::loop_signed_area`): exactly, by
+Gauss–Legendre, on a polynomial span, and enclosed with the quadrature's
+error estimate on a rational one.
+
+The nearest point of a curve or surface was the same mistake: the best of
+a few samples per span, refined by Newton, so a dip between two samples
+was never seen, and an interference check could miss two faces touching.
+Nearest points now come from a branch and bound over pieces of the two
+(`nearest::least_distance`). The control points' hulls bound each pair of
+pieces from below, an attained pair bounds the answer from above, and
+the result is an enclosure of the least distance. Measured across the
+direction between two pieces, the hull bound is off by the square of the
+pieces' size, so near a minimum a few pairs survive each level. A box
+bound is off by the size itself, and with it the survivors multiply.
+The distance is flat at its least, so the search pins the point attaining
+it only to the square root of the distance's precision: Newton refines
+the point afterwards, and the search proves no basin was missed.
+
+Reach for what the representation offers instead: an integral of the
+curve (Green's theorem, as in `mass.rs`), a subdivision search that
+encloses every point (`contains`, `intersection`), the control points'
+hull, or a topological fact. A sample count is then never a tunable that
+decides an answer. The rasterizer is the exception: what it draws is a
+polygon, so sampling is what it is for (`uv_loop::sample_loop_to_polygon`).
+A sample in an error message, to describe what went wrong, decides
+nothing and is fine.
+
 ## Subdivide to isolate, then Newton to refine
 
 Subdivision and Newton are different tools and neither does the other's job.
