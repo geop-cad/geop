@@ -724,6 +724,7 @@ dependencies = [
  "geop-core-topology",
  "geop-lib-fixtures",
  "geop-lib-shell",
+ "geop-ops-fillet",
  "geop-ops-model",
  "serde",
  "serde_json",

@@ -11,6 +11,8 @@ mod icons;
 mod operation;
 #[cfg(test)]
 mod program_tests;
+#[cfg(test)]
+mod regression_tests;
 
 pub use operation::{Boolean, BooleanArgs, Split, SplitArgs};
 
