@@ -6,13 +6,15 @@
 
 use crate::NamedModel;
 use geop_core_editor::editing::Choice;
+use geop_core_geometry::aabb::union_aabb;
 use geop_core_math::{
     geop_error::{GeopError, GeopResult},
     plain,
     primitives::CoordinateSystem,
+    vector::Vector3,
 };
 use geop_core_program::{numeric::NumericInput, reader::Reader};
-use geop_core_topology::{Body, FaceId, Model};
+use geop_core_topology::{Body, FaceId, Model, boundary::BoundaryType};
 use serde::{Deserialize, Serialize};
 
 /// How far one side of a tool goes: a length — an angle, in degrees, for a
@@ -109,7 +111,7 @@ impl Extent {
 
 /// Points whose convex hull holds the solids named `targets` (see
 /// [`face_hull`]). None for no solids.
-pub fn hull(model: &NamedModel, targets: &[String]) -> GeopResult<Option<Vec<[f64; 3]>>> {
+pub fn hull(model: &NamedModel, targets: &[String]) -> GeopResult<Option<Vec<Vector3>>> {
     let topology = model.topology();
     let mut faces = Vec::new();
     for target in targets {
@@ -120,14 +122,38 @@ pub fn hull(model: &NamedModel, targets: &[String]) -> GeopResult<Option<Vec<[f6
 }
 
 /// Points whose convex hull holds `faces`: the control points of their
-/// surfaces — a NURBS surface lies within the hull of its control points —
-/// as plain numbers, for sizing a tool that has to reach past them.
-pub fn face_hull(model: &Model, faces: &[FaceId]) -> GeopResult<Vec<[f64; 3]>> {
+/// surfaces, each restricted to the box in `(u, v)` around its face's outer
+/// loop — a NURBS surface lies within the hull of its control points, and
+/// a face within the box around its outer loop — enclosed, for sizing a
+/// tool that has to reach past them, and for telling which side of a line
+/// they lie on, which for a solid touching the line is decided by their
+/// enclosures, not by their midpoints.
+///
+/// The restriction matters where a face is a small part of its surface: a
+/// shell's floor is a disc of radius 36 on a patch of 240 square, and the
+/// patch's corners stood far out to every side of an axis the cup only
+/// touched (see `mug_handle_turned_up_to_next_around_the_cup_seam` in
+/// `geop-ops-extrude-revolve`).
+pub fn face_hull(model: &Model, faces: &[FaceId]) -> GeopResult<Vec<Vector3>> {
     let mut points = Vec::new();
     for &face in faces {
-        for cp in &model.get_face(face)?.surface.control_points {
-            let w = cp[3].to_f64();
-            points.push([0, 1, 2].map(|k| cp[k].to_f64() / w));
+        let face = model.get_face(face)?;
+        let outer = match face.outer {
+            BoundaryType::Loop(anchor) => model
+                .iterate_loop_coedges(anchor)
+                .map(|c| Ok(model.get_coedge(c)?.pcurve.aabb()))
+                .collect::<GeopResult<Vec<_>>>()?,
+            BoundaryType::Vertex(_) => Vec::new(),
+        };
+        let surface = match union_aabb(outer) {
+            Some(uv) => face.surface.sub_surface(
+                (uv[0].lower(), uv[0].upper()),
+                (uv[1].lower(), uv[1].upper()),
+            )?,
+            None => face.surface.clone(),
+        };
+        for cp in &surface.control_points {
+            points.push(cp.dehomogenized()?);
         }
     }
     Ok(points)
@@ -135,10 +161,13 @@ pub fn face_hull(model: &Model, faces: &[FaceId]) -> GeopResult<Vec<[f64; 3]>> {
 
 /// How far along `plane`'s normal the nearest and the furthest of
 /// `points` lie from it.
-pub fn spread_along(points: &[[f64; 3]], plane: &CoordinateSystem) -> (f64, f64) {
-    let o = [0, 1, 2].map(|k| plane.origin()[k].to_f64());
-    let w = [0, 1, 2].map(|k| plane.w()[k].to_f64());
-    let along = |p: &[f64; 3]| (0..3).map(|k| (p[k] - o[k]) * w[k]).sum::<f64>();
+pub fn spread_along(points: &[Vector3], plane: &CoordinateSystem) -> (f64, f64) {
+    let o = plane.origin().to_f64_array();
+    let w = plane.w().to_f64_array();
+    let along = |p: &Vector3| {
+        let p = p.to_f64_array();
+        (0..3).map(|k| (p[k] - o[k]) * w[k]).sum::<f64>()
+    };
     points
         .iter()
         .map(along)
@@ -151,7 +180,7 @@ pub fn spread_along(points: &[[f64; 3]], plane: &CoordinateSystem) -> (f64, f64)
 /// `-1` — reaches past everything of the solid whose convex hull `hull`
 /// spans: a side going up to its next face has to be built at least that
 /// long to meet whichever face that is.
-pub fn reach_past(hull: &[[f64; 3]], plane: &CoordinateSystem, sign: f64) -> GeopResult<f64> {
+pub fn reach_past(hull: &[Vector3], plane: &CoordinateSystem, sign: f64) -> GeopResult<f64> {
     let (near, far) = spread_along(hull, plane);
     let ahead = if sign > 0.0 { far } else { -near };
     if ahead <= 0.0 {
@@ -161,7 +190,7 @@ pub fn reach_past(hull: &[[f64; 3]], plane: &CoordinateSystem, sign: f64) -> Geo
         )));
     }
     // Well past the target, so the tool's end is clear of all of it.
-    let (lo, hi) = plain::bounds(hull.iter().copied())
+    let (lo, hi) = plain::bounds(hull.iter().map(Vector3::to_f64_array))
         .ok_or_else(|| GeopError::new("up to next: the target has no faces"))?;
     Ok(ahead + plain::diagonal(lo, hi))
 }

@@ -663,6 +663,7 @@ dependencies = [
  "geop-lib-fixtures",
  "geop-lib-sweep",
  "geop-ops-model",
+ "geop-ops-shell",
  "geop-ops-sketch",
  "geop-ops-sketch3d",
  "serde",

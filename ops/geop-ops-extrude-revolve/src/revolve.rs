@@ -445,7 +445,7 @@ impl Sweeping for Revolving<'_> {
         revolve(model, namer, name, self.axes, from, to, self.loops)
     }
 
-    fn past(&self, hull: &[[f64; 3]], sign: f64) -> GeopResult<f64> {
+    fn past(&self, hull: &[Vector3], sign: f64) -> GeopResult<f64> {
         turn_past(hull, self.axes, sign)
     }
 
@@ -456,6 +456,10 @@ impl Sweeping for Revolving<'_> {
 
     fn all_the_way(&self, _: f64) -> f64 {
         360.0
+    }
+
+    fn full_turn(&self) -> Option<f64> {
+        Some(360.0)
     }
 
     fn measure(&self, sign: f64, p: &Vector3) -> Option<f64> {
@@ -493,49 +497,79 @@ fn turned_angle(axes: &CoordinateSystem, p: &Vector3, sign: f64) -> Option<f64> 
 /// of the arc instead: whatever the side meets on the way in is there
 /// already. If the axis runs through the hull, there is no gap at all; one
 /// merely touching it still leaves the half turn on its other side.
-fn turn_past(hull: &[[f64; 3]], axes: &CoordinateSystem, sign: f64) -> GeopResult<f64> {
-    let f = |v: &Vector3| v.to_f64_array();
-    let (o, u, v) = (f(axes.origin()), f(axes.u()), f(axes.v()));
+///
+/// Touching is the usual case of a revolve around an edge of the target —
+/// a cup's seam, the edge of a plate — and the hull's points then lie on
+/// the axis and on a plane through it, exactly where rounding decides
+/// nothing. So they are measured as enclosed: a point that could lie on the
+/// axis says nothing of which way the target lies, and the target only
+/// surrounds the axis if the two points bounding the widest gap definitely
+/// leave less than a half turn between them.
+fn turn_past(hull: &[Vector3], axes: &CoordinateSystem, sign: f64) -> GeopResult<f64> {
+    let surrounds = |detail: String| {
+        surrounds(format!(
+            "{detail}; the axis through {:?} along {:?}",
+            axes.origin(),
+            axes.w()
+        ))
+    };
     // In `[0, 360)`: `rem_euclid` of the smallest negative angle rounds to
     // 360 itself, which is where the turn starts — 0.
     let turned = |degrees: f64| match degrees.rem_euclid(360.0) {
         a if a >= 360.0 => 0.0,
         a => a,
     };
-    let mut angles = Vec::with_capacity(hull.len());
+    // Each point seen down the axis, `y` measured the way the turn goes, and
+    // its angle there.
+    let mut seen = Vec::with_capacity(hull.len());
     for p in hull {
-        let d: Vec<f64> = (0..3).map(|k| p[k] - o[k]).collect();
-        let (x, y) = (
-            (0..3).map(|k| d[k] * u[k]).sum::<f64>(),
-            (0..3).map(|k| d[k] * v[k]).sum::<f64>(),
-        );
-        if x == 0.0 && y == 0.0 {
-            return Err(surrounds());
+        let q = axes.to_uvw(p);
+        let (x, y) = (q[0], q[1].mul(Scalar::from_f64(sign)));
+        // A point that could lie on the axis could lie on the edge of every
+        // half turn: where a hull touching the axis touches it — the axis an
+        // edge of the target, or through a corner of it.
+        if x.could_be_equal(Scalar::ZERO) && y.could_be_equal(Scalar::ZERO) {
+            continue;
         }
-        angles.push(turned(sign * y.atan2(x).to_degrees()));
+        let angle = turned(y.to_f64().atan2(x.to_f64()).to_degrees());
+        seen.push((angle, x, y, p));
     }
-    angles.sort_by(f64::total_cmp);
-    let n = angles.len();
-    let (gap, after) = (0..n)
+    if seen.is_empty() {
+        return Err(surrounds(format!(
+            "all of the hull's {} points could lie on the axis",
+            hull.len()
+        )));
+    }
+    seen.sort_by(|a, b| a.0.total_cmp(&b.0));
+    let n = seen.len();
+    let (gap, i) = (0..n)
         .map(|i| {
             let next = if i + 1 < n {
-                angles[i + 1]
+                seen[i + 1].0
             } else {
-                angles[0] + 360.0
+                seen[0].0 + 360.0
             };
-            (next - angles[i], angles[i])
+            (next - seen[i].0, i)
         })
         .max_by(|a, b| a.0.total_cmp(&b.0))
         .expect("a hull has points");
     // A convex hull clear of the axis fills less than a half turn of
     // directions, and one merely touching it — a solid with a face in a
     // plane through the axis — exactly a half turn: the other half is free
-    // either way. Only a hull the axis runs through leaves less.
-    if gap < 180.0 {
-        return Err(surrounds());
+    // either way. Only a hull the axis runs through leaves less: the gap
+    // from `a` round to `b` is less than a half turn where `a × b` is
+    // definitely positive.
+    let (a, b) = (&seen[i], &seen[(i + 1) % n]);
+    let across = a.1.mul(b.2).sub(a.2.mul(b.1));
+    if gap < 180.0 && across.definitely_greater(Scalar::ZERO) {
+        return Err(surrounds(format!(
+            "the widest gap between the hull's {n} points seen down the axis, from {:?} at {:?} degrees to {:?} at {:?}, is only {gap:?} degrees",
+            a.3, a.0, b.3, b.0,
+        )));
     }
     // The arc the solid fills, from `b` to `e`; an end at the start is a
     // full turn round.
+    let after = a.0;
     let b = turned(after + gap);
     let e = if after == 0.0 { 360.0 } else { after };
     Ok(if b > e {
@@ -549,16 +583,16 @@ fn turn_past(hull: &[[f64; 3]], axes: &CoordinateSystem, sign: f64) -> GeopResul
 }
 
 /// Why [`turn_past`] finds no angle to turn to.
-fn surrounds() -> GeopError {
-    GeopError::new(
-        "up to next: the target lies all around the revolve axis, so no turn short of a full one comes past it; give the angle instead",
-    )
+fn surrounds(detail: String) -> GeopError {
+    GeopError::new(format!(
+        "up to next: the target lies all around the revolve axis, so no turn short of a full one comes past it; give the angle instead ({detail})",
+    ))
 }
 
 #[cfg(test)]
 mod tests {
     use super::turn_past;
-    use geop_core_math::{primitives::CoordinateSystem, vector::Vector3};
+    use geop_core_math::{primitives::CoordinateSystem, scalars::Scalar, vector::Vector3};
 
     /// A solid with a face in the plane the turn starts from — a revolve
     /// sketched on that face — lies against the start from behind: one of
@@ -575,7 +609,8 @@ mod tests {
             [-3.0, 0.0, 1.0],
             [0.0, -3.0, 0.0],
             [2.0, -2.0, 1.0],
-        ];
+        ]
+        .map(|p| Vector3::from_array(p.map(Scalar::from_f64)));
         for sign in [1.0, -1.0] {
             let far = turn_past(&hull, &axes, sign).unwrap();
             assert!(far > 0.0 && far < 360.0, "{sign}: {far}");

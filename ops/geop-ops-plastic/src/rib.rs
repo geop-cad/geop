@@ -160,7 +160,7 @@ pub fn rib(
 fn reach_past(part: &NamedModel, plane: &CoordinateSystem, target: SolidId) -> GeopResult<Scalar> {
     let model = part.topology();
     let hull = face_hull(model, &model.body_faces(Body::Solid(target))?)?;
-    let (lo, hi) = plain::bounds(hull)
+    let (lo, hi) = plain::bounds(hull.iter().map(|p| p.to_f64_array()))
         .ok_or_else(|| GeopError::new(format!("solid {target:?} has no faces")))?;
     let origin = [0, 1, 2].map(|k| plane.origin()[k].to_f64());
     let diagonal = plain::diagonal(lo, hi);
