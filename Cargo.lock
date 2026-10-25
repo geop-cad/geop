@@ -547,6 +547,7 @@ dependencies = [
  "geop-lib-sweep",
  "geop-ops-extrude-revolve",
  "geop-ops-model",
+ "geop-ops-shell",
  "geop-ops-sketch",
  "serde",
  "serde_json",
