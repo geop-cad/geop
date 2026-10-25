@@ -139,6 +139,7 @@ impl Tool for DragTool {
             grab: lit.is_some(),
             prompt: None,
             gizmo: None,
+            hidden: Vec::new(),
         }
     }
 }

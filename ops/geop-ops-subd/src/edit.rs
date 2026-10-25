@@ -1,23 +1,26 @@
 //! What a cage starts as — a box, a cylinder, a sphere, a plane — and the
 //! edits that shape it: moving, turning and scaling its elements,
-//! extruding faces, inserting edge loops, creasing edges, deleting faces,
-//! and cutting it in half at a mirror plane or making the mirrored half its
-//! own.
+//! extruding and insetting faces, bevelling edges, cutting and sliding
+//! edge loops, merging and dissolving, bridging two faces, filling a hole,
+//! creasing edges, deleting faces, and cutting it in half at a mirror
+//! plane or making the mirrored half its own.
 //!
 //! An edit keeps the id of every element it does not take away, and gives
 //! what it adds ids no element has had, so that names built from them stay
-//! put (see [`crate::cage`]).
+//! put (see [`crate::cage`]). Every edit is a function of the cage and its
+//! arguments alone, its order fixed by the ids, so that the same edit of
+//! the same cage makes the same cage.
 
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 
 use geop_core_math::{
     geop_error::{GeopError, GeopResult},
-    plain::{centroid, cross, dot, norm, normalize, scale, sub},
-    solvers::walk::walk_by,
+    plain::{add, centroid, cross, dot, norm, normalize, scale, sub},
 };
 
 use crate::cage::{
-    Cage, CageFace, CageVertex, Mesh, Mirror, edge_key, face_key, undirected, vertex_key,
+    Cage, CageFace, CageVertex, Crease, Mesh, Mirror, edge_key, face_key, next, prev, undirected,
+    vertex_key,
 };
 
 /// An element of a cage, as a selection names it (see
@@ -46,6 +49,15 @@ impl Element {
             _ => None,
         }
     }
+
+    /// The key that names the element.
+    pub fn key(self) -> String {
+        match self {
+            Element::Vertex(v) => vertex_key(v),
+            Element::Edge(a, b) => edge_key(a, b),
+            Element::Face(f) => face_key(f),
+        }
+    }
 }
 
 /// A cage built from `points` and faces through them by index, ids given
@@ -70,6 +82,37 @@ fn cage_of(points: Vec<[f64; 3]>, faces: Vec<Vec<usize>>) -> Cage {
         next_id: 0,
     }
     .numbered()
+}
+
+/// Edges each directed the way a face runs along it.
+type DirectedEdges = BTreeSet<(u32, u32)>;
+
+/// The vertices of `face` as a cycle starting at `at`, which it runs
+/// through.
+fn rotated(face: &[u32], at: u32) -> Vec<u32> {
+    let k = face.iter().position(|&v| v == at).expect("on its face");
+    face[k..].iter().chain(&face[..k]).copied().collect()
+}
+
+/// `cycle` with each run of equal neighbours — around the end too — kept
+/// once.
+fn deduplicated(cycle: &[u32]) -> Vec<u32> {
+    let mut out: Vec<u32> = Vec::with_capacity(cycle.len());
+    for &v in cycle {
+        if out.last() != Some(&v) {
+            out.push(v);
+        }
+    }
+    while out.len() > 1 && out.first() == out.last() {
+        out.pop();
+    }
+    out
+}
+
+/// The vertex `cycle` runs through twice, if any.
+fn repeated(cycle: &[u32]) -> Option<u32> {
+    let mut seen = BTreeSet::new();
+    cycle.iter().copied().find(|&v| !seen.insert(v))
 }
 
 impl Cage {
@@ -117,8 +160,19 @@ impl Cage {
         for r in 0..=rows {
             let z = height * (r as f64 / rows as f64 - 0.5);
             for i in 0..segments {
-                let a = 2.0 * std::f64::consts::PI * i as f64 / segments as f64;
-                points.push([radius * a.cos(), radius * a.sin(), z]);
+                // On an axis, exactly: a vertex a rounding off the plane
+                // `y = 0` is not on it for a mirror, and a sliver away from
+                // the one that is.
+                let (s, c) = match (4 * i) % segments {
+                    0 => match 4 * i / segments {
+                        0 => (0.0, 1.0),
+                        1 => (1.0, 0.0),
+                        2 => (0.0, -1.0),
+                        _ => (-1.0, 0.0),
+                    },
+                    _ => (2.0 * std::f64::consts::PI * i as f64 / segments as f64).sin_cos(),
+                };
+                points.push([radius * c, radius * s, z]);
             }
         }
         let at = |r: usize, i: usize| r * segments + i % segments;
@@ -232,6 +286,13 @@ impl Cage {
         centroid(ats)
     }
 
+    /// Whether vertex `v` lies on the plane of `mirror`, where the mirror
+    /// image joins the cage.
+    fn on_plane(&self, v: u32, mirror: Mirror) -> GeopResult<bool> {
+        let at = self.vertex(v)?.at;
+        Ok(mirror.axis().is_some_and(|a| at[a] == 0.0))
+    }
+
     /// The vertices `vertices` moved to where `f` takes them — those on the
     /// plane of `mirror` kept on it, where the mirror image joins them.
     pub fn transform(
@@ -251,16 +312,43 @@ impl Cage {
         }
     }
 
-    /// Creases the edges `edges`, or smooths them again.
-    pub fn set_crease(&mut self, edges: &[[u32; 2]], sharp: bool) {
+    /// Makes the edit `edit` of the cage whole or not at all: a refusal
+    /// part way through leaves the cage as it was.
+    fn transaction(&mut self, edit: impl FnOnce(&mut Cage) -> GeopResult<()>) -> GeopResult<()> {
+        let mut edited = self.clone();
+        edit(&mut edited)?;
+        *self = edited;
+        Ok(())
+    }
+
+    /// Creases the edges `edges` at `sharpness` (see [`Crease`]): one is
+    /// sharp, zero or less smooths them again, and more than one is sharp.
+    pub fn set_sharpness(&mut self, edges: &[[u32; 2]], sharpness: f64) {
         for &[a, b] in edges {
             let edge = undirected(a, b);
-            self.creases.retain(|&c| c != edge);
-            if sharp {
-                self.creases.push(edge);
+            self.creases.retain(|c| c.edge != edge);
+            if sharpness > 0.0 {
+                self.creases.push(Crease {
+                    edge,
+                    sharpness: sharpness.min(1.0),
+                });
             }
         }
-        self.creases.sort();
+        self.creases.sort_by_key(|c| c.edge);
+    }
+
+    /// Renames the vertices of every crease by `to`, dropping a crease
+    /// whose two vertices became one.
+    fn rename_creases(&mut self, to: impl Fn([u32; 2]) -> [u32; 2]) {
+        let mut creases: Vec<Crease> = std::mem::take(&mut self.creases);
+        for c in &mut creases {
+            let [a, b] = to(c.edge);
+            c.edge = undirected(a, b);
+        }
+        creases.retain(|c| c.edge[0] != c.edge[1]);
+        creases.sort_by_key(|c| c.edge);
+        creases.dedup_by_key(|c| c.edge);
+        self.creases = creases;
     }
 
     /// Forgets vertices no face runs through any more, and creases of
@@ -273,7 +361,7 @@ impl Cage {
             .collect();
         self.vertices.retain(|v| used.contains(&v.id));
         let edges = self.edges();
-        self.creases.retain(|c| edges.contains(c));
+        self.creases.retain(|c| edges.contains(&c.edge));
     }
 
     /// Deletes the faces `faces`, and every vertex and crease that leaves
@@ -281,6 +369,24 @@ impl Cage {
     pub fn delete_faces(&mut self, faces: &BTreeSet<u32>) {
         self.faces.retain(|f| !faces.contains(&f.id));
         self.tidy();
+    }
+
+    /// The faces any of the edges `edges` is on, by id.
+    pub fn faces_along(&self, edges: &[[u32; 2]]) -> BTreeSet<u32> {
+        let directed = self.directed_edges();
+        edges
+            .iter()
+            .flat_map(|&[a, b]| [(a, b), (b, a)])
+            .filter_map(|e| directed.get(&e).map(|&(f, _)| self.faces[f].id))
+            .collect()
+    }
+
+    /// The faces any of the vertices `vertices` is a corner of, by id.
+    pub fn faces_around(&self, vertices: &BTreeSet<u32>) -> BTreeSet<u32> {
+        (self.faces.iter())
+            .filter(|f| f.vertices.iter().any(|v| vertices.contains(v)))
+            .map(|f| f.id)
+            .collect()
     }
 
     /// The orientation of the faces `faces`, for moving them along it: `z`
@@ -318,26 +424,23 @@ impl Cage {
         Ok(normal)
     }
 
-    /// Extrudes the faces `faces` `distance` along their normals: they move
-    /// out, keeping their ids, and a new quad joins each edge on the
-    /// region's rim to its moved copy. A vertex inside the region just
-    /// moves; one on its rim is left behind for the faces around, and a
-    /// new one moves. With a `mirror`, what is on its plane stays on it,
-    /// and an open edge along the plane gets no quad, which would lie in
-    /// it.
-    pub fn extrude(
-        &mut self,
-        faces: &BTreeSet<u32>,
-        distance: f64,
-        mirror: Mirror,
-    ) -> GeopResult<()> {
-        if faces.is_empty() {
-            return Err(GeopError::new("extrude: no face selected"));
-        }
-        let region: Vec<CageFace> = faces
-            .iter()
-            .map(|&f| self.face(f).cloned())
-            .collect::<GeopResult<_>>()?;
+    /// The unit direction from the edge `(a, b)` of face `face` into the
+    /// face, square to the edge in the face's plane: to the left of the
+    /// edge the way the face runs. `None` for a face of no area.
+    fn inward(&self, face: &CageFace, a: u32, b: u32) -> GeopResult<Option<[f64; 3]>> {
+        let n = self.normal(face)?;
+        let d = sub(self.vertex(b)?.at, self.vertex(a)?.at);
+        let runs_a_to_b = (face.vertices.iter())
+            .position(|&v| v == a)
+            .is_some_and(|k| face.vertices[(k + 1) % face.vertices.len()] == b);
+        let d = if runs_a_to_b { d } else { scale(d, -1.0) };
+        Ok(normalize(cross(n, d)))
+    }
+
+    /// The edges of the faces `faces` with a face of the region on one side
+    /// only, directed the way the region's face runs; and every directed
+    /// edge of the cage.
+    fn rim(&self, faces: &BTreeSet<u32>) -> (Vec<(u32, u32)>, DirectedEdges) {
         let mut directed: BTreeSet<(u32, u32)> = BTreeSet::new();
         let mut everywhere: BTreeSet<(u32, u32)> = BTreeSet::new();
         for face in &self.faces {
@@ -350,45 +453,58 @@ impl Cage {
                 }
             }
         }
-        let rim: Vec<(u32, u32)> = directed
+        let rim = directed
             .iter()
             .copied()
             .filter(|&(a, b)| !directed.contains(&(b, a)))
             .collect();
-        let mut normal: BTreeMap<u32, [f64; 3]> = BTreeMap::new();
-        for face in &region {
-            let n = self.normal(face)?;
-            for &v in &face.vertices {
-                let sum = normal.entry(v).or_insert([0.0; 3]);
-                for i in 0..3 {
-                    sum[i] += n[i];
-                }
-            }
+        (rim, everywhere)
+    }
+
+    /// Moves the region of faces `faces` by `offset` per vertex, keeping
+    /// the faces' ids, and joins each edge on the region's rim to its moved
+    /// copy by a new quad. A vertex inside the region just moves; one on
+    /// its rim is left behind for the faces around, and a new one moves.
+    /// With a `mirror`, what is on its plane stays on it, and an open edge
+    /// along the plane gets no quad, which would lie in it. A crease whose
+    /// edge only the region had moves with it; one on its rim stays. The
+    /// name is for the error messages.
+    fn offset_region(
+        &mut self,
+        name: &str,
+        faces: &BTreeSet<u32>,
+        mirror: Mirror,
+        offset: impl Fn(&Cage, u32) -> GeopResult<[f64; 3]>,
+    ) -> GeopResult<()> {
+        if faces.is_empty() {
+            return Err(GeopError::new(format!("{name}: no face selected")));
         }
-        let on_plane = |cage: &Cage, v: u32| -> GeopResult<bool> {
-            let at = cage.vertex(v)?.at;
-            Ok(mirror.axis().is_some_and(|a| at[a] == 0.0))
-        };
-        let mut offset: BTreeMap<u32, [f64; 3]> = BTreeMap::new();
-        for (&v, n) in &normal {
-            let mut n = *n;
-            if on_plane(self, v)? {
-                n[mirror.axis().expect("on a plane")] = 0.0;
+        for &f in faces {
+            self.face(f)?;
+        }
+        let (rim, everywhere) = self.rim(faces);
+        let region: BTreeSet<u32> = (self.faces.iter())
+            .filter(|f| faces.contains(&f.id))
+            .flat_map(|f| f.vertices.iter().copied())
+            .collect();
+        let mut offsets: BTreeMap<u32, [f64; 3]> = BTreeMap::new();
+        for &v in &region {
+            let mut d = offset(self, v)?;
+            if self.on_plane(v, mirror)? {
+                d[mirror.axis().expect("on a plane")] = 0.0;
             }
-            let length = (n[0] * n[0] + n[1] * n[1] + n[2] * n[2]).sqrt();
-            if length == 0.0 || !length.is_finite() {
+            if !d.iter().all(|c| c.is_finite()) {
                 return Err(GeopError::new(format!(
-                    "extrude: the faces around vertex {} face no one way",
+                    "{name}: vertex {} cannot be moved: {d:?}",
                     vertex_key(v)
                 )));
             }
-            offset.insert(v, n.map(|c| distance * c / length));
+            offsets.insert(v, d);
         }
         let rim_vertices: BTreeSet<u32> = rim.iter().flat_map(|&(a, b)| [a, b]).collect();
         let mut moved: BTreeMap<u32, u32> = BTreeMap::new();
-        for (&v, d) in &offset {
-            let at = self.vertex(v)?.at;
-            let to = [at[0] + d[0], at[1] + d[1], at[2] + d[2]];
+        for (&v, d) in &offsets {
+            let to = add(self.vertex(v)?.at, *d);
             if rim_vertices.contains(&v) {
                 let id = self.fresh_id();
                 self.vertices.push(CageVertex { id, at: to });
@@ -408,7 +524,7 @@ impl Cage {
         }
         for (a, b) in rim {
             let open = !everywhere.contains(&(b, a));
-            if open && on_plane(self, a)? && on_plane(self, b)? {
+            if open && self.on_plane(a, mirror)? && self.on_plane(b, mirror)? {
                 continue;
             }
             let id = self.fresh_id();
@@ -417,81 +533,213 @@ impl Cage {
                 vertices: vec![a, b, moved[&b], moved[&a]],
             });
         }
-        // A crease whose edge only the region had — inside it, or open
-        // along the mirror plane — moves out with it; one on its rim stays
-        // where the region was.
         let edges = self.edges();
         let to = |v: u32| moved.get(&v).copied().unwrap_or(v);
-        for crease in &mut self.creases {
-            if !edges.contains(crease) {
-                let (a, b) = (to(crease[0]), to(crease[1]));
-                *crease = undirected(a, b);
+        self.rename_creases(|edge| {
+            if edges.contains(&edge) {
+                edge
+            } else {
+                [to(edge[0]), to(edge[1])]
             }
-        }
+        });
         self.tidy();
         Ok(())
     }
 
-    /// Inserts an edge loop across the edge between `a` and `b`: through
-    /// the middle of every edge of its ring — the edges reached by
-    /// crossing quads from one side to the opposite one, until the ring
-    /// closes, or meets the cage's boundary or a face that is not a quad —
-    /// splitting each of those quads in two.
-    pub fn insert_loop(&mut self, a: u32, b: u32) -> GeopResult<()> {
-        let mut owner: HashMap<(u32, u32), usize> = HashMap::new();
-        for (i, face) in self.faces.iter().enumerate() {
-            let n = face.vertices.len();
-            for k in 0..n {
-                owner.insert((face.vertices[k], face.vertices[(k + 1) % n]), i);
+    /// Extrudes the faces `faces` `distance` along their normals (see
+    /// [`Cage::offset_region`]).
+    pub fn extrude(
+        &mut self,
+        faces: &BTreeSet<u32>,
+        distance: f64,
+        mirror: Mirror,
+    ) -> GeopResult<()> {
+        let mut normal: BTreeMap<u32, [f64; 3]> = BTreeMap::new();
+        for face in self.faces.iter().filter(|f| faces.contains(&f.id)) {
+            let n = self.normal(face)?;
+            for &v in &face.vertices {
+                let sum = normal.entry(v).or_insert([0.0; 3]);
+                *sum = add(*sum, n);
             }
         }
-        if !owner.contains_key(&(a, b)) && !owner.contains_key(&(b, a)) {
+        self.offset_region("extrude", faces, mirror, |cage, v| {
+            let mut n = normal[&v];
+            if cage.on_plane(v, mirror)? {
+                n[mirror.axis().expect("on a plane")] = 0.0;
+            }
+            normalize(n).map(|n| scale(n, distance)).ok_or_else(|| {
+                GeopError::new(format!(
+                    "extrude: the faces around vertex {} face no one way",
+                    vertex_key(v)
+                ))
+            })
+        })
+    }
+
+    /// Insets the faces `faces`: their rim moves `thickness` inwards, in
+    /// the faces' own planes, and a new ring of quads fills the gap to where
+    /// the rim was (see [`Cage::offset_region`]). A vertex inside the region
+    /// stays.
+    pub fn inset(
+        &mut self,
+        faces: &BTreeSet<u32>,
+        thickness: f64,
+        mirror: Mirror,
+    ) -> GeopResult<()> {
+        if faces.is_empty() {
+            return Err(GeopError::new("inset: no face selected"));
+        }
+        let (rim, _) = self.rim(faces);
+        let mut inward: BTreeMap<u32, Vec<[f64; 3]>> = BTreeMap::new();
+        let directed = self.directed_edges();
+        for &(a, b) in &rim {
+            let (f, _) = directed[&(a, b)];
+            let Some(d) = self.inward(&self.faces[f], a, b)? else {
+                return Err(GeopError::new(format!(
+                    "inset: face {} has no area",
+                    face_key(self.faces[f].id)
+                )));
+            };
+            inward.entry(a).or_default().push(d);
+            inward.entry(b).or_default().push(d);
+        }
+        let mut offsets: BTreeMap<u32, [f64; 3]> = BTreeMap::new();
+        for (&v, ds) in &inward {
+            let mut d = match ds[..] {
+                [d] => scale(d, thickness),
+                [d, e] => {
+                    // The mitre: `thickness` from both rim edges.
+                    let along = 1.0 + dot(d, e);
+                    if along <= 0.0 {
+                        return Err(GeopError::new(format!(
+                            "inset: the rim turns back on itself at vertex {}",
+                            vertex_key(v)
+                        )));
+                    }
+                    scale(add(d, e), thickness / along)
+                }
+                _ => {
+                    return Err(GeopError::new(format!(
+                        "inset: the rim passes vertex {} more than once",
+                        vertex_key(v)
+                    )));
+                }
+            };
+            if self.on_plane(v, mirror)? {
+                d[mirror.axis().expect("on a plane")] = 0.0;
+            }
+            offsets.insert(v, d);
+        }
+        let moved = |cage: &Cage, v: u32| -> GeopResult<[f64; 3]> {
+            Ok(add(
+                cage.vertex(v)?.at,
+                offsets.get(&v).copied().unwrap_or([0.0; 3]),
+            ))
+        };
+        let region = self.faces.iter().filter(|f| faces.contains(&f.id));
+        self.check_faces_keep_shape("inset", thickness, mirror, region, |face, k| {
+            let v = face.vertices[k];
+            offsets.contains_key(&v).then(|| moved(self, v)).transpose()
+        })?;
+        self.offset_region("inset", faces, mirror, |_, v| {
+            Ok(offsets.get(&v).copied().unwrap_or([0.0; 3]))
+        })
+    }
+
+    /// Refuses, by name, an edit `name` by `amount` that folds one of
+    /// `faces` over itself — the face is too small for it: a corner moved
+    /// out across one of the face's other sides, or a side turned round,
+    /// its two corners moved past each other. `corner_at` says where
+    /// corner `k` of a face goes, `None` for one that stays. A corner may
+    /// slide along its own two sides, and one on the plane of `mirror`
+    /// along a side in that plane. The check is exact for a convex face.
+    fn check_faces_keep_shape<'f>(
+        &self,
+        name: &str,
+        amount: f64,
+        mirror: Mirror,
+        faces: impl IntoIterator<Item = &'f CageFace>,
+        corner_at: impl Fn(&CageFace, usize) -> GeopResult<Option<[f64; 3]>>,
+    ) -> GeopResult<()> {
+        for face in faces {
+            let n = face.vertices.len();
+            let normal = self.normal(face)?;
+            let at = |k: usize| self.vertex(face.vertices[k % n]).map(|v| v.at);
+            let to = |k: usize| -> GeopResult<[f64; 3]> {
+                Ok(corner_at(face, k % n)?.unwrap_or(at(k)?))
+            };
+            let on_plane = |k: usize| self.on_plane(face.vertices[k % n], mirror);
+            for k in 0..n {
+                let before = sub(at(k + 1)?, at(k)?);
+                let after = sub(to(k + 1)?, to(k)?);
+                if dot(before, after) <= 0.0 {
+                    return Err(GeopError::new(format!(
+                        "{name}: face {} is too small for {amount}: its edge {} would turn round",
+                        face_key(face.id),
+                        edge_key(face.vertices[k], face.vertices[(k + 1) % n])
+                    )));
+                }
+                let Some(to) = corner_at(face, k)? else {
+                    continue;
+                };
+                for e in 0..n {
+                    // A corner may slide along its own two sides, and along
+                    // the mirror plane.
+                    let own = e == k || (e + 1) % n == k;
+                    if own || on_plane(k)? && on_plane(e)? && on_plane(e + 1)? {
+                        continue;
+                    }
+                    let (p, q) = (at(e)?, at(e + 1)?);
+                    let inward = cross(normal, sub(q, p));
+                    if dot(sub(to, p), inward) <= 0.0 {
+                        return Err(GeopError::new(format!(
+                            "{name}: face {} is too small for {amount}: its corner {} would leave it across edge {}",
+                            face_key(face.id),
+                            vertex_key(face.vertices[k]),
+                            edge_key(face.vertices[e], face.vertices[(e + 1) % n])
+                        )));
+                    }
+                }
+            }
+        }
+        Ok(())
+    }
+
+    /// Cuts a new edge loop across the edge between `a` and `b`: through
+    /// every edge of its ring (see [`Cage::edge_ring`]) at the fraction `t`
+    /// of the way along it from `a`'s side, splitting each quad of the
+    /// ring in two. The halves of a creased edge keep its crease.
+    pub fn insert_loop(&mut self, a: u32, b: u32, t: f64) -> GeopResult<()> {
+        self.transaction(|cage| cage.insert_loop_in_place(a, b, t))
+    }
+
+    /// [`Cage::insert_loop`], in place.
+    fn insert_loop_in_place(&mut self, a: u32, b: u32, t: f64) -> GeopResult<()> {
+        if !(0.0 < t && t < 1.0) {
             return Err(GeopError::new(format!(
-                "insert loop: the cage has no edge {}",
+                "loop cut: the cut must be between the edge's ends, not at {t} of the way"
+            )));
+        }
+        let ring = self.edge_ring(a, b)?;
+        if ring.quads.is_empty() {
+            return Err(GeopError::new(format!(
+                "loop cut: edge {} has no quad on either side to cut across",
                 edge_key(a, b)
             )));
         }
-        let mut ring: Vec<[u32; 2]> = vec![undirected(a, b)];
-        // The quads to split, by index.
-        let mut splits: Vec<usize> = Vec::new();
-        for start in [(a, b), (b, a)] {
-            // Across each quad to the opposite edge, until a quad or an edge
-            // is one the ring has already, from either side.
-            walk_by(
-                start,
-                |&(x, y)| undirected(x, y),
-                |&edge| {
-                    let Some(&f) = owner.get(&edge) else {
-                        return Ok::<_, GeopError>(None);
-                    };
-                    let face = &self.faces[f].vertices;
-                    if face.len() != 4 || splits.contains(&f) {
-                        return Ok(None);
-                    }
-                    splits.push(f);
-                    let k = face.iter().position(|&v| v == edge.0).expect("on its face");
-                    let across = (face[(k + 2) % 4], face[(k + 3) % 4]);
-                    let key = undirected(across.0, across.1);
-                    if ring.contains(&key) {
-                        return Ok(None);
-                    }
-                    ring.push(key);
-                    Ok(Some((across.1, across.0)))
-                },
-            )?;
-        }
         let mut middle: HashMap<[u32; 2], u32> = HashMap::new();
-        for &[x, y] in &ring {
+        for &(x, y) in &ring.edges {
             let (p, q) = (self.vertex(x)?.at, self.vertex(y)?.at);
             let id = self.fresh_id();
             self.vertices.push(CageVertex {
                 id,
-                at: [0, 1, 2].map(|c| (p[c] + q[c]) / 2.0),
+                at: [0, 1, 2].map(|c| p[c] + t * (q[c] - p[c])),
             });
-            middle.insert([x, y], id);
-            if self.is_crease(x, y) {
-                self.set_crease(&[[x, y]], false);
-                self.set_crease(&[[x, id], [id, y]], true);
+            middle.insert(undirected(x, y), id);
+            let sharpness = self.sharpness(x, y);
+            if sharpness > 0.0 {
+                self.set_sharpness(&[[x, y]], 0.0);
+                self.set_sharpness(&[[x, id], [id, y]], sharpness);
             }
         }
         for face in &mut self.faces {
@@ -506,14 +754,14 @@ impl Cage {
             }
             face.vertices = vertices;
         }
-        for f in splits {
+        for f in ring.quads {
             let vertices = self.faces[f].vertices.clone();
             let cuts: Vec<usize> = (0..vertices.len())
                 .filter(|&i| middle.values().any(|&m| m == vertices[i]))
                 .collect();
             let [i, j] = cuts[..] else {
                 return Err(GeopError::new(format!(
-                    "insert loop: face {} is crossed by the loop {} times",
+                    "loop cut: face {} is crossed by the loop {} times",
                     face_key(self.faces[f].id),
                     cuts.len()
                 )));
@@ -534,6 +782,712 @@ impl Cage {
         Ok(())
     }
 
+    /// Slides the vertices of the chain of edges `edges` along the edges
+    /// leaving the chain, by the fraction `factor` of their length: towards
+    /// the side the faces running along the chain, oriented from its first
+    /// edge, lie on for a positive factor, the other side for a negative
+    /// one. Each vertex needs one edge to slide along on that side, which
+    /// the quads of the chain's faces give it: a vertex where the chain
+    /// branches, or where its faces disagree, is refused by name.
+    pub fn edge_slide(
+        &mut self,
+        edges: &[[u32; 2]],
+        factor: f64,
+        mirror: Mirror,
+    ) -> GeopResult<()> {
+        if edges.is_empty() {
+            return Err(GeopError::new("edge slide: no edge selected"));
+        }
+        if !(-1.0 < factor && factor < 1.0) {
+            return Err(GeopError::new(format!(
+                "edge slide: the slide must stay short of the next loop, not {factor} of the way"
+            )));
+        }
+        let selected: BTreeSet<[u32; 2]> = edges.iter().map(|&[a, b]| undirected(a, b)).collect();
+        let directed = self.directed_edges();
+        // The selected edges at each vertex.
+        let mut at: BTreeMap<u32, Vec<[u32; 2]>> = BTreeMap::new();
+        for &e in &selected {
+            at.entry(e[0]).or_default().push(e);
+            at.entry(e[1]).or_default().push(e);
+        }
+        // Each chain oriented from its lowest edge, as directed edges.
+        let mut oriented: BTreeMap<[u32; 2], (u32, u32)> = BTreeMap::new();
+        for &start in &selected {
+            if oriented.contains_key(&start) {
+                continue;
+            }
+            let mut pending = vec![(start[0], start[1])];
+            while let Some((x, y)) = pending.pop() {
+                if oriented.insert(undirected(x, y), (x, y)).is_some() {
+                    continue;
+                }
+                for (from, to) in [(x, y), (y, x)] {
+                    let others: Vec<[u32; 2]> = at[&to]
+                        .iter()
+                        .copied()
+                        .filter(|e| *e != undirected(x, y))
+                        .collect();
+                    if let [e] = others[..]
+                        && !oriented.contains_key(&e)
+                    {
+                        let z = if e[0] == to { e[1] } else { e[0] };
+                        // Onwards from `to` if we came in through `from`.
+                        pending.push(if from == x { (to, z) } else { (z, to) });
+                    }
+                }
+            }
+        }
+        // Where each vertex slides to: the vertex across from it in the
+        // face on the chosen side of each of its chain edges.
+        let mut target: BTreeMap<u32, u32> = BTreeMap::new();
+        for &(x, y) in oriented.values() {
+            let side = if factor > 0.0 { (x, y) } else { (y, x) };
+            let Some(&(f, k)) = directed.get(&side) else {
+                return Err(GeopError::new(format!(
+                    "edge slide: edge {} has no face on that side",
+                    edge_key(x, y)
+                )));
+            };
+            let face = &self.faces[f].vertices;
+            let n = face.len();
+            // The face runs `side.0 -> side.1`: across from `side.1` is the
+            // vertex after it, across from `side.0` the one before.
+            let pairs = [(side.1, face[(k + 2) % n]), (side.0, face[(k + n - 1) % n])];
+            for (v, across) in pairs {
+                if let Some(&other) = target.get(&v)
+                    && other != across
+                {
+                    return Err(GeopError::new(format!(
+                        "edge slide: the faces along the chain disagree at vertex {}: it would slide to {} or to {}",
+                        vertex_key(v),
+                        vertex_key(other),
+                        vertex_key(across)
+                    )));
+                }
+                target.insert(v, across);
+            }
+        }
+        for (v, t) in target {
+            let p = self.vertex(v)?.at;
+            let q = self.vertex(t)?.at;
+            let mut to = [0, 1, 2].map(|c| p[c] + factor.abs() * (q[c] - p[c]));
+            if self.on_plane(v, mirror)? {
+                to[mirror.axis().expect("on a plane")] = 0.0;
+            }
+            self.vertex_mut(v)?.at = to;
+        }
+        Ok(())
+    }
+
+    /// Bevels the edges `edges`: each becomes a strip of one quad, `width`
+    /// wide, between the two faces along it, and each vertex where three or
+    /// more bevelled edges meet a face of its own. A vertex is split into
+    /// one vertex per *sector* — the faces around it between two bevelled
+    /// edges — placed `width` from both edges in the sector's first and
+    /// last face. At a vertex with one bevelled edge the strip ends on the
+    /// faces beside it: its end vertices lie `width` along the two other
+    /// edges of the edge's faces there, which split there, and a triangle
+    /// caps the strip between them and the vertex — which goes if that
+    /// leaves it between two faces, as at a box's corner. Edges on the
+    /// boundary cannot be bevelled.
+    pub fn bevel(&mut self, edges: &[[u32; 2]], width: f64, mirror: Mirror) -> GeopResult<()> {
+        self.transaction(|cage| cage.bevel_in_place(edges, width, mirror))
+    }
+
+    /// [`Cage::bevel`], in place.
+    fn bevel_in_place(&mut self, edges: &[[u32; 2]], width: f64, mirror: Mirror) -> GeopResult<()> {
+        if edges.is_empty() {
+            return Err(GeopError::new("bevel: no edge selected"));
+        }
+        let (mesh, topology) = self.indexed()?;
+        let ids: Vec<u32> = self.vertices.iter().map(|v| v.id).collect();
+        let id_of = |i: usize| ids[i];
+        let index_of: HashMap<u32, usize> = (self.vertices.iter().enumerate())
+            .map(|(i, v)| (v.id, i))
+            .collect();
+        let mut bevelled: BTreeSet<[usize; 2]> = BTreeSet::new();
+        for &[a, b] in edges {
+            let (Some(&i), Some(&j)) = (index_of.get(&a), index_of.get(&b)) else {
+                return Err(GeopError::new(format!(
+                    "bevel: the cage has no edge {}",
+                    edge_key(a, b)
+                )));
+            };
+            if !topology.directed.contains_key(&(i, j)) && !topology.directed.contains_key(&(j, i))
+            {
+                return Err(GeopError::new(format!(
+                    "bevel: the cage has no edge {}",
+                    edge_key(a, b)
+                )));
+            }
+            if topology.is_boundary(i, j) {
+                return Err(GeopError::new(format!(
+                    "bevel: edge {} is open — on the boundary or along the mirror plane — and has no second face to bevel between",
+                    edge_key(a, b)
+                )));
+            }
+            bevelled.insert(undirected(i, j));
+        }
+        let faces = &mesh.faces;
+        let face_ids: Vec<u32> = self.faces.iter().map(|f| f.id).collect();
+        let normals: Vec<[f64; 3]> = (self.faces.iter())
+            .map(|f| self.normal(f))
+            .collect::<GeopResult<_>>()?;
+        // The unit direction from the edge between corner `(f, k)` and `w`
+        // into face `f`, square to the edge in its plane (see
+        // [`Cage::inward`]).
+        let into = |(f, k): (usize, usize), w: usize| -> GeopResult<[f64; 3]> {
+            let face = &faces[f];
+            let d = sub(mesh.positions[w], mesh.positions[face[k]]);
+            let d = if face[(k + 1) % face.len()] == w {
+                d
+            } else {
+                scale(d, -1.0)
+            };
+            normalize(cross(normals[f], d)).ok_or_else(|| {
+                GeopError::new(format!("bevel: face {} has no area", face_key(face_ids[f])))
+            })
+        };
+        // Per touched vertex, per corner `(f, k)` of it: the new vertex of
+        // the sector that corner is in.
+        let mut sector_of: HashMap<(usize, usize), u32> = HashMap::new();
+        // Per touched vertex: its sector vertices in fan order, and whether
+        // the fan closes.
+        let mut sectors: BTreeMap<usize, (Vec<u32>, bool)> = BTreeMap::new();
+        // Per corner `(f, k)` of a vertex with one bevelled edge: the cap
+        // vertex that takes the corner's place in that face, on the face's
+        // other edge there, which it splits (`splits`, by the edge's
+        // vertices).
+        let mut caps: HashMap<(usize, usize), u32> = HashMap::new();
+        let mut splits: HashMap<[usize; 2], u32> = HashMap::new();
+        let mut cap_faces: Vec<[u32; 3]> = Vec::new();
+        let mut capped: Vec<u32> = Vec::new();
+        let touched: BTreeSet<usize> = bevelled.iter().flat_map(|&[a, b]| [a, b]).collect();
+        for &v in &touched {
+            let (fan, closed) = &topology.fans[v];
+            let m = fan.len();
+            // Between `fan[i]` and `fan[i + 1]` lies the edge to `fan[i]`'s
+            // previous corner; an open fan is cut at both ends too.
+            let cut = |i: usize| -> Option<usize> {
+                let w = prev(faces, fan[i]);
+                (bevelled.contains(&undirected(v, w)) || (!closed && i + 1 == m)).then_some(w)
+            };
+            let first_cut = (0..m)
+                .find(|&i| cut(i).is_some())
+                .expect("a bevelled edge at v");
+            let start = if *closed { (first_cut + 1) % m } else { 0 };
+            let mut runs: Vec<Vec<usize>> = Vec::new();
+            let mut run = Vec::new();
+            for step in 0..m {
+                let i = (start + step) % m;
+                run.push(i);
+                if cut(i).is_some() || step + 1 == m {
+                    runs.push(std::mem::take(&mut run));
+                }
+            }
+            let p = |i: usize| mesh.positions[i];
+            let placed = |at: [f64; 3]| -> [f64; 3] {
+                let mut at = at;
+                if let Some(axis) = mirror.axis()
+                    && p(v)[axis] == 0.0
+                {
+                    at[axis] = 0.0;
+                }
+                at
+            };
+            if let [run] = &runs[..]
+                && *closed
+            {
+                // One bevelled edge all round: the strip is capped at the
+                // vertex. The run starts with the face running from `v`
+                // along the edge, and ends with the one running back; the
+                // cap vertices lie on those faces' other edges at `v`.
+                let (first, last) = (fan[run[0]], fan[run[run.len() - 1]]);
+                let mut cap = [id_of(v), 0, 0];
+                for (corner, other, slot) in
+                    [(first, prev(faces, first), 2), (last, next(faces, last), 1)]
+                {
+                    let along = sub(p(other), p(v));
+                    let length = norm(along);
+                    if width >= length {
+                        return Err(GeopError::new(format!(
+                            "bevel: edge {} is {length} long, too short for a width of {width}",
+                            edge_key(id_of(v), id_of(other))
+                        )));
+                    }
+                    let at = add(p(v), scale(along, width / length));
+                    let id = self.fresh_id();
+                    self.vertices.push(CageVertex { id, at });
+                    caps.insert(corner, id);
+                    splits.insert(undirected(v, other), id);
+                    cap[slot] = id;
+                }
+                cap_faces.push(cap);
+                capped.push(id_of(v));
+                continue;
+            }
+            let mut ids = Vec::with_capacity(runs.len());
+            for run in &runs {
+                let first = fan[run[0]];
+                let last = fan[run[run.len() - 1]];
+                // The bevelled edge before the run — the one to the first
+                // corner's next vertex — and after it.
+                let before = next(faces, first);
+                let after = prev(faces, last);
+                let before_bevelled = bevelled.contains(&undirected(v, before));
+                let after_bevelled = bevelled.contains(&undirected(v, after));
+                let offset = match (before_bevelled, after_bevelled) {
+                    (true, true) => {
+                        let (d, e) = (into(first, before)?, into(last, after)?);
+                        let along = 1.0 + dot(d, e);
+                        if along <= 0.0 {
+                            return Err(GeopError::new(format!(
+                                "bevel: the bevelled edges fold back at vertex {}",
+                                vertex_key(id_of(v))
+                            )));
+                        }
+                        scale(add(d, e), width / along)
+                    }
+                    (true, false) => scale(into(first, before)?, width),
+                    (false, true) => scale(into(last, after)?, width),
+                    (false, false) => unreachable!("a sector is bounded by a bevelled edge"),
+                };
+                let at = placed(add(p(v), offset));
+                let id = self.fresh_id();
+                self.vertices.push(CageVertex { id, at });
+                for &i in run {
+                    sector_of.insert(fan[i], id);
+                }
+                ids.push(id);
+            }
+            sectors.insert(v, (ids, *closed));
+        }
+        // A width a face is too small for folds it at a sector vertex.
+        let corners: HashMap<(u32, usize), u32> = (sector_of.iter())
+            .map(|(&(f, k), &id)| ((face_ids[f], k), id))
+            .collect();
+        let touched = (self.faces.iter())
+            .filter(|face| (0..face.vertices.len()).any(|k| corners.contains_key(&(face.id, k))));
+        self.check_faces_keep_shape("bevel", width, mirror, touched, |face, k| {
+            (corners.get(&(face.id, k)))
+                .map(|&id| Ok(self.vertex(id)?.at))
+                .transpose()
+        })?;
+        // The faces shrink to their sector vertices; a capped corner gives
+        // way to its cap, which every face along the split edge takes in.
+        for (f, face) in self.faces.iter_mut().enumerate() {
+            let n = face.vertices.len();
+            let mut vertices = Vec::with_capacity(n + 2);
+            for (k, &v) in face.vertices.iter().enumerate() {
+                match sector_of.get(&(f, k)) {
+                    Some(&id) => vertices.push(id),
+                    None if caps.contains_key(&(f, k)) => {}
+                    None => vertices.push(v),
+                }
+                let w = face.vertices[(k + 1) % n];
+                if let Some(&cap) = splits.get(&undirected(index_of[&v], index_of[&w])) {
+                    vertices.push(cap);
+                }
+            }
+            face.vertices = vertices;
+        }
+        // A strip per bevelled edge, a face per vertex of three sectors or
+        // more, and the caps.
+        let new_corner = |f: usize, k: usize| -> u32 {
+            (sector_of.get(&(f, k)).or_else(|| caps.get(&(f, k))))
+                .copied()
+                .unwrap_or_else(|| id_of(faces[f][k]))
+        };
+        let corner = |x: usize, y: usize| -> u32 {
+            let &(f, k) = &topology.directed[&(x, y)];
+            new_corner(f, k)
+        };
+        let corner_after = |x: usize, y: usize| -> u32 {
+            // The corner of `y` in the face running `x -> y`.
+            let &(f, k) = &topology.directed[&(x, y)];
+            new_corner(f, (k + 1) % faces[f].len())
+        };
+        for &[a, b] in &bevelled {
+            let strip = deduplicated(&[
+                corner_after(a, b),
+                corner(a, b),
+                corner_after(b, a),
+                corner(b, a),
+            ]);
+            if strip.len() >= 3 {
+                let id = self.fresh_id();
+                self.faces.push(CageFace {
+                    id,
+                    vertices: strip,
+                });
+            }
+        }
+        for (ids, closed) in sectors.values() {
+            if *closed && ids.len() >= 3 {
+                let id = self.fresh_id();
+                self.faces.push(CageFace {
+                    id,
+                    vertices: ids.clone(),
+                });
+            }
+        }
+        for cap in cap_faces {
+            let id = self.fresh_id();
+            self.faces.push(CageFace {
+                id,
+                vertices: cap.to_vec(),
+            });
+        }
+        // A crease of an edge not bevelled follows its corners; one of a
+        // bevelled edge is gone with it.
+        let creases = std::mem::take(&mut self.creases);
+        for c in creases {
+            let [a, b] = c.edge;
+            let (i, j) = (index_of[&a], index_of[&b]);
+            if bevelled.contains(&undirected(i, j)) {
+                continue;
+            }
+            let &(f, k) = topology
+                .directed
+                .get(&(i, j))
+                .or_else(|| topology.directed.get(&(j, i)))
+                .expect("a crease is on an edge");
+            let n = faces[f].len();
+            let x = sector_of
+                .get(&(f, k))
+                .copied()
+                .unwrap_or(id_of(faces[f][k]));
+            let y = sector_of
+                .get(&(f, (k + 1) % n))
+                .copied()
+                .unwrap_or(id_of(faces[f][(k + 1) % n]));
+            match splits.get(&undirected(i, j)) {
+                Some(&cap) => self.set_sharpness(&[[x, cap], [cap, y]], c.sharpness),
+                None => self.set_sharpness(&[[x, y]], c.sharpness),
+            }
+        }
+        self.tidy();
+        // A capped vertex of three edges is left between the cap and one
+        // face: it goes, and the cap with it.
+        self.drop_two_edged(&capped, mirror)
+    }
+
+    /// Merges the vertices `vertices` into one at their centre — on the
+    /// mirror plane if any of them was — keeping the lowest id. A face left
+    /// with fewer than three corners goes; one that would run through the
+    /// merged vertex twice is refused by name.
+    pub fn merge_vertices(&mut self, vertices: &BTreeSet<u32>, mirror: Mirror) -> GeopResult<()> {
+        self.transaction(|cage| cage.merge_vertices_in_place(vertices, mirror))
+    }
+
+    /// [`Cage::merge_vertices`], in place.
+    fn merge_vertices_in_place(
+        &mut self,
+        vertices: &BTreeSet<u32>,
+        mirror: Mirror,
+    ) -> GeopResult<()> {
+        if vertices.len() < 2 {
+            return Err(GeopError::new("merge: select at least two vertices"));
+        }
+        let kept = *vertices.first().expect("two at least");
+        let mut centre = self.centre(vertices).ok_or_else(|| {
+            GeopError::new(format!(
+                "merge: the cage has no vertex {}",
+                vertex_key(
+                    *vertices
+                        .iter()
+                        .find(|&&v| self.vertex(v).is_err())
+                        .expect("one is missing")
+                )
+            ))
+        })?;
+        if let Some(axis) = mirror.axis()
+            && vertices
+                .iter()
+                .any(|&v| self.vertex(v).is_ok_and(|x| x.at[axis] == 0.0))
+        {
+            centre[axis] = 0.0;
+        }
+        self.vertex_mut(kept)?.at = centre;
+        let to = |v: u32| if vertices.contains(&v) { kept } else { v };
+        let mut faces = Vec::with_capacity(self.faces.len());
+        for face in &self.faces {
+            let cycle: Vec<u32> = face.vertices.iter().map(|&v| to(v)).collect();
+            let cycle = deduplicated(&cycle);
+            if cycle.len() < 3 {
+                continue;
+            }
+            if let Some(v) = repeated(&cycle) {
+                return Err(GeopError::new(format!(
+                    "merge: face {} would run through vertex {} twice",
+                    face_key(face.id),
+                    vertex_key(v)
+                )));
+            }
+            faces.push(CageFace {
+                id: face.id,
+                vertices: cycle,
+            });
+        }
+        self.faces = faces;
+        self.rename_creases(|[a, b]| [to(a), to(b)]);
+        self.tidy();
+        // A corner the merge left between two faces alone goes.
+        let around: Vec<u32> = (self.faces.iter())
+            .filter(|f| f.vertices.contains(&kept))
+            .flat_map(|f| f.vertices.iter().copied())
+            .collect();
+        self.drop_two_edged(&around, mirror)
+    }
+
+    /// Takes the vertices among `candidates` that are left between two
+    /// faces only, with two edges, out of those faces: no corner any more,
+    /// such a vertex lies along an edge, where the limit surface has no
+    /// use for it. On the plane of `mirror`, a vertex of one face whose two
+    /// edges both run along the plane is that: the face and its image are
+    /// its two faces.
+    fn drop_two_edged(&mut self, candidates: &[u32], mirror: Mirror) -> GeopResult<()> {
+        let directed = self.directed_edges();
+        let mut drop: BTreeSet<u32> = BTreeSet::new();
+        for &v in candidates {
+            // Its neighbours, whichever way the faces run the edges.
+            let around: BTreeSet<u32> = (directed.keys())
+                .filter_map(|&(x, y)| (x == v).then_some(y).or((y == v).then_some(x)))
+                .collect();
+            let around: Vec<u32> = around.into_iter().collect();
+            let [y, z] = around[..] else { continue };
+            let two_faced = if self.on_plane(v, mirror)? {
+                self.on_plane(y, mirror)? && self.on_plane(z, mirror)?
+            } else {
+                directed.contains_key(&(y, v)) && directed.contains_key(&(z, v))
+            };
+            if two_faced {
+                drop.insert(v);
+            }
+        }
+        if !drop.is_empty() {
+            for face in &mut self.faces {
+                face.vertices.retain(|v| !drop.contains(v));
+            }
+            self.faces.retain(|f| f.vertices.len() >= 3);
+            self.tidy();
+        }
+        Ok(())
+    }
+
+    /// Dissolves the edges `edges`: the two faces along each become one,
+    /// keeping the lower id, and an end left between those two faces alone
+    /// goes with it. An edge with one face, or two faces that meet along
+    /// more than that edge, is refused by name.
+    pub fn dissolve_edges(&mut self, edges: &[[u32; 2]], mirror: Mirror) -> GeopResult<()> {
+        self.transaction(|cage| cage.dissolve_edges_in_place(edges, mirror))
+    }
+
+    /// [`Cage::dissolve_edges`], in place.
+    fn dissolve_edges_in_place(&mut self, edges: &[[u32; 2]], mirror: Mirror) -> GeopResult<()> {
+        if edges.is_empty() {
+            return Err(GeopError::new("dissolve: no edge selected"));
+        }
+        let mut edges: Vec<[u32; 2]> = edges.iter().map(|&[a, b]| undirected(a, b)).collect();
+        edges.sort();
+        edges.dedup();
+        for [a, b] in edges {
+            let directed = self.directed_edges();
+            let (Some(&(f, _)), Some(&(g, _))) = (directed.get(&(a, b)), directed.get(&(b, a)))
+            else {
+                return Err(GeopError::new(format!(
+                    "dissolve: edge {} has one face only: delete the face instead",
+                    edge_key(a, b)
+                )));
+            };
+            let first = rotated(&self.faces[f].vertices, b);
+            let second = rotated(&self.faces[g].vertices, a);
+            let mut merged = first;
+            merged.extend(&second[1..second.len() - 1]);
+            if let Some(v) = repeated(&merged) {
+                return Err(GeopError::new(format!(
+                    "dissolve: faces {} and {} meet at vertex {} as well as along edge {}",
+                    face_key(self.faces[f].id),
+                    face_key(self.faces[g].id),
+                    vertex_key(v),
+                    edge_key(a, b)
+                )));
+            }
+            let (keep, drop) = if self.faces[f].id < self.faces[g].id {
+                (f, g)
+            } else {
+                (g, f)
+            };
+            self.faces[keep].vertices = merged;
+            self.faces.remove(drop);
+            self.drop_two_edged(&[a, b], mirror)?;
+        }
+        self.tidy();
+        Ok(())
+    }
+
+    /// Dissolves the vertices `vertices`: the faces around each become one
+    /// face, keeping the lowest id, and the vertex goes — as does any
+    /// neighbour of it left between two faces alone. Faces around it that
+    /// meet elsewhere than at it are refused by name.
+    pub fn dissolve_vertices(
+        &mut self,
+        vertices: &BTreeSet<u32>,
+        mirror: Mirror,
+    ) -> GeopResult<()> {
+        self.transaction(|cage| cage.dissolve_vertices_in_place(vertices, mirror))
+    }
+
+    /// [`Cage::dissolve_vertices`], in place.
+    fn dissolve_vertices_in_place(
+        &mut self,
+        vertices: &BTreeSet<u32>,
+        mirror: Mirror,
+    ) -> GeopResult<()> {
+        if vertices.is_empty() {
+            return Err(GeopError::new("dissolve: no vertex selected"));
+        }
+        for &v in vertices {
+            let (mesh, topology) = self.indexed()?;
+            let Some(i) = self.vertices.iter().position(|x| x.id == v) else {
+                // Dissolving a neighbour took it with it.
+                continue;
+            };
+            let (fan, _) = &topology.fans[i];
+            let mut merged: Vec<u32> = Vec::new();
+            for &(f, k) in fan {
+                let face = &mesh.faces[f];
+                let n = face.len();
+                // From the corner after `v` up to the one before it, that
+                // one left to the next face of the fan.
+                for j in 1..n - 1 {
+                    merged.push(self.vertices[face[(k + j) % n]].id);
+                }
+            }
+            // An open fan ends at the boundary: its last face's last
+            // corner closes the run.
+            if !topology.fans[i].1 {
+                let (f, k) = fan[fan.len() - 1];
+                let n = mesh.faces[f].len();
+                merged.push(self.vertices[mesh.faces[f][(k + n - 1) % n]].id);
+            }
+            let merged = deduplicated(&merged);
+            if merged.len() < 3 {
+                return Err(GeopError::new(format!(
+                    "dissolve: the faces around vertex {} leave no face",
+                    vertex_key(v)
+                )));
+            }
+            if let Some(w) = repeated(&merged) {
+                return Err(GeopError::new(format!(
+                    "dissolve: the faces around vertex {} meet at vertex {} too",
+                    vertex_key(v),
+                    vertex_key(w)
+                )));
+            }
+            let around: BTreeSet<u32> = fan.iter().map(|&(f, _)| self.faces[f].id).collect();
+            let keep = *around.first().expect("a vertex has a face");
+            self.faces
+                .retain(|face| face.id == keep || !around.contains(&face.id));
+            self.face_mut(keep)?.vertices = merged.clone();
+            self.drop_two_edged(&merged, mirror)?;
+        }
+        self.tidy();
+        Ok(())
+    }
+
+    fn face_mut(&mut self, id: u32) -> GeopResult<&mut CageFace> {
+        self.faces
+            .iter_mut()
+            .find(|f| f.id == id)
+            .ok_or_else(|| GeopError::new(format!("the cage has no face {}", face_key(id))))
+    }
+
+    /// Bridges the faces `a` and `b`: both go, and a ring of quads joins
+    /// their rims, each corner of `a` to the nearest corner of `b` going
+    /// the other way round — a tunnel through the body, or a handle between
+    /// two of its faces. The faces need the same number of corners. With a
+    /// `mirror`, a quad that would lie in its plane is the seam to the
+    /// mirror image, and is left out.
+    pub fn bridge(&mut self, a: u32, b: u32, mirror: Mirror) -> GeopResult<()> {
+        let first = self.face(a)?.vertices.clone();
+        let second = self.face(b)?.vertices.clone();
+        let n = first.len();
+        if n != second.len() {
+            return Err(GeopError::new(format!(
+                "bridge: face {} has {n} corners and face {} has {}: they need the same number",
+                face_key(a),
+                face_key(b),
+                second.len()
+            )));
+        }
+        if first.iter().any(|v| second.contains(v)) {
+            return Err(GeopError::new(format!(
+                "bridge: faces {} and {} share a vertex",
+                face_key(a),
+                face_key(b)
+            )));
+        }
+        // `b` seen from `a`'s side runs the other way round; of its
+        // rotations, the one whose corners lie nearest `a`'s.
+        let reversed: Vec<u32> = second.iter().rev().copied().collect();
+        let at = |v: u32| self.vertex(v).map(|x| x.at);
+        let mut best: Option<(f64, usize)> = None;
+        for r in 0..n {
+            let mut total = 0.0;
+            for i in 0..n {
+                total += norm(sub(at(first[i])?, at(reversed[(i + r) % n])?));
+            }
+            if best.is_none_or(|(d, _)| total < d) {
+                best = Some((total, r));
+            }
+        }
+        let (_, r) = best.expect("a face has corners");
+        self.faces.retain(|f| f.id != a && f.id != b);
+        for i in 0..n {
+            let vertices = vec![
+                first[i],
+                first[(i + 1) % n],
+                reversed[(i + 1 + r) % n],
+                reversed[(i + r) % n],
+            ];
+            let in_plane = mirror.axis().is_some()
+                && (vertices.iter()).all(|&v| self.on_plane(v, mirror).unwrap_or(false));
+            if in_plane {
+                continue;
+            }
+            let id = self.fresh_id();
+            self.faces.push(CageFace { id, vertices });
+        }
+        self.tidy();
+        Ok(())
+    }
+
+    /// Fills the hole the open edge between `a` and `b` is on with one face
+    /// through all the vertices around it (see [`Cage::boundary_run`]).
+    /// With a `mirror`, a hole whose rim lies in the plane is the seam to
+    /// the mirror image, and is refused.
+    pub fn fill_hole(&mut self, a: u32, b: u32, mirror: Mirror) -> GeopResult<()> {
+        let run = self.boundary_run(a, b)?;
+        if mirror.axis().is_some()
+            && run
+                .iter()
+                .all(|&v| self.on_plane(v, mirror).unwrap_or(false))
+        {
+            return Err(GeopError::new(format!(
+                "fill: the hole through edge {} lies in the mirror plane, where the mirror image closes it",
+                edge_key(a, b)
+            )));
+        }
+        let id = self.fresh_id();
+        self.faces.push(CageFace {
+            id,
+            vertices: run.into_iter().rev().collect(),
+        });
+        Ok(())
+    }
+
     /// Cuts the cage at the plane where coordinate `axis` is zero and keeps
     /// the half where it is positive, as a mirrored cage holds it. Every
     /// edge reaching across the plane is split where it crosses, the new
@@ -551,8 +1505,9 @@ impl Cage {
                 let id = self.fresh_id();
                 self.vertices.push(CageVertex { id, at });
                 crossing.insert([a, b], id);
-                if self.is_crease(a, b) {
-                    self.set_crease(&[[a, id], [id, b]], true);
+                let sharpness = self.sharpness(a, b);
+                if sharpness > 0.0 {
+                    self.set_sharpness(&[[a, id], [id, b]], sharpness);
                 }
             }
         }
@@ -639,8 +1594,12 @@ impl Cage {
                 });
             }
         }
-        let creases: Vec<[u32; 2]> = mesh.sharp.iter().map(|&[a, b]| [ids[a], ids[b]]).collect();
-        cage.set_crease(&creases, true);
+        for &[a, b] in &mesh.sharp {
+            cage.set_sharpness(&[[ids[a], ids[b]]], 1.0);
+        }
+        for (&[a, b], &s) in &mesh.soft {
+            cage.set_sharpness(&[[ids[a], ids[b]]], s);
+        }
         Ok(cage)
     }
 }

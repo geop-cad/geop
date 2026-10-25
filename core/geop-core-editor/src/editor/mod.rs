@@ -312,7 +312,15 @@ impl Editor {
         }
         let step = self.step_state();
         let steps = self.shown_steps(step.as_ref());
-        let hidden = self.hidden(step.as_ref().map(|s| &s.presentation.pickable[..]), steps);
+        let mut hidden = self.hidden(step.as_ref().map(|s| &s.presentation.pickable[..]), steps);
+        // What the step being edited asks to hide of what it builds.
+        if let Some(step) = &step {
+            for name in &step.presentation.hidden {
+                if !hidden.contains(name) {
+                    hidden.push(name.clone());
+                }
+            }
+        }
         let shown = Shown {
             run: self.run,
             steps,

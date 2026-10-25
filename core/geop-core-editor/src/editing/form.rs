@@ -81,6 +81,10 @@ pub struct Form {
     /// A gizmo to move, turn or scale something by: its drags are sent as
     /// [`CanvasEvent::Gizmo`].
     pub gizmo: Option<Gizmo>,
+    /// Solids and faces of the part, by name, not to draw while the step
+    /// is edited: what the step builds, when its visuals show it better —
+    /// a control cage shown alone.
+    pub hidden: Vec<String>,
 }
 
 impl Default for Form {
@@ -96,6 +100,7 @@ impl Default for Form {
             pulls: Vec::new(),
             prompt: None,
             gizmo: None,
+            hidden: Vec::new(),
         }
     }
 }

@@ -292,3 +292,255 @@ fn subd_faces_are_moved_turned_and_scaled_by_the_gizmo() {
         );
     }
 }
+
+/// A click at `pointer`, double or not, shift held or not.
+fn click(pointer: geop_core_editor::editing::Pointer, double: bool, shift: bool) -> StepEditEvent {
+    StepEditEvent::Click {
+        pointer,
+        button: Button::Primary,
+        double,
+        shift,
+    }
+}
+
+/// The arguments of the step `editor` edits, as its edits left them.
+fn editing_args(editor: &Editor) -> crate::SubdArgs {
+    let step = editor.editing().expect("a step is edited");
+    serde_json::from_value(step.args.clone()).expect("subd arguments")
+}
+
+/// The keys of the visuals `step` shows selected, sorted.
+fn selection(step: &geop_core_editor::editor::StepState) -> Vec<String> {
+    let mut keys: Vec<String> = (step.presentation.visuals.iter())
+        .filter(|v| v.style == Style::Selected)
+        .map(|v| v.key.clone())
+        .collect();
+    keys.sort();
+    keys
+}
+
+/// Edges are selected by their loops and rings: a double click on the box's
+/// vertical edge `e0-4` with shift held selects its ring — all four vertical
+/// edges — and a loop cut across them, pressed once, cuts the ring once:
+/// four new vertices at `z = 0`, ten faces. A double click on one of the
+/// cut's edges selects the whole loop of four. The cut built is a valid
+/// solid.
+#[test]
+fn subd_loops_and_rings_are_selected_by_double_click() {
+    let mut editor = Editor::new(registry(), BTreeMap::new());
+    editor.handle(Command::New {
+        kind: "subd".into(),
+    });
+    // From the front, at the box's left front vertical edge.
+    let side = pointer([-1.0, -10.0, 0.0], [0.0, 1.0, 0.0]);
+    let step = event(&mut editor, click(side, false, false));
+    assert_eq!(selection(&step), ["e0-4"]);
+    let step = event(&mut editor, click(side, true, true));
+    assert_eq!(selection(&step), ["e0-4", "e1-5", "e2-6", "e3-7"]);
+
+    let step = event(
+        &mut editor,
+        StepEditEvent::Dialog {
+            key: "edit".into(),
+            value: Value::Choice("loop_cut".into()),
+        },
+    );
+    assert_eq!(step.error, None);
+    let args = editing_args(&editor);
+    assert_eq!(args.cage.faces.len(), 10);
+    let cut: Vec<[u32; 2]> = (args.cage.edges().into_iter())
+        .filter(|&[a, b]| a >= 14 && b >= 14)
+        .collect();
+    assert_eq!(cut.len(), 4);
+    // The edge's middle is on a side of the box, one unit out: look at it
+    // from ten units further out.
+    let [a, b] = cut[0];
+    let (p, q) = (
+        args.cage.vertex(a).unwrap().at,
+        args.cage.vertex(b).unwrap().at,
+    );
+    let mid = [0, 1, 2].map(|c| (p[c] + q[c]) / 2.0);
+    let at = pointer(mid.map(|c| 10.0 * c), mid.map(|c| -c));
+    event(
+        &mut editor,
+        StepEditEvent::Key {
+            key: "Escape".into(),
+        },
+    );
+    event(&mut editor, click(at, false, false));
+    let step = event(&mut editor, click(at, true, false));
+    assert_eq!(selection(&step).len(), 4, "{:?}", selection(&step));
+    assert!(selection(&step).iter().all(|k| k.starts_with("e1")));
+
+    let update = editor.handle(Command::Commit);
+    assert!(update.error.is_none(), "{:?}", update.error);
+    let part = geop_core_editor::testing::built(&editor).unwrap();
+    geop_ops_model::testing::assert_valid(&geop_ops_model::read_model(&part.current()).unwrap());
+}
+
+/// Box select: `b` arms it — a press anywhere grabs — and a drag from above
+/// draws its window while it goes and, released, selects what lies within:
+/// the front of the box, with `y <= 0`, is its four front vertices, its
+/// four front edges and its front face. Shift adds the back face's window
+/// to it.
+#[test]
+fn subd_box_select_takes_what_is_within_the_window() {
+    let mut editor = Editor::new(registry(), BTreeMap::new());
+    editor.handle(Command::New {
+        kind: "subd".into(),
+    });
+    let step = event(&mut editor, StepEditEvent::Key { key: "b".into() });
+    assert!(step.presentation.grab, "box select grabs anywhere");
+    let step = event(
+        &mut editor,
+        StepEditEvent::Drag {
+            from: from_above(-1.5, -1.5),
+            to: from_above(1.5, 0.0),
+            done: false,
+            shift: false,
+        },
+    );
+    assert!(
+        (step.presentation.visuals.iter()).any(|v| v.key == "window"),
+        "the window is drawn while dragged"
+    );
+    let step = event(
+        &mut editor,
+        StepEditEvent::Drag {
+            from: from_above(-1.5, -1.5),
+            to: from_above(1.5, 0.0),
+            done: true,
+            shift: false,
+        },
+    );
+    assert_eq!(
+        selection(&step),
+        [
+            "e0-1", "e0-4", "e1-5", "e4-5", "f10", "v0", "v1", "v4", "v5"
+        ]
+    );
+    assert!(
+        !step.presentation.grab,
+        "box select is put down after one window"
+    );
+
+    event(&mut editor, StepEditEvent::Key { key: "b".into() });
+    let step = event(
+        &mut editor,
+        StepEditEvent::Drag {
+            from: from_above(-1.5, 0.5),
+            to: from_above(1.5, 1.5),
+            done: true,
+            shift: true,
+        },
+    );
+    assert_eq!(selection(&step).len(), 18);
+}
+
+/// The edits from the dialog, with their amounts typed: the top face inset
+/// by 0.3 and pulled up by `e`; the top's rim creased soft at a half, then
+/// one rim edge bevelled 0.2 wide; the whole committed as one valid solid
+/// whose crease is saved with its sharpness. The dialog names what cannot
+/// be done: bridging one face.
+#[test]
+fn subd_edits_are_made_from_the_dialog_with_typed_amounts() {
+    let mut editor = Editor::new(registry(), BTreeMap::new());
+    editor.handle(Command::New {
+        kind: "subd".into(),
+    });
+    let step = event(&mut editor, click(from_above(0.3, 0.2), false, false));
+    assert_eq!(selection(&step), ["f9"]);
+    let step = event(
+        &mut editor,
+        StepEditEvent::Dialog {
+            key: "edit".into(),
+            value: Value::Choice("bridge".into()),
+        },
+    );
+    match step.presentation.dialog.get("problem") {
+        Some(Control::Text { text, .. }) => assert!(text.contains("two faces"), "{text}"),
+        other => panic!("{other:?}"),
+    }
+    editor.handle(dialog("thickness", Value::Number(0.3)));
+    editor.handle(dialog("edit", Value::Choice("inset".into())));
+    editor.handle(dialog("distance", Value::Number(0.4)));
+    let step = event(&mut editor, StepEditEvent::Key { key: "e".into() });
+    assert_eq!(step.error, None);
+    let args = editing_args(&editor);
+    assert_eq!(args.cage.faces.len(), 14);
+    let top = args.cage.face(9).unwrap();
+    for &v in &top.vertices {
+        let at = args.cage.vertex(v).unwrap().at;
+        assert!(
+            (at[0].abs() - 0.7).abs() < 1e-9 && (at[2] - 1.4).abs() < 1e-9,
+            "{at:?}"
+        );
+    }
+
+    // The top's rim: the four edges at `z = 1` on the box's outline, seen
+    // from the front near a corner, clear of the inset edge behind.
+    event(
+        &mut editor,
+        StepEditEvent::Key {
+            key: "Escape".into(),
+        },
+    );
+    let rim = pointer([0.9, -10.0, 1.0], [0.0, 1.0, 0.0]);
+    let step = event(&mut editor, click(rim, false, false));
+    assert_eq!(selection(&step), ["e4-5"]);
+    let step = event(&mut editor, click(rim, true, false));
+    assert_eq!(selection(&step).len(), 4);
+    editor.handle(dialog("sharpness", Value::Number(0.5)));
+    let args = editing_args(&editor);
+    assert_eq!(args.cage.creases.len(), 4);
+    assert_eq!(args.cage.sharpness(4, 5), 0.5);
+
+    event(
+        &mut editor,
+        StepEditEvent::Key {
+            key: "Escape".into(),
+        },
+    );
+    event(&mut editor, click(rim, false, false));
+    editor.handle(dialog("width", Value::Number(0.2)));
+    let step = event(
+        &mut editor,
+        StepEditEvent::Dialog {
+            key: "edit".into(),
+            value: Value::Choice("bevel".into()),
+        },
+    );
+    assert_eq!(step.presentation.dialog.get("problem"), None);
+    let args = editing_args(&editor);
+    assert_eq!(args.cage.faces.len(), 14 + 3);
+    assert_eq!(args.cage.creases.len(), 3, "{:?}", args.cage.creases);
+
+    let update = editor.handle(Command::Commit);
+    assert!(update.error.is_none(), "{:?}", update.error);
+    let part = geop_core_editor::testing::built(&editor).unwrap();
+    let model = geop_ops_model::read_model(&part.current()).unwrap();
+    geop_ops_model::testing::assert_valid(&model);
+    assert_eq!(model.solid_names().len(), 1);
+}
+
+/// "Cage only" hides the limit surface: the scene's hidden names take in
+/// the step's solid, and the cage stays drawn; off again, it is shown.
+#[test]
+fn subd_cage_only_hides_the_limit_surface() {
+    let mut editor = Editor::new(registry(), BTreeMap::new());
+    let update = editor.handle(Command::New {
+        kind: "subd".into(),
+    });
+    let id = editor.editing().expect("a step is edited").id.clone();
+    let solid = format!("subd({id})");
+    let scene = update.scene.expect("the new step is drawn");
+    assert!(!scene.hidden.contains(&solid));
+    let update = editor.handle(dialog("cage_only", Value::Bool(true)));
+    let scene = update.scene.expect("what is hidden changed");
+    assert!(scene.hidden.contains(&solid), "{:?}", scene.hidden);
+    let step = update.step.expect("the subd is edited");
+    assert!((step.presentation.visuals.iter()).any(|v| v.key == "f9"));
+    let update = editor.handle(dialog("cage_only", Value::Bool(false)));
+    let scene = update.scene.expect("what is hidden changed");
+    assert!(!scene.hidden.contains(&solid));
+}

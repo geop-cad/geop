@@ -572,6 +572,8 @@ export interface Presentation {
   prompt: Prompt | null;
   /** A gizmo to move, turn or scale by. */
   gizmo: GizmoView | null;
+  /** Solids and faces of the part, by name, the step asks not to draw while it is edited: the scene's `hidden` has them. */
+  hidden: string[];
 }
 
 /** A value asked for in place in the viewport — see `geop_ops::ui::Prompt`. */

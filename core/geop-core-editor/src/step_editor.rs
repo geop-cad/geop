@@ -334,9 +334,18 @@ impl StepEditor {
             return self.dialog(e, &form, key, value.clone());
         }
         // A click on the gizmo is no click on what is under it — unless a
-        // field waits for a pick, which a click is for, as for a handle.
-        if let (StepEditEvent::Click { pointer, .. }, Some(gizmo), None) =
-            (event, self.gizmo(&form), &self.armed)
+        // field waits for a pick, which a click is for, as for a handle. A
+        // double click is the operation's: the gizmo stands at the centre
+        // of what the first click selected, right where the second lands.
+        if let (
+            StepEditEvent::Click {
+                pointer,
+                double: false,
+                ..
+            },
+            Some(gizmo),
+            None,
+        ) = (event, self.gizmo(&form), &self.armed)
             && gizmo.hit(pointer).is_some()
         {
             self.pointer = Some(*pointer);
@@ -791,6 +800,7 @@ impl StepEditor {
                 || (tool == InHand::Strokes && !waiting),
             prompt: form.prompt,
             gizmo,
+            hidden: form.hidden,
         })
     }
 }

@@ -30,6 +30,19 @@ pub struct CageFace {
     pub vertices: Vec<u32>,
 }
 
+/// An edge creased: kept sharp through the limit surface at a `sharpness`
+/// of one, bent a little less than smooth below it.
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+pub struct Crease {
+    /// Its two vertices, the smaller id first.
+    pub edge: [u32; 2],
+    /// In `(0, 1]`: one is sharp — a corner in the limit surface — and
+    /// below it the crease is *soft*: the cage is pulled to the edge by
+    /// that fraction in the first subdivision step and smooth after, so
+    /// the surface rounds off tighter there without a corner.
+    pub sharpness: f64,
+}
+
 /// A control cage: a mesh of faces of any number of sides — quads mostly,
 /// triangles and n-gons allowed — with the edges named in `creases` kept
 /// sharp. Ids are unique across vertices and faces, and `next_id` is the
@@ -38,9 +51,9 @@ pub struct CageFace {
 pub struct Cage {
     pub vertices: Vec<CageVertex>,
     pub faces: Vec<CageFace>,
-    /// Edges kept sharp, each by its two vertices, the smaller id first.
+    /// The edges creased, in order of their vertices.
     #[serde(default)]
-    pub creases: Vec<[u32; 2]>,
+    pub creases: Vec<Crease>,
     pub next_id: u32,
 }
 
@@ -147,8 +160,47 @@ impl Cage {
             .collect()
     }
 
+    /// How sharp the edge between `a` and `b` is creased: zero for a smooth
+    /// edge, one for a sharp one (see [`Crease`]).
+    pub fn sharpness(&self, a: u32, b: u32) -> f64 {
+        let edge = undirected(a, b);
+        (self.creases.iter())
+            .find(|c| c.edge == edge)
+            .map_or(0.0, |c| c.sharpness)
+    }
+
+    /// Whether the edge between `a` and `b` is creased at all.
     pub fn is_crease(&self, a: u32, b: u32) -> bool {
-        self.creases.contains(&undirected(a, b))
+        self.sharpness(a, b) > 0.0
+    }
+
+    /// The face that runs along each directed edge `(a, b)`, by its index
+    /// and the corner of it at `a`. Two faces running the same way along
+    /// an edge are turned against each other: the later one is kept, and
+    /// [`Topology::new`] refuses the cage by name.
+    pub fn directed_edges(&self) -> HashMap<(u32, u32), (usize, usize)> {
+        let mut directed = HashMap::new();
+        for (f, face) in self.faces.iter().enumerate() {
+            let n = face.vertices.len();
+            for k in 0..n {
+                directed.insert((face.vertices[k], face.vertices[(k + 1) % n]), (f, k));
+            }
+        }
+        directed
+    }
+
+    /// The cage indexed and its topology checked, for an edit that walks
+    /// around vertices: vertex `i` of the mesh is `self.vertices[i]`, face
+    /// `f` is `self.faces[f]`.
+    pub fn indexed(&self) -> GeopResult<(Mesh, Topology)> {
+        let mesh = Mesh::new(self, Mirror::None)?;
+        let topology = Topology::new(
+            mesh.positions.len(),
+            &mesh.faces,
+            &mesh.vertex_names,
+            &mesh.face_names,
+        )?;
+        Ok((mesh, topology))
     }
 }
 
@@ -165,6 +217,9 @@ pub struct Mesh {
     pub faces: Vec<Vec<usize>>,
     /// The edges kept sharp, the smaller index first.
     pub sharp: BTreeSet<[usize; 2]>,
+    /// The edges creased soft, by their sharpness in `(0, 1)` (see
+    /// [`Crease`]).
+    pub soft: BTreeMap<[usize; 2], f64>,
 }
 
 impl Mesh {
@@ -181,6 +236,7 @@ impl Mesh {
             face_names: Vec::new(),
             faces: Vec::new(),
             sharp: BTreeSet::new(),
+            soft: BTreeMap::new(),
         };
         for v in &cage.vertices {
             if !v.at.iter().all(|c| c.is_finite()) {
@@ -223,10 +279,21 @@ impl Mesh {
             mesh.face_names.push(face_key(f.id));
             mesh.faces.push(vertices);
         }
-        for &[a, b] in &cage.creases {
+        for crease in &cage.creases {
+            let [a, b] = crease.edge;
+            if !(crease.sharpness > 0.0 && crease.sharpness <= 1.0) {
+                return Err(GeopError::new(format!(
+                    "crease {} has a sharpness of {}: it must be above zero and at most one",
+                    edge_key(a, b),
+                    crease.sharpness
+                )));
+            }
             match (index.get(&a), index.get(&b)) {
-                (Some(&i), Some(&j)) => {
+                (Some(&i), Some(&j)) if crease.sharpness == 1.0 => {
                     mesh.sharp.insert(undirected(i, j));
+                }
+                (Some(&i), Some(&j)) => {
+                    mesh.soft.insert(undirected(i, j), crease.sharpness);
                 }
                 _ => {
                     return Err(GeopError::new(format!(
@@ -281,6 +348,11 @@ impl Mesh {
         for [a, b] in sharp {
             let (i, j) = (image[a], image[b]);
             self.sharp.insert(undirected(i, j));
+        }
+        let soft: Vec<([usize; 2], f64)> = self.soft.iter().map(|(e, s)| (*e, *s)).collect();
+        for ([a, b], s) in soft {
+            let (i, j) = (image[a], image[b]);
+            self.soft.insert(undirected(i, j), s);
         }
         Ok(())
     }
@@ -442,7 +514,7 @@ impl Mesh {
                 self.vertex_names[apart], self.vertex_names[0]
             )));
         }
-        for &[a, b] in &self.sharp {
+        for &[a, b] in self.sharp.iter().chain(self.soft.keys()) {
             if !topology.directed.contains_key(&(a, b)) && !topology.directed.contains_key(&(b, a))
             {
                 return Err(GeopError::new(format!(
