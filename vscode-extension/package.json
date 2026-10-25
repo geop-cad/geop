@@ -2,7 +2,7 @@
   "name": "geop",
   "displayName": "Geop CAD",
   "description": "Open and edit .geop CAD programs in VS Code, on the native geop kernel.",
-  "version": "0.1.0",
+  "version": "0.10.0",
   "publisher": "geop-cad",
   "license": "MIT OR Apache-2.0",
   "private": true,
