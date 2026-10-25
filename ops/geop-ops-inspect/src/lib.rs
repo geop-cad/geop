@@ -119,6 +119,8 @@ impl Inspector for Interference {
 mod editor_tests;
 mod icons;
 #[cfg(test)]
+mod regression_tests;
+#[cfg(test)]
 mod tests;
 
 use geop_core_editor::registry::Registry;

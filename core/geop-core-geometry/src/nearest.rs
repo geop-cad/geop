@@ -417,7 +417,8 @@ impl Piece for SurfacePatch {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use geop_core_math::scalars::Scalar;
+    use crate::nurb_curve::NurbCurve;
+    use geop_core_math::{scalars::Scalar, vector::Vector4};
 
     /// A piece of the segment `[lo, hi]` of the `x` axis.
     #[derive(Clone)]
@@ -446,6 +447,86 @@ mod tests {
             let mid = self.0.add(self.1).div(Scalar::TWO)?.sharpen();
             Ok(Some(vec![Segment(self.0, mid), Segment(mid, self.1)]))
         }
+    }
+
+    /// A span of the rim of a hole drilled by a boolean, traced and fitted:
+    /// its control points are as wide as the trace, `2e-6` in `y`,
+    /// `2e-12` in `z`, beside a sharp edge of the same top, measured to two
+    /// points of the bottom, one below. The sharp edge attains the distance
+    /// one sharply; the rim's lower bound is one less its width in `z`, so
+    /// the pair is neither beyond the best nor converged. Its box can never
+    /// shrink below its points' widths, so cutting it never brought its
+    /// size under the handoff, and the search cut it until its domain was
+    /// two ULPs wide and could not be split. The distance is one, enclosed
+    /// as wide as the data is.
+    #[test]
+    fn traced_span_beside_a_sharp_edge_above_two_points() {
+        let cp = |x: [f64; 2], y: [f64; 2], z: [f64; 2], w: [f64; 2]| {
+            Vector4::from_array([
+                Scalar::new(x[0], x[1]),
+                Scalar::new(y[0], y[1]),
+                Scalar::new(z[0], z[1]),
+                Scalar::new(w[0], w[1]),
+            ])
+        };
+        let span = NurbCurve::try_new(
+            3,
+            vec![
+                cp(
+                    [1.0502014289205366, 1.0502015605016914],
+                    [1.3968357901928796, 1.3968380515018717],
+                    [0.9999999999990593, 1.0000000000009528],
+                    [0.9999999999999375, 1.0000000000000744],
+                ),
+                cp(
+                    [1.0502014289205344, 1.0502015605016937],
+                    [1.396835790192877, 1.3968380515018743],
+                    [0.9999999999990575, 1.000000000000955],
+                    [0.9999999999999357, 1.0000000000000766],
+                ),
+                cp(
+                    [1.050201428920532, 1.0502015605016959],
+                    [1.3968357901928743, 1.396838051501877],
+                    [0.9999999999990558, 1.0000000000009572],
+                    [0.9999999999999339, 1.0000000000000788],
+                ),
+                cp(
+                    [1.0502014289205295, 1.050201560501698],
+                    [1.3968357901928716, 1.3968380515018797],
+                    [0.999999999999054, 1.0000000000009595],
+                    [0.9999999999999322, 1.000000000000081],
+                ),
+            ],
+            [0.0, 0.0, 0.0, 0.0, 1.0, 1.0, 1.0, 1.0]
+                .map(Scalar::from_f64)
+                .to_vec(),
+        )
+        .unwrap();
+        let at = |p: [f64; 3]| Vector3::from_array(p.map(Scalar::from_f64));
+        let edge = crate::test_fixtures::line([4.0, 4.0, 1.0], [5.0, 5.0, 1.0]);
+        let nearest = least_distance(
+            vec![
+                PointPiece(at([1.0502015, 1.3968369, 0.0])),
+                PointPiece(at([4.5, 4.5, 0.0])),
+            ],
+            vec![CurveSpan(span), CurveSpan(edge)],
+            Scalar::from_f64(1e-7),
+            10_000,
+        )
+        .unwrap();
+        assert!(
+            nearest.distance.could_be_equal(Scalar::ONE),
+            "{:?}",
+            nearest.distance
+        );
+        assert!(
+            !nearest
+                .distance
+                .width()
+                .definitely_greater(Scalar::from_f64(1e-5)),
+            "{:?}",
+            nearest.distance
+        );
     }
 
     /// A point above the middle of a segment is its height from it, and the
