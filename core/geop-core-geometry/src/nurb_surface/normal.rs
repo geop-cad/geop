@@ -4,7 +4,7 @@ use geop_core_math::{
     vector::{Vector, Vector3},
 };
 
-use super::NurbSurface;
+use super::{NurbSurface, evaluate::corner_nearest};
 use crate::{
     knot_insertion::is_clamped_at,
     nurb_curve::dehomogenize,
@@ -39,7 +39,8 @@ impl NurbSurface<4> {
             .flat_map(|i| (span_v - q..=span_v).map(move |j| i * nv + j))
             .map(|k| self.control_points[k])
             .collect();
-        let (cp, _) = centered(&local);
+        let at = corner_nearest(self, (span_u, u), (span_v, v));
+        let (cp, _) = centered(&local, at);
         let at = |i: usize, j: usize| cp[i * (q + 1) + j];
         let mixed = n >= 2;
         // Each row at `v`, and along `v` where the mixed partial is asked.
@@ -180,7 +181,12 @@ impl NurbSurface<4> {
     /// normal and is an error.
     pub fn normal(&self, u: Scalar, v: Scalar) -> GeopResult<Vector3> {
         let (du, dv) = self.derivatives(u, v)?;
-        let regular = du.prod_cross(&dv).normalize();
+        let regular = du.prod_cross(&dv).normalize().with_context(&|e: GeopError| {
+            e.with_context(format!(
+                "NurbSurface::normal({:?}): S_u = {du:?}, S_v = {dv:?}",
+                (u, v)
+            ))
+        });
         if regular.is_ok() {
             return regular;
         }
@@ -217,7 +223,7 @@ impl NurbSurface<4> {
 #[cfg(test)]
 mod tests {
     use crate::nurb_surface::NurbSurface;
-    use crate::test_fixtures::hom;
+    use crate::test_fixtures::{hom, revolved};
     use geop_core_math::scalars::Scalar;
 
     /// Flat unit patch in the xy-plane: normal should be constant +z everywhere.
@@ -282,27 +288,26 @@ mod tests {
 
     // ── Poles ──────────────────────────────────────────────────────────────
 
-    /// Quarter of a revolved patch: `u` sweeps the unit quarter arc at
-    /// height `rim_z`, `v` runs linearly from the collapsed `v = 0` row at
-    /// `(0, 0, apex_z)` out to the arc. `apex_z = rim_z` is a flat disc, any
-    /// other a cone.
-    fn revolved(apex_z: f64, rim_z: f64) -> NurbSurface<4> {
+    /// A hair off a disc's centre — the foot point of a point a shell moves
+    /// onto the disc's axis — the normal is still the disc's: `S_u` is of
+    /// the order of the hair, and its width that of the control points
+    /// relative to the pole, an ulp of their coordinates. Evaluated
+    /// relative to the far corner of the patch, as it once was, `S_u` was
+    /// as wide as the patch. (Nearer the pole than a few hundred ulps, the
+    /// width wins: there the normal is the pole's, see `pole_normal`.)
+    #[test]
+    fn disc_normal_a_hair_off_the_pole() {
         let f = Scalar::from_f64;
-        let w = std::f64::consts::FRAC_1_SQRT_2;
-        let rim = [(1., 0., 1.), (1., 1., w), (0., 1., 1.)];
-        let mut cps = Vec::new();
-        for (x, y, wi) in rim {
-            cps.push(hom(0., 0., apex_z * wi, wi));
-            cps.push(hom(x * wi, y * wi, rim_z * wi, wi));
+        let disc = revolved(2., 2.);
+        for (u, v) in [(0., 5.4e-14), (1., 5.4e-14), (0.3, 1e-10)] {
+            let n = disc.normal(f(u), f(v)).unwrap();
+            let (su, sv) = disc.derivatives(f(u), f(v)).unwrap();
+            assert!(
+                n[2].abs().could_be_equal(Scalar::ONE) && n[0].width().to_f64() < 0.1,
+                "at {:?}: {n:?}, S_u = {su:?}, S_v = {sv:?}",
+                (u, v)
+            );
         }
-        NurbSurface::try_new(
-            2,
-            1,
-            cps,
-            vec![f(0.), f(0.), f(0.), f(1.), f(1.), f(1.)],
-            vec![f(0.), f(0.), f(1.), f(1.)],
-        )
-        .unwrap()
     }
 
     /// A disc's centre has the disc's normal — for every `u` at once, and

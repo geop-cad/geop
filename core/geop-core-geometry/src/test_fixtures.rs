@@ -64,3 +64,25 @@ pub fn sphere_octant() -> NurbSurface3D {
     let k = knots(&[0., 0., 0., 1., 1., 1.]);
     NurbSurface3D::try_new(2, 2, cps, k.clone(), k).unwrap()
 }
+
+/// Quarter of a revolved patch: `u` sweeps the unit quarter arc at height
+/// `rim_z`, `v` runs linearly from the collapsed `v = 0` row at
+/// `(0, 0, apex_z)` out to the arc. `apex_z = rim_z` is a flat disc, any
+/// other a cone.
+pub fn revolved(apex_z: f64, rim_z: f64) -> NurbSurface3D {
+    let w = std::f64::consts::FRAC_1_SQRT_2;
+    let rim = [(1., 0., 1.), (1., 1., w), (0., 1., 1.)];
+    let mut cps = Vec::new();
+    for (x, y, wi) in rim {
+        cps.push(hom(0., 0., apex_z * wi, wi));
+        cps.push(hom(x * wi, y * wi, rim_z * wi, wi));
+    }
+    NurbSurface3D::try_new(
+        2,
+        1,
+        cps,
+        knots(&[0., 0., 0., 1., 1., 1.]),
+        knots(&[0., 0., 1., 1.]),
+    )
+    .unwrap()
+}

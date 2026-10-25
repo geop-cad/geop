@@ -20,7 +20,7 @@ use geop_core_math::{
     with_context,
 };
 
-use crate::{nurb_surface::NurbSurface3D, search::PROJECT_ITERATIONS};
+use crate::{nurb_surface::NurbSurface3D, search::PROJECT_ITERATIONS, shape::Plane};
 
 /// Newton steps [`meet`] takes at most: between planes it lands in one, and
 /// against curved surfaces it converges quadratically from a start a
@@ -47,6 +47,14 @@ impl<'a> Offset<'a> {
         }
     }
 
+    /// The plane each piece lies in, if it is flat ([`Self::foot`]).
+    fn planes(&self) -> GeopResult<Vec<Option<Plane>>> {
+        self.pieces
+            .iter()
+            .map(|(surface, _)| surface.as_plane())
+            .collect()
+    }
+
     /// The foot point of `p` on the union of the pieces — the nearest of
     /// theirs, which piece being a free choice where they tie — and the
     /// unit normal there. Each piece's `(u, v)` becomes its own foot
@@ -54,14 +62,32 @@ impl<'a> Offset<'a> {
     /// surface's second derivatives and converges only linearly on a
     /// curved one, so it has to start near to end on the foot point.
     ///
+    /// A piece that is flat ([`Self::planes`]) is its plane: the foot point
+    /// is `p` dropped onto it and the normal the plane's, wherever `p` is.
+    /// Through the patch, the foot point is clamped to it and the normal
+    /// read off `S_u × S_v`, and at a pole neither says what the plane
+    /// does. A disc's pole row is a point only to the width of its control
+    /// points; a hair off it `S_u` is of the order of that hair, and the
+    /// normal there as wide as the width over the hair: at `5e-14` from the
+    /// pole of a cap, `±0.4`. Where a shell moves a vertex onto the axis of
+    /// a revolved cap, every step passes there.
+    ///
     /// Where the foot point's enclosure reaches an end of the domain, the
     /// seed is that end. Any point of the enclosure is a valid seed, but at
     /// a pole the enclosure reaches a hair off it, and a midpoint there
     /// lies so close to the pole that the surface's derivatives underflow
     /// and it has no normal; the pole itself has one.
-    fn foot(&mut self, p: &Vector3) -> GeopResult<(Vector3, Vector3)> {
+    fn foot(&mut self, p: &Vector3, planes: &[Option<Plane>]) -> GeopResult<(Vector3, Vector3)> {
         let mut best: Option<(f64, Vector3, Vector3)> = None;
         for (k, (surface, uv)) in self.pieces.iter_mut().enumerate() {
+            if let Some(plane) = &planes[k] {
+                let at = plane.project(p);
+                let distance = at.sub(p).norm_sq().upper().to_f64();
+                if best.as_ref().is_none_or(|(d, _, _)| distance < *d) {
+                    best = Some((distance, at, plane.normal));
+                }
+                continue;
+            }
             let ctx = with_context!("the foot point of {p:?} on piece {k}, from {uv:?}");
             let (u, v) = surface
                 .project_in_domain(*p, uv.0.sharpen(), uv.1.sharpen(), PROJECT_ITERATIONS)
@@ -146,6 +172,10 @@ pub fn meet(
     planes: &[(Vector3, Vector3)],
 ) -> GeopResult<Vector3> {
     let mut answer = start;
+    let flat: Vec<Vec<Option<Plane>>> = offsets
+        .iter()
+        .map(Offset::planes)
+        .collect::<GeopResult<_>>()?;
     iterate(
         start.sharpen(),
         start,
@@ -154,8 +184,8 @@ pub fn meet(
         |next| (next.sharpen(), *next),
         |seed| -> GeopResult<Step<Vector3>> {
             let mut rows: Vec<(Vector3, Scalar)> = Vec::new();
-            for condition in offsets.iter_mut() {
-                let (at, normal) = condition.foot(seed)?;
+            for (condition, flat) in offsets.iter_mut().zip(&flat) {
+                let (at, normal) = condition.foot(seed, flat)?;
                 rows.push((
                     normal,
                     normal.prod_dot(&seed.sub(&at)).sub(condition.offset),
@@ -164,14 +194,22 @@ pub fn meet(
             for (normal, p) in planes {
                 rows.push((*normal, normal.prod_dot(&seed.sub(p))));
             }
-            let step = shortest_solution(&rows)?;
+            let step = shortest_solution(&rows).with_context(&|e: GeopError| {
+                let feet: Vec<Vec<(Scalar, Scalar)>> = offsets
+                    .iter()
+                    .map(|o| o.pieces.iter().map(|&(_, uv)| uv).collect())
+                    .collect();
+                e.with_context(format!(
+                    "the step of meet from {seed:?}, with the rows {rows:?}, the foot points at {feet:?}"
+                ))
+            })?;
             answer = answer.sub(&step);
             Ok(Step::Next(seed.sub(&step)))
         },
     )?;
     let count = offsets.len();
-    for (k, condition) in offsets.iter_mut().enumerate() {
-        let (at, normal) = condition.foot(&answer)?;
+    for (k, (condition, flat)) in offsets.iter_mut().zip(&flat).enumerate() {
+        let (at, normal) = condition.foot(&answer, flat)?;
         if !at
             .add(&normal.prod_scalar(condition.offset))
             .could_be_equal(&answer)

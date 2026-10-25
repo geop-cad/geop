@@ -5,7 +5,21 @@ use geop_core_math::{
 };
 
 use super::NurbSurface;
-use crate::spline::{centered, de_boor, find_span};
+use crate::spline::{centered, de_boor, find_span, nearer_end};
+
+/// The index, among the `(p + 1) × (q + 1)` control points acting on
+/// `(u, v)` in `u` index major order, of the corner nearest `(u, v)`: the
+/// one to evaluate relative to (see [`centered`]).
+pub(super) fn corner_nearest(
+    surface: &NurbSurface<4>,
+    (span_u, u): (usize, Scalar),
+    (span_v, v): (usize, Scalar),
+) -> usize {
+    let (p, q) = (surface.degree_u, surface.degree_v);
+    let i = if nearer_end(&surface.knot_vector_u, span_u, u) { p } else { 0 };
+    let j = if nearer_end(&surface.knot_vector_v, span_v, v) { q } else { 0 };
+    i * (q + 1) + j
+}
 
 // ── 3-D surface ──────────────────────────────────────────────────────────────
 
@@ -27,7 +41,8 @@ impl NurbSurface<4> {
             .flat_map(|i| (span_v - q..=span_v).map(move |j| i * nv + j))
             .map(|k| self.control_points[k])
             .collect();
-        let (local, origin) = centered(&local);
+        let at = corner_nearest(self, (span_u, u), (span_v, v));
+        let (local, origin) = centered(&local, at);
         let cols: Vec<Vector<4>> = (0..=q)
             .map(|j| {
                 let col: Vec<Vector<4>> = (0..=p).map(|i| local[i * (q + 1) + j]).collect();

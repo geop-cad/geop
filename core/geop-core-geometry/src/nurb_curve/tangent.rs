@@ -5,7 +5,9 @@ use geop_core_math::{
 };
 
 use super::NurbCurve;
-use crate::spline::{centered, find_spans, homogeneous_derivatives, rational_derivatives};
+use crate::spline::{
+    centered, find_spans, homogeneous_derivatives, nearer_end, rational_derivatives,
+};
 
 impl<const D: usize> NurbCurve<D> {
     /// The Cartesian point and its derivatives up to order `n` at `t`:
@@ -41,7 +43,8 @@ impl<const D: usize> NurbCurve<D> {
                 ))
             };
             let mut derivatives = at(local)?;
-            let relative = at(&centered(local).0)?;
+            let near = if nearer_end(&self.knot_vector, span, piece) { p } else { 0 };
+            let relative = at(&centered(local, near).0)?;
             for (d, r) in derivatives.iter_mut().zip(&relative).skip(1) {
                 for c in 0..C {
                     d[c] = d[c].intersect(r[c]);

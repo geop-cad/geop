@@ -7,7 +7,7 @@ use geop_core_math::{
 use super::NurbCurve;
 use crate::{
     knot_insertion::pinned_clamped_end,
-    spline::{centered, de_boor, find_spans},
+    spline::{centered, de_boor, find_spans, nearer_end},
 };
 
 impl<const D: usize> NurbCurve<D> {
@@ -57,7 +57,8 @@ impl<const D: usize> NurbCurve<D> {
             let local = &self.control_points[span - p..=span];
             let knots = &self.knot_vector[span - p..];
             let absolute = de_boor(p, knots, local, piece, p);
-            let (moved, origin) = centered(local);
+            let near = if nearer_end(&self.knot_vector, span, piece) { p } else { 0 };
+            let (moved, origin) = centered(local, near);
             let relative = de_boor(p, knots, &moved, piece, p);
             // The weights are not moved: one `W` for both.
             let inv_w = inverse(absolute[D - 1], span)?;

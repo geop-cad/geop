@@ -397,8 +397,9 @@ impl<'a> Hollow<'a> {
             })
             .collect::<GeopResult<Vec<_>>>()?;
 
-        // Walls thicker than a face is wide turn its inner copy inside out:
-        // a straight edge's inner copy then runs the other way.
+        // Walls thicker than a face is wide turn its inner copy inside out,
+        // and walls as thick as an edge is long take all of its inner copy:
+        // a straight edge's inner copy then runs the other way, or is a point.
         for (e, edge) in spec.edges.iter().enumerate() {
             let (Some(start), Some(end)) = (&inner_points[edge.start], &inner_points[edge.end])
             else {
@@ -412,7 +413,7 @@ impl<'a> Hollow<'a> {
                     .definitely_greater(Scalar::ZERO)
             {
                 return Err(GeopError::new(format!(
-                    "the walls are too thick: the inner copy of edge {} turns around",
+                    "the walls are too thick: the inner copy of edge {} has no length or turns around",
                     names.edges[e]
                 )));
             }
