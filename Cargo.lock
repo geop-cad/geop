@@ -372,6 +372,7 @@ dependencies = [
  "geop-core-geometry",
  "geop-core-math",
  "geop-core-topology",
+ "geop-lib-booleans",
  "geop-lib-sweep",
  "geop-ops-model",
 ]
