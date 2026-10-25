@@ -4,7 +4,7 @@ Geop is a Cargo workspace in four tiers. `core/` defines what things are:
 math, geometry and topology; a program, the part it builds, and how it is
 edited. `lib/` holds the algorithms two operations share, taking geometry
 and models. `ops/` has one crate per family of operations, each with its
-targets, forms, examples and tests. `cad/` composes them — one `register`
+forms, examples and tests, over the targets `geop-ops-model` defines. `cad/` composes them — one `register`
 line per crate — and carries them to the browser and the command line.
 `web/` is a React front end that loads the composition compiled to
 WebAssembly and renders its output with three.js.
@@ -33,7 +33,9 @@ lib/geop-lib-booleans        booleans, split, imprint, a step's `Combine`
 lib/geop-lib-sweep           extrude, revolve, sweeps, lofts, skinning
 lib/geop-lib-shell           shelling, thickening, offsetting
 lib/geop-lib-stdlib          the standard parts beside every workspace
-ops/geop-ops-model           the model target: topology with stable names
+ops/geop-ops-model           the vocabulary every operation shares: the
+                              model, sketch, datum, parameter and placed-part
+                              targets and the references into them
 lib/geop-lib-constraints     the constraints of a part's state, solved
 ops/geop-ops-sketch          the sketch operation
 ops/geop-ops-sketch3d        the 3-D sketch operation

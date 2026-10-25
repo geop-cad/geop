@@ -12,10 +12,15 @@ geop-core-sketch.workspace = true
 geop-core-program.workspace = true
 geop-core-editor.workspace = true
 geop-ops-model.workspace = true
-geop-ops-sketch.workspace = true
-# What the examples sketch on: the origin's planes.
 geop-lib-sheet.workspace = true
 serde.workspace = true
+# Only for `examples`.
+geop-ops-sketch = { workspace = true, optional = true }
+
+[features]
+# The examples: a bracket flanged from a sketch. Written in the sketch
+# operation too, so only an editor turns it on.
+examples = ["dep:geop-ops-sketch"]
 
 [dev-dependencies]
 geop-core-program = { workspace = true, features = ["testing"] }
@@ -23,3 +28,4 @@ geop-core-editor = { workspace = true, features = ["testing"] }
 serde_json.workspace = true
 geop-ops-model = { workspace = true, features = ["testing"] }
 geop-core-rasterize.workspace = true
+geop-ops-sketch.workspace = true

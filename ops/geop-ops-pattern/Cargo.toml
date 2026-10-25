@@ -11,17 +11,22 @@ geop-core-math.workspace = true
 geop-core-geometry.workspace = true
 geop-core-topology.workspace = true
 geop-ops-model.workspace = true
-geop-ops-sketch.workspace = true
-# What the examples' plates and holes are extruded by.
-geop-ops-extrude-revolve.workspace = true
 geop-lib-booleans.workspace = true
 serde.workspace = true
+# Only for `examples`.
+geop-ops-extrude-revolve = { workspace = true, optional = true }
+geop-ops-sketch = { workspace = true, optional = true }
+
+[features]
+# The examples: plates and holes extruded from sketches, patterned.
+# Written in those operations too, so only an editor turns it on.
+examples = ["dep:geop-ops-extrude-revolve", "dep:geop-ops-sketch"]
 
 [dev-dependencies]
 geop-core-program = { workspace = true, features = ["testing"] }
 geop-ops-boolean.workspace = true
 geop-ops-model = { workspace = true, features = ["testing"] }
-geop-ops-extrude-revolve = { workspace = true, features = ["testing"] }
+geop-ops-extrude-revolve = { workspace = true, features = ["testing", "examples"] }
 geop-lib-sweep = { workspace = true, features = ["testing"] }
 geop-ops-sketch3d.workspace = true
 # The turbine example's blade is lofted between datum planes.
@@ -29,3 +34,4 @@ geop-ops-reference-geometry.workspace = true
 serde_json.workspace = true
 geop-core-editor = { workspace = true, features = ["testing"] }
 geop-ops-hole = { workspace = true, features = ["testing"] }
+geop-ops-sketch.workspace = true

@@ -17,6 +17,7 @@ mod corner;
 mod editor_tests;
 #[cfg(test)]
 mod example_tests;
+#[cfg(any(test, feature = "examples"))]
 pub mod examples;
 pub mod operation;
 mod rolling;
@@ -39,7 +40,8 @@ use geop_core_math::geop_error::GeopResult;
 /// Adds what this crate offers an editor to `r`: fillets and chamfers, and
 /// the examples of them.
 pub fn register(r: Registry) -> GeopResult<Registry> {
-    r.operation(Fillet)?
-        .operation(Chamfer)?
-        .examples(examples::set())
+    let r = r.operation(Fillet)?.operation(Chamfer)?;
+    #[cfg(any(test, feature = "examples"))]
+    let r = r.examples(examples::set())?;
+    Ok(r)
 }

@@ -32,12 +32,12 @@ apart (see Scripts).
 | `lib/geop-lib-sweep` | extrude, revolve, screw, sweeps along paths, lofts, the skinned grid blends share; feature `testing`: basic shapes |
 | `lib/geop-lib-shell` | shelling, thickening and offsetting faces, rebuilding a solid face by face |
 | `lib/geop-lib-stdlib` | the standard parts, one program per family, and `WithStandardParts`, the `FileStore` that puts them beside a workspace's files |
-| `ops/geop-ops-model` | the model target: topology with stable names, features, element kinds, threads, solid notes, `Combine` and `Extent`, its drawer |
 | `lib/geop-lib-constraints` | the constraints and unknowns of a part's state, and the solver over them |
+| `ops/geop-ops-model` | the vocabulary every operation shares, the one `ops/` crate an operation depends on: the model target (topology with stable names, features, element kinds, threads, solid notes, `Combine`, `Extent`), the sketch and 3-D sketch targets and the references into them, the datums, a part's parameters and properties (their steps and panel), what is picked (`Selected`, `MateEntity`), placed parts with their solids and bill of materials, `Spacing`; their drawers |
 | `ops/geop-ops-sketch` | the sketch operation, its tools, snapping and references |
 | `ops/geop-ops-sketch3d` | the 3-D sketch operation: wires in space, paths and rails |
 | `ops/geop-ops-reference-geometry` | the datum operation: points, axes, planes and frames from what is picked |
-| `ops/geop-ops-extrude-revolve` | extrude, revolve, sweep and loft; feature `testing`: the sketches and extrusions other crates' tests start from |
+| `ops/geop-ops-extrude-revolve` | extrude, revolve, sweep and loft; feature `testing`: the sketches and extrusions other crates' tests start from; feature `examples`: its examples |
 | `ops/geop-ops-hole` | holes from ISO tables, threads cosmetic or modelled |
 | `ops/geop-ops-fillet` | fillets and chamfers, rolling-ball blends of tangent chains |
 | `ops/geop-ops-shell` | the shell operation |
@@ -99,7 +99,13 @@ round trip (`assert_round_trips`) and an incremental build
 (`geop_core_editor::testing`: `editor_with`, `Stepping`, pointers and
 clicks); `src/regression_tests.rs` rebuilds the user reproducers of its
 bugs; `src/stress_tests.rs` holds ignored sweeps; feature `testing` what
-other crates' tests need of it. An op crate whose tests need a crate that
+other crates' tests need of it. An operation is a leaf: its dependencies
+are `core/`, `lib/` and `geop-ops-model`. Its examples (`src/examples.rs`)
+are written in other operations' `Args` too, so they sit behind the
+feature `examples`, those dependencies optional; `geop-cad-base` turns the
+feature on, and so does the crate's own test build (`cfg(test)`) and any
+test that reads its examples (`features = ["examples"]` on the
+dev-dependency). An op crate whose tests need a crate that
 depends on it puts those tests in `tests/` (as `geop-ops-sketch` does):
 in `src/` Cargo would link two copies of it. `cargo test -p <crate>` must
 pass on its own.
@@ -189,11 +195,15 @@ Every run is capped with `timeout` and `prlimit`, as `AGENTS.md` asks.
   `--dry-run` prints the crates; arguments after `--` go to `cargo test`.
 - `scripts/check-layering.sh` checks the dependency rules between the
   tiers (`ARCHITECTURE_PLAN.md` §2.1): core depends on core only, and
-  `geop-core-program` on `geop-core-math` only; a `geop-lib-*` on core,
-  `geop-ops-model` and libs; no ops or lib crate on `geop-cad-*`; no source
-  under `core/` names an ops, lib or cad crate; `geop-cad-base` names ops
-  crates only in `src/registry.rs` and `src/tests.rs`. The allow-list
-  `scripts/layering-allowed.txt` is empty: a violation fails the check.
+  `geop-core-program` on `geop-core-math` only; `geop-ops-model` on core
+  only; a `geop-lib-*` on core, `geop-ops-model` and libs; an op crate on
+  core, libs and `geop-ops-model` only, another op reached only by an
+  optional dependency of its `examples` or `testing` feature (printed as a
+  warning, like a dev-dependency); no ops or lib crate on `geop-cad-*`; no
+  source under `core/` names an ops, lib or cad crate; `geop-cad-base`
+  names ops crates only in `src/registry.rs` and `src/tests.rs`. The
+  allow-list `scripts/layering-allowed.txt` is empty: a violation fails
+  the check.
 - `scripts/baseline-<date>.txt` records the lines and tests per crate and
   the results of the fast suite, as its header says how; a change that
   loses tests says which and why.

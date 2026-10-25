@@ -12,7 +12,6 @@ geop-core-geometry.workspace = true
 geop-core-topology.workspace = true
 geop-core-sketch.workspace = true
 geop-ops-model.workspace = true
-geop-ops-sketch.workspace = true
 geop-lib-sweep.workspace = true
 geop-lib-booleans.workspace = true
 # For rebuilding a solid face by face: moving vertices onto new surfaces,
@@ -20,10 +19,11 @@ geop-lib-booleans.workspace = true
 geop-lib-shell.workspace = true
 serde.workspace = true
 # Only for `testing`: the datums the enclosure's reference plane is built
-# among, the steps building it, and the step shelling the enclosure.
+# among, the steps sketching and building it, and the step shelling it.
 geop-ops-extrude-revolve = { workspace = true, optional = true }
 geop-ops-reference-geometry = { workspace = true, optional = true }
 geop-ops-shell = { workspace = true, optional = true }
+geop-ops-sketch = { workspace = true, optional = true }
 
 [features]
 # The enclosure of `testing`, for other crates' tests.
@@ -31,6 +31,7 @@ testing = [
     "dep:geop-ops-reference-geometry",
     "dep:geop-ops-extrude-revolve",
     "dep:geop-ops-shell",
+    "dep:geop-ops-sketch",
     "geop-ops-extrude-revolve/testing",
 ]
 
@@ -44,3 +45,4 @@ geop-ops-fillet.workspace = true
 geop-core-program = { workspace = true, features = ["testing"] }
 geop-core-editor = { workspace = true, features = ["testing"] }
 geop-lib-sweep = { workspace = true, features = ["testing"] }
+geop-ops-sketch.workspace = true

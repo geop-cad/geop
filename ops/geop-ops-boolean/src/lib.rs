@@ -5,6 +5,7 @@
 
 #[cfg(test)]
 mod example_tests;
+#[cfg(any(test, feature = "examples"))]
 pub mod examples;
 mod icons;
 mod operation;
@@ -19,7 +20,8 @@ use geop_core_math::geop_error::GeopResult;
 /// Adds what this crate offers an editor to `r`: combining bodies and
 /// splitting them, and the examples of them.
 pub fn register(r: Registry) -> GeopResult<Registry> {
-    r.operation(Boolean)?
-        .operation(Split)?
-        .examples(examples::set())
+    let r = r.operation(Boolean)?.operation(Split)?;
+    #[cfg(any(test, feature = "examples"))]
+    let r = r.examples(examples::set())?;
+    Ok(r)
 }

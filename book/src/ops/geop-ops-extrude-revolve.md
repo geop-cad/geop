@@ -4,18 +4,20 @@
 
 Extrude, revolve, sweep and loft operations. They resolve what their
 arguments refer to — the sketch's areas as profiles
-(`geop_ops_sketch::shape_profiles`), the axis, the path — and sweep them
+(`geop_ops_model::sketch::shape_profiles`), the axis, the path — and sweep them
 with [geop-lib-sweep](../lib/geop-lib-sweep.md), which describes the sweeps
 and how what they build is named. With the `testing` feature, `testing`
 draws the sketches and pushes the extrusions other crates' program tests
 start from, and `testing::bodies` the boxes, cylinders and spheres the
 stress sweeps of `geop-ops-fillet` and `geop-ops-shell` blend and shell.
+Both features write sketches, so the sketch operations are optional
+dependencies of theirs: the crate itself depends on no other operation.
 
 Its `examples` — `box_with_drill_hole`, `bracket`, `cross_drilled_shaft`,
 `handle_with_hole`, `luggage_tag`, `revolved_cone_on_box`,
 `parametric_plate`, `pipe`, and `edge_part`, drawn in the editor and kept
 as the `.geop` text it saved (`src/drawn/`) — are registered with its
-operations; each is
+operations when the feature `examples` is on; each is
 tested to round-trip and to build incrementally (`example_tests.rs`). The
 programs from bug reports, rebuilt in Rust, are `regression_tests.rs`.
 

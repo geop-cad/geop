@@ -463,7 +463,6 @@ dependencies = [
  "geop-lib-stdlib",
  "geop-lib-sweep",
  "geop-ops-assembly",
- "geop-ops-bom",
  "geop-ops-extrude-revolve",
  "geop-ops-fillet",
  "geop-ops-hole",

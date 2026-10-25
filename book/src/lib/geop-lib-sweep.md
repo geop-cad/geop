@@ -12,7 +12,7 @@ coordinates, `Chain`s of 3-D curves, planes and axes — and builds into a
 `NamedModel`. Resolving a sketch, an axis or a picked edge into that
 geometry, and combining what is built with a solid, is the operations' part
 (see [geop-ops-extrude-revolve](../ops/geop-ops-extrude-revolve.md)); the
-sketch's areas become profiles by `geop_ops_sketch::shape_profiles`.
+sketch's areas become profiles by `geop_ops_model::sketch::shape_profiles`.
 
 All are *sweeps* (`sweep`): a planar profile carried along a `Path` —
 straight for an extrude, around an axis for a revolve, along a chain of

@@ -11,12 +11,11 @@ geop-core-math.workspace = true
 geop-core-geometry.workspace = true
 geop-core-topology.workspace = true
 geop-ops-model.workspace = true
-geop-ops-assembly.workspace = true
 serde.workspace = true
 
 [dev-dependencies]
 # The parts and assemblies written: extruded sketches, placed.
-geop-ops-extrude-revolve = { workspace = true, features = ["testing"] }
+geop-ops-extrude-revolve = { workspace = true, features = ["testing", "examples"] }
 geop-ops-model = { workspace = true, features = ["testing"] }
 geop-lib-sweep = { workspace = true, features = ["testing"] }
 # STEP exported and imported in an editor, of the example parts and
@@ -27,3 +26,4 @@ geop-ops-reference-geometry.workspace = true
 geop-ops-pattern.workspace = true
 geop-lib-stdlib.workspace = true
 serde_json.workspace = true
+geop-ops-assembly = { workspace = true, features = ["examples"] }

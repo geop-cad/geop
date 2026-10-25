@@ -6,9 +6,16 @@
 #   geop-core-editor         workspace deps only on geop-core-math and
 #                            geop-core-program (editing a step is editing a
 #                            step of a program)
+#   geop-ops-model           the vocabulary crate: deps only on geop-core-*
 #   geop-lib-*               deps only on geop-core-*, geop-ops-model, geop-lib-*
 #   geop-lib-stdlib          also on the geop-ops-* whose Args its programs are
 #                            written in (ARCHITECTURE_PLAN.md §5.4)
+#   geop-ops-*               an operation is a leaf: deps only on geop-core-*,
+#                            geop-lib-* and geop-ops-model. An optional
+#                            dependency on another op is allowed only behind
+#                            the crate's `examples` or `testing` feature (the
+#                            programs written in several operations' Args),
+#                            and is printed as a warning, like a dev-dependency
 #   geop-ops-*, geop-lib-*   no deps on geop-cad-*
 #   core/                    no source names geop_ops_*, geop_lib_*, geop_cad_*
 #   cad/geop-cad-base/src    names geop_ops_* only in src/registry.rs (one
@@ -17,8 +24,8 @@
 #
 # Every violation is printed as one line. Lines listed in
 # scripts/layering-allowed.txt are known violations that later phases burn
-# down; anything else fails the check. Dev-dependencies breaking a rule are
-# printed as warnings and never fail it.
+# down; anything else fails the check. Dev-dependencies and optional
+# dependencies breaking a rule are printed as warnings and never fail it.
 #
 # Usage: scripts/check-layering.sh [--write-allowed]
 #   --write-allowed  rewrite the allow-list from the current violations
@@ -37,11 +44,12 @@ done
 metadata="$(cargo metadata --format-version 1 --no-deps)"
 
 # One line per workspace dependency edge: "<kind> <from> <to>", kind being
-# "normal", "dev" or "build".
+# "normal", "optional" (a normal dependency a feature turns on), "dev" or
+# "build".
 edges="$(jq -r '
     .packages[] | .name as $from
     | .dependencies[] | select(.path != null)
-    | "\(.kind // "normal") \($from) \(.name)"' <<<"$metadata" | sort -u)"
+    | "\(if .optional then "optional" else (.kind // "normal") end) \($from) \(.name)"' <<<"$metadata" | sort -u)"
 
 # Prints the rule an edge breaks, or nothing.
 rule_broken() {
@@ -65,8 +73,12 @@ rule_broken() {
             [[ "$to" == geop-core-* || "$to" == geop-ops-model || "$to" == geop-lib-* ]] \
                 || echo "lib depends on core, geop-ops-model and lib only"
             ;;
+        geop-ops-model)
+            [[ "$to" == geop-core-* ]] || echo "geop-ops-model depends on core only"
+            ;;
         geop-ops-*)
-            [[ "$to" != geop-cad-* ]] || echo "ops never depend on cad"
+            [[ "$to" == geop-core-* || "$to" == geop-lib-* || "$to" == geop-ops-model ]] \
+                || echo "an op depends on core, lib and geop-ops-model only"
             ;;
     esac
 }
@@ -79,6 +91,8 @@ while read -r kind from to; do
     [[ -n "$rule" ]] || continue
     if [[ "$kind" == dev ]]; then
         warnings+=("dev-dep $from -> $to: $rule")
+    elif [[ "$kind" == optional && "$to" != geop-cad-* ]]; then
+        warnings+=("optional dep $from -> $to: $rule")
     else
         violations+=("dep $from -> $to: $rule")
     fi
@@ -134,5 +148,5 @@ done
 for line in "${new[@]}"; do echo "error: $line"; done
 
 echo "check-layering: ${#violations[@]} violations, $(( ${#violations[@]} - ${#new[@]} )) of them allowed" \
-    "(${#allowed[@]} on the allow-list), ${#new[@]} new, ${#warnings[@]} dev-dependency warnings"
+    "(${#allowed[@]} on the allow-list), ${#new[@]} new, ${#warnings[@]} dev- and optional-dependency warnings"
 [[ ${#new[@]} -eq 0 ]]

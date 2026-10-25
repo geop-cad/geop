@@ -24,6 +24,7 @@ mod draw_tests;
 pub mod editor;
 #[cfg(test)]
 mod editor_tests;
+#[cfg(any(test, feature = "examples"))]
 pub mod examples;
 #[cfg(test)]
 mod frame_tests;
@@ -74,13 +75,16 @@ pub use urdf::Urdf;
 /// assemblies.
 pub fn register(r: Registry) -> GeopResult<Registry> {
     let settled = Rc::new(settle::Settled::default());
-    r.operation(AddPart)?
+    let r = r
+        .operation(AddPart)?
         .operation(PartPattern)?
         .exporter(Stl)?
         .exporter(Urdf)?
         .drawer(AssemblyDrawer)?
         .panel(JointsPanel::new(settled.clone()))?
         .tool(DragTool::INFO, DragTool::default())?
-        .settler(Settler { settled })?
-        .examples(examples::set())
+        .settler(Settler { settled })?;
+    #[cfg(any(test, feature = "examples"))]
+    let r = r.examples(examples::set())?;
+    Ok(r)
 }

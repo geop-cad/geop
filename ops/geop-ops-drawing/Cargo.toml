@@ -14,29 +14,25 @@ geop-core-topology.workspace = true
 geop-core-sketch.workspace = true
 geop-ops-model.workspace = true
 geop-lib-sheet.workspace = true
-# The parts placed, drawn where they are.
-geop-ops-assembly.workspace = true
 # The plane a section cuts on.
-geop-ops-sketch.workspace = true
 geop-lib-booleans.workspace = true
-# The parts list it puts on the sheet.
-geop-ops-bom.workspace = true
 geop-lib-sweep.workspace = true
 serde.workspace = true
 
 [dev-dependencies]
-geop-ops-assembly = { workspace = true, features = ["testing"] }
+geop-ops-assembly = { workspace = true, features = ["testing", "examples"] }
 geop-ops-model = { workspace = true, features = ["testing"] }
 geop-core-program = { workspace = true, features = ["testing"] }
 geop-lib-sweep = { workspace = true, features = ["testing"] }
 serde_json.workspace = true
 # The example parts and assemblies drawn, the operations they are written
 # in, and the standard parts they place.
-geop-ops-extrude-revolve = { workspace = true, features = ["testing"] }
-geop-ops-hole.workspace = true
+geop-ops-extrude-revolve = { workspace = true, features = ["testing", "examples"] }
+geop-ops-hole = { workspace = true, features = ["examples"] }
 geop-ops-subd.workspace = true
 geop-ops-fillet.workspace = true
-geop-ops-pattern.workspace = true
-geop-ops-reference-geometry.workspace = true
+geop-ops-pattern = { workspace = true, features = ["examples"] }
+geop-ops-reference-geometry = { workspace = true, features = ["examples"] }
 geop-lib-stdlib.workspace = true
 geop-core-editor = { workspace = true, features = ["testing"] }
+geop-ops-sketch.workspace = true

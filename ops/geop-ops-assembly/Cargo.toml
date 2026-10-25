@@ -8,6 +8,14 @@ license.workspace = true
 # Parts made in Rust as the programs of a workspace, for tests (see
 # `testing`).
 testing = []
+# The examples of assemblies: parts sketched and extruded, standard parts
+# placed. Written in those operations too, so only an editor turns it on.
+examples = [
+    "dep:geop-ops-extrude-revolve",
+    "dep:geop-ops-sketch",
+    "dep:geop-lib-stdlib",
+    "geop-ops-extrude-revolve/examples",
+]
 
 [dependencies]
 geop-core-program.workspace = true
@@ -17,24 +25,28 @@ geop-core-geometry.workspace = true
 geop-core-topology.workspace = true
 geop-ops-model.workspace = true
 geop-lib-constraints.workspace = true
-geop-ops-reference-geometry.workspace = true
 geop-core-rasterize.workspace = true
 # The URDF export writes XML.
 geop-lib-sheet.workspace = true
-geop-ops-pattern.workspace = true
-geop-ops-sketch.workspace = true
-# The examples: parts sketched and extruded, standard parts placed.
 geop-core-sketch.workspace = true
-geop-ops-extrude-revolve.workspace = true
-geop-lib-stdlib.workspace = true
 serde.workspace = true
 serde_json.workspace = true
+# Only for `examples`: the parts they sketch and extrude, and the standard
+# parts they place.
+geop-ops-extrude-revolve = { workspace = true, optional = true }
+geop-ops-sketch = { workspace = true, optional = true }
+geop-lib-stdlib = { workspace = true, optional = true }
 
 [dev-dependencies]
 geop-ops-model = { workspace = true, features = ["testing"] }
-geop-ops-extrude-revolve = { workspace = true, features = ["testing"] }
+geop-ops-extrude-revolve = { workspace = true, features = ["testing", "examples"] }
 geop-lib-sweep = { workspace = true, features = ["testing"] }
 geop-core-editor = { workspace = true, features = ["testing"] }
 geop-core-program = { workspace = true, features = ["testing"] }
-# The press example rounds and mirrors.
+# The press example rounds and mirrors; the tests write sketches, datums,
+# patterns and standard parts.
 geop-ops-fillet.workspace = true
+geop-ops-sketch.workspace = true
+geop-lib-stdlib.workspace = true
+geop-ops-reference-geometry.workspace = true
+geop-ops-pattern.workspace = true

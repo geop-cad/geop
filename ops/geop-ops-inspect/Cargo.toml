@@ -11,10 +11,6 @@ geop-core-topology.workspace = true
 geop-core-program.workspace = true
 geop-core-editor.workspace = true
 geop-ops-model.workspace = true
-# What is picked to be measured, and what it is.
-geop-ops-reference-geometry.workspace = true
-# The solids of the parts placed.
-geop-ops-assembly.workspace = true
 # The overlap of two solids is their intersection.
 geop-lib-booleans.workspace = true
 serde.workspace = true
@@ -29,8 +25,9 @@ geop-ops-sketch3d.workspace = true
 geop-lib-sweep = { workspace = true, features = ["testing"] }
 # The example assemblies inspected through an editor, the operations they
 # are written in, and the standard parts beside them.
-geop-ops-extrude-revolve = { workspace = true, features = ["testing"] }
+geop-ops-extrude-revolve = { workspace = true, features = ["testing", "examples"] }
 geop-ops-pattern.workspace = true
 geop-lib-stdlib.workspace = true
 serde_json.workspace = true
 geop-core-editor = { workspace = true, features = ["testing"] }
+geop-ops-reference-geometry.workspace = true

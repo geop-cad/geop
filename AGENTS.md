@@ -823,7 +823,7 @@ A step's arguments refer to what other steps built by typed references
 (`ElementReference<Target, Kind>`), never by bare strings: a face to sketch
 on is `ElementReference<NamedModel<Design>, Plane>`, made with
 `geop_ops_model::element(name)`; a datum with `geop_ops_model::datums::datum`; a
-sketch with `geop_ops_sketch::whole_sketch`. A field that takes one of
+sketch with `geop_ops_model::sketch::whole_sketch`. A field that takes one of
 several kinds of thing is an enum made by `one_of!`, which derives how it
 is saved, picked and resolved. An element of a part placed in the part is
 the same reference, its target behind the instance's path (`/plate:model`,
@@ -868,7 +868,7 @@ an editor driven as a front end drives it), `geop_core_program::testing`
 validity, entities by where they are, a part of a model given with steps
 run on it one by one, the model a program builds — `Built`, `model_of`),
 `geop_lib_sweep::shapes` (basic solids: blocks, cylinders, spheres),
-`geop_ops_sketch::figures` (sketches of figures and the planes to sketch
+`geop_ops_model::sketch::figures` (sketches of figures and the planes to sketch
 on) and `geop_ops_extrude_revolve::testing` (feature `testing`: the steps
 extruding sketches, and the bodies a sketch and an extrusion or two build):
 look there before writing an `assert_valid`, a cube or a `v3` of your own.
@@ -890,13 +890,24 @@ broke before it was one.
 - **Geometry with no notion of a program goes in `core/`.** What a
   program, a part, an operation, a workspace and an editor *are* is
   `geop-core-program` and `geop-core-editor`; nothing in `core/` names an
-  operation. A target type, its element kinds, how it is drawn and listed,
-  the operations that produce it, their forms, tests, examples and
-  regressions belong to that operation's crate. An algorithm two
-  operations share goes in a `geop-lib-*` crate. Composition is one line
-  in `cad/geop-cad-base/src/registry.rs`. `geop-cad-base` once held 26 000
-  lines of every operation's tests and examples: changing a dialog meant
-  building and testing everything.
+  operation. The operations that produce a target, their forms, tests,
+  examples and regressions belong to that operation's crate. An algorithm
+  two operations share goes in a `geop-lib-*` crate. Composition is one
+  line in `cad/geop-cad-base/src/registry.rs`. `geop-cad-base` once held
+  26 000 lines of every operation's tests and examples: changing a dialog
+  meant building and testing everything.
+- **An operation is a leaf; what operations share is vocabulary, in
+  `geop-ops-model`.** An op crate depends on `core/`, `lib/` and
+  `geop-ops-model` only, never on another op crate. Every target a step
+  of one operation reads of another — the sketch an extrude sweeps, the
+  datum a sketch lies on, the placed parts a drawing draws, what was
+  picked (`Selected`) — lives in model with its references, its readers
+  and its drawer; the operation that produces it keeps only its `Args`,
+  form and editor. Nineteen crates once depended on extrude-revolve for
+  `Extents` and `Output` that only its examples wrote, and a change to
+  one operation retested 22 of 40 crates. `scripts/check-layering.sh`
+  fails an op → op dependency; an optional one behind the crate's
+  `examples` or `testing` feature (see below) is a warning.
 - **A lib takes geometry; an op resolves references.** A `geop-lib-*`
   function takes profiles, models, named models and poses, never an
   `ElementReference`, a `PlacedSketch` or a `Reader`. The extrusion's
@@ -942,19 +953,24 @@ tests in `tests/` (an integration test links one copy), as
 dependency cycle through a dev-dependency is that copy waiting to happen:
 check for one before adding a dev-dependency on a crate above you.
 
-### Examples are code, and their crate depends on what they are written in
+### Examples are code, behind the `examples` feature
 
 An example is a Rust program written against the operations' `Args`
-types, so it compiles only where every `Args` it writes is a dependency,
-and the crate that hosts it must depend on each of them — a normal
-dependency, since `register` offers the example to the editor. Put an
-example in the highest crate whose operations it uses (the reference
-geometry's examples extrude and loft, so that crate depends on
-extrude-revolve), never in a crate that would need a new dependency
-upward. An example drawn in the editor is kept as the `.geop` text it
-saved, in its crate's `src/drawn/`, and read with `include_str!`: it needs
-no `Args` at compile time, but its tests build it, so its crate's tests
-need every operation it uses (a dev-dependency suffices).
+types, so it compiles only where every `Args` it writes is a dependency.
+An example of rounding a box writes a sketch and an extrusion too, and an
+operation must not depend on another: so an op crate's `examples.rs` sits
+behind its feature `examples`, the other ops it writes optional
+dependencies of that feature (`#[cfg(any(test, feature = "examples"))]`,
+and `register` adds the set under the same `cfg`). `geop-cad-base` turns
+the feature on for every crate it registers; the crate's own tests see
+the module through `cfg(test)`, with the same crates as dev-dependencies;
+a test of another crate that reads an example asks for the feature
+(`geop-ops-extrude-revolve = { workspace = true, features = ["testing",
+"examples"] }`). An example drawn in the editor is kept as the `.geop`
+text it saved, in its crate's `src/drawn/`, and read with
+`include_str!`: it needs no `Args` at compile time, but its tests build
+it, so its crate's tests need every operation it uses (a dev-dependency
+suffices).
 
 ## Working in parallel worktrees
 

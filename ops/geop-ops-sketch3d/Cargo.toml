@@ -12,7 +12,6 @@ geop-core-math.workspace = true
 geop-core-sketch.workspace = true
 geop-core-topology.workspace = true
 geop-ops-model.workspace = true
-geop-ops-sketch.workspace = true
 serde.workspace = true
 
 [features]
@@ -29,4 +28,5 @@ geop-core-program = { workspace = true, features = ["testing"] }
 geop-core-editor = { workspace = true, features = ["testing"] }
 # The box the editor's tests draw on: an integration test's programs (a
 # unit test would hold a second copy of this crate's targets).
-geop-ops-extrude-revolve = { workspace = true, features = ["testing"] }
+geop-ops-extrude-revolve = { workspace = true, features = ["testing", "examples"] }
+geop-ops-sketch.workspace = true

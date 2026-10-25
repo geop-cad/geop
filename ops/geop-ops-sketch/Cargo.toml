@@ -23,6 +23,6 @@ geop-core-editor = { workspace = true, features = ["testing"] }
 # Parts to sketch on, extruded from sketches: the integration tests'
 # programs (the extrusion depends on this crate, so they are not unit
 # tests, which would hold a second copy of its targets).
-geop-ops-extrude-revolve = { workspace = true, features = ["testing"] }
+geop-ops-extrude-revolve = { workspace = true, features = ["testing", "examples"] }
 # A 3-D sketch's curves, projected.
 geop-ops-sketch3d.workspace = true

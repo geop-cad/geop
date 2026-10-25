@@ -12,18 +12,21 @@ geop-core-geometry.workspace = true
 geop-core-topology.workspace = true
 geop-core-sketch.workspace = true
 geop-ops-model.workspace = true
-geop-ops-sketch.workspace = true
-geop-ops-sketch3d.workspace = true
 geop-lib-booleans.workspace = true
 geop-lib-sweep.workspace = true
 serde.workspace = true
 # Only for `testing`: reading and writing the arguments of steps.
 serde_json = { workspace = true, optional = true }
+geop-ops-sketch = { workspace = true, optional = true }
+geop-ops-sketch3d = { workspace = true, optional = true }
 
 [features]
 # For other crates' tests: the sketches, extrusions and programs of
 # `testing` that their programs are written with.
-testing = ["dep:serde_json", "geop-ops-model/testing"]
+testing = ["dep:serde_json", "dep:geop-ops-sketch", "geop-ops-model/testing"]
+# The examples: programs of sketches, 3-D sketches and sweeps. Written in
+# the sketch operations too, so only an editor turns it on.
+examples = ["dep:geop-ops-sketch", "dep:geop-ops-sketch3d"]
 
 [dev-dependencies]
 # The examples' round trips and incremental builds.
@@ -33,3 +36,5 @@ geop-core-editor = { workspace = true, features = ["testing"] }
 geop-ops-model = { workspace = true, features = ["testing"] }
 geop-ops-reference-geometry.workspace = true
 serde_json.workspace = true
+geop-ops-sketch.workspace = true
+geop-ops-sketch3d.workspace = true

@@ -7,6 +7,7 @@
 
 #[cfg(test)]
 mod editor_tests;
+#[cfg(any(test, feature = "examples"))]
 pub mod examples;
 mod hole;
 mod icons;
@@ -29,5 +30,8 @@ use geop_core_math::geop_error::GeopResult;
 
 /// Adds what this crate offers an editor to `r`: holes and threads.
 pub fn register(r: Registry) -> GeopResult<Registry> {
-    (r.operation(Hole)?.operation(Thread))?.examples(examples::set())
+    let r = r.operation(Hole)?.operation(Thread)?;
+    #[cfg(any(test, feature = "examples"))]
+    let r = r.examples(examples::set())?;
+    Ok(r)
 }

@@ -140,11 +140,14 @@ core/   geop-core-math        scalars, intervals, linear algebra, error type, fr
         geop-core-program     what a program, operation, part, workspace is (§3)
         geop-core-editor      what editing a step and a program is (§4)
 
-ops/    geop-ops-model        the model target, stable names, element kinds, drawing of
-                              solids, and the solid vocabulary every feature shares
+ops/    geop-ops-model        the vocabulary every operation shares: every target a step
+                              refers to (the model with its stable names and element kinds,
+                              sketches, 3-D sketches, datums, parameters and properties,
+                              placed parts and their solids), the references into them,
+                              what is picked, Combine and Extent, Spacing; their drawers
         geop-lib-*            shared algorithm libraries over the model, no operations
-        geop-ops-*            one crate per operation family: targets, retrieval,
-                              editing, tests, examples, regression tests
+        geop-ops-*            one crate per operation family: its operations, their forms,
+                              editor, tests, examples (feature `examples`), regressions
 
 cad/    geop-cad-base         composition: the list of crates, nothing else
         geop-cad-web          wasm bindings
@@ -161,12 +164,16 @@ Dependency rules, enforced by `scripts/check-layering.sh` (§8):
   `geop-ops-*` crate other than model. **A lib takes geometry and models;
   an op resolves references.** An algorithm takes `Profile`s, `Model`s,
   `NamedModel`s, `Pose`s, never a `PlacedSketch` or an `ElementReference`.
-- `geop-ops-*` depends on `core/*`, `geop-ops-model`, `geop-lib-*`, and on
-  other `geop-ops-*` crates **only to read their targets** (the sketch
-  target to extrude it, the datums target to pick a plane). Depending on
-  another op crate for its `Args` type, a helper, or a test fixture is a
-  layering error; the thing being imported belongs in a lib crate or in
-  model.
+- `geop-ops-*` depends on `core/*`, `geop-ops-model` and `geop-lib-*`
+  only: **an operation is a leaf.** Every target another operation reads
+  (the sketch to extrude, the datum to sketch on, the placed parts to
+  draw) is `geop-ops-model`'s, so no op depends on another op. The one
+  thing written in several operations' `Args` is an example program; an
+  op crate's examples sit behind its feature `examples`, whose
+  dependencies on other ops are optional, turned on by `geop-cad-base`
+  and by tests. The same holds for the programs a `testing` feature
+  offers other crates' tests. Depending on another op crate for a helper
+  is a layering error; the helper belongs in a lib crate or in model.
 - `cad/*` depends on everything and defines nothing but composition.
 - `web/` knows the protocol types of `geop-core-editor` only. It maps
   panel keys to components; it never branches on an operation kind.
@@ -617,14 +624,15 @@ operation.
 
 ```
 ops/geop-ops-<name>/
-  Cargo.toml          features: testing (fixtures for dependents)
+  Cargo.toml          features: testing (fixtures for dependents), examples (its
+                      examples; the ops they are written in are optional deps)
   src/lib.rs          the public surface, enumerated: register(), target types,
                       reference constructors, read_* functions, *Args types
   src/targets.rs      the targets it defines: types, HasElements/Kind/Selectable impls
   src/<op>.rs         one PartOperation per file: Args, run, form, new_args, canvas
   src/draw.rs         Drawer impl (if it defines a drawn target)
   src/icons.rs
-  src/examples.rs     ExampleSet: programs that exercise this crate
+  src/examples.rs     ExampleSet: programs that exercise this crate (feature `examples`)
   src/testing.rs      feature `testing`: what dependents' tests need
   src/program_tests.rs    builds programs with a registry of what it needs
   src/editor_tests.rs     drives geop_core_editor::Editor the way the front end does
@@ -678,44 +686,60 @@ allowed). `Design` and `validate_operation_id` are imported from the core.
 
 ### 5.4 Expected dependency graph after the split
 
+The graph as it is (October 2026), required dependencies only; the
+optional dependencies of an `examples` or `testing` feature are noted
+after the arrow:
+
 ```
 geop-ops-model        -> core
-geop-lib-booleans     -> model
-geop-lib-sweep        -> model, lib-booleans (to combine)
-geop-lib-shell        -> model, lib-booleans
-geop-lib-sheet        -> core-math
-geop-ops-parameters   -> model (its Panel, DefineParameters, PartProperties)
-geop-ops-datums       -> model
-geop-ops-sketch       -> model, datums
-geop-ops-sketch3d     -> model, datums, sketch (reads sketch target for projection)
-geop-ops-add-datum    -> model, datums, sketch
-geop-ops-extrude-rev. -> model, lib-sweep, sketch, sketch3d, datums
-geop-ops-boolean      -> model, lib-booleans
-geop-ops-fillet       -> model, lib-booleans, lib-sweep
-geop-ops-hole         -> model, lib-booleans, lib-sweep, sketch, datums
-geop-ops-shell        -> model, lib-shell
-geop-ops-plastic      -> model, lib-booleans, lib-sweep, lib-shell, sketch
-geop-ops-pattern      -> model, lib-booleans, sketch, datums
 geop-lib-constraints  -> core
-geop-ops-assembly     -> model, constraints, datums, add-datum (Selected), core-rasterize
-geop-ops-drawing      -> model, lib-sheet, assembly (placed parts), bom
-geop-ops-inspect      -> model, assembly
-geop-ops-bom, -urdf, -step -> model, assembly, lib-sheet/rasterize as needed
-geop-lib-stdlib       -> the ops whose Args it writes programs in
-geop-cad-base         -> everything
+geop-lib-booleans     -> model
+geop-lib-sweep        -> model
+geop-lib-shell        -> model, lib-booleans
+geop-lib-sheet        -> core
+geop-lib-stdlib       -> model, sketch, reference-geometry, extrude-revolve, pattern
+                         (the ops whose Args its programs are written in)
+geop-ops-sketch       -> model
+geop-ops-sketch3d     -> model
+geop-ops-reference-g. -> model                 [examples: sketch, extrude-revolve]
+geop-ops-extrude-rev. -> model, lib-sweep, lib-booleans
+                                               [testing: sketch; examples: sketch, sketch3d]
+geop-ops-boolean      -> model, lib-booleans   [examples: sketch, extrude-revolve]
+geop-ops-fillet       -> model, lib-booleans, lib-sweep
+                                               [examples: sketch, extrude-revolve]
+geop-ops-hole         -> model, lib-booleans, lib-sweep
+                                               [testing, examples: sketch, extrude-revolve]
+geop-ops-shell        -> model, lib-shell
+geop-ops-plastic      -> model, lib-booleans, lib-sweep, lib-shell
+                                               [testing: sketch, extrude-revolve, reference-geometry, shell]
+geop-ops-pattern      -> model, lib-booleans   [examples: sketch, extrude-revolve]
+geop-ops-subd         -> model
+geop-ops-surface      -> model, lib-booleans, lib-shell
+                                               [examples: sketch, sketch3d, extrude-revolve, boolean]
+geop-ops-edit         -> model, lib-booleans, lib-sweep
+geop-ops-sheetmetal   -> model, lib-sheet      [examples: sketch]
+geop-ops-assembly     -> model, lib-constraints, lib-sheet, core-rasterize
+                                               [examples: sketch, extrude-revolve, lib-stdlib]
+geop-ops-harness      -> model, lib-sweep
+geop-ops-step         -> model
+geop-ops-drawing      -> model, lib-sheet, lib-booleans, lib-sweep
+geop-ops-inspect      -> model, lib-booleans
+geop-ops-bom          -> model
+geop-cad-base         -> everything, every op's `examples` on
 ```
 
-`geop-ops-fillet` no longer depends on `geop-ops-extrude-revolve`;
-`geop-ops-edit` no longer depends on the boolean operation crate. Changing
-the Extrude dialog retests Extrude, stdlib and cad-base. Changing the
-boolean algorithm retests, correctly, everything that cuts.
+No op crate depends on another op crate: what one reads of another — the
+sketch to extrude, the datums to sketch on, a placed part to draw or weigh,
+what was picked — is `geop-ops-model`'s. Changing the Extrude dialog
+rebuilds extrude-revolve, the examples written with it, stdlib and
+cad-base. Changing the boolean algorithm rebuilds, correctly, everything
+that cuts.
 
-Known remaining op→op edges that are legitimate (reading a target):
-sketch (every feature on a sketch), datums (planes and axes), add-datum's
-`Selected` (what a mate picks), assembly's placed parts (drawing, BOM,
-inspect, STEP export).
-
----
+The exporters of the assembly's mechanism (STL, URDF) live in
+`geop-ops-assembly`: they read its joints and its solver, which are the
+operation's own. The bill of materials is computed in model
+(`placed::bom`), where a drawing's parts list and the BOM inspector both
+read it.
 
 ## 6. Thin `cad/`
 
@@ -1003,6 +1027,24 @@ listing 40 crates.
 | panels keep bespoke TSX components, looked up by key | express panels as `Answer` blocks | the parameters panel is a real editor (tables, rename); UI code is allowed in the UI, logic is not |
 
 ---
+
+## Status (2026-10-25): every operation a leaf
+
+- `geop-ops-model` is the vocabulary crate: it took in `geop-ops-datums`
+  and `geop-ops-parameters` whole, the sketch and 3-D sketch targets and
+  the references into them (`sketch`, `sketch3d`), `Selected` and
+  `MateEntity` (`selection`, `mate_entity`), `Spacing`, and the placed
+  parts with their solids, meshes and bill of materials (`placed`).
+  `geop-ops-constraints` became `lib/geop-lib-constraints`; URDF export
+  joined STL export in `geop-ops-assembly`.
+- Examples are behind each op crate's `examples` feature (see §2.1): the
+  required dependency graph has no op → op edge, and
+  `scripts/check-layering.sh` fails one.
+- The retest scope measured with dev-dependents barely changed: nearly
+  every crate's tests start from sketched and extruded programs
+  (`geop_ops_extrude_revolve::testing`). Fixtures from
+  `geop_ops_model::testing` and `geop_lib_sweep::shapes` are the next
+  step, test by test.
 
 ## Status (2026-10-16)
 

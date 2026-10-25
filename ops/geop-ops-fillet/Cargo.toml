@@ -13,17 +13,23 @@ geop-core-topology.workspace = true
 geop-ops-model.workspace = true
 geop-lib-sweep.workspace = true
 geop-lib-booleans.workspace = true
-# The examples: solids extruded from sketches, then rounded.
-geop-ops-extrude-revolve.workspace = true
-geop-ops-sketch.workspace = true
 serde.workspace = true
+# Only for `examples`.
+geop-ops-extrude-revolve = { workspace = true, optional = true }
+geop-ops-sketch = { workspace = true, optional = true }
+
+[features]
+# The examples: solids extruded from sketches, then rounded. Written in
+# those operations too, so only an editor turns it on.
+examples = ["dep:geop-ops-extrude-revolve", "dep:geop-ops-sketch"]
 
 [dev-dependencies]
 # The examples' round trips and incremental builds.
 geop-core-program = { workspace = true, features = ["testing"] }
 geop-ops-model = { workspace = true, features = ["testing"] }
-geop-ops-extrude-revolve = { workspace = true, features = ["testing"] }
+geop-ops-extrude-revolve = { workspace = true, features = ["testing", "examples"] }
 geop-lib-sweep = { workspace = true, features = ["testing"] }
 geop-ops-reference-geometry.workspace = true
 serde_json.workspace = true
 geop-core-editor = { workspace = true, features = ["testing"] }
+geop-ops-sketch.workspace = true

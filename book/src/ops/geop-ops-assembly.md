@@ -7,9 +7,11 @@ through the runner and placed by `AddPart` at a pose its program's state
 holds — and mated to what is already there. Where every placed part is, is
 the program's state, which the editor solves the mates for; dragging a
 placed part moves it as far as its mates let it. `PartPattern` places
-copies of a placed part in a row or round an axis. Also what reads a part
-with the parts placed in it: their solids, each of its own part's material
-(`solids`), and an STL file of them all (`Stl`).
+copies of a placed part in a row or round an axis. Also what is exported
+of a part with the parts placed in it: an STL file of its solids (`Stl`)
+and its mechanism as a robot description (`urdf`). What a placed part is
+to what reads it — where each is, its solids, the bill of materials — is
+[geop-ops-model](./geop-ops-model.md)'s `placed` module.
 
 ## Arguments, and where the part goes
 
@@ -59,7 +61,7 @@ what it shows, so a viewer is sent a part drawn alike — every screw of a
 size — once. A pattern's copy loads again the file and inputs the part it
 copies was loaded from, run with its own state. `testing` (feature
 `testing`) makes parts in Rust the programs of a workspace, for the tests
-of what reads placed parts. `placed_parts` lists every
+of what reads placed parts. `geop_ops_model::placed::placed_parts` lists every
 placed part, however deep, `locate` where one is, and `drawn` how it is
 drawn.
 
@@ -155,20 +157,24 @@ a whole drag one edit to undo); the `AssemblyDrawer`, which draws the
 placed parts as instances of their components and lists those placed in
 the part itself; and the examples of assemblies (`examples::set`).
 
-## Solids and STL
+## STL and URDF
 
-`solids` lists the solids a part shows, wherever they are placed — its own
-and those of the parts placed in it, however deep — each of its own part's
-material, with their mass properties: what weighing a part, checking it for
-interference, ordering it and simulating it read. `Stl` is the STL exporter
+`geop_ops_model::placed::solids` lists the solids a part shows, wherever
+they are placed — its own and those of the parts placed in it, however
+deep — each of its own part's material, with their mass properties: what
+weighing a part, checking it for interference, ordering it and simulating
+it read. `Stl` is the STL exporter
 (see [geop-core-editor](../core/geop-core-editor.md#exporters)): the mesh the
 editor draws, the parts placed included, each where it is; its options
 choose the solids (`solids`), text or binary (`ascii`) and how finely
-curved faces are meshed (`quality`).
+curved faces are meshed (`quality`). `urdf` writes the assembly as a
+robot description for simulators: its links the placed parts that mates
+hold rigidly together, its joints the assembly's, each link's inertia from
+its solids, its meshes as STL in one ZIP archive.
 
 ## Examples and tests
 
-`examples` holds the examples of assemblies: the parts they place (`pin`,
+`examples` (feature `examples`) holds the examples of assemblies: the parts they place (`pin`,
 `link`, `bar`, `metric_plate`) and the examples made of several files
 (`workspaces`: `press`, `pin_in_plate`, `chain`, `parametric_plates`,
 `four_bar`, `arm`, `bolted_plate`), with the mates and frames they are

@@ -23,7 +23,7 @@ tier the toolbar offers operations in the order they are registered;
 exporters and inspectors come in that order too, and the first exporter's
 first format, STL, is what a part is written in unless told otherwise. A
 part is drawn and listed by the drawers in that order: solids and faces,
-sketches, datums, placed parts.
+datums, sketches, the part's colour, placed parts.
 
 This and the composition's tests are the only places the crate names an
 operation crate (`scripts/check-layering.sh` checks it). `editor()` is an
@@ -75,7 +75,10 @@ depends on it), with the helpers of `geop_core_editor::testing`.
 ## Examples
 
 Each operation crate ships the examples that exercise it in its own
-`examples.rs`, registered by its `register` (extrude and revolve's
+`examples.rs`, registered by its `register` when its feature `examples`
+is on — which this crate asks for, since an example is written in other
+operations' `Args` too and an operation itself depends on none (extrude
+and revolve's
 `box_with_drill_hole`, `bracket`, `pipe`, `parametric_plate`, ...;
 `split_plate` of [geop-ops-boolean](../ops/geop-ops-boolean.md);
 `rounded_box` of `geop-ops-fillet`; `horn` and `motor_flange` of extrude

@@ -1,5 +1,5 @@
 //! [`parts_list`]: the bill of materials a drawing lists, from the part's
-//! own (see [`geop_ops_bom`]).
+//! own (see [`geop_ops_model::placed::bom`]).
 
 use geop_core_math::geop_error::GeopResult;
 use geop_core_program::reader::Reader;

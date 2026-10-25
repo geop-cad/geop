@@ -10,10 +10,6 @@ geop-core-editor.workspace = true
 geop-core-math.workspace = true
 geop-core-geometry.workspace = true
 geop-ops-model.workspace = true
-# What a route runs through: an element of the part, or of a part placed in
-# it, or the frame on one.
-geop-ops-reference-geometry.workspace = true
-geop-ops-assembly.workspace = true
 # For its path sweep, which the bundle is swept along the route with.
 geop-lib-sweep.workspace = true
 serde.workspace = true
@@ -21,10 +17,12 @@ serde.workspace = true
 [dev-dependencies]
 geop-ops-model = { workspace = true, features = ["testing"] }
 geop-core-topology.workspace = true
-geop-ops-extrude-revolve = { workspace = true, features = ["testing"] }
+geop-ops-extrude-revolve = { workspace = true, features = ["testing", "examples"] }
 geop-lib-sweep = { workspace = true, features = ["testing"] }
 geop-ops-sketch.workspace = true
 geop-ops-sketch3d.workspace = true
 geop-ops-inspect.workspace = true
 geop-ops-bom.workspace = true
 geop-core-editor = { workspace = true, features = ["testing"] }
+geop-ops-reference-geometry.workspace = true
+geop-ops-assembly = { workspace = true, features = ["examples"] }

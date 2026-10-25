@@ -23,6 +23,7 @@
 pub mod boundary;
 #[cfg(test)]
 mod editor_tests;
+#[cfg(any(test, feature = "examples"))]
 pub mod examples;
 pub mod extend;
 mod icons;
@@ -95,14 +96,17 @@ use geop_core_editor::registry::Registry;
 /// Adds what this crate offers an editor to `r`: surfaces: boundary,
 /// offset, thickened, knit, trimmed, extended and network surfaces.
 pub fn register(r: Registry) -> GeopResult<Registry> {
-    r.operation(BoundarySurface)?
+    let r = r
+        .operation(BoundarySurface)?
         .operation(OffsetSurface)?
         .operation(Thicken)?
         .operation(Knit)?
         .operation(TrimSurface)?
         .operation(ExtendSurface)?
-        .operation(NetworkSurface)?
-        .examples(examples::set())
+        .operation(NetworkSurface)?;
+    #[cfg(any(test, feature = "examples"))]
+    let r = r.examples(examples::set())?;
+    Ok(r)
 }
 
 /// What the tests share: the model's elements by name.

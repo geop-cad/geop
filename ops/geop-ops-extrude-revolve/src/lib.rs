@@ -23,6 +23,7 @@
 mod editor_tests;
 #[cfg(test)]
 mod example_tests;
+#[cfg(any(test, feature = "examples"))]
 pub mod examples;
 mod extrude;
 mod icons;
@@ -54,9 +55,12 @@ use geop_core_math::geop_error::GeopResult;
 /// Adds what this crate offers an editor to `r`: extrusions, revolutions,
 /// sweeps and lofts, and the examples of them.
 pub fn register(r: Registry) -> GeopResult<Registry> {
-    r.operation(Extrude)?
+    let r = r
+        .operation(Extrude)?
         .operation(Revolve)?
         .operation(Sweep)?
-        .operation(Loft)?
-        .examples(examples::set())
+        .operation(Loft)?;
+    #[cfg(any(test, feature = "examples"))]
+    let r = r.examples(examples::set())?;
+    Ok(r)
 }

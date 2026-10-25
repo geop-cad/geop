@@ -27,7 +27,8 @@ stays where it was whatever later steps do to what it was built from.
 
 ## The selection
 
-The step's selection is a list of `Selected`, a `one_of!` enum (see
+The step's selection is a list of `Selected`
+(`geop_ops_model::selection`, a `one_of!` enum, see
 [geop-core-editor](../core/geop-core-editor.md#picking-references)) of
 anything that can be an input of some construction: a vertex, an edge or a
 face of the model, a datum, a sketch's point or curve. What each selected
@@ -51,8 +52,8 @@ formulas: an offset plane's distance along its normal, an offset point's
 
 ## Examples
 
-`examples` offers three parts sketched on datum planes, registered with
-the operation: `boss_on_reference_plane`, a boss extruded down from a plane
+`examples` (feature `examples`) offers three parts sketched on datum
+planes, registered with the operation: `boss_on_reference_plane`, a boss extruded down from a plane
 above a box, `airfoil_wing`, a wing lofted between NACA 2412 sections on
 planes apart, and `conebox`, a double cone revolved from a plane turned
 about a box's edge, drawn in the editor and kept as the `.geop` text it
