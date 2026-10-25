@@ -147,6 +147,13 @@ export function Toolbar({
       : ([
           { kind: "separator" },
           { kind: "item", label: "Report a bug…", icon: "bug", onSelect: onBugReportOpen },
+          {
+            kind: "item",
+            label: "Discord community",
+            icon: "chat",
+            title: "Ask questions and show what you built: discord.gg/btRDgrcwJ5",
+            onSelect: () => window.open("https://discord.gg/btRDgrcwJ5", "_blank", "noopener"),
+          },
           { kind: "item", label: "Privacy", icon: "privacy", onSelect: () => setPrivacyOpen(true) },
         ] as MenuEntry[])),
   ];

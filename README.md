@@ -1,72 +1,54 @@
-# Geop CAD-Kernel
+# geop
 
-Geop is a CAD kernel written in Rust based on NURBS.
+**Parametric CAD for designing real machines: an exact, interval-arithmetic NURBS kernel in Rust, driving parts and assemblies written as programs with typed references.**
 
-- [geop-cad.dev](https://geop-cad.dev) — project landing page
-- [app.geop-cad.dev](https://app.geop-cad.dev) — the web app
-- [book.geop-cad.dev](https://book.geop-cad.dev) — a short, crate-by-crate tour
-- [docs.geop-cad.dev](https://docs.geop-cad.dev) — generated rustdoc reference
+[![CI](https://github.com/geop-cad/geop/actions/workflows/ci.yml/badge.svg)](https://github.com/geop-cad/geop/actions/workflows/ci.yml)
+[![License: MIT OR Apache-2.0](https://img.shields.io/badge/license-MIT%20OR%20Apache--2.0-blue.svg)](#license)
+[![Discord](https://img.shields.io/badge/Discord-join%20the%20chat-5865F2?logo=discord&logoColor=white)](https://discord.gg/btRDgrcwJ5)
+[![Web app](https://img.shields.io/badge/app.geop--cad.dev-open%20in%20the%20browser-0a7d5c)](https://app.geop-cad.dev)
 
-If Geop is useful to you, consider [sponsoring on Ko-fi](https://ko-fi.com/tobiasjacob)
-— it funds the time that goes into the kernel.
+![A part sketched, extruded and filleted in the geop web app, then rebuilt with a new distance](docs/demo.gif)
 
-## License
+*New part, a rectangle sketched by clicks, extruded, an edge filleted, and the extrusion's distance changed: the fillet follows.*
 
-Geop is dual-licensed under the [MIT](LICENSE-MIT) and [Apache-2.0](LICENSE-APACHE)
-licenses, at your option. The code is provided as is, with no warranty of
-any kind. Unless you state otherwise, a contribution you submit is licensed
-the same way, with no further terms.
+## Try it
 
-## Contributing
+- **In the browser:** [app.geop-cad.dev](https://app.geop-cad.dev). Nothing to install; files stay in your browser.
+- **On the command line:**
+  ```sh
+  cargo install --path cad/geop-cad-cli
+  geop examples --out-dir examples   # every built-in example as a .geop program and its STL
+  geop compile part.geop -o part.step
+  ```
+- **From Claude Code (or any MCP client):**
+  ```sh
+  claude mcp add geop -- geop mcp
+  ```
+  Then ask for a part: the agent sketches, extrudes, fillets, inspects and exports through the same editor the web app runs. See [docs/mcp.md](docs/mcp.md).
+- **In VS Code:** the extension in [`vscode-extension/`](vscode-extension/README.md) opens any `.geop` file as the editor, with the kernel running natively.
 
-**Kernel (Rust):**
-```sh
-cargo test        # run the whole workspace's test suite
-cargo build        # native build, e.g. for the examples under each crate's examples/
+## What works
 
-cargo install --path cad/geop-cad-cli
-geop compile part.geop -o out/part.stl  # compile to stl
-```
+Taken from [ROADMAP.md](ROADMAP.md), which also says what is next.
 
-**Web app:**
+- **Sketching:** 2-D constraint sketches with slots, polygons, fillets, offsets, mirrors and patterns, redundant constraints proven and conflicts named; 3-D sketches as wires; exact helices.
+- **Part features:** extrude, revolve, sweep (with rails and twist) and loft; holes from ISO tables, cosmetic and modelled threads; rolling-ball fillets on any edge with variable radius and rounded corners, chamfers; shell, rib, lip and groove, draft; linear and circular patterns and mirrors of bodies and features; parameters as formulas.
+- **Surfacing:** ruled, boundary, N-sided and Gordon (UV) surfaces, offset, thicken, knit, trim and extend; Catmull–Clark subdivision surfaces converted to valid NURBS solids.
+- **Sheet metal:** base and edge flanges, hems, corners, cuts across bends, exact flat patterns as DXF.
+- **Assemblies:** multi-file assemblies placed by mates; revolute, slider, cylindrical and fastened joints with limits, gear, rack-and-pinion and screw couplings; standard parts (ISO fasteners, bearings, extrusions, steppers, gears, pulleys, rails, servos); wire harnesses with bend radii and cut lengths; a drag in 2000 parts in about 0.25 s.
+- **Inspection and output:** measure, mass properties from the exact B-rep, interference, section views; bills of materials; drawings with hidden lines, sections, dimensions and balloons as SVG and DXF; STEP AP214 import and export (322 of 361 public corpus files import valid); URDF for robot simulators; STL.
+- **Front ends:** the web app, the VS Code extension, the `geop` CLI and the MCP server all drive one headless editor over one JSON protocol.
 
-Requires `wasm-pack` (`cargo install wasm-pack`) and the
-`wasm32-unknown-unknown` target (`rustup target add wasm32-unknown-unknown`),
-plus Node 20+.
+## How it is built
 
-```sh
-cd web
-npm install         # once
-npm run dev          # rebuilds the wasm bindings, then starts the Vite dev server
-```
+- Every number is an interval: comparisons are three-valued (`definitely`, `could be`), searches subdivide to isolate and Newton to refine, and no epsilon decides an answer. [AGENTS.md](AGENTS.md) records the rules and the bugs that made them.
+- A part is a *program*: an ordered list of steps, each an operation with its arguments, referring to what earlier steps built by stable names (`extrude(box,end)` is the end cap of the step `box`), never by a kernel id, so it rebuilds the same part name for name.
+- The workspace has four tiers: `core/` (math, NURBS, the B-rep, programs, the editor), `lib/` (algorithms two operations share), `ops/` (one crate per family of operations, each with its forms, examples and tests) and `cad/` (the composition, one `register` line per crate, carried to the browser, the command line and MCP).
+- The [book](https://book.geop-cad.dev) tours the crates; [docs.geop-cad.dev](https://docs.geop-cad.dev) is the rustdoc; [DEVELOPERS.md](DEVELOPERS.md) has the crate table, scripts and conventions.
+- The landing page is [geop-cad.dev](https://geop-cad.dev).
 
-**VS Code extension:**
-
-Opens any `.geop` file as the editor, with the kernel running natively
-(`geop serve`) instead of as wasm. Requires Node 20+ and the `web/`
-dependencies (`npm install` in `web/`).
-
-```sh
-cd vscode-extension
-npm install         # once
-npm run build       # page -> media/, kernel -> bin/, TypeScript -> out/
-npm run package     # optional: a .vsix for the current platform
-```
-
-Press F5 (from the repo root or from `vscode-extension/`) to start an Extension Development Host
-after `npm run build`. See
-`vscode-extension/README.md` for how it works.
-
-### Programs
-
-A part is described by a *program*: an ordered list of steps, each an
-operation (`add_sketch`, `extrude`, `revolve`, `sweep`, `loft`, `boolean`,
-`add_datum`, `add_part`) with its arguments.
-Steps refer to what earlier steps made only by stable names — `extrude(box)`
-is the solid the step `box` extruded, `extrude(box,end)` its end cap — never
-by a kernel id, so a program is self-contained and rebuilds the same part,
-name for name, every time. It is stored as JSON, one step per object and
-every sketch entity keyed by its id, so edits show up as small diffs:
+<details>
+<summary>A program, as it is saved</summary>
 
 ```json
 {
@@ -86,30 +68,27 @@ every sketch entity keyed by its id, so edits show up as small diffs:
 }
 ```
 
-Whatever a step builds on directly — a sketch's plane, what a reference is
-built from — is an *entity reference*: a `Vertex`, `Edge`, `Face`, `Solid`,
-`Sketch` or `Datum` of the part by name, `{"type": "Face", "name": "..."}`.
-Every part starts with the coordinate-system datum `origin`, and one of a
-coordinate system's axes or planes is referred to on its own by a
-`component`: `{"type": "Datum", "name": "origin", "component": {"axis":
-"x"}}`, or its xy plane, normal to its z axis, `{"type": "Datum", "name":
-"origin", "component": {"plane": "z"}}`.
+Whatever a step builds on is an *entity reference*: a `Vertex`, `Edge`, `Face`,
+`Solid`, `Sketch` or `Datum` by name. Every part starts with the datum
+`origin`; one of its axes or planes is `{"type": "Datum", "name": "origin",
+"component": {"plane": "z"}}`. A program places the parts other files build
+with `add_part` and mates their entities (`pin/extrude(pin,start)`); where
+each placed part is, is the program's `state`, solved after every edit.
+`geop compile assembly.geop` reads the placed files next to it.
+</details>
 
-A program can place the part another program file builds: `add_part`
-names the file relative to its own (`"file": "pin.geop"`) and mates
-entities of it — named behind the step's id, `pin/extrude(pin,start)` — to
-those of the parts placed before or of the program's own part. Where each
-placed part is, is the program's `state`
-(`"pin.pose": {"position": [...], "rotation": [w, x, y, z]}`), which the
-editor solves the program's mates for after every edit, moving any part
-that no `fixed` mate holds — so a later step's mates move an earlier part for
-every step. Dragging a placed part moves it as far as the mates allow, and a
-sub-assembly's own parts move with the program's mates too.
-Files place each other as a DAG: a file that places itself, directly or
-through others, is an error naming the cycle. `geop compile assembly.geop`
-reads the placed files next to it.
+## Contributing
 
-The web app keeps its program files in the browser, in an explorer sidebar
-like VS Code's: new, rename, delete, upload and download them there. The VS Code extension in `vscode-extension/` opens any
-`.geop` file as the editor, with the kernel running natively (`geop serve`). `geop examples --out-dir <dir>` writes every
-built-in example (each operation crate's `examples.rs`) as a program file and its part.
+Issues and pull requests are welcome; see [CONTRIBUTING.md](CONTRIBUTING.md)
+for how the code is laid out and tested, and come talk on
+[Discord](https://discord.gg/btRDgrcwJ5).
+
+If geop is useful to you, consider [sponsoring on Ko-fi](https://ko-fi.com/tobiasjacob):
+it funds the time that goes into the kernel.
+
+## License
+
+Dual-licensed under [MIT](LICENSE-MIT) or [Apache-2.0](LICENSE-APACHE), at
+your option. The code is provided as is, with no warranty of any kind.
+Unless you state otherwise, a contribution you submit is licensed the same
+way, with no further terms.

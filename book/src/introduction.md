@@ -13,7 +13,8 @@ This book gives an overview of each crate: what it is for, its main types
 and operations, and the design decisions behind them. It does not document
 every API in depth — see [docs.geop-cad.dev](https://docs.geop-cad.dev) for
 the generated rustdoc reference, and expect these chapters to grow over
-time.
+time. Questions about the code are welcome on the project's
+[Discord](https://discord.gg/btRDgrcwJ5).
 
 ```text
 core/geop-core-math          scalars, intervals, linear algebra, errors,

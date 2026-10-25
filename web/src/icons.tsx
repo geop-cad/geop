@@ -52,6 +52,14 @@ const ICONS: Record<string, ReactElement> = {
     </>
   ),
   privacy: <path d="M10 3 L16 5.5 L16 10 C16 13.5 13.5 16 10 17 C6.5 16 4 13.5 4 10 L4 5.5 Z" />,
+  chat: (
+    <>
+      <path d="M3.5 4.5 H16.5 V13 H9 L5.5 16 V13 H3.5 Z" />
+      {dot(7, 8.75, 0.9)}
+      {dot(10, 8.75, 0.9)}
+      {dot(13, 8.75, 0.9)}
+    </>
+  ),
   new_part: (
     <>
       <path d="M10 3 L16 6.5 L16 13.5 L10 17 L4 13.5 L4 6.5 Z" />
