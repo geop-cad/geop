@@ -81,5 +81,6 @@
   Write-Host "Next:"
   Write-Host "  $geop open                          edit the .geop files of this folder in your browser"
   Write-Host "  claude mcp add geop -- $geop mcp    let Claude Code model parts with geop"
+  Write-Host "  codex mcp add geop -- $geop mcp     let Codex model parts with geop"
   Write-Host "  $geop vscode                        install the VS Code extension"
 }

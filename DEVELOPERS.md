@@ -219,7 +219,7 @@ match `SHA256SUMS`. To try them without a release, point
 writes it with an exporter, `examples` writes every built-in example,
 `serve` runs the editor for a front end over stdin/stdout (the VS Code
 extension), and `mcp` runs it as a Model Context Protocol server for an
-agent — `claude mcp add geop -- geop mcp`, tools in `docs/mcp.md`, the
+agent — `claude mcp add geop -- geop mcp` or `codex mcp add geop -- geop mcp`, tools in `docs/mcp.md`, the
 protocol in `src/mcp.rs`, the end-to-end session in `tests/mcp.rs`.
 
 `geop open [DIR | program.geop]` serves the web editor to a browser, its

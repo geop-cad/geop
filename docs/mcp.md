@@ -8,11 +8,22 @@ step's references, weigh and measure the part, and export or save it.
 
 ## Setup
 
-Install the CLI, then register it with your client. For Claude Code:
+Install the CLI (`curl -fsSL https://geop-cad.dev/install.sh | sh`, on
+Windows `irm https://geop-cad.dev/install.ps1 | iex`, or from source
+`cargo install --path cad/geop-cad-cli`), then register it with your
+client.
+
+Claude Code:
 
 ```sh
-cargo install --path cad/geop-cad-cli
 claude mcp add geop -- geop mcp
+```
+
+Codex (writes `[mcp_servers.geop]` to `~/.codex/config.toml`; check with
+`codex mcp list`):
+
+```sh
+codex mcp add geop -- geop mcp
 ```
 
 Any other MCP client that starts a stdio server works the same way: the

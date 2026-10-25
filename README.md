@@ -38,7 +38,7 @@
 ## Try it
 
 - **In the browser:** [app.geop-cad.dev](https://app.geop-cad.dev). Nothing to install; files stay in your browser. Or open an example straight away: [turbine blade](https://app.geop-cad.dev/?example=turbine_blade), [flange](https://app.geop-cad.dev/?example=cool_flange), [press assembly](https://app.geop-cad.dev/?example=press), [edge part](https://app.geop-cad.dev/?example=edge_part).
-- **On the command line:** install `geop` with one line *(available from the first release)*:
+- **On the command line:** install `geop` with one line:
   ```sh
   curl -fsSL https://geop-cad.dev/install.sh | sh          # macOS, Linux
   irm https://geop-cad.dev/install.ps1 | iex               # Windows (PowerShell)
@@ -49,9 +49,10 @@
   geop examples --out-dir examples    # every built-in example as a .geop program and its STL
   geop compile part.geop -o part.step
   ```
-- **From Claude Code (or any MCP client):**
+- **From Claude Code, Codex or any MCP client:**
   ```sh
-  claude mcp add geop -- geop mcp
+  claude mcp add geop -- geop mcp   # Claude Code
+  codex mcp add geop -- geop mcp    # Codex
   ```
   Then ask for a part: the agent sketches, extrudes, fillets, inspects and exports through the same editor the web app runs. See [docs/mcp.md](docs/mcp.md).
 - **In VS Code:** `geop vscode` installs the extension of your `geop`'s release (into VS Code, Cursor or VSCodium); it opens any `.geop` file as the editor, with the kernel running natively. See [`vscode-extension/`](vscode-extension/README.md).

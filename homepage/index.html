@@ -801,7 +801,8 @@ footer.site {
         Codex can write one step by step, compile it with the <code>geop</code> CLI, and see exactly
         what it built. Or register geop as an MCP server and it sketches, extrudes, fillets,
         inspects and exports through the same editor the web app runs:
-        <code>claude mcp add geop -- geop mcp</code>
+        <code>claude mcp add geop -- geop mcp</code> for Claude Code,
+        <code>codex mcp add geop -- geop mcp</code> for Codex.
       </p>
 
       <div class="agent-demo-grid">
@@ -834,9 +835,10 @@ footer.site {
 <span class="tl-agent"># then</span>
 <span class="tl-prompt">$</span> geop open                         <span class="tl-agent"># this folder's parts, in your browser</span>
 <span class="tl-prompt">$</span> claude mcp add geop -- geop mcp   <span class="tl-agent"># for Claude Code</span>
+<span class="tl-prompt">$</span> codex mcp add geop -- geop mcp    <span class="tl-agent"># for Codex</span>
 <span class="tl-prompt">$</span> geop vscode                       <span class="tl-agent"># the VS Code extension</span></pre>
         </div>
-        <p class="install-note mono">Available from the first release · checks every download's SHA-256 · no sudo</p>
+        <p class="install-note mono">Checks every download's SHA-256 · no sudo</p>
       </div>
       <div class="inline-ctas">
         <a class="btn btn-ghost" href="https://github.com/geop-cad/geop/blob/main/docs/mcp.md" target="_blank" rel="noopener">Use with Claude Code (MCP) ↗</a>

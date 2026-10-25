@@ -61,7 +61,8 @@ enum Command {
     /// line on stdout. This is how the VS Code extension drives the kernel.
     Serve(ServeArgs),
     /// Run the editor as a Model Context Protocol server over stdin/stdout,
-    /// for an agent to drive: `claude mcp add geop -- geop mcp`. See
+    /// for an agent to drive: `claude mcp add geop -- geop mcp` (Claude Code)
+    /// or `codex mcp add geop -- geop mcp` (Codex). See
     /// docs/mcp.md.
     Mcp(McpArgs),
     /// Edit the files of a folder in the web editor, in your browser, on

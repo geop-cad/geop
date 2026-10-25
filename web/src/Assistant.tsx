@@ -23,7 +23,8 @@ function OwnAgent() {
           Open the editor on a folder: <code>geop open</code>
         </li>
         <li>
-          Connect your own Claude Code: <code>claude mcp add geop -- geop mcp</code>
+          Connect your own agent: <code>claude mcp add geop -- geop mcp</code> (Claude Code) or{" "}
+          <code>codex mcp add geop -- geop mcp</code> (Codex)
         </li>
       </ol>
       <a href={MCP_DOCS} target="_blank" rel="noopener">
