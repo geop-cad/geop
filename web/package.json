@@ -14,7 +14,8 @@
     "preview": "vite preview",
     "build:vscode": "vite build --mode vscode",
     "e2e": "node e2e/web.mjs",
-    "e2e:vscode": "node e2e/vscode.mjs"
+    "e2e:vscode": "node e2e/vscode.mjs",
+    "demo": "node e2e/demo.mjs"
   },
   "dependencies": {
     "@types/three": "^0.185.4",

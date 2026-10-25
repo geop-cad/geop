@@ -70,6 +70,7 @@ it uses, so `prlimit --as` kills it.
 ```sh
 npm run e2e          # the web app
 npm run e2e:vscode   # the VS Code extension's page against a real `geop serve`
+npm run demo         # records the README's docs/demo.gif (needs ffmpeg)
 ```
 
 - `npm run e2e` rebuilds `dist/` if any source is newer (`npm run build`),
