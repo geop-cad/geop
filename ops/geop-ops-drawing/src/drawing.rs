@@ -28,7 +28,7 @@ use geop_core_program::{placed::Located, reader::Reader, values::Design};
 use geop_core_sketch::dimension::Measure;
 use geop_core_topology::{FaceId, Model};
 use geop_lib_sheet::{Anchor, Layer, P, Shape, Sheet, decimal, strokes_of};
-use geop_ops_assembly::placed::locate;
+use geop_ops_model::placed::locate;
 use geop_ops_model::sketch::SketchPlane;
 use geop_ops_model::{CosmeticThread, Edge, NamedModel, Vertex, element, frame_along};
 use serde::{Deserialize, Serialize};

@@ -633,7 +633,7 @@ fn an_assembly_is_cut_and_dimensioned_through_its_parts() {
         .collect();
     let built = build_file(&program, "bolted_plate.geop", files);
     let view = built.current();
-    let placed = geop_ops_assembly::placed_parts(&view).unwrap();
+    let placed = geop_ops_model::placed::placed_parts(&view).unwrap();
     let placed = placed.iter().find(|p| p.name == "plate").unwrap();
     let plate = geop_ops_model::read_model(&placed.located.part.clone()).unwrap();
     let plate = &*plate;

@@ -3,7 +3,7 @@
 
 use geop_core_math::geop_error::GeopResult;
 use geop_core_program::reader::Reader;
-use geop_ops_bom::{LineKind, Structure, bom};
+use geop_ops_model::placed::bom::{LineKind, Structure, bom};
 
 use crate::{DrawingArgs, PartsListLine};
 

@@ -32,11 +32,7 @@ use std::{
     time::Instant,
 };
 
-use crate::{
-    AddPartArgs, Kind, Mate, Resolved,
-    placed::{locate, placed_parts},
-    solving::check as check_mates,
-};
+use crate::{AddPartArgs, Kind, Mate, Resolved, solving::check as check_mates};
 use geop_core_editor::editing::{Pointer, Reach, StepEditEvent};
 use geop_core_math::{
     geop_error::GeopResult,
@@ -46,6 +42,7 @@ use geop_core_math::{
 };
 use geop_lib_stdlib::WithStandardParts;
 use geop_ops_model::mate_entity::MateEntity;
+use geop_ops_model::placed::{locate, placed_parts};
 use geop_ops_model::selection::Selected;
 use geop_ops_model::{Combine, element, read_model};
 

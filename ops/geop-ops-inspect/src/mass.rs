@@ -13,7 +13,7 @@ use geop_core_program::{
     values::Design,
 };
 use geop_core_topology::mass::MassProperties;
-use geop_ops_assembly::solids::{PlacedSolid, Shapes, placed_solids};
+use geop_ops_model::placed::solids::{PlacedSolid, Shapes, placed_solids};
 use geop_ops_model::{Solid, model};
 use serde::Serialize;
 

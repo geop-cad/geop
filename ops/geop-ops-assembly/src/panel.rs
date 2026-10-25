@@ -19,8 +19,9 @@ use geop_core_math::{
 use geop_core_program::{program::Program, reader::Reader, values::Design};
 use serde::{Deserialize, Serialize};
 
+use geop_ops_model::placed::placed_parts;
+
 use crate::{
-    placed::placed_parts,
     settle::Settled,
     solving::{self, Freedom, SettingsState, settings},
 };

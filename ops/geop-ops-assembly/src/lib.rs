@@ -10,10 +10,9 @@
 //! which constraints conflict. [`PartPattern`] places copies of a placed
 //! part in a row or round an axis.
 //!
-//! Also what reads a part with the parts placed in it: their solids, each
-//! of its own part's material ([`solids`]), and an STL file of them all
-//! ([`Stl`]); and how the placed parts are drawn and listed
-//! ([`AssemblyDrawer`]).
+//! Also an STL file of a part with the parts placed in it ([`Stl`]), and
+//! how the placed parts are drawn and listed ([`AssemblyDrawer`]). What a
+//! placed part is to what reads it is [`geop_ops_model::placed`]'s.
 
 mod add_part;
 mod drag_tool;
@@ -39,7 +38,6 @@ pub mod residuals;
 #[cfg(test)]
 mod scale_tests;
 mod settle;
-pub mod solids;
 pub mod solving;
 mod stl;
 #[cfg(any(test, feature = "testing"))]
@@ -61,9 +59,9 @@ pub use mates::{
 pub use mechanism::mates_resolved;
 pub use panel::{JointsCommand, JointsPanel, JointsState};
 pub use part_pattern::{Layout, PartPattern, PartPatternArgs, PatternAxis};
-pub use placed::{Drawn, define_placed, drawn, placed_parts, solid_meshes};
+pub use placed::define_placed;
 pub use settle::Settler;
-pub use stl::{STL_QUALITY, Stl, StlOptions, stl_bytes};
+pub use stl::{Stl, StlOptions};
 
 /// Adds what assemblies offer an editor to `r`: placing parts and patterns
 /// of them, the STL of a part with its placed parts, how placed parts are

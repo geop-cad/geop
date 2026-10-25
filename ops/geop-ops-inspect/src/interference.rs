@@ -14,7 +14,7 @@ use geop_core_topology::{
     Body, SolidId,
     distance::{Feature, PlacedFace, closest_points},
 };
-use geop_ops_assembly::solids::{PlacedSolid, placed_solids};
+use geop_ops_model::placed::solids::{PlacedSolid, placed_solids};
 use geop_ops_model::{BodyNames, NamedModel, Namer};
 
 use crate::mass::drawn;

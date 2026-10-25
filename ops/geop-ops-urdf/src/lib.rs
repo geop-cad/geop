@@ -23,7 +23,7 @@
 //!
 //! **Inertia.** Each link's mass, centre of mass and inertia tensor come
 //! from the exact B-rep of its solids, each of its own part's material
-//! (see [`geop_ops_assembly::solids`]), the tensor about the centre of mass
+//! (see [`geop_ops_model::placed::solids`]), the tensor about the centre of mass
 //! along the link frame's axes.
 //!
 //! **Meshes.** Each placed component is meshed once, in its own frame, as
@@ -62,17 +62,19 @@ use geop_core_math::{
 use geop_core_rasterize::stl::StlFormat;
 use geop_core_topology::mass::MassProperties;
 use geop_ops_assembly::{
-    CouplingKind, JointKind, Motion, Resolved, STL_QUALITY, drawn, joint_parameter,
+    CouplingKind, JointKind, Motion, Resolved, joint_parameter,
     joints::{Connector, measure},
     mechanism::mates_of,
-    placed_parts,
     residuals::D,
-    solids::{Shapes, own_solids_at},
     solving::{self, check},
-    stl_bytes,
 };
 use geop_ops_model::parameters::stem;
+use geop_ops_model::placed::{
+    drawn, placed_parts,
+    solids::{Shapes, own_solids_at},
+};
 use geop_ops_model::read_model;
+use geop_ops_model::{STL_QUALITY, stl_bytes};
 use serde::Deserialize;
 
 /// The URDF file's path in an export.

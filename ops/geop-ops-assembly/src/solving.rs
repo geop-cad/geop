@@ -44,8 +44,8 @@ use serde::Serialize;
 
 pub use geop_lib_constraints::unknown::{Unknown, declare_unknowns};
 
-use crate::placed::{Drawn, Located, drawn, locate, placed_parts};
 use geop_core_editor::view::PartView;
+use geop_ops_model::placed::{Drawn, Located, drawn, locate, placed_parts};
 
 /// The program of `rerun`, to run again by a solve.
 fn run<'r>(rerun: &'r mut Rerun) -> Run<'r> {

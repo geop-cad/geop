@@ -31,9 +31,9 @@ use geop_lib_sweep::shapes::block;
 use geop_ops_assembly::{
     AddPartArgs,
     examples::{metric_plate, pose, workspaces},
-    placed::placed_parts,
     testing::{Shelf, given_model, place, runner},
 };
+use geop_ops_model::placed::placed_parts;
 use geop_ops_model::{CutWire, NamedModel, SolidNotes, read_model};
 
 use crate::{Bom, LineKind, Structure, bom};

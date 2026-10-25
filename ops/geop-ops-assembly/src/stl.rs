@@ -2,18 +2,12 @@
 //! draws (see [`geop_core_rasterize::stl`]), so a file looks exactly like
 //! the part on screen, the parts it places included, each where it is.
 
-use geop_core_math::{
-    geop_error::{GeopError, GeopResult},
-    primitives::TriangleFace,
-    scalars::Scalar,
-};
-use geop_core_rasterize::stl::{StlFormat, StlTriangle, outward, write_stl};
+use geop_core_math::geop_error::{GeopError, GeopResult};
+use geop_core_rasterize::stl::StlFormat;
 use serde::Deserialize;
 
 use geop_core_editor::output::{Content, Export, Exporter, ExporterInfo, Output};
-use geop_ops_model::parameters::stem;
-
-use crate::placed::solid_meshes;
+use geop_ops_model::{STL_QUALITY, parameters::stem, placed::solid_meshes, stl_bytes};
 
 /// Writes the solids of the part as an STL mesh.
 pub struct Stl;
@@ -32,10 +26,6 @@ pub struct StlOptions {
     /// is.
     pub quality: usize,
 }
-
-/// How finely an STL file's curved faces are meshed unless asked otherwise:
-/// as finely as the editor draws them.
-pub const STL_QUALITY: usize = geop_core_editor::view::RESOLUTION;
 
 impl Default for StlOptions {
     fn default() -> Self {
@@ -83,18 +73,4 @@ impl Exporter for Stl {
             content: Content::Bytes(bytes),
         })
     }
-}
-
-/// `triangles` as an STL file called `name`, each facing out (see
-/// [`outward`]).
-pub fn stl_bytes<'t, S: Scalar + 't>(
-    triangles: impl IntoIterator<Item = &'t TriangleFace<S>>,
-    name: &str,
-    format: StlFormat,
-) -> GeopResult<Vec<u8>> {
-    let triangles: Vec<StlTriangle> = triangles.into_iter().map(outward).collect();
-    let mut bytes = Vec::new();
-    write_stl(&triangles, name, format, &mut bytes)
-        .map_err(|e| GeopError::new(format!("writing {name}.stl: {e}")))?;
-    Ok(bytes)
 }

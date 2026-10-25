@@ -12,10 +12,7 @@ use geop_core_program::{
 };
 use std::collections::BTreeMap;
 
-use crate::{
-    AddPartArgs, JointsCommand, JointsPanel, Kind, Mate, MateKind, placed_parts,
-    program_tests::editor,
-};
+use crate::{AddPartArgs, JointsCommand, JointsPanel, Kind, Mate, MateKind, program_tests::editor};
 use geop_core_editor::{
     editing::{Axis, Control, GizmoPart, Pointer, StepEditEvent, Tone, Value},
     editor::{Editor, ProgramState, Update},
@@ -33,6 +30,7 @@ use geop_ops_extrude_revolve::{
 };
 use geop_ops_model::datums::{ORIGIN, component_name, datums};
 use geop_ops_model::mate_entity::MateEntity;
+use geop_ops_model::placed::placed_parts;
 use geop_ops_model::selection::Selected;
 use geop_ops_model::sketch::figures::{on_origin, rectangle_outline};
 use geop_ops_model::{Combine, element, testing::assert_close};

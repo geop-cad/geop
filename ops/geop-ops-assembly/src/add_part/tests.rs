@@ -32,10 +32,11 @@ use geop_ops_model::spacing::Spacing;
 use geop_ops_model::{read_model, testing::assert_close};
 
 use super::*;
+use geop_ops_model::placed::{locate, placed_parts};
+
 use crate::{
     Kind, MateKind, PatternAxis,
     editor::PART,
-    placed::{locate, placed_parts},
     solving::{self, check as check_mates, solve, solved_states},
     testing::{Shelf, given_model},
 };

@@ -8,7 +8,9 @@ use geop_core_editor::{
 use geop_core_math::geop_error::GeopResult;
 use geop_core_program::{placed::Located, reader::Reader};
 
-use crate::placed::{draw_instances, drawn, placed_parts};
+use geop_ops_model::placed::{drawn, placed_parts};
+
+use crate::placed::draw_instances;
 
 /// Draws the parts placed in a part, however deep, each as an instance of
 /// its component where the state has it (see [`draw_instances`]), and lists

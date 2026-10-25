@@ -50,10 +50,11 @@ use geop_lib_constraints::{
 use geop_ops_model::parameters::{compose, placement};
 use geop_ops_model::selection::Selected;
 
+use geop_ops_model::placed::{drawn, locate, moved_by};
+
 use crate::{
     joints::{Connector, JointKind, Motion, joint_residuals, measure},
     mates::{Mate, MateKind, On, Resolved, joint_parameter, mate, mate_name},
-    placed::{drawn, locate, moved_by},
     residuals::{D, Geometry, Kind, residuals},
     solving::{Setting, Settings, largest, scale_of, settings_of},
 };

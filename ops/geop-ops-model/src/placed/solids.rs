@@ -3,25 +3,27 @@
 //! material: what weighing a part, checking it for interference, ordering
 //! it and simulating it read.
 //!
-//! What a step says of a solid beyond its shape (see
-//! [`geop_ops_model::notes`]) is read here: a solid only drawn is no body.
+//! What a step says of a solid beyond its shape (see [`crate::notes`]) is
+//! read here: a solid only drawn is no body.
 //!
 //! Lengths are millimetres and densities kg/m³ (see
-//! [`geop_ops_model::parameters::Material`]), so a mass is in kilograms.
+//! [`crate::parameters::Material`]), so a mass is in kilograms.
 
 use geop_core_program::{placed::Located, reader::Reader, values::Design};
 use std::collections::HashMap;
 
+use crate::{
+    NamedModel, notes_of,
+    parameters::{MaterialOf, Properties, read_properties},
+    placed::placed_parts,
+    read_model,
+};
 use geop_core_math::{
     geop_error::{GeopError, GeopResult, WithContext},
     primitives::Pose,
     scalars::{Field, Scalar},
 };
 use geop_core_topology::{SolidId, mass::MassProperties};
-use geop_ops_model::parameters::{MaterialOf, read_properties};
-use geop_ops_model::{NamedModel, notes_of, read_model};
-
-use crate::placed::placed_parts;
 
 /// A solid of a part, or of a part placed in it: named as the part names it
 /// (`/pin:extrude(pin)` for one of the part placed as `pin`, see
@@ -49,7 +51,7 @@ impl PlacedSolid<'_> {
     /// What it is made of: its part's material.
     pub fn material(&self) -> MaterialOf {
         (read_properties(&self.reader).map(|properties| properties.material()))
-            .unwrap_or_else(|_| geop_ops_model::parameters::Properties::default().material())
+            .unwrap_or_else(|_| Properties::default().material())
     }
 
     /// Its mass properties, where it is, of its part's material — its

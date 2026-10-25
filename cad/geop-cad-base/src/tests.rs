@@ -541,7 +541,6 @@ mod examples {
     use geop_core_program::{part::Part, program::Program};
     use geop_lib_booleans::{RemeshParams, boolean};
     use geop_lib_sweep::shapes::cube_solid;
-    use geop_ops_assembly::solids::placed_solids;
     use geop_ops_drawing::{
         DrawingArgs, ViewKind, ViewLine, ViewOptions, compose, drawing::drawn_faces, parts_list,
         project_view, scene::Scene,
@@ -550,6 +549,7 @@ mod examples {
         interference::bounding_box,
         mass::{MassSummary, mass_report},
     };
+    use geop_ops_model::placed::solids::placed_solids;
     use geop_ops_model::{BooleanOp, NamedModel, Namer, RefId};
 
     use super::Built;

@@ -29,9 +29,9 @@ use geop_core_math::{
 use geop_ops_assembly::{
     AddPartArgs, CouplingKind, JointKind, Mate, Transmission,
     examples::{self, pose},
-    solids::{Shapes, placed_solids},
     solving,
 };
+use geop_ops_model::placed::solids::{Shapes, placed_solids};
 
 use crate::{JointType, Mechanism, Origin, Robot, URDF_FILE, UrdfExport, export};
 

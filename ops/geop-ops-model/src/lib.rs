@@ -59,6 +59,7 @@ mod named_model;
 mod names;
 pub mod notes;
 pub mod parameters;
+pub mod placed;
 pub mod records;
 mod resolve;
 pub mod selection;
@@ -83,7 +84,7 @@ pub use geometry::{
     Body, Circle, Curve, Line, Path, Plane, Point, Round, frame_along, resolve_bodies,
 };
 pub use ids::RefId;
-pub use mesh::SolidMeshes;
+pub use mesh::{STL_QUALITY, SolidMeshes, stl_bytes};
 pub use named_model::{NamedModel, element, model};
 pub use names::{LONGEST_ARGUMENT, NameRegistry, Namer, digest, operation_of, origin_of};
 pub use notes::{CutWire, SolidNote, SolidNotes, notes_of, solid_notes};

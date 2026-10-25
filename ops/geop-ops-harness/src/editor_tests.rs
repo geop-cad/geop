@@ -24,9 +24,10 @@ use geop_core_program::{
     program::Program,
     values::{Design, StateValue, StateValues, pose_state},
 };
-use geop_ops_assembly::{AddPartArgs, Kind, Mate, examples::pose, solids::placed_solids};
+use geop_ops_assembly::{AddPartArgs, Kind, Mate, examples::pose};
 use geop_ops_model::datums::{ORIGIN, component_name, datum};
 use geop_ops_model::mate_entity::MateEntity;
+use geop_ops_model::placed::solids::placed_solids;
 use geop_ops_model::read_model;
 use geop_ops_model::selection::Selected;
 
@@ -179,7 +180,12 @@ fn a_cable_bundle_is_no_body_to_weigh_or_check() {
     let interference = geop_ops_inspect::interference_report(view).unwrap();
     assert_eq!(interference.solids, 2, "{:?}", interference.found);
 
-    let bill = geop_ops_bom::bom(view, "assembly.geop", geop_ops_bom::Structure::Flat).unwrap();
+    let bill = geop_ops_model::placed::bom::bom(
+        view,
+        "assembly.geop",
+        geop_ops_model::placed::bom::Structure::Flat,
+    )
+    .unwrap();
     let total = |b: Bounded| b.value;
     let weighed = mass.total.as_ref().unwrap().mass.value;
     assert!(
@@ -188,7 +194,7 @@ fn a_cable_bundle_is_no_body_to_weigh_or_check() {
         bill.total_mass
     );
     let wires = (bill.lines.iter())
-        .filter(|l| matches!(l.kind, geop_ops_bom::LineKind::Wire { .. }))
+        .filter(|l| matches!(l.kind, geop_ops_model::placed::bom::LineKind::Wire { .. }))
         .count();
     assert_eq!(wires, 1, "{:?}", bill.lines);
 }

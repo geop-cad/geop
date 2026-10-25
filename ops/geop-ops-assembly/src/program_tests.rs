@@ -47,11 +47,12 @@ use geop_ops_model::{
 };
 use geop_ops_reference_geometry::{AddDatumArgs, Construction};
 
+use geop_ops_model::placed::{Placed, locate, placed_parts};
+
 use crate::{
     AddPartArgs, DragTool, PartPatternArgs, PatternAxis, Resolved,
     examples::{self, pose},
     mate_name,
-    placed::{Placed, locate, placed_parts},
     solving::{self, Freedom, Report, SettingsState},
 };
 use geop_ops_model::mate_entity::MateEntity;
