@@ -52,7 +52,15 @@ pub fn register(r: Registry) -> GeopResult<Registry> {
 /// A 2 x 2 x 1 box with a blind hole of radius 0.4 drilled half way into
 /// its top, around its middle: the block `box` (the solid `block(box)`,
 /// its top `block(box,end)`) and the cylinder `hole` cut from it, which
-/// leaves the solid `cylinder(hole)`.
+/// leaves the solid `cylinder(hole)`. The tool ends flush with the top, as
+/// a disc sketched on it and cut back into the box does, so the rim is the
+/// tool's own exact arcs.
+///
+/// The cylinder's top is flush with the box's, as the cap of an extrusion
+/// cut from the top face is: the hole's rim is then the cylinder's own
+/// arcs. A cylinder standing out of the top would have its rim traced by
+/// the boolean instead, a fitted curve no drawing sees as a circle, and
+/// whose spans `least_distance` splits until their domain is a point.
 pub fn drilled_box() -> Program {
     let mut program = Program::new();
     program.push(
@@ -61,7 +69,44 @@ pub fn drilled_box() -> Program {
     );
     program.push(
         "hole",
-        PrimitiveArgs::cylinder_z([1.0, 1.0, 0.5], 0.4, 1.0).combined(Combine::cut("block(box)")),
+        PrimitiveArgs::cylinder_z([1.0, 1.0, 0.5], 0.4, 0.5).combined(Combine::cut("block(box)")),
+    );
+    program
+}
+
+/// A plate 8 x 2 x 0.5 on the origin with a hole of radius 0.3 at (1, 1)
+/// through it: the block `plate` (the solid `block(plate)`, its top
+/// `block(plate,end)`) and the cylinder `hole` cut through it, which
+/// leaves the solid `cylinder(hole)` — the feature `hole` a pattern of
+/// features copies.
+pub fn drilled_plate() -> Program {
+    let mut program = Program::new();
+    program.push(
+        "plate",
+        PrimitiveArgs::block([0.0, 0.0, 0.0], [8.0, 2.0, 0.5]),
+    );
+    program.push(
+        "hole",
+        PrimitiveArgs::cylinder_z([1.0, 1.0, -1.0], 0.3, 2.5).cut("block(plate)"),
+    );
+    program
+}
+
+/// The [`drilled_box`] with its hole cut flush from the top: the cylinder
+/// `hole` ends in the top face `block(box,end)` instead of piercing it, so
+/// the hole's rim on top is the cylinder's own quarter arcs — a circle a
+/// mate takes the axis of, a route runs down — where a pierced top's rim
+/// is a traced intersection curve, which is no arc. Same steps, solids
+/// and geometry as [`drilled_box`].
+pub fn drilled_box_cut_flush() -> Program {
+    let mut program = Program::new();
+    program.push(
+        "box",
+        PrimitiveArgs::block([0.0, 0.0, 0.0], [2.0, 2.0, 1.0]),
+    );
+    program.push(
+        "hole",
+        PrimitiveArgs::cylinder_z([1.0, 1.0, 0.5], 0.4, 0.5).cut("block(box)"),
     );
     program
 }
@@ -72,10 +117,13 @@ mod tests {
 
     use super::*;
     use geop_core_math::primitives::{DatumKind, FrameAxis};
+    use geop_core_math::scalars::Scalar;
     use geop_core_program::testing::assert_round_trips;
     use geop_core_topology::contains::shell::PointClassification;
     use geop_ops_model::datums::read_datums;
-    use geop_ops_model::testing::{Built, assert_valid, assert_volume, classify, model_of};
+    use geop_ops_model::testing::{
+        Built, assert_valid, assert_volume, classify, face_towards, model_of,
+    };
 
     /// The drilled box is a valid solid named by its last step, with the
     /// hole's volume missing, and the program reads back as written.
@@ -95,6 +143,32 @@ mod tests {
             classify(&part, "cylinder(hole)", [1.0, 1.0, 0.25]),
             PointClassification::Inside
         );
+        // The rim is the tool's own four quarter arcs, and the hole's floor
+        // a plane: what a disc sketched on the top and cut back gives.
+        let model = part.topology();
+        let rim = model
+            .edges
+            .values()
+            .filter(|e| {
+                e.curve
+                    .as_arc()
+                    .unwrap()
+                    .is_some_and(|arc| arc.circle.center[2].could_be_equal(Scalar::from_f64(1.0)))
+            })
+            .count();
+        assert_eq!(rim, 4);
+        let floors: Vec<&str> = model
+            .faces
+            .iter()
+            .filter(|(_, f)| {
+                f.surface.as_plane().unwrap().is_some_and(|plane| {
+                    plane.normal[2].could_be_equal(Scalar::ONE)
+                        && plane.point[2].could_be_equal(Scalar::from_f64(0.5))
+                })
+            })
+            .filter_map(|(&id, _)| part.name_of(id))
+            .collect();
+        assert_eq!(floors, ["cylinder(hole,start)"]);
         assert_round_trips(Rc::new(registry().unwrap()), None, &program);
     }
 
@@ -152,7 +226,6 @@ mod tests {
     /// `-y`.
     #[test]
     fn block_faces_are_named_by_side() {
-        use geop_ops_model::testing::face_towards;
         let mut program = Program::new();
         program.push("s", PrimitiveArgs::block([0.0, 0.0, 0.0], [2.0, 2.0, 1.0]));
         let part = program.build_model(registry).unwrap();

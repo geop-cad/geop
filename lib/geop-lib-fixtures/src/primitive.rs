@@ -18,7 +18,7 @@ use geop_core_math::{
 use geop_core_program::{part::StepContext, reader::Reader};
 use geop_core_topology::SolidId;
 use geop_lib_booleans::combine_tools;
-use geop_lib_sweep::{SweepLoop, circle_at, extrude, polygon, polyline, revolve_at_oriented};
+use geop_lib_sweep::{SweepLoop, circle_at, extrude, polygon, revolve_at_oriented};
 use geop_ops_model::{Combine, ModelOperation, NamedModel, Namer, Profile, Tool, build_model};
 use serde::{Deserialize, Serialize};
 
@@ -133,8 +133,8 @@ impl PrimitiveArgs {
 /// Adds the solid `args.shape` describes to the part, combined as
 /// `args.combine` says and named after the step by the shape's kind:
 /// `block(B)`, `cylinder(B)`, ... — its faces as the sweep that built it
-/// names them (`block(B,end)` is the top of a block, `cylinder(B,c1)` the
-/// side of a cylinder). Only for tests: an editor never offers it.
+/// names them (`block(B,end)` is the top of a block, `cylinder(B,end)` of
+/// a cylinder, `cylinder(B,c0)` to `c3` its side's quarters). Only for tests: an editor never offers it.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub struct Primitive;
 
@@ -229,26 +229,37 @@ fn build_shape(
             radius,
             height,
         } => {
-            // Each orientation a cyclic permutation of the world's axes, so
-            // `u x v = w` holds and the solid comes out with its normals
-            // outwards, as a revolve round `z` does.
+            // A circle extruded along the axis, as a sketched disc is: planar
+            // caps (`start` at the base, `end` at the top) and four side
+            // quarters (`c0`..`c3`). Each orientation a cyclic permutation of
+            // the world's axes, so `u x v = w` holds and the solid comes out
+            // with its normals outwards.
             let [x, y, z] = [0, 1, 2].map(Vector3::axis);
             let (u, v, w) = match axis {
                 FrameAxis::X => (y, z, x),
                 FrameAxis::Y => (z, x, y),
                 FrameAxis::Z => (x, y, z),
             };
-            let axes = CoordinateSystem::try_new(point(*base), u, v, w)?;
             let (r, h) = (Scalar::from_f64(*radius), Scalar::from_f64(*height));
-            // Top-down, as a full turn takes its profile: bottom-up revolves
-            // the solid inside out.
-            let profile = polyline(&[
-                Vector2::from_array([Scalar::ZERO, h]),
-                Vector2::from_array([r, h]),
-                Vector2::from_array([r, Scalar::ZERO]),
-                Vector2::from_array([Scalar::ZERO, Scalar::ZERO]),
-            ])?;
-            revolve_at_oriented(model, namer, solid, &Profile::open(profile), &axes)
+            let plane = CoordinateSystem::try_new(
+                point(*base),
+                u.prod_scalar(r),
+                v.prod_scalar(r),
+                w.prod_scalar(h),
+            )?;
+            let loops = [SweepLoop::plain(Profile::closed(circle_at(0.0, 0.0, 1.0)?))];
+            let built = extrude(
+                model,
+                namer,
+                Some(solid),
+                &plane,
+                Scalar::ZERO,
+                Scalar::ONE,
+                &loops,
+            )?;
+            built
+                .solid
+                .ok_or_else(|| GeopError::new("extruded as a solid, but none came out"))
         }
         Shape::Sphere { center, radius } => {
             let axes = CoordinateSystem::world_at(point(*center));
