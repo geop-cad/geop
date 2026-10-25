@@ -2,6 +2,7 @@
 name = "geop-ops-assembly"
 version.workspace = true
 edition.workspace = true
+license.workspace = true
 
 [features]
 # Parts made in Rust as the programs of a workspace, for tests (see

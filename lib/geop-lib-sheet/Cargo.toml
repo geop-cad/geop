@@ -2,6 +2,7 @@
 name = "geop-lib-sheet"
 version.workspace = true
 edition.workspace = true
+license.workspace = true
 
 [dependencies]
 geop-core-math.workspace = true

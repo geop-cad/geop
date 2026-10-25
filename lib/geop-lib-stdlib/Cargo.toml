@@ -2,6 +2,7 @@
 name = "geop-lib-stdlib"
 version.workspace = true
 edition.workspace = true
+license.workspace = true
 
 # The standard parts are programs written in the arguments of the
 # operations that build them (ARCHITECTURE_PLAN.md §5.4).

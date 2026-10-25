@@ -2,6 +2,7 @@
 name = "geop-cad-cli"
 version.workspace = true
 edition.workspace = true
+license.workspace = true
 
 # `geop compile part.geop` — named for the project, not the crate.
 [[bin]]

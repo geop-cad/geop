@@ -12,35 +12,12 @@ If Geop is useful to you, consider [sponsoring on Ko-fi](https://ko-fi.com/tobia
 
 ## License
 
-Geop is licensed under the [Business Source License 1.1](LICENSE.md), converting
-to Apache-2.0 on 2030-09-27 (each release gets its own 4-year clock). In short:
-
-- ✅ **Free for basically everything** — using it in your own product or
-  infrastructure, research, embedding it in a commercial app, a business
-  building a parts configurator on their site, a contractor building one for
-  a client, self-hosting it, forking and modifying it.
-- ✅ **Free to build CAD tools with it**, as long as they're free for end users
-  and run entirely client-side (e.g. compiled to WebAssembly in the browser).
-- ❌ **Not free** if you want to sell a general-purpose, hosted CAD design
-  service where users design and upload arbitrary parts online. That's the
-  one thing reserved for commercial licensing from the Geop maintainers,
-  since it's the product we intend to build ourselves.
-- 🕓 Every released version becomes fully open source (Apache-2.0) 4 years
-  after its release, so nothing is locked away forever.
-- ⚠️ The code is provided **as is, with no warranty of any kind** — see the
-  disclaimer in [LICENSE.md](LICENSE.md) for the full terms.
-
-Need a commercial license for a competing hosted CAD service, or unsure which
-bucket your use case falls into? Reach out to the maintainers.
+Geop is dual-licensed under the [MIT](LICENSE-MIT) and [Apache-2.0](LICENSE-APACHE)
+licenses, at your option. The code is provided as is, with no warranty of
+any kind. Unless you state otherwise, a contribution you submit is licensed
+the same way, with no further terms.
 
 ## Contributing
-
-Contributions require agreeing to the [Contributor License Agreement](CLA.md),
-which assigns copyright in your contribution to the maintainer (with a
-license granted back to you for your own use) so the project can keep
-relicensing and selling commercial licenses without needing to track down
-every past contributor for permission. See CLA.md for how to sign it.
-
 
 **Kernel (Rust):**
 ```sh
