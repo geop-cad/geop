@@ -9,8 +9,6 @@
 //! promises only the sequence: `start`, then each value `next` makes of
 //! the one before, at most `most` of them, each asked once and in order.
 //! It answers `None` when none decided, never the last value tried.
-//! [`first_success`] probes a list of trials, each of which either answers
-//! or fails, and keeps the last failure for when none answers.
 
 use crate::{geop_error::GeopError, scalars::Scalar};
 
@@ -67,24 +65,6 @@ pub fn attempts<T, E>(
     at: impl FnMut(&usize) -> Result<Probe<T>, E>,
 ) -> Result<Option<T>, E> {
     probe(0, most, |k| Ok(k + 1), at)
-}
-
-/// Tries each of `trials` in order until one succeeds: that success, or,
-/// if none did, the failure of the last — `None` for no trials at all. For
-/// a question any of several points answers equally well, asked again
-/// elsewhere only where one cannot be answered.
-pub fn first_success<X, T, E>(
-    trials: impl IntoIterator<Item = X>,
-    mut try_one: impl FnMut(X) -> Result<T, E>,
-) -> Result<T, Option<E>> {
-    let mut last = None;
-    for trial in trials {
-        match try_one(trial) {
-            Ok(found) => return Ok(found),
-            Err(e) => last = Some(e),
-        }
-    }
-    Err(last)
 }
 
 #[cfg(test)]
@@ -149,20 +129,6 @@ mod tests {
         )
         .unwrap();
         assert_eq!((found, asked), (None, 3));
-    }
-
-    /// The first trial that succeeds is taken, and none after it is tried;
-    /// with none succeeding, the last failure is what comes back.
-    #[test]
-    fn the_first_success_or_the_last_failure() {
-        let mut tried = Vec::new();
-        let found = first_success([3, 4, 5, 6], |x| {
-            tried.push(x);
-            if x % 2 == 0 { Ok(x) } else { Err(x) }
-        });
-        assert_eq!((found, tried), (Ok(4), vec![3, 4]));
-        assert_eq!(first_success([1, 3], Err::<(), _>), Err(Some(3)));
-        assert_eq!(first_success([], Ok::<(), ()>), Err(None));
     }
 
     /// Attempts are counted from zero, and none past `most`.

@@ -62,8 +62,6 @@ pub mod runner;
 pub mod target;
 #[cfg(test)]
 mod test;
-#[cfg(test)]
-mod test2;
 #[cfg(any(test, feature = "testing"))]
 pub mod testing;
 pub mod values;

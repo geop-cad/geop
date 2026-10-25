@@ -1,44 +1,34 @@
-mod add_two_frame;
-mod given_frame;
+//! The program machinery run on toy operations ([`operations`]): what is
+//! built again when a step, an input, the state or a placed part changes,
+//! what a step sees of the steps before it, and how a program is checked,
+//! saved and read.
+
 mod instances;
-mod middle_frame;
-mod shift_frame;
+mod operations;
 
 use std::{cell::RefCell, collections::BTreeMap, rc::Rc};
 
 use geop_core_math::{
-    geop_error::{GeopError, GeopResult},
     primitives::Pose,
     scalars::Scalar,
     vector::{Vector, Vector3},
 };
 
 use crate::{
-    element::{ElementReference, HasElements, Kind},
+    element::ElementReference,
     operation_registry::OperationRegistry,
     part::Part,
     placed::Located,
     program::{Program, ProgramStep},
     runner::{RunOutput, Runner},
-    target::{Target, TargetReference},
+    target::TargetReference,
     values::{Design, Setting, Settings, StateValue, StateValues},
 };
-pub(crate) use add_two_frame::{AddTwoFrameArgs, AddTwoFrameOperation};
-pub(crate) use given_frame::{
-    InputFrameArgs, InputFrameOperation, StateFrameArgs, StateFrameOperation,
+pub(crate) use operations::{
+    AddTwoDatums, AddTwoDatumsArgs, AddTwoFrameArgs, AddTwoFrameOperation, Datum, Datums, Frame,
+    InputFrameArgs, InputFrameOperation, MiddleDatum, MiddleDatumArgs, MiddleFrameArgs,
+    MiddleFrameOperation, ShiftFrameArgs, ShiftFrameOperation, StateFrameArgs, StateFrameOperation,
 };
-pub(crate) use middle_frame::{MiddleFrameArgs, MiddleFrameOperation};
-pub(crate) use shift_frame::{ShiftFrameArgs, ShiftFrameOperation};
-
-#[derive(Debug, Clone, Default, PartialEq)]
-pub struct Frame {
-    pub data: Vector3<Design>,
-}
-
-/// Defined by one step, shifted by the ones after it.
-impl Target for Frame {
-    const CHAIN: bool = true;
-}
 
 /// The state of a body at `position`, unturned.
 pub(crate) fn pose_at(position: [f64; 3]) -> StateValue {
@@ -60,25 +50,14 @@ pub(crate) fn assert_encloses<const N: usize>(actual: Vector<Design, N>, expecte
     );
 }
 
-/// A frame is read whole: a kind of its own.
-impl Kind for Frame {
-    const NAME: &'static str = "frame";
-}
-
-impl HasElements<Frame> for Frame {
-    type Element<'a> = &'a Frame;
-
-    fn element(&self, name: &str) -> GeopResult<&Frame> {
-        match name.is_empty() {
-            true => Ok(self),
-            false => Err(GeopError::new(format!("a frame has no element `{name}`"))),
-        }
-    }
-}
-
 /// The frame target `name`, whole.
 pub(crate) fn whole_frame(name: &str) -> ElementReference<Frame, Frame> {
     ElementReference::whole(TargetReference::located(Located::of_key(name).unwrap()))
+}
+
+/// A reference to the datum `name`.
+fn datum(name: &str) -> ElementReference<Datums, Datum> {
+    ElementReference::in_singleton(name).unwrap()
 }
 
 thread_local! {
@@ -107,6 +86,8 @@ pub(crate) fn registry() -> OperationRegistry {
         .and_then(|o| o.with(InputFrameOperation))
         .and_then(|o| o.with(StateFrameOperation))
         .and_then(|o| o.with(ShiftFrameOperation))
+        .and_then(|o| o.with(AddTwoDatums))
+        .and_then(|o| o.with(MiddleDatum))
         .and_then(|o| o.with(instances::LoadOperation))
         .and_then(|o| o.with(instances::CountOperation))
         .unwrap()
@@ -187,6 +168,22 @@ fn shift_frame(id: &str, target: &str, x: f64) -> ProgramStep {
     ProgramStep::new::<ShiftFrameOperation>(id, &args).unwrap()
 }
 
+fn add_two_datums(id: &str, data1: [f64; 3], data2: [f64; 3]) -> ProgramStep {
+    let args = AddTwoDatumsArgs {
+        data1: vector(data1),
+        data2: vector(data2),
+    };
+    ProgramStep::new::<AddTwoDatums>(id, &args).unwrap()
+}
+
+fn middle_datum(id: &str, a: &str, b: &str) -> ProgramStep {
+    let args = MiddleDatumArgs {
+        a: datum(a),
+        b: datum(b),
+    };
+    ProgramStep::new::<MiddleDatum>(id, &args).unwrap()
+}
+
 pub(crate) fn inputs(values: &[(&str, f64)]) -> Settings {
     values
         .iter()
@@ -207,6 +204,12 @@ fn frame(runner: &Running, name: &str) -> Vector3<Design> {
 fn frame_before(runner: &Running, step: &str, name: &str) -> Vector3<Design> {
     let view = runner.part.before(step);
     view.retrieve_element(&whole_frame(name)).unwrap().data
+}
+
+/// The datum `name`, as the part is now.
+fn datum_at(runner: &Running, name: &str) -> Vector3<Design> {
+    let current = runner.part.current();
+    current.retrieve_element(&datum(name)).unwrap().data
 }
 
 /// The failed steps and what went wrong at the root.
@@ -246,6 +249,57 @@ fn rebuilds_only_what_changed() {
     ok(runner.run(&program([1.0, 0.0, 0.0]), &inputs(&[]), &no_state()));
     assert_eq!(take_built(), ["step1_1@step1", "step2@step2"]);
     assert_encloses(frame(&runner, "step2"), [0.5, 0.0, 0.5]);
+}
+
+/// Every step revises the one target of datums, and a step builds on a
+/// datum by an element reference into it: a step reading datums of an
+/// earlier one is rebuilt when that one changes.
+#[test]
+fn datums_are_revised_by_each_step_and_read_as_elements() {
+    let mut runner = runner();
+    let program = |first: [f64; 3]| {
+        Program::from_steps(vec![
+            add_two_datums("s1", first, [0.0, 0.0, 1.0]),
+            middle_datum("s2", "s1_1", "s1_2"),
+        ])
+    };
+
+    ok(runner.run(&program([0.0; 3]), &inputs(&[]), &no_state()));
+    assert_eq!(take_built(), ["datums@s1", "datums@s2"]);
+    assert_encloses(datum_at(&runner, "s1_1"), [0.0; 3]);
+    assert_encloses(datum_at(&runner, "s1_2"), [0.0, 0.0, 1.0]);
+    assert_encloses(datum_at(&runner, "s2"), [0.0, 0.0, 0.5]);
+
+    ok(runner.run(&program([1.0, 0.0, 0.0]), &inputs(&[]), &no_state()));
+    assert_eq!(take_built(), ["datums@s1", "datums@s2"]);
+    assert_encloses(datum_at(&runner, "s2"), [0.5, 0.0, 0.5]);
+}
+
+/// A datum that is not there is named, with the reference that asked for
+/// it.
+#[test]
+fn a_missing_datum_is_named() {
+    let mut runner = runner();
+    let program = Program::from_steps(vec![
+        add_two_datums("s1", [0.0; 3], [1.0, 0.0, 0.0]),
+        middle_datum("m", "s1_1", "s9_2"),
+    ]);
+    let output = runner.run(&program, &inputs(&[]), &no_state());
+    assert_eq!(
+        errors(&output),
+        [("m".to_string(), "there is no datum `s9_2`".to_string())]
+    );
+}
+
+/// In the one target of datums a part has, a step's arguments name a datum
+/// by its name alone.
+#[test]
+fn a_program_names_datums_by_their_names() {
+    let step = middle_datum("m", "s1_1", "s1_2");
+    assert_eq!(
+        serde_json::to_value(&step.args).unwrap(),
+        serde_json::json!({"a": "s1_1", "b": "s1_2"})
+    );
 }
 
 /// A failure is not kept as a result: once its cause is gone, the failed
