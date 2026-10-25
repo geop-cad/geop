@@ -22,12 +22,14 @@ use geop_lib_stdlib::WithStandardParts;
 use std::{collections::BTreeMap, rc::Rc};
 
 use geop_core_editor::{
-    editing::{Button, Control, Pointer, Pull, Reach, Shape, StepEditEvent, Value},
+    editing::{
+        Button, Control, Pointer, Presentation, Pull, Reach, Shape, StepEditEvent, Style, Value,
+    },
     selectable::Selectable,
 };
 use geop_core_math::{
     geop_error::GeopResult,
-    primitives::{DatumComponent, FrameAxis, Pose, Ray},
+    primitives::{CoordinateSystem, DatumComponent, FrameAxis, Pose, Ray},
     scalars::Scalar,
     vector::Vector3,
 };
@@ -1848,14 +1850,11 @@ fn a_coupling_offers_the_joints_that_move_as_it_needs() {
 
 /// Clicking the way the front end does: with a joint's frames to pick, a
 /// hover over a face lights it and draws the frame a click would put there,
-/// as three arrows; a click picks it. A revolute joint between the frames
-/// on the pin's top and the plate's top then stands the pin on its head in
-/// the middle of the plate, its top at the plate's top.
+/// as a triad; a click picks it, and the frames picked stay drawn. A
+/// revolute joint between the frames on the pin's top and the plate's top
+/// then stands the pin on its head in the middle of the plate, its top at
+/// the plate's top.
 #[test]
-#[ignore = "the step editor lights a hovered frame pick but no longer draws it as a triad: \
-            `geop_ops::ui::step` drew one for every `EntityRef::Frame` hovered or picked, and \
-            neither `geop_core_editor::step_editor` nor `Selectable` has a way to draw \
-            what a pick is (the highlight and the joint the clicks make pass)"]
 fn a_joint_is_made_by_clicking_where_its_frames_go() {
     let mut program = examples::pin_in_plate_assembly();
     edit_args(&mut program.steps[1], |pin: &mut AddPartArgs| {
@@ -1874,6 +1873,21 @@ fn a_joint_is_made_by_clicking_where_its_frames_go() {
         MateEntity::picked_from()
     );
     let event = |event| Command::Event { event };
+    let triads = |presentation: &Presentation| -> Vec<(Style, Vector3, [Vector3; 3])> {
+        (presentation.visuals.iter())
+            .filter_map(|v| match &v.shape {
+                Shape::Triad { at, axes } => Some((v.style, *at, *axes)),
+                _ => None,
+            })
+            .collect()
+    };
+    let assert_frame = |(at, axes): (Vector3, [Vector3; 3]), frame: &CoordinateSystem| {
+        let f64s = |v: &Vector3| [0, 1, 2].map(|k| v[k].to_f64());
+        assert_close(f64s(&at), f64s(frame.origin()), 1e-9);
+        for (axis, want) in axes.iter().zip([frame.u(), frame.v(), frame.w()]) {
+            assert_close(f64s(axis), f64s(want), 1e-9);
+        }
+    };
 
     // Not through the pin's origin, a frame datum that is picked first.
     let update = editor.handle(event(StepEditEvent::Hover {
@@ -1882,24 +1896,51 @@ fn a_joint_is_made_by_clicking_where_its_frames_go() {
     }));
     let presentation = update.step.unwrap().presentation;
     // Lit as the frame a click there puts on the pin's top.
-    let pin_top = geop_core_editor::view::FramePick {
-        on: MateEntity::of("pin", Selected::Face(element("extrude(pin,end)"))).picked(),
+    let pin_top = MateEntity::of("pin", Selected::Face(element("extrude(pin,end)")));
+    let lit = geop_core_editor::view::FramePick {
+        on: pin_top.picked(),
         at: None,
-    }
-    .picked();
+    };
     assert!(
-        presentation.highlights.contains(&pin_top),
+        presentation.highlights.contains(&lit.picked()),
         "{:?}",
         presentation.highlights
     );
-    for (x, y) in [(3.6, 1.0), (0.3, 0.3)] {
+    // The hover drew the frame a click would put, as a triad: in the
+    // middle of the pin's top, in the world, its z up the pin.
+    let frame = pin_top.frame_in_world(&editor.part()).unwrap();
+    assert_close(
+        [0, 1, 2].map(|k| frame.origin()[k].to_f64()),
+        [3.5, 1.0, 2.0],
+        1e-9,
+    );
+    assert!((frame.w()[2].to_f64() - 1.0).abs() < 1e-9, "z up");
+    let [(style, at, axes)] = triads(&presentation)[..] else {
+        panic!("one frame is drawn: {:?}", triads(&presentation));
+    };
+    assert_eq!(style, Style::Hover);
+    assert_frame((at, axes), &frame);
+
+    // Picked, the frame stays drawn, as held. The second pick completes
+    // the joint, which is then no longer the mate being edited: its fields
+    // go, and the frames with them.
+    for (x, y, held) in [(3.6, 1.0, true), (0.3, 0.3, false)] {
         let click = StepEditEvent::Click {
             pointer: from_above(x, y),
             button: Button::Primary,
             double: false,
             shift: false,
         };
-        handled(&mut editor, event(click));
+        let update = handled(&mut editor, event(click));
+        let drawn = triads(&update.step.unwrap().presentation);
+        match (held, &drawn[..]) {
+            (true, [(style, at, axes)]) => {
+                assert_eq!(*style, Style::Selected);
+                assert_frame((*at, *axes), &frame);
+            }
+            (false, []) => {}
+            _ => panic!("{drawn:?}"),
+        }
     }
     handled(&mut editor, Command::Commit);
     assert_close(
@@ -1907,21 +1948,6 @@ fn a_joint_is_made_by_clicking_where_its_frames_go() {
         [1.0, 1.0, -1.0],
         1e-7,
     );
-    // The hover drew the frame a click would put, as three arrows.
-    let triad = presentation
-        .visuals
-        .iter()
-        .find_map(|v| match &v.shape {
-            Shape::Triad { at, axes } => Some((at, axes)),
-            _ => None,
-        })
-        .expect("the frame a click would put is drawn");
-    assert_close(
-        [0, 1, 2].map(|k| triad.0[k].to_f64()),
-        [3.5, 1.0, 2.0],
-        1e-9,
-    );
-    assert!((triad.1[2][2].to_f64().abs() - 1.0).abs() < 1e-9, "z up");
 }
 
 /// The `bolted_plate` example holds together: the screw down the hole, the

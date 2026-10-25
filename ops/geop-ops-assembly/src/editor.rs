@@ -242,7 +242,7 @@ fn set_value(kind: &mut MateKind, v: f64) {
 /// limits; the joints a coupling ties, and how.
 fn selected<'a>(
     f: &mut PartForm<'a>,
-    before: &geop_core_program::reader::Reader<'a>,
+    reader: &geop_core_program::reader::Reader<'a>,
     id: &str,
     mate: &Mate,
     joint: Option<&SettingsState>,
@@ -361,7 +361,7 @@ fn selected<'a>(
     f.pick(
         &format!("mate:{id}:entities"),
         label,
-        before,
+        reader,
         &mate.entities,
         true,
         move |edit, mut entities| {
@@ -737,7 +737,16 @@ pub(crate) fn form<'a>(
         (session.selected.as_ref()).and_then(|id| args.mates.get_key_value(id))
     {
         let joint = joints.iter().find(|j| j.name == namer(id));
-        selected(&mut f, &context.before, id, mate, joint, &joints);
+        // Its entities are of the part placed, of one placed before or of
+        // the part itself: all in the part as the step built it.
+        selected(
+            &mut f,
+            built.unwrap_or(&context.before),
+            id,
+            mate,
+            joint,
+            &joints,
+        );
     }
 
     if let Some(view) = built

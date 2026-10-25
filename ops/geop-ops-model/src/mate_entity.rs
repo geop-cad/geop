@@ -5,8 +5,10 @@
 
 use crate::{
     NamedModel, frame_along,
+    placed::locate,
     selection::{Selected, Shape},
 };
+use geop_core_editor::editing::{Style, Visual};
 use geop_core_editor::selectable::Selectable;
 use geop_core_editor::view::{FramePick, drawn};
 use geop_core_geometry::{
@@ -104,6 +106,18 @@ impl MateEntity {
         };
         let at = self.at.as_ref().map(Selected::local);
         frame_on(&inside, &self.on.local(), at.as_ref()).with_context(ctx)
+    }
+
+    /// The frame it gives, where the part it is of is placed in the part
+    /// `reader` reads — in the world, as the part is drawn.
+    pub fn frame_in_world(&self, reader: &Reader) -> GeopResult<CoordinateSystem> {
+        let frame = self.frame(reader)?;
+        match self.part() {
+            "" => Ok(frame),
+            part => (locate(reader, part)?.world.motion())
+                .apply_frame(&frame)
+                .with_context(with_context!("the frame on {}", self.label())),
+        }
     }
 }
 
@@ -248,6 +262,19 @@ impl Selectable for MateEntity {
         let mut drawn = vec![drawn_of(&self.on)];
         drawn.extend(self.at.iter().map(drawn_of));
         drawn
+    }
+
+    /// The frame it gives, as a triad where it is drawn: nothing for an
+    /// element that gives none, which the mate says of it when it is held.
+    fn visuals(&self, reader: &Reader) -> Vec<Visual> {
+        let Ok(frame) = self.frame_in_world(reader) else {
+            return Vec::new();
+        };
+        let shape = geop_core_editor::editing::Shape::Triad {
+            at: *frame.origin(),
+            axes: [*frame.u(), *frame.v(), *frame.w()],
+        };
+        vec![Visual::new("frame", shape, Style::Selected)]
     }
 }
 
