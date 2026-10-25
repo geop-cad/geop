@@ -26,8 +26,8 @@ use serde::{Deserialize, Serialize};
 
 use geop_core_geometry::nurb_curve::NurbCurve3D;
 use geop_ops_model::sketch::{PlacedSketch, SketchRef};
+use geop_ops_model::sketch3d::PlacedSketch3d;
 use geop_ops_model::{Chain, NamedModel, Namer, Path, ToolReach, read_model};
-use geop_ops_sketch3d::PlacedSketch3d;
 
 use geop_lib_sweep::SweepLoop;
 

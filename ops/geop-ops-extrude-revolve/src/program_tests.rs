@@ -37,8 +37,9 @@ use geop_core_math::{
 use geop_core_sketch::PointId;
 use geop_core_topology::validation::{ValidationParameters, validate};
 use geop_ops_model::datums::{AnyDatum, Datums, ORIGIN, component_name, datums, origin_axis};
+use geop_ops_model::sketch3d::sketch3d_path;
 use geop_ops_reference_geometry::{AddDatum, AddDatumArgs, Construction, Selected};
-use geop_ops_sketch3d::{AddSketch3d, sketch3d_path};
+use geop_ops_sketch3d::AddSketch3d;
 
 /// The sketch `name` as a path.
 fn sketch_path(name: &str) -> PathRef {
@@ -927,7 +928,7 @@ fn loft_along_a_3d_sketch_guide() {
     );
     lifted(&mut program, "top_plane", 2.0);
     program.push("top", AddSketchArgs::on(on_datum("top_plane"), square(1.0)));
-    let mut bow = geop_ops_sketch3d::Sketch3d::new();
+    let mut bow = geop_ops_model::sketch3d::Sketch3d::new();
     let p = [[1.0, 0.0, 0.0], [1.5, 0.0, 1.0], [1.0, 0.0, 2.0]]
         .map(|p| bow.add_point(geop_core_math::vector::Vector3::from_array(p.map(n))));
     bow.add_spline(p.to_vec());

@@ -12,9 +12,10 @@ use geop_ops_model::sketch::{
     figures::{n, rectangle, solved},
     whole_sketch,
 };
+use geop_ops_model::sketch3d::{CurveSource, Sketch3d};
 use geop_ops_model::{Combine, element, solid};
 use geop_ops_sketch::AddSketchArgs;
-use geop_ops_sketch3d::{AddSketch3dArgs, CurveSource, Sketch3d};
+use geop_ops_sketch3d::AddSketch3dArgs;
 
 use crate::NetworkSurfaceArgs;
 

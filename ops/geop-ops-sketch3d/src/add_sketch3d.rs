@@ -4,7 +4,7 @@ use geop_core_editor::{
     edit_form::{Edit, EditForm, FormState},
     editable::{Context, OperationGroup, OperationInfo, OperationTier},
     editing::CanvasEvent,
-    one_of, part_operation,
+    part_operation,
     part_operation::PartOperation,
 };
 use geop_core_program::{
@@ -15,10 +15,7 @@ use geop_core_program::{
 };
 use std::collections::{BTreeMap, BTreeSet};
 
-use geop_core_geometry::{
-    nurb_curve::{NurbCurve, NurbCurve3D},
-    shape::Axis,
-};
+use geop_core_geometry::nurb_curve::{NurbCurve, NurbCurve3D};
 use geop_core_math::{
     geop_error::{GeopError, GeopResult, WithContext},
     scalars::Scalar,
@@ -30,47 +27,13 @@ use geop_core_sketch::{
     space::{Constraint3d, CurveKind3d},
 };
 use geop_core_topology::build::{BodySpec, EdgeSpec};
-use geop_ops_model::datums::Datums;
-use geop_ops_model::sketch::PlacedSketch;
 use geop_ops_model::{
-    BodyNames, Chain, Curve, Line, ModelOperation, NamedModel, Namer, Point, build_model,
+    BodyNames, ModelOperation, NamedModel, Namer, build_model,
+    sketch3d::{CurveSource, LineSource, PlacedSketch3d, PointSource, Sketch3d, sketch3d},
 };
 use serde::{Deserialize, Serialize};
 
-use crate::{
-    Sketch3d,
-    editor::{self, Sketch3dSession},
-    placed::{PlacedSketch3d, sketch3d},
-};
-
-one_of! {
-    /// A point of the part a 3-D sketch's fixed point is at: a vertex, a
-    /// datum point or a frame's origin, a sketch's point.
-    pub enum PointSource -> Vector3<Design> {
-        Vertex(ElementReference<NamedModel<Design>, Point>),
-        Datum(ElementReference<Datums, Point>),
-        Sketch(ElementReference<PlacedSketch<Design>, Point>),
-    }
-}
-
-one_of! {
-    /// A curve of the part a 3-D sketch's reference curve is: an edge, a
-    /// sketch's curve.
-    pub enum CurveSource -> Chain<NurbCurve3D<Design>> {
-        Edge(ElementReference<NamedModel<Design>, Curve>),
-        Sketch(ElementReference<PlacedSketch<Design>, Curve>),
-    }
-}
-
-one_of! {
-    /// A line of the part a 3-D sketch's direction runs along: a straight
-    /// edge, a datum axis or a frame's, a sketch's line.
-    pub enum LineSource -> Axis<Design> {
-        Edge(ElementReference<NamedModel<Design>, Line>),
-        Datum(ElementReference<Datums, Line>),
-        Sketch(ElementReference<PlacedSketch<Design>, Line>),
-    }
-}
+use crate::editor::{self, Sketch3dSession};
 
 /// Adds a sketch in space to the part, named by the operation's id: points,
 /// lines, arcs through three points and splines through points, with the

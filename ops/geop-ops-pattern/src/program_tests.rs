@@ -517,7 +517,7 @@ fn linear_patterns_and_moves_sweep() {
 #[test]
 fn holes_patterned_along_sketch_lines() {
     let mut program = plate_and_pin();
-    let mut route = geop_ops_sketch3d::Sketch3d::new();
+    let mut route = geop_ops_model::sketch3d::Sketch3d::new();
     let at = |p: [f64; 3]| geop_core_math::vector::Vector3::from_array(p.map(n));
     let (a, b) = (
         route.add_point(at([0.0, 3.0, 0.0])),

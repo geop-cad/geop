@@ -50,7 +50,8 @@ use geop_ops_model::sketch::fields::constraint_status;
 /// snap onto it: an allowance on screen, like the pointer's own reach.
 const AXIS_SNAP: f64 = 2.0;
 
-use crate::{AddSketch3dArgs, CurveSource, LineSource, PointSource, Reference3d, Target};
+use crate::{AddSketch3dArgs, Reference3d, Target};
+use geop_ops_model::sketch3d::{CurveSource, LineSource, PointSource};
 
 /// 3-D sketches are edited in the scalar their programs hold.
 type S = Design;

@@ -46,8 +46,8 @@ use geop_core_topology::{
     build::{BodySpec, CoedgeOn, EdgeSpec, FaceSpec},
     distance::{Feature, closest_points},
 };
+use geop_ops_model::sketch3d::CurveSource;
 use geop_ops_model::{BodyNames, Chain, ModelOperation, NamedModel, Namer, build_model};
-use geop_ops_sketch3d::CurveSource;
 use serde::{Deserialize, Serialize};
 
 use crate::{NamedCurve, SheetSpec};

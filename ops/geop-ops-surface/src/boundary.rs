@@ -53,10 +53,10 @@ use geop_core_topology::{
     Curve3, Sense,
     build::{BodySpec, CoedgeOn, CoedgeSpec, EdgeSpec, FaceSpec},
 };
+use geop_ops_model::sketch3d::CurveSource;
 use geop_ops_model::{
     BodyNames, Chain, Edge, ModelOperation, NamedModel, Namer, build_model, read_model,
 };
-use geop_ops_sketch3d::CurveSource;
 use serde::{Deserialize, Serialize};
 
 use crate::{NamedCurve, SheetSpec};

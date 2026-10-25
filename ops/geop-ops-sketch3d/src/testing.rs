@@ -3,7 +3,8 @@
 use geop_core_math::{scalars::Scalar, vector::Vector3};
 use geop_core_program::values::Design;
 
-use crate::{AddSketch3dArgs, Sketch3d};
+use crate::AddSketch3dArgs;
+use geop_ops_model::sketch3d::Sketch3d;
 
 /// The 3-D sketch `route`: lines from `(1, 1, 1)` to `(3, 1, 1)` and on to
 /// `(3, 2, 2)` — its points `p0`, `p1` and `p3`, its lines `c2` and `c4`.

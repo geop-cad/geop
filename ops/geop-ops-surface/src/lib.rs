@@ -59,7 +59,7 @@ pub type SheetSpec<S> = (
 /// One curve picked to span a surface through: an edge — of a face or of a
 /// wire — or a sketch's curve, with the names of its ends. An edge's name
 /// is its own, its ends its vertices'; a sketch `K`'s curve `c3` is `K,c3`,
-/// its ends `K,p1` (see [`geop_ops_sketch3d::CurveSource`]).
+/// its ends `K,p1` (see [`geop_ops_model::sketch3d::CurveSource`]).
 #[derive(Clone, Debug)]
 struct NamedCurve<S: Scalar> {
     name: String,
@@ -109,8 +109,8 @@ pub fn register(r: Registry) -> GeopResult<Registry> {
 #[cfg(test)]
 pub(crate) mod test_refs {
     use geop_core_program::{element::ElementReference, values::Design};
+    use geop_ops_model::sketch3d::CurveSource;
     use geop_ops_model::{NamedModel, model};
-    use geop_ops_sketch3d::CurveSource;
 
     /// The model's element named `name`.
     pub fn named<K>(name: impl Into<String>) -> ElementReference<NamedModel<Design>, K> {

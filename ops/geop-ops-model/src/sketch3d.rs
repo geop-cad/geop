@@ -1,13 +1,21 @@
-//! [`PlacedSketch3d`]: a 3-D sketch as a part holds it — the value of its
-//! target ([`sketch3d`]) — and what it is to the steps that build on it: a
-//! path as a whole ([`Path`]), picked by an edge of the wire it is built
-//! as.
+//! The 3-D sketch target: [`PlacedSketch3d`], a 3-D sketch as a part holds
+//! it — the value of its target ([`sketch3d`]) — and what it is to the
+//! steps that build on it: a path as a whole ([`Path`]), picked by an edge
+//! of the wire it is built as. And what of the part a 3-D sketch is given:
+//! a point ([`PointSource`]), a curve ([`CurveSource`]), a line to run
+//! along ([`LineSource`]). The step that draws one is `geop_ops_sketch3d`'s.
 
-use geop_core_editor::selectable::SelectableElement;
-use geop_core_editor::view::drawn;
-use geop_core_geometry::nurb_curve::NurbCurve3D;
+use crate::{
+    Chain, Curve, Line, NamedModel, Path, Point,
+    datums::Datums,
+    model,
+    sketch::{PlacedSketch, chain_of_pieces},
+};
+use geop_core_editor::{one_of, selectable::SelectableElement, view::drawn};
+use geop_core_geometry::{nurb_curve::NurbCurve3D, shape::Axis};
 use geop_core_math::{
     geop_error::{GeopError, GeopResult, WithContext},
+    vector::Vector3,
     with_context,
 };
 use geop_core_program::{
@@ -16,10 +24,40 @@ use geop_core_program::{
     target::{Target, TargetReference},
     values::Design,
 };
-use geop_ops_model::sketch::chain_of_pieces;
-use geop_ops_model::{Chain, Path, model};
 
-use crate::Sketch3d;
+/// A 3-D sketch as a program holds it.
+pub type Sketch3d = geop_core_sketch::space::Sketch3d<Design>;
+/// A 3-D sketch's constraint as a program holds it.
+pub type Constraint3d = geop_core_sketch::space::Constraint3d<Design>;
+
+one_of! {
+    /// A point of the part a 3-D sketch's fixed point is at: a vertex, a
+    /// datum point or a frame's origin, a sketch's point.
+    pub enum PointSource -> Vector3<Design> {
+        Vertex(ElementReference<NamedModel<Design>, Point>),
+        Datum(ElementReference<Datums, Point>),
+        Sketch(ElementReference<PlacedSketch<Design>, Point>),
+    }
+}
+
+one_of! {
+    /// A curve of the part a 3-D sketch's reference curve is: an edge, a
+    /// sketch's curve.
+    pub enum CurveSource -> Chain<NurbCurve3D<Design>> {
+        Edge(ElementReference<NamedModel<Design>, Curve>),
+        Sketch(ElementReference<PlacedSketch<Design>, Curve>),
+    }
+}
+
+one_of! {
+    /// A line of the part a 3-D sketch's direction runs along: a straight
+    /// edge, a datum axis or a frame's, a sketch's line.
+    pub enum LineSource -> Axis<Design> {
+        Edge(ElementReference<NamedModel<Design>, Line>),
+        Datum(ElementReference<Datums, Line>),
+        Sketch(ElementReference<PlacedSketch<Design>, Line>),
+    }
+}
 
 /// A 3-D sketch as a part holds it: its name, the id of the step that drew
 /// it; the sketch, what it is given of the part brought up to date and

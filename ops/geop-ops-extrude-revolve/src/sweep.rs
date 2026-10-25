@@ -13,8 +13,8 @@ use geop_core_program::{
     element::ElementReference, part::StepContext, reader::Reader, values::Design,
 };
 use geop_ops_model::sketch::{PlacedSketch, SketchRef, shape_profiles};
+use geop_ops_model::sketch3d::PlacedSketch3d;
 use geop_ops_model::{ModelOperation, NamedModel, Namer, build_model, read_model};
-use geop_ops_sketch3d::PlacedSketch3d;
 use serde::{Deserialize, Serialize};
 
 use geop_lib_sweep::{Control, Orientation, SweepLoop, profile_centre, starting_near, sweep_along};

@@ -14,9 +14,9 @@ use geop_lib_sweep::shapes::block_part;
 use geop_ops_model::datums::{ORIGIN, datums, origin_axis};
 use geop_ops_model::{model, testing::vertex_at};
 
-use crate::{
-    AddSketch3d, AddSketch3dArgs, CurveSource, LineSource, PlacedSketch3d, PointSource,
-    Reference3d, Sketch3d, sketch3d,
+use crate::{AddSketch3d, AddSketch3dArgs, Reference3d};
+use geop_ops_model::sketch3d::{
+    CurveSource, LineSource, PlacedSketch3d, PointSource, Sketch3d, sketch3d,
 };
 
 fn v(p: [f64; 3]) -> Vector3<S> {

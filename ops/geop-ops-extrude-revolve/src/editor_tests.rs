@@ -791,9 +791,9 @@ fn a_3d_sketch_is_drawn_and_swept_along() {
         (sweep.profile, sweep.path),
         (
             geop_ops_model::sketch::whole_sketch("section"),
-            Some(crate::PathRef::Sketch3d(geop_ops_sketch3d::sketch3d_path(
-                &route.id
-            )))
+            Some(crate::PathRef::Sketch3d(
+                geop_ops_model::sketch3d::sketch3d_path(&route.id)
+            ))
         )
     );
     let part = model_of(&built(&editor).unwrap());
@@ -809,7 +809,7 @@ fn a_3d_sketch_is_drawn_and_swept_along() {
 fn a_sweep_takes_a_3d_sketch_as_its_rail() {
     let mut program = crate::examples::horn();
     program.steps.truncate(2);
-    let mut flare = geop_ops_sketch3d::Sketch3d::new();
+    let mut flare = geop_ops_model::sketch3d::Sketch3d::new();
     let points = [
         [0.0, 0.5, 0.0],
         [1.5, 0.4, 0.0],
@@ -845,9 +845,9 @@ fn a_sweep_takes_a_3d_sketch_as_its_rail() {
     let args: crate::SweepArgs = args(editor.program().steps.last().unwrap());
     assert_eq!(
         args.rails,
-        [crate::PathRef::Sketch3d(geop_ops_sketch3d::sketch3d_path(
-            "flare"
-        ))]
+        [crate::PathRef::Sketch3d(
+            geop_ops_model::sketch3d::sketch3d_path("flare")
+        )]
     );
     let part = model_of(&built(&editor).unwrap());
     assert_eq!(part.solid_names().len(), 1);

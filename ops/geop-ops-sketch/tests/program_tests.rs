@@ -663,7 +663,7 @@ fn sketch_curves_are_projected() {
 #[test]
 fn sketch3d_curves_are_projected() {
     let mut program = Program::new();
-    let mut route = geop_ops_sketch3d::Sketch3d::new();
+    let mut route = geop_ops_model::sketch3d::Sketch3d::new();
     let at = |p: [f64; 3]| geop_core_math::vector::Vector3::from_array(p.map(n));
     let (a, b) = (
         route.add_point(at([3.0, 0.0, 1.0])),

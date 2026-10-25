@@ -133,10 +133,10 @@ fn a_boundary_surface_spans_sketch_lines() {
     assert_eq!(
         args.edges,
         [
-            geop_ops_sketch3d::CurveSource::Sketch(geop_ops_model::sketch::sketch_element(
+            geop_ops_model::sketch3d::CurveSource::Sketch(geop_ops_model::sketch::sketch_element(
                 "base", line
             )),
-            geop_ops_sketch3d::CurveSource::Edge(element("sketch3d(route,c2)"))
+            geop_ops_model::sketch3d::CurveSource::Edge(element("sketch3d(route,c2)"))
         ]
     );
     let part = model_of(&built(&editor).unwrap());
@@ -149,7 +149,7 @@ fn a_boundary_surface_spans_sketch_lines() {
 /// for `s` from -0.5 to 2.5 — or, with `across`, lines
 /// `(0, s, s - 0.5)` and `(2, s, s - 0.5)` crossing them, run downwards.
 fn network_lines(across: bool) -> geop_ops_sketch3d::AddSketch3dArgs {
-    let mut s = geop_ops_sketch3d::Sketch3d::new();
+    let mut s = geop_ops_model::sketch3d::Sketch3d::new();
     let at = |p: [f64; 3]| Vector3::from_array(p.map(geop_ops_model::sketch::figures::n));
     let lines: [[[f64; 3]; 2]; 2] = if across {
         [
@@ -200,7 +200,7 @@ fn a_uv_surface_picks_its_curves_by_clicks() {
     let update = editor.handle(Command::Commit);
     assert!(update.error.is_none(), "{:?}", update.error);
     let args: crate::NetworkSurfaceArgs = args(editor.program().steps.last().unwrap());
-    let edge = |name: &str| geop_ops_sketch3d::CurveSource::Edge(element(name));
+    let edge = |name: &str| geop_ops_model::sketch3d::CurveSource::Edge(element(name));
     assert_eq!(
         args.u_curves,
         [edge("sketch3d(along,c5)"), edge("sketch3d(along,c2)")]

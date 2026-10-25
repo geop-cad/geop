@@ -26,12 +26,13 @@ use geop_ops_model::sketch::{
     figures::{circle, n, polygon, rectangle, solved},
     sketch, sketch_element, whole_sketch,
 };
+use geop_ops_model::sketch3d::{Constraint3d, Sketch3d, sketch3d_path};
 use geop_ops_model::{Combine, element};
 use geop_ops_sketch::{
     AddSketch, AddSketchArgs,
     references::{Projected, Reference, Source},
 };
-use geop_ops_sketch3d::{AddSketch3dArgs, Constraint3d, Sketch3d, sketch3d_path};
+use geop_ops_sketch3d::AddSketch3dArgs;
 
 use crate::{
     Extent, Extents, Extrude, ExtrudeArgs, Output, PathRef, RevolveArgs, RevolveAxis, SweepArgs,

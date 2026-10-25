@@ -61,6 +61,7 @@ pub mod parameters;
 pub mod records;
 mod resolve;
 pub mod sketch;
+pub mod sketch3d;
 pub mod tangent;
 #[cfg(any(test, feature = "testing"))]
 pub mod testing;
