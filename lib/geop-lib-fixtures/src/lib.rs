@@ -92,32 +92,13 @@ pub fn drilled_plate() -> Program {
     program
 }
 
-/// The [`drilled_box`] with its hole cut flush from the top: the cylinder
-/// `hole` ends in the top face `block(box,end)` instead of piercing it, so
-/// the hole's rim on top is the cylinder's own quarter arcs — a circle a
-/// mate takes the axis of, a route runs down — where a pierced top's rim
-/// is a traced intersection curve, which is no arc. Same steps, solids
-/// and geometry as [`drilled_box`].
-pub fn drilled_box_cut_flush() -> Program {
-    let mut program = Program::new();
-    program.push(
-        "box",
-        PrimitiveArgs::block([0.0, 0.0, 0.0], [2.0, 2.0, 1.0]),
-    );
-    program.push(
-        "hole",
-        PrimitiveArgs::cylinder_z([1.0, 1.0, 0.5], 0.4, 0.5).cut("block(box)"),
-    );
-    program
-}
-
 #[cfg(test)]
 mod tests {
     use std::rc::Rc;
 
     use super::*;
     use geop_core_math::primitives::{DatumKind, FrameAxis};
-    use geop_core_math::scalars::Scalar;
+    use geop_core_math::{scalars::Scalar, vector::Vector3};
     use geop_core_program::testing::assert_round_trips;
     use geop_core_topology::contains::shell::PointClassification;
     use geop_ops_model::datums::read_datums;
@@ -252,28 +233,22 @@ mod tests {
             "top",
             GivenDatumArgs::plane([0.0, 0.0, 1.0], [0.0, 0.0, 1.0]),
         );
+        // Directions of any length: only their direction reaches the frame.
         program.push(
             "axle",
-            GivenDatumArgs::axis([1.0, 0.0, 0.0], [0.0, 1.0, 0.0]),
+            GivenDatumArgs::axis([1.0, 0.0, 0.0], [0.0, 3.0, 0.0]),
         );
         let part = program.built(registry).unwrap();
         let datums = read_datums(&part.current()).unwrap();
         let top = datums.get("top").unwrap();
         assert_eq!(top.kind, DatumKind::Plane);
-        assert_eq!(
-            top.frame.w().to_array().map(|c| c.to_f64()),
-            [0.0, 0.0, 1.0]
-        );
+        let unit = |p: [f64; 3]| Vector3::from_array(p.map(Scalar::from_f64));
+        assert!(top.frame.w().could_be_equal(&unit([0.0, 0.0, 1.0])));
         let axle = datums.get("axle").unwrap();
         assert_eq!(axle.kind, DatumKind::Axis);
-        assert_eq!(
-            axle.frame.origin().to_array().map(|c| c.to_f64()),
-            [1.0, 0.0, 0.0]
-        );
-        assert_eq!(
-            axle.frame.w().to_array().map(|c| c.to_f64()),
-            [0.0, 1.0, 0.0]
-        );
+        assert!(axle.frame.origin().could_be_equal(&unit([1.0, 0.0, 0.0])));
+        assert!(axle.frame.w().could_be_equal(&unit([0.0, 1.0, 0.0])));
+        assert!(axle.frame.u().norm().could_be_equal(Scalar::ONE));
         assert!(model_of(&part).solid_names().is_empty());
         assert_round_trips(Rc::new(registry().unwrap()), None, &program);
     }

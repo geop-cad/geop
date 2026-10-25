@@ -26,10 +26,10 @@ use serde::{Deserialize, Serialize};
 pub struct GivenDatumArgs {
     pub kind: DatumKind,
     pub origin: [f64; 3],
-    /// The frame's `x`; for a point, an axis or a plane, any direction
-    /// across `z`.
+    /// The frame's `x`, of any length; for a point, an axis or a plane, any
+    /// direction across `z`.
     pub x: [f64; 3],
-    /// The frame's `z`: the axis, or the plane's normal.
+    /// The frame's `z`, of any length: the axis, or the plane's normal.
     pub z: [f64; 3],
 }
 
@@ -82,10 +82,14 @@ impl GivenDatumArgs {
         }
     }
 
-    /// The datum it describes.
+    /// The datum it describes: `x` and `z` are directions, so their lengths
+    /// do not reach the frame (`try_from_xz` keeps them, and a plane given
+    /// with the normal `(0, -1, 1)` would stretch what is sketched on it by
+    /// `sqrt 2`).
     fn datum(&self) -> GeopResult<Datum> {
-        let frame =
-            CoordinateSystem::try_from_xz(point(self.origin), point(self.x), point(self.z))?;
+        let x = point(self.x).normalize()?;
+        let z = point(self.z).normalize()?;
+        let frame = CoordinateSystem::try_from_xz(point(self.origin), x, z)?;
         Ok(Datum {
             kind: self.kind,
             frame,
