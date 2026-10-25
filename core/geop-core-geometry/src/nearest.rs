@@ -31,11 +31,19 @@
 //! in `AGENTS.md`), and the search stops at `max_nodes` pairs; either only
 //! leaves the enclosure wider, never wrong. The pairs left at the handoff
 //! are returned too, for a caller to refine each with Newton.
+//!
+//! A piece is also left as it is once its points spread no further than
+//! they are wide ([`resolved`]). Its hull points are enclosures, and the
+//! bound from them is off by their width as well as by the piece's size:
+//! cutting halves the size, never the width. A span of a traced curve, its
+//! control points `2e-6` wide, was cut until its domain was two ULPs wide
+//! because its box never came under the handoff; the distance it bounds
+//! is as wide as its data, and no cut could make it sharper.
 
 use std::{cmp::Ordering, collections::BinaryHeap};
 
 use geop_core_math::{
-    geop_error::{GeopError, GeopResult},
+    geop_error::{GeopError, GeopResult, WithContext},
     scalars::Scalar,
     vector::Vector3,
 };
@@ -186,6 +194,28 @@ fn separation(a: &[Vector3], b: &[Vector3]) -> GeopResult<Scalar> {
     })
 }
 
+/// Whether cutting a piece whose hull is `points` cannot tighten its bound:
+/// the points' midpoints spread, on no axis, definitely further than the
+/// widest of them is wide. A cut halves the spread and keeps the width,
+/// so the bound is then as sharp as the piece's enclosures can make it.
+fn resolved(points: &[Vector3]) -> bool {
+    let midpoints: Vec<Vector3> = points
+        .iter()
+        .map(|p| Vector3::from_array(p.to_array().map(|x| x.midpoint())))
+        .collect();
+    let spread = bounds(&midpoints);
+    (0..3).all(|k| {
+        let widest = points
+            .iter()
+            .map(|p| p[k].width())
+            .fold(
+                Scalar::ZERO,
+                |m, w| if w.to_f64() > m.to_f64() { w } else { m },
+            );
+        !spread[k].width().definitely_greater(widest)
+    })
+}
+
 /// The least distance attained so far, and the two points attaining it.
 type Best<A, B> = Option<(Scalar, (A, Vector3), (B, Vector3))>;
 
@@ -251,7 +281,9 @@ pub fn least_distance<PA: Piece + Clone, PB: Piece + Clone>(
             break;
         }
         visited += 1;
-        // Cut the larger piece of the pair, or the other if it cannot be.
+        // Cut the larger piece of the pair, or the other if it cannot be:
+        // a piece is not cut below the handoff, nor once its data resolves
+        // nothing finer (see the module docs).
         let size = |hull: &[Vector3]| -> f64 {
             bounds(hull)
                 .iter()
@@ -260,12 +292,18 @@ pub fn least_distance<PA: Piece + Clone, PB: Piece + Clone>(
         };
         let a_first = size(&pair.hull_a) >= size(&pair.hull_b);
         let cut_a = |pair: &Pair<PA, PB>| -> GeopResult<Option<Vec<(PA, PB)>>> {
+            if resolved(&pair.hull_a) {
+                return Ok(None);
+            }
             Ok(pair
                 .a
                 .split(handoff)?
                 .map(|halves| halves.into_iter().map(|h| (h, pair.b.clone())).collect()))
         };
         let cut_b = |pair: &Pair<PA, PB>| -> GeopResult<Option<Vec<(PA, PB)>>> {
+            if resolved(&pair.hull_b) {
+                return Ok(None);
+            }
             Ok(pair
                 .b
                 .split(handoff)?
@@ -362,7 +400,13 @@ impl Piece for CurveSpan {
         if !self.0.size()?.definitely_greater(handoff) {
             return Ok(None);
         }
-        let (a, b) = self.0.split_mid()?;
+        let (a, b) = self.0.split_mid().with_context(&|e: GeopError| {
+            e.with_context(format!(
+                "CurveSpan::split(domain={:?}, handoff={handoff:?}, control_points={:?})",
+                self.0.domain(),
+                self.0.control_points
+            ))
+        })?;
         Ok(Some(vec![CurveSpan(a), CurveSpan(b)]))
     }
 }
