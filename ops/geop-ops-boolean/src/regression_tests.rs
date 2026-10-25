@@ -62,3 +62,49 @@ fn cylinder_cut_from_a_block_far_from_the_origin() {
     let hole = std::f64::consts::PI * 2.75 * 2.75 * 6.0;
     assert_volume(&part, "boolean(drilled)", 80.0 * 50.0 * 6.0 - hole, 1.0);
 }
+
+/// A screw boss standing against the inner wall of an enclosure (Fusion
+/// 360 "Electronics enclosure" tutorial: bosses are placed touching the
+/// walls so they can be filleted into them): a cylinder of radius 3 whose
+/// side is tangent to a block's side face, united with it. The union
+/// builds a non-manifold solid:
+///
+/// > edge 70 has 4 coedge(s) (expected exactly 2 for a manifold shell)
+/// > where EdgeId(70) = cylinder(boss,p3)
+///
+/// `cylinder(boss,p3)` is the cylinder's own seam between its quarters
+/// `c2` and `c3`, at 270°, which is exactly the line along which the
+/// block's face touches it. The same union with the tangent line away
+/// from a seam (a prism whose side touches the cylinder at 45°) builds
+/// valid, and so does the same cylinder cut from the block instead of
+/// united. Inside a pocket (the boss against the pocket's wall) both seams
+/// `p1` and `p3` touch and both come out with four coedges.
+#[test]
+#[ignore = "bug: uniting a cylinder with a block whose face is tangent to it along the cylinder's seam cylinder(boss,p3) leaves that seam with four coedges; tangent at 45° (no seam) and the cut build valid"]
+fn union_of_a_cylinder_tangent_to_a_block_along_its_seam() {
+    let mut program = Program::new();
+    program.push(
+        "box",
+        PrimitiveArgs::block([0.0, 0.0, 0.0], [20.0, 10.0, 10.0]),
+    );
+    program.push(
+        "boss",
+        PrimitiveArgs::cylinder_z([10.0, 13.0, 0.0], 3.0, 10.0),
+    );
+    program.push(
+        "joined",
+        BooleanArgs {
+            a: solid("block(box)"),
+            b: solid("cylinder(boss)"),
+            op: BooleanOp::Union,
+        },
+    );
+    let part = program.build_model(registry).unwrap();
+    assert_valid(&part);
+    assert_volume(
+        &part,
+        "boolean(joined)",
+        20.0 * 10.0 * 10.0 + std::f64::consts::PI * 9.0 * 10.0,
+        1.0,
+    );
+}
