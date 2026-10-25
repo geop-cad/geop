@@ -41,7 +41,6 @@ pub fn registry() -> GeopResult<Registry> {
     let r = geop_ops_harness::register(r)?;
     let r = geop_ops_step::register(r)?;
     let r = geop_ops_drawing::register(r)?;
-    let r = geop_ops_urdf::register(r)?;
     let r = geop_ops_sheetmetal::register(r)?;
     let r = geop_ops_inspect::register(r)?;
     geop_ops_bom::register(r)

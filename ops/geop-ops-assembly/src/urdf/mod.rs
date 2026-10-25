@@ -48,6 +48,13 @@ use geop_core_program::{
 };
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 
+use crate::{
+    CouplingKind, JointKind, Motion, Resolved, joint_parameter,
+    joints::{Connector, measure},
+    mechanism::mates_of,
+    residuals::D,
+    solving::{self, check},
+};
 use geop_core_editor::{
     editor::Rerun,
     output::{Content, Export, Exporter, ExporterInfo, Output},
@@ -61,13 +68,6 @@ use geop_core_math::{
 };
 use geop_core_rasterize::stl::StlFormat;
 use geop_core_topology::mass::MassProperties;
-use geop_ops_assembly::{
-    CouplingKind, JointKind, Motion, Resolved, joint_parameter,
-    joints::{Connector, measure},
-    mechanism::mates_of,
-    residuals::D,
-    solving::{self, check},
-};
 use geop_ops_model::parameters::stem;
 use geop_ops_model::placed::{
     drawn, placed_parts,
@@ -746,12 +746,4 @@ fn mimics(mechanism: &Mechanism, tree: &tree::Tree, joints: &mut [Joint]) -> Geo
         });
     }
     Ok(())
-}
-
-use geop_core_editor::registry::Registry;
-
-/// Adds what this crate offers an editor to `r`: a part with its placed
-/// parts written as a URDF robot.
-pub fn register(r: Registry) -> GeopResult<Registry> {
-    r.exporter(Urdf)
 }

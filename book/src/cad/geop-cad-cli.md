@@ -36,6 +36,6 @@ restricts it to the named examples, and `--option` works as for `compile`.
 The command line's tests are of its own: its arguments, `serve`'s one
 line per command, and `examples` over every example the registry offers.
 What a part compiles to is tested in the crate of its exporter (STEP in
-`geop-ops-step`, URDF in `geop-ops-urdf`, a bill in `geop-ops-bom`, a
+`geop-ops-step`, STL and URDF in `geop-ops-assembly`, a bill in `geop-ops-bom`, a
 drawing in `geop-ops-drawing`, a flat pattern in `geop-ops-sheetmetal`, an
 assembly's mesh in `geop-ops-assembly`).

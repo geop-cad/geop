@@ -13,14 +13,14 @@
 
 use std::collections::{BTreeMap, HashMap, HashSet};
 
+use crate::JointKind;
 use geop_core_math::{
     geop_error::{GeopError, GeopResult},
     solvers::walk::{Take, flood},
     union_find::UnionFind,
 };
-use geop_ops_assembly::JointKind;
 
-use crate::Mechanism;
+use crate::urdf::Mechanism;
 
 /// The links of a mechanism and the joints between them.
 #[derive(Clone, Debug, PartialEq)]

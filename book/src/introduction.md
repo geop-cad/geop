@@ -52,7 +52,6 @@ ops/geop-ops-assembly        placed parts, mates, joints, the drag tool
 ops/geop-ops-harness         wire harnesses
 ops/geop-ops-step            STEP import and export
 ops/geop-ops-drawing         2-D drawings
-ops/geop-ops-urdf            URDF export
 ops/geop-ops-sheetmetal      sheet metal and flat patterns
 ops/geop-ops-inspect         mass properties, measurements, interference
 ops/geop-ops-bom             bills of materials

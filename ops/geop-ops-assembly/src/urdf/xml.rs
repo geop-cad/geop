@@ -4,7 +4,7 @@ use std::fmt::Write;
 
 use geop_lib_sheet::xml_escape;
 
-use crate::{Inertial, JointType, Origin, Robot, Visual};
+use crate::urdf::{Inertial, JointType, Origin, Robot, Visual};
 
 /// `value` as short as reads back exactly: plainly, or in exponent
 /// notation, which every URDF reader parses too, where that is shorter —
@@ -138,7 +138,7 @@ impl Robot {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{Joint, Link, Mimic};
+    use crate::urdf::{Joint, Link, Mimic};
 
     /// Names are escaped, limits written only where the joint type has
     /// them, a mimic where a coupling drives the joint.

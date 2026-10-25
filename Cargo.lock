@@ -238,7 +238,6 @@ dependencies = [
  "geop-ops-step",
  "geop-ops-subd",
  "geop-ops-surface",
- "geop-ops-urdf",
  "serde_json",
 ]
 
@@ -401,6 +400,7 @@ dependencies = [
  "geop-core-sketch",
  "geop-core-topology",
  "geop-lib-constraints",
+ "geop-lib-sheet",
  "geop-lib-stdlib",
  "geop-lib-sweep",
  "geop-ops-extrude-revolve",
@@ -804,25 +804,6 @@ dependencies = [
  "geop-ops-sketch",
  "geop-ops-sketch3d",
  "serde",
-]
-
-[[package]]
-name = "geop-ops-urdf"
-version = "0.1.0"
-dependencies = [
- "geop-core-editor",
- "geop-core-math",
- "geop-core-program",
- "geop-core-rasterize",
- "geop-core-topology",
- "geop-lib-sheet",
- "geop-ops-assembly",
- "geop-ops-extrude-revolve",
- "geop-ops-model",
- "geop-ops-reference-geometry",
- "geop-ops-sketch",
- "serde",
- "serde_json",
 ]
 
 [[package]]

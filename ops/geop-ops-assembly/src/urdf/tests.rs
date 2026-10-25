@@ -19,6 +19,11 @@ use std::{
     rc::Rc,
 };
 
+use crate::{
+    AddPartArgs, CouplingKind, JointKind, Mate, Transmission,
+    examples::{self, pose},
+    solving,
+};
 use geop_core_editor::output::Output;
 use geop_core_math::{
     geop_error::GeopResult,
@@ -26,14 +31,9 @@ use geop_core_math::{
     scalars::{ScalInF64 as S, Scalar},
     vector::Vector3,
 };
-use geop_ops_assembly::{
-    AddPartArgs, CouplingKind, JointKind, Mate, Transmission,
-    examples::{self, pose},
-    solving,
-};
 use geop_ops_model::placed::solids::{Shapes, placed_solids};
 
-use crate::{JointType, Mechanism, Origin, Robot, URDF_FILE, UrdfExport, export};
+use crate::urdf::{JointType, Mechanism, Origin, Robot, URDF_FILE, UrdfExport, export};
 
 /// A number of a test, as design data.
 fn n(x: f64) -> Design {
@@ -48,7 +48,6 @@ fn registry() -> GeopResult<Registry> {
     let r = geop_ops_sketch::register(r)?;
     let r = geop_ops_reference_geometry::register(r)?;
     let r = geop_ops_extrude_revolve::register(r)?;
-    let r = geop_ops_assembly::register(r)?;
     let r = crate::register(r)?;
     Ok(r)
 }

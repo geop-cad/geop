@@ -10,9 +10,11 @@
 //! which constraints conflict. [`PartPattern`] places copies of a placed
 //! part in a row or round an axis.
 //!
-//! Also an STL file of a part with the parts placed in it ([`Stl`]), and
-//! how the placed parts are drawn and listed ([`AssemblyDrawer`]). What a
-//! placed part is to what reads it is [`geop_ops_model::placed`]'s.
+//! Also what is exported of an assembly: an STL file of a part with the
+//! parts placed in it ([`Stl`]), and its mechanism as a robot description
+//! ([`urdf`]); and how the placed parts are drawn and listed
+//! ([`AssemblyDrawer`]). What a placed part is to what reads it is
+//! [`geop_ops_model::placed`]'s.
 
 mod add_part;
 mod drag_tool;
@@ -43,6 +45,7 @@ mod stl;
 #[cfg(any(test, feature = "testing"))]
 #[allow(clippy::expect_used, reason = "tests' helpers fail where a test would")]
 pub mod testing;
+pub mod urdf;
 
 use std::rc::Rc;
 
@@ -62,16 +65,19 @@ pub use part_pattern::{Layout, PartPattern, PartPatternArgs, PatternAxis};
 pub use placed::define_placed;
 pub use settle::Settler;
 pub use stl::{Stl, StlOptions};
+pub use urdf::Urdf;
 
 /// Adds what assemblies offer an editor to `r`: placing parts and patterns
-/// of them, the STL of a part with its placed parts, how placed parts are
-/// drawn, the joints panel, the drag tool, what settles the program's
-/// state after every edit, and the examples of assemblies.
+/// of them, the STL of a part with its placed parts and the URDF of its
+/// mechanism, how placed parts are drawn, the joints panel, the drag tool,
+/// what settles the program's state after every edit, and the examples of
+/// assemblies.
 pub fn register(r: Registry) -> GeopResult<Registry> {
     let settled = Rc::new(settle::Settled::default());
     r.operation(AddPart)?
         .operation(PartPattern)?
         .exporter(Stl)?
+        .exporter(Urdf)?
         .drawer(AssemblyDrawer)?
         .panel(JointsPanel::new(settled.clone()))?
         .tool(DragTool::INFO, DragTool::default())?

@@ -19,6 +19,8 @@ geop-ops-model.workspace = true
 geop-lib-constraints.workspace = true
 geop-ops-reference-geometry.workspace = true
 geop-core-rasterize.workspace = true
+# The URDF export writes XML.
+geop-lib-sheet.workspace = true
 geop-ops-pattern.workspace = true
 geop-ops-sketch.workspace = true
 # The examples: parts sketched and extruded, standard parts placed.

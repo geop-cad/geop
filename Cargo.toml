@@ -33,7 +33,6 @@ members = [
     "ops/geop-ops-pattern",
     "ops/geop-ops-harness",
     "ops/geop-ops-hole",
-    "ops/geop-ops-urdf",
     "ops/geop-ops-bom",
     "lib/geop-lib-constraints",
     "lib/geop-lib-booleans",
@@ -87,7 +86,6 @@ imbl = "7"
 geop-ops-pattern = { path = "ops/geop-ops-pattern" }
 geop-ops-harness = { path = "ops/geop-ops-harness" }
 geop-ops-hole = { path = "ops/geop-ops-hole" }
-geop-ops-urdf = { path = "ops/geop-ops-urdf" }
 geop-ops-bom = { path = "ops/geop-ops-bom" }
 geop-lib-constraints = { path = "lib/geop-lib-constraints" }
 geop-lib-booleans = { path = "lib/geop-lib-booleans" }
