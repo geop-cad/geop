@@ -288,7 +288,15 @@ fn combine(
         for &face_id in faces {
             let class = classify_face(topology, face_id, other, params, &mut classified)
                 .with_context(&ctx)
-                .with_context(with_context!("classifying face {face_id}"))?;
+                .with_context(with_context!(
+                    "classifying face {face_id} ({:?}, of {})",
+                    model.name_of(face_id),
+                    if from_a {
+                        "the first solid"
+                    } else {
+                        "the second solid"
+                    }
+                ))?;
             decisions.insert(face_id, (class, keeps(op, class, from_a)));
         }
     }
