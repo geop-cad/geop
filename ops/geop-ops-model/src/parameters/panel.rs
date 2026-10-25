@@ -21,8 +21,8 @@ use geop_core_program::{
 use serde::{Deserialize, Serialize};
 
 use crate::parameters::{
-    COLOR, Material, Parameters, parameter_uses, parameters_of, read_properties, rename_parameter,
-    set_parameters,
+    COLOR, LookupTableArgs, Material, Parameters, parameter_uses, parameters_of, read_properties,
+    rename_parameter, set_parameters, steps::LOOKUP,
 };
 
 /// The parameters panel: see the module docs.
@@ -40,6 +40,10 @@ pub struct ParametersPanelState {
     pub parameter_uses: BTreeMap<String, Vec<String>>,
     /// The materials a part's can be picked from (see [`Material`]).
     pub materials: Vec<Material>,
+    /// The step each table is looked up in, by the table's name: what
+    /// edits the table, opened as any step is
+    /// ([`geop_core_editor::editor::Command::Open`]).
+    pub table_steps: BTreeMap<String, String>,
 }
 
 /// What the parameters panel is sent.
@@ -66,6 +70,13 @@ impl Panel for ParametersPanel {
             parameters: ParametersState::of(program, part),
             parameter_uses: parameter_uses(program),
             materials: Material::listed().collect(),
+            table_steps: (program.steps.iter())
+                .filter(|step| step.operation == LOOKUP)
+                .filter_map(|step| {
+                    let args: LookupTableArgs = serde_json::from_value(step.args.clone()).ok()?;
+                    Some((args.input, step.id.clone()))
+                })
+                .collect(),
         }
     }
 

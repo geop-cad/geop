@@ -8,7 +8,7 @@ use geop_core_math::{
 };
 use serde::Serialize;
 
-use super::{Dialog, GizmoView};
+use super::{Dialog, GizmoView, Layout};
 use geop_core_program::element::PickedElement;
 
 /// What a visual is.
@@ -178,6 +178,8 @@ impl Visual {
 #[derive(Clone, Debug, PartialEq, Serialize)]
 pub struct Presentation {
     pub dialog: Dialog,
+    /// Where the dialog is shown (see [`Layout`]).
+    pub layout: Layout,
     pub visuals: Vec<Visual>,
     /// Elements of the part to draw lit: what is picked, what a click would
     /// pick.

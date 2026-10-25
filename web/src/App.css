@@ -99,45 +99,6 @@ button.small {
   font-size: 0.85rem;
 }
 
-.vec3 {
-  display: flex;
-  flex-direction: column;
-  gap: 0.2rem;
-}
-.vec3-label {
-  font-size: 0.75rem;
-  color: #999;
-}
-
-.slider-number {
-  display: grid;
-  grid-template-columns: minmax(1rem, max-content) minmax(0, 1fr) 3.6rem;
-  align-items: center;
-  gap: 0.5rem;
-  font-size: 0.85rem;
-}
-.vec3 .slider-number {
-  font-size: 0.75rem;
-  color: #bbb;
-}
-.slider-number-label {
-  text-transform: none;
-  white-space: nowrap;
-}
-.slider-number input[type="range"] {
-  min-width: 0;
-  width: 100%;
-}
-.slider-number-input {
-  width: 3.6rem;
-  background: #262626;
-  color: #eee;
-  border: 1px solid #3a3a3a;
-  border-radius: 4px;
-  padding: 0.15rem 0.3rem;
-  font-size: 0.75rem;
-  font-variant-numeric: tabular-nums;
-}
 
 .timeline ol {
   list-style: none;
@@ -211,7 +172,7 @@ button.small {
 
 .popup {
   pointer-events: auto;
-  width: 280px;
+  width: 320px;
   max-height: 100%;
   box-sizing: border-box;
   overflow-y: auto;
@@ -219,16 +180,17 @@ button.small {
   backdrop-filter: blur(4px);
   border: 1px solid #3a3a3a;
   border-radius: 8px;
-  padding: 0.85rem;
+  padding: 0.85rem 0.9rem;
   display: flex;
   flex-direction: column;
-  gap: 0.55rem;
+  gap: 0.6rem;
   box-shadow: 0 8px 24px rgba(0, 0, 0, 0.5);
 }
 
 .popup h2 {
-  font-size: 0.9rem;
-  margin: 0 0 0.15rem;
+  font-size: 0.95rem;
+  margin: 0;
+  font-weight: 600;
 }
 
 .popup .hint {
@@ -241,13 +203,338 @@ button.small {
   color: #ffe066;
 }
 
-.preview-row {
-  padding-top: 0.15rem;
+/* The dialog's fields, one under the other, each a row of label and
+   control on one grid — so every label lines up with every other. */
+.dialog-body {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+.popup .field-row {
+  display: grid;
+  grid-template-columns: minmax(5.5rem, 36%) minmax(0, 1fr);
+  align-items: center;
+  gap: 0.5rem;
+  font-size: 0.82rem;
+}
+.field-label {
+  color: #bbb;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.field-unit {
+  color: #777;
+  font-size: 0.7rem;
+  margin-left: 0.3rem;
+}
+.popup .field-row input[type="text"],
+.popup .field-row input[type="number"],
+.popup .field-row select,
+.popup .field-row input[type="search"] {
+  width: 100%;
+  min-width: 0;
+  box-sizing: border-box;
+  background: #111;
+  color: #eee;
+  border: 1px solid #3a3a3a;
+  border-radius: 4px;
+  padding: 0.3rem 0.45rem;
+  font-size: 0.8rem;
+  font-family: inherit;
+}
+.popup .field-row input:focus,
+.popup .field-row select:focus {
+  outline: none;
+  border-color: #3d7ab8;
+}
+.popup .field-row input[type="number"] {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+.popup .checkbox-row input[type="checkbox"] {
+  justify-self: start;
+  width: 1rem;
+  height: 1rem;
+  margin: 0;
+}
+.popup .field-row input[type="color"] {
+  justify-self: start;
+  width: 2.4rem;
+  height: 1.6rem;
+  padding: 0;
+  border: 1px solid #3a3a3a;
+  border-radius: 4px;
+  background: #111;
+}
+/* A number that takes formulas: marked ƒ, its text in a monospaced face. */
+.formula-box {
+  display: flex;
+  align-items: center;
+  gap: 0.3rem;
+  min-width: 0;
+}
+.formula-mark {
+  color: #8fb4d8;
+  font-family: Georgia, serif;
+  font-style: italic;
+  font-size: 0.85rem;
+  flex-shrink: 0;
+  width: 0.7rem;
+  text-align: center;
+}
+.popup .field-row input.formula-input {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+/* Said under a field, aligned with its control. */
+.popup .field-note {
+  margin: -0.15rem 0 0;
+  padding-left: calc(36% + 0.5rem);
+  font-size: 0.72rem;
+}
+/* A reference field: what it holds, or that it waits, and a way to clear it. */
+.reference-box {
+  display: flex;
+  align-items: stretch;
+  gap: 0.25rem;
+  min-width: 0;
+}
+.reference-pick {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  padding: 0.3rem 0.45rem;
+  font-size: 0.8rem;
+  border-style: dashed;
+}
+.reference-pick.holds {
+  border-style: solid;
+  border-color: #4a6a4a;
+  background: #1f2a1f;
+}
+.reference-pick.active {
+  border-style: solid;
+}
+.reference-pick .icon {
+  width: 14px;
+  height: 14px;
+  flex-shrink: 0;
+  opacity: 0.8;
+}
+.reference-text {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.reference-clear {
+  flex-shrink: 0;
+}
+.popup .reference .dialog-list {
+  margin-top: 0.25rem;
+}
+/* The footer every step has: the preview switch, and Cancel beside OK, the
+   one primary action. */
+.dialog-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+  padding-top: 0.6rem;
+  margin-top: 0.1rem;
   border-top: 1px solid #333;
+}
+.dialog-footer .button-row {
+  flex: 0 0 auto;
+}
+.dialog-footer .button-row button {
+  min-width: 4.5rem;
+  padding: 0.35rem 0.8rem;
+  font-size: 0.8rem;
+}
+.preview-row {
+  font-size: 0.78rem;
+  color: #bbb;
 }
 .preview-row input[type="checkbox"] {
   width: 1rem;
   height: 1rem;
+  margin: 0;
+}
+
+/* The popup layout: a wide dialog over the middle of the viewport, for a
+   form of tables; its backdrop takes the clicks, as nothing is picked. */
+.popup-backdrop.centered {
+  justify-content: center;
+  align-items: center;
+  pointer-events: auto;
+  background: rgba(0, 0, 0, 0.45);
+  padding: 1.5rem;
+}
+.popup.wide {
+  width: min(900px, 100%);
+  max-height: 100%;
+  padding: 1rem 1.2rem;
+  gap: 0.7rem;
+  background: #1c1c1c;
+}
+.dialog-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+}
+.popup.wide h2 {
+  font-size: 1.05rem;
+}
+.popup.wide .field-row {
+  grid-template-columns: minmax(7rem, 12rem) minmax(0, 24rem);
+}
+.popup.wide .field-note {
+  padding-left: 0;
+}
+
+/* A table field: headers, a row per entry, an input per cell. */
+.table-field {
+  max-width: 100%;
+  overflow: auto;
+  max-height: min(60vh, 32rem);
+  border: 1px solid #2e2e2e;
+  border-radius: 6px;
+  background: #171717;
+}
+.table-field table {
+  border-collapse: separate;
+  border-spacing: 0;
+  min-width: 100%;
+}
+.table-field th {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  background: #202020;
+  font-size: 0.72rem;
+  font-weight: 500;
+  color: #999;
+  text-align: left;
+  padding: 0.3rem 0.4rem;
+  border-bottom: 1px solid #333;
+  white-space: nowrap;
+}
+.table-field th.table-head-number {
+  text-align: right;
+}
+.table-field td {
+  padding: 2px 3px;
+  vertical-align: top;
+  border-bottom: 1px solid #222;
+}
+.table-field tr:last-child td {
+  border-bottom: none;
+}
+.table-field .cell-input {
+  width: 100%;
+  min-width: 5rem;
+  box-sizing: border-box;
+  background: transparent;
+  color: #eee;
+  border: 1px solid transparent;
+  border-radius: 3px;
+  padding: 0.28rem 0.4rem;
+  font-size: 0.8rem;
+  font-family: inherit;
+}
+.table-field .cell-input:hover {
+  border-color: #333;
+}
+.table-field .cell-input:focus {
+  outline: none;
+  background: #111;
+  border-color: #3d7ab8;
+}
+.table-field .cell-number {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+.table-field .cell-formula {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+.table-field tr.selected td {
+  background: #1b261b;
+}
+.table-field td.failed .cell-input {
+  border-color: #6a2e2e;
+  color: #ff9a9a;
+}
+.cell-detail {
+  display: block;
+  padding: 0 0.4rem 2px;
+  font-size: 0.68rem;
+  max-width: 14rem;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.table-field .table-select {
+  width: 1.8rem;
+  text-align: center;
+  vertical-align: middle;
+}
+.table-field th.table-select .icon {
+  width: 14px;
+  height: 14px;
+  vertical-align: middle;
+}
+.table-field .table-select input[type="radio"] {
+  margin: 0.45rem 0 0;
+  accent-color: #7ad17a;
+}
+.table-field .table-actions {
+  white-space: nowrap;
+  text-align: right;
+  vertical-align: middle;
+  width: 4.5rem;
+}
+.table-field .table-actions button {
+  padding: 0 3px;
+  font-size: 0.65rem;
+}
+.table-head-editable {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+}
+.table-head-editable .cell-input {
+  min-width: 4rem;
+  width: 6rem;
+  font-size: 0.72rem;
+  font-weight: 500;
+  color: #ccc;
+  padding: 0.15rem 0.3rem;
+}
+.table-head-editable button {
+  visibility: hidden;
+}
+.table-field th:hover .table-head-editable button {
+  visibility: visible;
+}
+.table-add-column button {
+  white-space: nowrap;
+}
+.table-foot {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  margin-top: 0.4rem;
+}
+.table-empty {
+  margin: 0.4rem 0;
+  padding: 0 0.4rem;
+}
+.field-table .table-foot .hint,
+.field-table .table-empty {
+  font-size: 0.72rem;
 }
 
 .bug-report-text {
@@ -535,12 +822,17 @@ button.inline {
 .popup .field {
   display: flex;
   flex-direction: column;
-  gap: 2px;
+  gap: 3px;
 }
 
-.popup .field .hint {
-  margin: 0 0 4px;
-  font-size: 0.8em;
+.popup .field > .hint {
+  margin: 0;
+  font-size: 0.74rem;
+  line-height: 1.4;
+}
+.popup .field-heading + .field,
+.popup .dialog-heading {
+  margin-top: 0.15rem;
 }
 
 /* Grouped actions: a box of buttons per group, those that don't fit now
@@ -1027,20 +1319,6 @@ button.inline {
   font-family: ui-monospace, monospace;
 }
 
-/* A number field that takes formulas: wider, for the formula's text. */
-.formula-number {
-  grid-template-columns: minmax(1rem, max-content) minmax(0, 1fr) 7rem;
-}
-.formula-number input.formula-input {
-  width: 7rem;
-  box-sizing: border-box;
-  font-family: ui-monospace, monospace;
-  font-size: 0.75rem;
-}
-.formula-value {
-  text-align: right;
-  font-variant-numeric: tabular-nums;
-}
 
 /* A choice among many, found by typing. */
 .search-select-box {
@@ -1681,41 +1959,6 @@ button.danger:hover:not(:disabled) {
   display: flex;
   justify-content: space-between;
   padding-top: 0.3rem;
-}
-.table-editor {
-  display: flex;
-  flex-direction: column;
-  align-items: flex-start;
-  gap: 0.4rem;
-  max-width: 100%;
-  overflow-x: auto;
-}
-.table-editor table {
-  border-collapse: separate;
-  border-spacing: 2px;
-}
-.table-editor th {
-  font-size: 0.7rem;
-  font-weight: 500;
-  color: #888;
-  text-align: left;
-  padding: 0 2px;
-}
-.table-editor td input[type="text"],
-.table-editor th input[type="text"] {
-  width: 5.5rem;
-}
-.table-editor td.table-built {
-  text-align: center;
-}
-.table-editor tr.selected td input[type="text"] {
-  border-color: #3d6a3d;
-  background: #142014;
-}
-.table-column {
-  display: inline-flex;
-  align-items: center;
-  gap: 2px;
 }
 .modal-head h2 {
   text-transform: none;

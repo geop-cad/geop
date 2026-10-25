@@ -308,7 +308,32 @@ export type Value =
   /** The entity at this index taken out of a reference field. */
   | { type: "remove_at"; value: number }
   /** Everything taken out of a reference field. */
-  | { type: "clear" };
+  | { type: "clear" }
+  /** Something done to a table field. */
+  | { type: "table"; value: TableEdit };
+
+/**
+ * What is done to a table field, one thing at a time — see
+ * `geop_core_editor::editing::TableEdit`. Rows and columns are named by
+ * their index in the table as shown.
+ */
+export type TableEdit =
+  /** The cell at `row`, `column` typed into. */
+  | { edit: "cell"; row: number; column: number; text: string }
+  /** A block pasted at `row`, `column`: a row of cells per line, rows added below the last for what runs over. */
+  | { edit: "paste"; row: number; column: number; cells: string[][] }
+  /** A row added after the last. */
+  | { edit: "add_row" }
+  | { edit: "remove_row"; row: number }
+  /** The row `row` moved to be the row `to`. */
+  | { edit: "move_row"; row: number; to: number }
+  /** The row chosen, of a table one row of which is. */
+  | { edit: "select_row"; row: number }
+  /** The header of the column `column` typed into. */
+  | { edit: "column"; column: number; text: string }
+  /** A column added after the last. */
+  | { edit: "add_column" }
+  | { edit: "remove_column"; column: number };
 
 /** One thing the user did in the viewport. */
 export type PointerEvent_ =
@@ -365,10 +390,63 @@ export interface Picked {
   tone: Tone;
 }
 
+/** What the cells of a table's column hold, which decides how they are edited. */
+export type ColumnKind = { type: "text" } | { type: "number"; unit: Unit } | { type: "formula" };
+
+/** A column of a table field — see `geop_core_editor::editing::Column`. */
+export interface Column {
+  label: string;
+  kind: ColumnKind;
+  /** Whether it is the user's: renamed in its header, and taken out. */
+  editable: boolean;
+}
+
+/** One cell of a table field: what it holds, as text, and what is said beside it. */
+export interface Cell {
+  text: string;
+  /** What a formula comes to, or why it does not. */
+  detail: string | null;
+  tone: Tone;
+}
+
+/** One row of a table field. */
+export interface TableRow {
+  cells: Cell[];
+  /** The row chosen, of a table one row of which is. */
+  selected: boolean;
+  removable: boolean;
+}
+
+/**
+ * A table edited in place — see `geop_core_editor::editing::Table`: every
+ * edit of it is sent back as one [[TableEdit]], under the field's key.
+ */
+export interface Table {
+  columns: Column[];
+  rows: TableRow[];
+  /** Shown when there are no rows. */
+  empty: string;
+  /** Whether rows are added after the last, and moved. */
+  rows_editable: boolean;
+  /** Whether columns are added; the ones that are the user's say so themselves. */
+  columns_editable: boolean;
+  /** Whether one row is chosen. */
+  selectable: boolean;
+}
+
+/**
+ * Where the dialog of a step is shown — see `geop_core_editor::editing::Layout`:
+ * beside the viewport, one field under the other, or as a wide popup over
+ * the middle of it, for a form of tables.
+ */
+export type Layout = "sidebar" | "popup";
+
 /** A dialog primitive. */
 export type Control =
   | { type: "heading"; text: string }
   | { type: "text"; text: string; tone: Tone }
+  /** Text typed — a name, a title — sent back as `text`. */
+  | { type: "input"; label: string; value: string; placeholder: string | null }
   /** Pressing one sends its value as a choice. */
   | { type: "actions"; actions: Action[] }
   | { type: "checkbox"; label: string; value: boolean }
@@ -415,7 +493,9 @@ export type Control =
       required: boolean;
       armed: boolean;
     }
-  | { type: "list"; items: ListItem[]; empty: string };
+  | { type: "list"; items: ListItem[]; empty: string }
+  /** A table edited in place, every edit of it sent back as `table`. */
+  | ({ type: "table" } & Table);
 
 /** A control, under the key the events it sends carry. */
 export type Field = { key: string } & Control;
@@ -475,6 +555,8 @@ export interface GizmoView {
 /** What the step being edited shows. */
 export interface Presentation {
   dialog: Field[];
+  /** Where the dialog is shown. */
+  layout: Layout;
   visuals: Visual[];
   /** Elements of the part to draw lit. */
   highlights: PickedElement[];
@@ -607,7 +689,7 @@ export interface ProgramState {
   can_redo: boolean;
   /** The key of the tool in hand, if one is (see [[Command]] `tool`). */
   tool: string | null;
-  /** The tools the toolbar offers to take in hand, as it offers the operations. */
+  /** The tools to take in hand, offered beside the inspectors: none of them is an operation. */
   tools: ToolInfo[];
   operations: OperationInfo[];
   /** What can be written of the part, for [[Command]] `export`. */
@@ -625,15 +707,15 @@ export interface ProgramState {
   panels: Record<string, unknown>;
 }
 
-/** A tool the toolbar offers to take in hand — see `geop_core_editor::tools::ToolInfo`. */
+/**
+ * A tool to take in hand — see `geop_core_editor::tools::ToolInfo`. A tool
+ * is no operation: the inspect panel offers it, beside the inspectors.
+ */
 export interface ToolInfo {
   /** What [[Command]] `tool` takes it in hand by: `drag`. */
   key: string;
   label: string;
   doc: string;
-  /** The section of the toolbar it is in, as an operation's. */
-  group: string;
-  tier: OperationTier;
   /** What it is shown as: SVG markup (see [[Icon]]). */
   icon: string | null;
 }

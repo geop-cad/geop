@@ -1,9 +1,15 @@
-import type { AnswerRow, Block, PickedElement, Inspection, InspectorInfo } from "./geop";
+import type { AnswerRow, Block, PickedElement, Inspection, InspectorInfo, ToolInfo } from "./geop";
 import { Icon } from "./icons";
 import type { Section } from "./section";
 
 interface Props {
   enabled: boolean;
+  /** The tools the kernel offers to take in hand — the drag tool — none of them an operation: a button each. */
+  tools: ToolInfo[];
+  /** The key of the tool in hand, if one is. */
+  inHand: string | null;
+  /** Take the tool `key` in hand, or put the one in hand down. */
+  onTool: (key: string | null) => void;
   /** The inspectors the kernel offers: a button each. */
   inspectors: InspectorInfo[];
   /** The inspector whose pick tool is in hand, if one is. */
@@ -148,14 +154,19 @@ function AnswerView({ inspection, h }: { inspection: Inspection; h: Omit<Handler
 }
 
 /**
- * The inspect tools: the inspectors the kernel offers — those that pick
- * as tools to take in hand, the others as questions about the part as
- * drawn — and a section view. None of them is a step: inspecting changes
- * nothing, and a section only changes the view. Every answer is shown as
- * the kernel built it ([[Answer]]), whatever the inspector.
+ * The inspect tools: the tools the kernel offers to take in hand — the
+ * drag tool, which moves placed parts as their mates let them — the
+ * inspectors, those that pick as tools to take in hand, the others as
+ * questions about the part as drawn, and a section view. None of them is a
+ * step: a tool and an inspection add nothing to the program, and a section
+ * only changes the view. Every answer is shown as the kernel built it
+ * ([[Answer]]), whatever the inspector.
  */
 export function InspectPanel({
   enabled,
+  tools,
+  inHand,
+  onTool,
   inspectors,
   picking,
   onPicking,
@@ -174,6 +185,21 @@ export function InspectPanel({
   return (
     <div className="inspect">
       <div className="inspect-tools">
+        {tools.map((tool) => {
+          const active = inHand === tool.key;
+          return (
+            <button
+              key={tool.key}
+              className={["op-button", active ? "active" : ""].join(" ")}
+              disabled={!enabled}
+              title={tool.doc}
+              onClick={() => onTool(active ? null : tool.key)}
+            >
+              {tool.icon && <Icon name={tool.icon} />}
+              <span>{tool.label}</span>
+            </button>
+          );
+        })}
         {inspectors.map((inspector) => {
           const picks = inspector.picks != null;
           const active = picks && picking === inspector.kind;

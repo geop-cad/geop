@@ -15,7 +15,7 @@ use std::borrow::Cow;
 use geop_core_editor::{
     edit_form::{EditForm, FormState},
     editable::{Context, OperationGroup, OperationInfo, OperationTier},
-    editing::{Action, ListItem, Tone, Value},
+    editing::{Cell, Column, ColumnKind, Layout, Table, TableEdit, TableRow, Tone, Unit},
     part_operation,
     part_operation::PartOperation,
 };
@@ -99,20 +99,89 @@ impl PartOperation for DefineParameters {
         ctx.produce(&parameter_values(), &names, add_values)
     }
 
-    /// What is defined is edited where the program's parameters are listed.
+    /// The parameters as a table, in a popup: a row each, of its name, its
+    /// value — a number or a formula, and what it comes to in the part as
+    /// the step built it — and what a slider offers, from and to. A row
+    /// added is a fresh `length` of 10. A name typed here renames the
+    /// definition alone; the Parameters panel renames what reads it too.
     fn form<'a>(
-        _: &'a Context<'a>,
+        ctx: &'a Context<'a>,
         args: &DefineParametersArgs,
         _: &FormState<()>,
     ) -> EditForm<'a, DefineParametersArgs> {
         let mut f = EditForm::<DefineParametersArgs>::default();
-        let names: Vec<&str> = args.values.iter().map(|p| p.name.as_str()).collect();
-        let text = match names.is_empty() {
-            true => "No parameters: add them under Parameters.".to_string(),
-            false => format!("{} — edited under Parameters.", names.join(", ")),
-        };
-        f.form.dialog.text("parameters", text, Tone::Hint);
+        f.layout(Layout::Popup);
+        let reader = ctx.built.as_ref().unwrap_or(&ctx.before);
+        let columns = vec![
+            Column::new("Name", ColumnKind::Text),
+            Column::new("Value", ColumnKind::Formula),
+            Column::new("Slider from", ColumnKind::Number { unit: Unit::Length }),
+            Column::new("to", ColumnKind::Number { unit: Unit::Length }),
+        ];
+        let optional = |n: Option<f64>| Cell::new(n.map(|n| n.to_string()).unwrap_or_default());
+        let rows = (args.values.iter())
+            .map(|p| {
+                let value = match evaluate(&p.expression, |name| read_parameter(reader, name)) {
+                    Ok(value) => Cell::new(&p.expression).detail(format!("= {value}"), Tone::Hint),
+                    Err(e) => Cell::new(&p.expression).detail(e.root_message(), Tone::Error),
+                };
+                TableRow::new(vec![
+                    Cell::new(&p.name),
+                    value,
+                    optional(p.min),
+                    optional(p.max),
+                ])
+            })
+            .collect();
+        let table = Table::new(columns, rows, "No parameters yet: add a row.");
+        f.table("parameters", table, |edit, what| {
+            let values = &mut edit.args.values;
+            match what {
+                TableEdit::Cell { row, column, text } => {
+                    let Some(p) = values.get_mut(row) else {
+                        return;
+                    };
+                    match column {
+                        0 => p.name = text.trim().to_string(),
+                        1 => p.expression = text.trim().to_string(),
+                        2 => p.min = text.trim().parse().ok(),
+                        3 => p.max = text.trim().parse().ok(),
+                        _ => {}
+                    }
+                }
+                TableEdit::AddRow => {
+                    let names: Vec<String> = values.iter().map(|p| p.name.clone()).collect();
+                    values.push(NumberParameter {
+                        name: fresh_name(&names, "length"),
+                        expression: "10".into(),
+                        min: None,
+                        max: None,
+                    });
+                }
+                TableEdit::RemoveRow { row } => {
+                    if row < values.len() {
+                        values.remove(row);
+                    }
+                }
+                TableEdit::MoveRow { row, to } => move_row(values, row, to),
+                // No row is chosen, and the columns are the step's.
+                TableEdit::SelectRow { .. }
+                | TableEdit::Column { .. }
+                | TableEdit::AddColumn
+                | TableEdit::RemoveColumn { .. }
+                | TableEdit::Paste { .. } => {}
+            }
+        });
         f
+    }
+}
+
+/// The row `row` of `rows` moved to be the row `to`; nothing, for a row
+/// there is none of.
+fn move_row<R>(rows: &mut Vec<R>, row: usize, to: usize) {
+    if row < rows.len() {
+        let moved = rows.remove(row);
+        rows.insert(to.min(rows.len()), moved);
     }
 }
 
@@ -262,123 +331,110 @@ impl PartOperation for LookupTable {
         ctx.produce(&parameter_values(), &names, add_values)
     }
 
-    /// The table as the Parameters panel edits it: the input it is looked
-    /// up by, its columns, its rows — each named, the one built where the
-    /// run names none selected — and each row's value in each column. A
-    /// column or a row added is named afresh and its values are 0; the last
-    /// row is not taken out, and taking out the row selected selects the
-    /// first left.
+    /// The table, in a popup: the input it is looked up by, and its rows —
+    /// each named in the first column, the one built where the run names
+    /// none chosen — with a value per column; the columns are the user's,
+    /// named in their headers. A column or a row added is named afresh and
+    /// its values are 0; the last row is not taken out, and taking out the
+    /// row chosen chooses the first left.
     fn form<'a>(
         _: &'a Context<'a>,
         args: &LookupTableArgs,
         _: &FormState<()>,
     ) -> EditForm<'a, LookupTableArgs> {
         let mut f = EditForm::<LookupTableArgs>::default();
-        let input = ListItem {
-            text: Some(args.input.clone()),
-            ..ListItem::new("input", "Looked up by")
-        };
-        f.form.dialog.list("input", vec![input], "");
-        f.on("input", |edit, value| {
-            if let Value::Text(name) = value {
-                edit.args.input = name;
-            }
-        });
-
-        let columns = (args.columns.iter().enumerate())
-            .map(|(k, column)| ListItem {
-                text: Some(column.clone()),
-                removable: true,
-                ..ListItem::new(format!("column:{k}"), "Column")
-            })
-            .collect();
-        f.form.dialog.list("columns", columns, "No columns");
-        for k in 0..args.columns.len() {
-            f.on(format!("column:{k}"), move |edit, value| match value {
-                Value::Text(name) => edit.args.columns[k] = name,
-                Value::Remove => {
-                    edit.args.columns.remove(k);
-                    for row in &mut edit.args.rows {
-                        row.values.remove(k);
-                    }
-                }
-                _ => {}
-            });
-        }
-
-        let rows = (args.rows.iter().enumerate())
-            .map(|(i, row)| ListItem {
-                text: Some(row.name.clone()),
+        f.layout(Layout::Popup);
+        f.input(
+            "input",
+            "Looked up by",
+            &args.input,
+            Some("size"),
+            |edit, name| edit.args.input = name.trim().to_string(),
+        );
+        let mut columns = vec![Column::new("Row", ColumnKind::Text)];
+        columns.extend((args.columns.iter()).map(|column| {
+            Column::new(column, ColumnKind::Number { unit: Unit::Length }).editable()
+        }));
+        let rows = (args.rows.iter())
+            .map(|row| TableRow {
+                cells: (std::iter::once(Cell::new(&row.name)))
+                    .chain(row.values.iter().map(|v| Cell::number(*v)))
+                    .collect(),
                 selected: row.name == args.selected,
                 removable: args.rows.len() > 1,
-                ..ListItem::new(format!("row:{i}"), "Row")
             })
             .collect();
-        f.form.dialog.list("rows", rows, "No rows");
-        for i in 0..args.rows.len() {
-            f.on(format!("row:{i}"), move |edit, value| {
-                let args = &mut *edit.args;
-                match value {
-                    Value::Press => args.selected = args.rows[i].name.clone(),
-                    Value::Text(name) => {
-                        if args.selected == args.rows[i].name {
-                            args.selected = name.clone();
-                        }
-                        args.rows[i].name = name;
-                    }
-                    Value::Remove if args.rows.len() > 1 => {
-                        let row = args.rows.remove(i);
-                        if row.name == args.selected {
-                            args.selected = args.rows[0].name.clone();
-                        }
-                    }
-                    _ => {}
-                }
-            });
-        }
-
-        let cells = (args.rows.iter().enumerate())
-            .flat_map(|(i, row)| {
-                (args.columns.iter().enumerate()).map(move |(k, column)| ListItem {
-                    value: row.values.get(k).copied(),
-                    ..ListItem::new(format!("cell:{i}:{k}"), format!("{}: {column}", row.name))
-                })
-            })
-            .collect();
-        f.form.dialog.list("values", cells, "No values");
-        for i in 0..args.rows.len() {
-            for k in 0..args.columns.len() {
-                f.on(format!("cell:{i}:{k}"), move |edit, value| {
-                    if let (Value::Number(n), Some(cell)) =
-                        (value, edit.args.rows[i].values.get_mut(k))
-                    {
-                        *cell = n;
-                    }
-                });
-            }
-        }
-
-        let add = vec![
-            Action::new("column", "Add a column"),
-            Action::new("row", "Add a row"),
-        ];
-        f.actions("add", add, |edit, what| {
+        let table = Table::new(columns, rows, "No rows: add one.")
+            .columns_editable()
+            .selectable();
+        f.table("table", table, |edit, what| {
             let args = &mut *edit.args;
             match what {
-                "column" => {
-                    args.columns.push(fresh_name(&args.columns, "value"));
-                    for row in &mut args.rows {
-                        row.values.push(0.0);
+                TableEdit::Cell {
+                    row,
+                    column: 0,
+                    text,
+                } => {
+                    let Some(r) = args.rows.get_mut(row) else {
+                        return;
+                    };
+                    let name = text.trim().to_string();
+                    if args.selected == r.name {
+                        args.selected = name.clone();
+                    }
+                    r.name = name;
+                }
+                TableEdit::Cell { row, column, text } => {
+                    let cell = (args.rows.get_mut(row)).and_then(|r| r.values.get_mut(column - 1));
+                    if let (Ok(n), Some(cell)) = (text.trim().parse::<f64>(), cell) {
+                        *cell = n;
                     }
                 }
-                "row" => {
+                TableEdit::AddRow => {
                     let names: Vec<String> = args.rows.iter().map(|r| r.name.clone()).collect();
                     args.rows.push(Row {
                         name: fresh_name(&names, "row"),
                         values: vec![0.0; args.columns.len()],
                     });
                 }
-                _ => {}
+                TableEdit::RemoveRow { row } => {
+                    if args.rows.len() > 1 && row < args.rows.len() {
+                        let removed = args.rows.remove(row);
+                        if removed.name == args.selected {
+                            args.selected = args.rows[0].name.clone();
+                        }
+                    }
+                }
+                TableEdit::MoveRow { row, to } => move_row(&mut args.rows, row, to),
+                TableEdit::SelectRow { row } => {
+                    if let Some(r) = args.rows.get(row) {
+                        args.selected = r.name.clone();
+                    }
+                }
+                // The first column names the rows, and is the step's.
+                TableEdit::Column { column: 0, .. } | TableEdit::RemoveColumn { column: 0 } => {}
+                TableEdit::Column { column, text } => {
+                    if let Some(c) = args.columns.get_mut(column - 1) {
+                        *c = text.trim().to_string();
+                    }
+                }
+                TableEdit::AddColumn => {
+                    args.columns.push(fresh_name(&args.columns, "value"));
+                    for row in &mut args.rows {
+                        row.values.push(0.0);
+                    }
+                }
+                TableEdit::RemoveColumn { column } => {
+                    if column - 1 < args.columns.len() {
+                        args.columns.remove(column - 1);
+                        for row in &mut args.rows {
+                            if column - 1 < row.values.len() {
+                                row.values.remove(column - 1);
+                            }
+                        }
+                    }
+                }
+                TableEdit::Paste { .. } => {}
             }
         });
         f

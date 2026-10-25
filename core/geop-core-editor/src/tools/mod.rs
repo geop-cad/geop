@@ -14,22 +14,20 @@ use geop_core_math::geop_error::GeopResult;
 use serde::Serialize;
 
 use crate::{
-    editable::{OperationGroup, OperationTier},
     editing::{Presentation, StepEditEvent},
     editor::{Changed, EditorContext},
     output::Inspection,
 };
 
 /// What a tool is to an editor: the key it is taken in hand by
-/// ([`crate::editor::Command::Tool`]), and how a toolbar offers it — as it
-/// offers an operation (see [`crate::editable::OperationInfo`]).
+/// ([`crate::editor::Command::Tool`]), and how it is offered. A tool is no
+/// operation, so it is offered where the inspectors are — beside what asks
+/// about the part — not among the operations a step can be.
 #[derive(Clone, Debug, PartialEq, Serialize)]
 pub struct ToolInfo {
     pub key: &'static str,
     pub label: &'static str,
     pub doc: &'static str,
-    pub group: OperationGroup,
-    pub tier: OperationTier,
     /// What it is shown as: SVG on a 20 × 20 grid, as an operation's icon.
     pub icon: Option<&'static str>,
 }

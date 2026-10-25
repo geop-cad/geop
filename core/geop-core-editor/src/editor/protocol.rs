@@ -196,8 +196,8 @@ pub struct ProgramState {
     pub can_redo: bool,
     /// The key of the tool in hand, if one is ([`Command::Tool`]).
     pub tool: Option<String>,
-    /// The tools a toolbar offers to take in hand, as it offers the
-    /// operations; the pick tools are the inspectors'.
+    /// The tools to take in hand, offered beside the inspectors — none of
+    /// them is an operation; the pick tools are the inspectors'.
     pub tools: Vec<ToolInfo>,
     /// Every operation a step can be, as the toolbar offers them: group by
     /// group, in [`crate::editable::OperationGroup`]'s order, and within a

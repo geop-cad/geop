@@ -7,7 +7,7 @@ use geop_core_math::{
     vector::Vector3,
 };
 
-use super::{CanvasEvent, Dialog, Extent, Gizmo, Prompt, Value, Visual};
+use super::{CanvasEvent, Dialog, Extent, Gizmo, Layout, Prompt, Value, Visual};
 
 /// What an operation has in hand while a step is edited (see
 /// [`Form::tool`]).
@@ -54,6 +54,9 @@ pub enum Pull {
 #[derive(Clone, Debug, PartialEq)]
 pub struct Form {
     pub dialog: Dialog,
+    /// Where the dialog is shown: beside the viewport, or as a popup over
+    /// it (see [`Layout`]).
+    pub layout: Layout,
     pub visuals: Vec<Visual>,
     /// A plane to work in, its `u`/`v` plane: the viewer faces it head on,
     /// stops orbiting, and draws a grid on it. Draggable visuals are
@@ -84,6 +87,7 @@ impl Default for Form {
     fn default() -> Self {
         Self {
             dialog: Dialog::new(),
+            layout: Layout::default(),
             visuals: Vec::new(),
             focus: None,
             sheet: None,

@@ -12,6 +12,8 @@ const dot = (x: number, y: number, r = 1.6) => <circle cx={x} cy={y} r={r} fill=
 /** Each icon's drawing, by name. */
 const ICONS: Record<string, ReactElement> = {
   chevron: <path d="M6 8 L10 12 L14 8" />,
+  check: <path d="M4.5 10.5 L8.5 14.5 L15.5 6" />,
+  pick: <path d="M5 3.5 L5 15 L8.2 12 L10.5 16.5 L12.5 15.5 L10.3 11 L14.5 11 Z" />,
   open: (
     <>
       <path d="M3 6 L3 15.5 L16 15.5 L17.5 8.5 L6 8.5 L4.5 15.5" />
