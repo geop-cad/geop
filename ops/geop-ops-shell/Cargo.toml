@@ -17,6 +17,8 @@ geop-core-topology.workspace = true
 geop-ops-model = { workspace = true, features = ["testing"] }
 # The given solids the tests shell, and the stress sweeps' bodies.
 geop-lib-fixtures.workspace = true
+# The regression test of shelling a box whose edges were rounded first.
+geop-ops-fillet.workspace = true
 serde_json.workspace = true
 geop-core-program = { workspace = true, features = ["testing"] }
 geop-core-editor = { workspace = true, features = ["testing"] }

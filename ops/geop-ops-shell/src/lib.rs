@@ -8,6 +8,8 @@ mod operation;
 #[cfg(test)]
 mod program_tests;
 #[cfg(test)]
+mod regression_tests;
+#[cfg(test)]
 mod stress_tests;
 
 pub use operation::{Shell, ShellArgs};
