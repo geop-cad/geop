@@ -137,7 +137,13 @@ fn a_table_is_made_in_its_popup_dialog() {
     assert_eq!(value("size"), Some(ParameterValue::Text("M5".into())));
     assert_eq!(value("size.k"), Some(ParameterValue::Number(3.5)));
 
-    handled(&mut editor, Command::Open { id: step.id });
+    handled(
+        &mut editor,
+        Command::Open {
+            id: step.id,
+            placed: None,
+        },
+    );
     handled(&mut editor, edit("table", TableEdit::RemoveRow { row: 1 }));
     handled(&mut editor, edit("table", TableEdit::RemoveRow { row: 0 }));
     handled(

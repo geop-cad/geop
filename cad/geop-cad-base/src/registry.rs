@@ -9,6 +9,7 @@ use std::{collections::BTreeMap, rc::Rc};
 use geop_core_editor::{editor::Editor, output::Outputs, registry::Registry};
 use geop_core_math::geop_error::GeopResult;
 use geop_core_program::{
+    cache::Cache,
     part::Part,
     program::Program,
     runner::Runner,
@@ -49,8 +50,13 @@ pub fn registry() -> GeopResult<Registry> {
 /// An editor of everything [`registry`] offers, the standard parts beside
 /// the files it is sent.
 pub fn editor() -> Editor {
+    editor_with(Cache::new())
+}
+
+/// [`editor`], what its files are made into kept in `cache`.
+pub fn editor_with(cache: Cache) -> Editor {
     let registry = registry().expect("the editor's extensions each have a name of their own");
-    Editor::new(registry, WithStandardParts(BTreeMap::new()))
+    Editor::with_cache(registry, WithStandardParts(BTreeMap::new()), cache)
 }
 
 /// The exporters and inspectors the editor offers (see
@@ -66,8 +72,17 @@ pub type Workspace<F = BTreeMap<String, String>> = Files<WithStandardParts<F>>;
 /// The workspace of `files`, beside the standard parts, whose programs are
 /// written in the editor's operations.
 pub fn workspace<F: FileStore + 'static>(files: F) -> Rc<Workspace<F>> {
+    workspace_with(files, Cache::new())
+}
+
+/// [`workspace()`], what its files are made into kept in `cache`.
+pub fn workspace_with<F: FileStore + 'static>(files: F, cache: Cache) -> Rc<Workspace<F>> {
     let registry = registry().expect("the editor's extensions each have a name of their own");
-    Workspace::new(WithStandardParts(files), Rc::new(registry.operations()))
+    Workspace::with_cache(
+        WithStandardParts(files),
+        Rc::new(registry.operations()),
+        cache,
+    )
 }
 
 /// A runner of the editor's operations, that has run nothing yet.

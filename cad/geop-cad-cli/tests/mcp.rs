@@ -141,11 +141,16 @@ fn a_block_with_a_hole_is_modelled_inspected_exported_and_saved() {
     let status = server.ok("new_part", json!({}));
     assert_eq!(status["steps"], json!([]));
 
-    // The operations: extrude is one, and its form names its sketch field.
+    // The operations, listed briefly: extrude is one.
     let operations = server.ok("list_operations", json!({}));
     let extrude = (operations["operations"].as_array().unwrap().iter())
         .find(|op| op["kind"] == "extrude")
         .expect("extrude is offered");
+    assert_eq!(extrude["label"], "Extrude");
+    assert!(extrude.get("form").is_none(), "{extrude}");
+
+    // Extrude in full: its arguments, and a form naming its sketch field.
+    let extrude = server.ok("list_operations", json!({ "kind": "extrude" }));
     assert_eq!(extrude["label"], "Extrude");
     assert!(extrude["default_args"].is_object(), "{extrude}");
     let keys: Vec<&str> = (extrude["form"].as_array().unwrap().iter())
@@ -269,4 +274,45 @@ fn a_step_that_does_not_build_is_answered_as_an_error_naming_it() {
     assert!(is_error && text.contains("no_such_tool"), "{text}");
     let unknown = server.request("no/such/method", json!({}));
     assert_eq!(unknown["error"]["code"], -32601, "{unknown}");
+}
+
+#[test]
+fn a_step_is_added_before_another_and_a_wrong_target_names_the_right_ones() {
+    let mut server = Server::start();
+    server.ok("new_part", json!({}));
+    let steps = drilled_box().steps;
+    let (outline, extrude) = (&steps[0], &steps[1]);
+
+    // The extrusion first: it builds nothing, its sketch not yet drawn.
+    let status = server.ok(
+        "add_step",
+        json!({ "kind": extrude.operation, "args": extrude.args, "id": extrude.id }),
+    );
+    assert_eq!(status["failed"], 1, "{status}");
+
+    // The sketch added before it: both build.
+    let status = server.ok(
+        "add_step",
+        json!({ "kind": outline.operation, "args": outline.args, "id": outline.id, "before": extrude.id }),
+    );
+    assert_eq!(status["failed"], 0, "{status}");
+    assert_eq!(status["steps"][0]["id"], json!(outline.id), "{status}");
+    assert_eq!(status["solids"], json!(["extrude(box)"]), "{status}");
+
+    // A sketch named by its step id alone: the error names the target the
+    // sketch is.
+    let status = server.ok(
+        "edit_step",
+        json!({ "id": extrude.id, "args": { "sketch": { "target": "/:outline:" } } }),
+    );
+    let error = status["steps"][1]["error"].as_str().unwrap();
+    assert!(error.contains("`sketch:outline`"), "{error}");
+
+    let (text, is_error) = server.call(
+        "add_step",
+        json!({ "kind": outline.operation, "args": outline.args, "before": "nothing" }),
+    );
+    assert!(is_error && text.contains("nothing"), "{text}");
+    let (text, is_error) = server.call("list_operations", json!({ "kind": "nothing" }));
+    assert!(is_error && text.contains("extrude"), "{text}");
 }

@@ -1,6 +1,67 @@
 {
   "steps": [
     {
+      "id": "table_size",
+      "operation": "lookup_table",
+      "args": {
+        "columns": [
+          "d"
+        ],
+        "input": "size",
+        "rows": [
+          {
+            "name": "A",
+            "values": [
+              1
+            ]
+          },
+          {
+            "name": "row",
+            "values": [
+              0
+            ]
+          }
+        ],
+        "selected": "A"
+      }
+    },
+    {
+      "id": "properties",
+      "operation": "properties",
+      "args": {
+        "color": "#9e9e9e",
+        "material": {
+          "density": 7850,
+          "name": "Steel"
+        }
+      }
+    },
+    {
+      "id": "parameters",
+      "operation": "parameters",
+      "args": {
+        "values": [
+          {
+            "expression": "10",
+            "name": "length"
+          }
+        ]
+      }
+    },
+    {
+      "id": "part2",
+      "operation": "add_part",
+      "args": {
+        "file": "base.geop",
+        "mates": {
+          "m1": {
+            "entities": [],
+            "type": "fixed"
+          }
+        }
+      }
+    },
+    {
       "id": "part1",
       "operation": "add_part",
       "args": {
@@ -17,14 +78,27 @@
   "state": {
     "part1.pose": {
       "position": [
-        -10.000000000000268,
+        -1.0477350545154143e-8,
         0,
         0
       ],
       "rotation": [
-        1.0000000000000069,
+        1.0000000001746223,
         0,
         0,
+        0
+      ]
+    },
+    "part2.pose": {
+      "position": [
+        -1.0970863001727075e-13,
+        -32.281465399433614,
+        2.4378909530880628e-11
+      ],
+      "rotation": [
+        1.0000000000000002,
+        0,
+        6.227337202236492e-16,
         0
       ]
     }

@@ -202,6 +202,7 @@ mod editor {
 
         editor.handle(Command::Open {
             id: "extrude1".into(),
+            placed: None,
         });
         editor.handle(dialog("distance", Value::Number(2.0)));
         // Not in the program until committed.
@@ -262,6 +263,7 @@ mod editor {
         assert!(update.error.is_none());
         let update = editor.handle(Command::Open {
             id: "hole_sketch".into(),
+            placed: None,
         });
         assert!(update.step.unwrap().error.is_some());
         let update = editor.handle(Command::Commit);
@@ -274,7 +276,10 @@ mod editor {
     fn only_what_changed_is_sent() {
         let (mut editor, update) = editor();
         assert!(update.program.is_some() && update.scene.is_some());
-        let update = editor.handle(Command::Open { id: "hole".into() });
+        let update = editor.handle(Command::Open {
+            id: "hole".into(),
+            placed: None,
+        });
         assert!(update.program.is_some(), "the step is marked as edited");
         let update = editor.handle(Command::Event {
             event: StepEditEvent::Hover {
@@ -346,10 +351,11 @@ mod editor {
                 "drawing",
             ]
         );
-        // The part's own parameters and properties come first, in its menu.
+        // The part's own parameters, tables and properties come first,
+        // small buttons, so the ribbon's Part section is not empty.
         let json = serde_json::to_value(&operations[0]).unwrap();
         assert_eq!(json["group"], "Part");
-        assert_eq!(json["tier"], "Menu");
+        assert_eq!(json["tier"], "Small");
         let sketch = operations.iter().find(|o| o.kind == "add_sketch").unwrap();
         let json = serde_json::to_value(sketch).unwrap();
         assert_eq!(json["group"], "Sketch");

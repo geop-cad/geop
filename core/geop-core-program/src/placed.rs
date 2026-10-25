@@ -33,6 +33,7 @@ use crate::{
     reader::Reader,
     target::{Read, Target, TargetReference},
     values::{Settings, StateValues},
+    workspace::Location,
 };
 
 /// What separates the names of a path of instances, and begins a located
@@ -255,10 +256,12 @@ pub fn placed(instance: &str) -> TargetReference<PlacedPart> {
     TargetReference::new(format!("{PLACED}{instance}"))
 }
 
-/// A placed part, as built: shared by every instance built alike.
+/// A placed part, as built: shared by every instance built alike — and
+/// where its program is, which an editor edits it in.
 #[derive(Clone)]
 pub struct PlacedPart {
     pub part: Rc<Part>,
+    pub location: Location,
 }
 
 /// The same build, or builds holding the same.
@@ -337,7 +340,7 @@ pub fn build_placed(reader: &Reader, args: &PlacedArgs) -> GeopResult<PlacedPart
                 .and_then(|node| node.value.as_ref().ok())
                 .and_then(|value| value.downcast_ref::<PlacedPart>());
             let mut part = last.map(|last| (*last.part).clone()).unwrap_or_default();
-            let nested = runner.nested(location);
+            let nested = runner.nested(location.clone());
             nested.build(&mut part, &program.steps, &key.inputs, &key.state, None);
             let part = Rc::new(part);
             runner.cache(key, part.clone());
@@ -358,7 +361,7 @@ pub fn build_placed(reader: &Reader, args: &PlacedArgs) -> GeopResult<PlacedPart
     for (path, revision) in &part.files_read {
         reader.record_raw(Read::File(path.clone(), *revision));
     }
-    Ok(PlacedPart { part })
+    Ok(PlacedPart { part, location })
 }
 
 /// What a placed part is built from, exactly: the program — its file, that

@@ -37,6 +37,8 @@ mod part_pattern;
 pub mod placed;
 #[cfg(test)]
 mod program_tests;
+#[cfg(test)]
+mod regression_tests;
 pub mod residuals;
 #[cfg(test)]
 mod scale_tests;

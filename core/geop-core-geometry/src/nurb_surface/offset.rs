@@ -47,7 +47,9 @@ impl NurbSurface3D {
     /// The surface `distance` along its normal — against it for a negative
     /// distance — with the same parametrization: the offset of the point at
     /// `(u, v)` is at `(u, v)` of the result, so a trim loop's `(u, v)` stay
-    /// meaningful on it.
+    /// meaningful on it. A cone's apex, which has no normal, goes to the
+    /// offset cone's apex, so a pole stays a pole; along the meridians
+    /// from it the points then move a little along the meridian too.
     ///
     /// Exact for a plane and for a surface of revolution whose meridian is a
     /// line or a circular arc (see the module docs). Fails for any other
@@ -170,11 +172,25 @@ impl NurbSurface3D {
 
         let offset: Vec<(Scalar, Scalar)> = if let Some(line) = profile.as_line()? {
             // The meridian's normal, turned to point the way the surface's
-            // does: every control point moves `distance` along it.
+            // does: every control point moves `distance` along it, but an
+            // apex. An apex has no normal, and its offset is the offset
+            // cone's apex: where the moved meridian meets the axis, `d / r'`
+            // along it for the meridian's unit direction `(h', r')`. Moved
+            // along the meridian's normal, it would leave the axis, and the
+            // offset would have a hole round it or pass through itself. A
+            // disc's pole moves along the axis anyway (`dr` is zero).
             let (nh, nr) = (line.direction[1].neg(), line.direction[0]);
             let d = signed(distance, points_along(normal.prod_dot(&in_space(nh, nr)))?);
             let (dh, dr) = (nh.mul(d), nr.mul(d));
-            (0..rows).map(|j| (h[j].add(dh), r[j].add(dr))).collect()
+            (0..rows)
+                .map(|j| {
+                    if r[j].could_be_equal(Scalar::ZERO) && !dr.could_be_equal(Scalar::ZERO) {
+                        Ok((h[j].sub(d.div(line.direction[1])?), Scalar::ZERO))
+                    } else {
+                        Ok((h[j].add(dh), r[j].add(dr)))
+                    }
+                })
+                .collect::<GeopResult<_>>()?
         } else if let Some(arc) = profile.as_arc()? {
             // The concentric arc: every control point scaled about the
             // center, by more where the normal points away from it.
@@ -382,6 +398,34 @@ mod tests {
             &torus.offset(Scalar::from_f64(-0.25)).unwrap(),
             -0.25,
         );
+    }
+
+    /// A quarter of the cone of half-angle 45° with its apex at z = 1 and
+    /// radius 1 at z = 0 (`v` from the apex to the rim): the apex goes to
+    /// the offset cone's apex, `√2` times the distance along the axis, and
+    /// the rim moves along the normal.
+    #[test]
+    fn a_cones_apex_goes_to_the_offset_cones_apex() {
+        let cone = crate::test_fixtures::revolved(1., 0.);
+        for d in [0.25, -0.25] {
+            let offset = cone.offset(Scalar::from_f64(d)).unwrap();
+            let rim = |s: &NurbSurface3D, u: f64| s.evaluate(Scalar::from_f64(u), Scalar::ONE).unwrap();
+            let shift = rim(&offset, 0.5).sub(&rim(&cone, 0.5));
+            let pole = offset.pole_at(Scalar::ZERO, Scalar::ZERO).unwrap();
+            // The pole moves the way the rim moves along the axis.
+            let up = shift[2].definitely_greater(Scalar::ZERO);
+            let z = 1. + if up { 0.25 } else { -0.25 } * std::f64::consts::SQRT_2;
+            let expected = Vector3::from_array([0., 0., z].map(Scalar::from_f64));
+            assert!(pole.could_be_equal(&expected), "{d}: {pole:?}");
+            for u in [0., 0.5, 1.] {
+                let (u, v) = (Scalar::from_f64(u), Scalar::ONE);
+                let expected = cone
+                    .evaluate(u, v)
+                    .unwrap()
+                    .add(&cone.normal(u, v).unwrap().prod_scalar(Scalar::from_f64(d)));
+                assert!(offset.evaluate(u, v).unwrap().could_be_equal(&expected), "{d}: {u:?}");
+            }
+        }
     }
 
     #[test]

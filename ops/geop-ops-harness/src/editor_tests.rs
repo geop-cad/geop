@@ -134,7 +134,10 @@ fn moving_a_mated_part_reroutes_the_cable() {
     let before = cable_length(&editor);
     assert!(before.could_be_equal(half_circle(4.0)), "{before:?}");
 
-    editor.handle(Command::Open { id: "b".into() });
+    editor.handle(Command::Open {
+        id: "b".into(),
+        placed: None,
+    });
     editor.handle(Command::Event {
         event: StepEditEvent::Dialog {
             key: "x".into(),
@@ -284,7 +287,8 @@ fn new_route_is_picked_and_its_wires_chosen() {
     let update = editor.handle(Command::Commit);
     assert!(update.error.is_none(), "{:?}", update.error);
     assert!(
-        update
+        editor
+            .handle(Command::Show)
             .scene
             .unwrap()
             .part
@@ -302,6 +306,7 @@ fn new_route_is_picked_and_its_wires_chosen() {
     assert!((cut - 0.5).abs() < 1e-9, "{cut}");
     let update = editor.handle(Command::Open {
         id: "route1".into(),
+        placed: None,
     });
     let presentation = update.step.expect("the route is edited").presentation;
     let Some(Control::Text { text, tone }) = presentation.dialog.get("report") else {

@@ -183,6 +183,7 @@ fn parameters_changed_rebuild_what_reads_them() {
     // Editing the outline, the width changes: the drawing follows, solved.
     editor.handle(Command::Open {
         id: "outline".into(),
+        placed: None,
     });
     set_width(&mut parameters, "7");
     let update = editor.handle(set_parameters(parameters.clone()));
@@ -205,6 +206,7 @@ fn parameters_changed_rebuild_what_reads_them() {
     // A table, added while the hole's sketch is edited, read in a formula.
     editor.handle(Command::Open {
         id: "hole_sketch".into(),
+        placed: None,
     });
     parameters.values.push(Parameter {
         name: "size".into(),
@@ -309,7 +311,10 @@ fn distance(editor: &Editor, id: &str) -> f64 {
 #[test]
 fn handles_are_dragged() {
     let (mut editor, _) = editor();
-    editor.handle(Command::Open { id: "hole".into() });
+    editor.handle(Command::Open {
+        id: "hole".into(),
+        placed: None,
+    });
     // Seen from the side: the hole's end cap is half a unit into the box,
     // at (1, 1, 0.5); dragged up past its sketch plane, it builds up.
     let side = |z: f64| pointer([1.0, -10.0, z], [0.0, 1.0, 0.0]);
@@ -525,6 +530,7 @@ fn editing_an_early_sketch_builds_only_up_to_it() {
         &mut editor,
         Command::Open {
             id: "outline".into(),
+            placed: None,
         },
     );
     let args: geop_ops_sketch::AddSketchArgs = args(editor.editing().unwrap());
@@ -608,7 +614,10 @@ fn formulas_are_typed_into_dialog_fields() {
             .fold(f64::NEG_INFINITY, f64::max)
     };
 
-    let update = editor.handle(Command::Open { id: "plate".into() });
+    let update = editor.handle(Command::Open {
+        id: "plate".into(),
+        placed: None,
+    });
     let step = update.step.expect("the plate is edited");
     // The example's own formula.
     let n = field(&step);
@@ -644,7 +653,10 @@ fn formulas_are_typed_into_dialog_fields() {
     assert!((top(&editor) - 1.5).abs() < 1e-9, "{}", top(&editor));
 
     // A number typed is plain again: slid and dragged.
-    editor.handle(Command::Open { id: "plate".into() });
+    editor.handle(Command::Open {
+        id: "plate".into(),
+        placed: None,
+    });
     let update = editor.handle(dialog("distance", Value::Text(" 0.8 ".into())));
     let step = update.step.expect("the plate is edited");
     let n = field(&step);
@@ -1129,7 +1141,10 @@ fn renaming_a_parameter_renames_what_reads_it() {
         error.contains(r#"there is a parameter "t" already"#),
         "{error}"
     );
-    editor.handle(Command::Open { id: "plate".into() });
+    editor.handle(Command::Open {
+        id: "plate".into(),
+        placed: None,
+    });
     let editing = editor.handle(rename_parameter("depth", "plate_depth"));
     assert!(editing.error.is_some(), "renamed while a step is edited");
     editor.handle(Command::Cancel);

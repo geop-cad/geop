@@ -209,7 +209,10 @@ fn an_editor_of_a_registry_of_its_own_edits_programs() -> Result<(), GeopError> 
     // Two points clicked down, one raised above the second.
     put(&mut editor, "place", 2.0, 3.0);
     put(&mut editor, "place", 5.0, 0.0);
-    let update = put(&mut editor, "raise", 0.0, 0.0);
+    put(&mut editor, "raise", 0.0, 0.0);
+    // The commit shows what the step's preview showed: the viewer has it,
+    // and is sent it whole when it asks.
+    let update = handled(&mut editor, Command::Show);
     let ids: Vec<&str> = editor
         .program()
         .steps
@@ -263,5 +266,47 @@ fn an_editor_of_a_registry_of_its_own_edits_programs() -> Result<(), GeopError> 
     let update = handled(&mut editor, Command::Undo);
     assert_eq!(drawn(&update).len(), 2);
     assert!(editor.program().state.is_empty());
+    Ok(())
+}
+
+/// A step edited with its preview off is not built — however long it would
+/// take — and its dialog says nothing of whether it builds; the part shown
+/// is the part before it. Committed, it is built then, once; previewed
+/// again, it is built and shown.
+#[test]
+fn a_step_not_previewed_is_built_only_when_committed() -> Result<(), GeopError> {
+    let registry = (Registry::default().operation(Place))
+        .and_then(|r| r.operation(Raise))
+        .and_then(|r| r.drawer(Points))?;
+    let mut editor = editor_with(registry, Default::default());
+    put(&mut editor, "place", 2.0, 3.0);
+    let built = |editor: &Editor| -> Vec<String> {
+        let part = editor.part();
+        (part.targets_of::<Point>().iter())
+            .map(|target| target.name().to_string())
+            .collect()
+    };
+
+    handled(&mut editor, Command::Preview { preview: false });
+    handled(
+        &mut editor,
+        Command::New {
+            kind: "raise".into(),
+        },
+    );
+    let clicked = handled(&mut editor, click_at(from_above(0.0, 0.0)));
+    assert_eq!(clicked.step.expect("the step is edited").error, None);
+    assert_eq!(built(&editor).len(), 1, "the raise is not built");
+    let shown = handled(&mut editor, Command::Show);
+    assert_eq!(drawn(&shown), [("place1".to_string(), [2.0, 3.0, 0.0])]);
+
+    handled(&mut editor, Command::Preview { preview: true });
+    assert_eq!(built(&editor).len(), 2, "previewed again, it is built");
+    handled(&mut editor, Command::Preview { preview: false });
+    assert_eq!(built(&editor).len(), 1);
+
+    handled(&mut editor, Command::Commit);
+    let shown = handled(&mut editor, Command::Show);
+    assert_eq!(drawn(&shown).len(), 2, "committed, it is built");
     Ok(())
 }

@@ -34,7 +34,7 @@ use std::{
 
 use geop_core_math::geop_error::{GeopError, GeopResult};
 
-use crate::{operation_registry::OperationRegistry, program::Program};
+use crate::{cache::Cache, operation_registry::OperationRegistry, program::Program};
 
 /// Programs and other files, by path.
 pub trait Workspace {
@@ -59,6 +59,13 @@ pub trait Workspace {
     /// The revision of the file at `path`: changes whenever the file
     /// does, so a node that read it is made again.
     fn revision(&self, path: &str) -> u64;
+
+    /// What it keeps of what its files were made into, shared by every
+    /// build reading them: none, for a workspace that keeps nothing, whose
+    /// files are made into what they read as each time they are read.
+    fn cache(&self) -> Option<&Cache> {
+        None
+    }
 }
 
 /// Where the program a runner runs is: the file it is in, and the files
@@ -149,10 +156,18 @@ pub struct Files<F: 'static = BTreeMap<String, String>> {
     revision: Cell<u64>,
     /// The revision of each file that changed: the count when it last did.
     revisions: RefCell<BTreeMap<String, u64>>,
+    /// What its files were made into.
+    cache: Cache,
 }
 
 impl<F: FileStore + 'static> Files<F> {
+    /// The files `files`, what they are made into kept in memory.
     pub fn new(files: F, registry: Rc<OperationRegistry>) -> Rc<Self> {
+        Self::with_cache(files, registry, Cache::new())
+    }
+
+    /// The files `files`, what they are made into kept in `cache`.
+    pub fn with_cache(files: F, registry: Rc<OperationRegistry>, cache: Cache) -> Rc<Self> {
         Rc::new(Self {
             files: RefCell::new(files),
             registry,
@@ -160,6 +175,7 @@ impl<F: FileStore + 'static> Files<F> {
             texts: RefCell::new(BTreeMap::new()),
             revision: Cell::new(0),
             revisions: RefCell::new(BTreeMap::new()),
+            cache,
         })
     }
 
@@ -241,6 +257,10 @@ impl<F: FileStore + 'static> Workspace for Files<F> {
             .get(path)
             .copied()
             .unwrap_or_default()
+    }
+
+    fn cache(&self) -> Option<&Cache> {
+        Some(&self.cache)
     }
 }
 

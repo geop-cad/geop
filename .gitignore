@@ -25,3 +25,7 @@ homepage/examples/
 homepage/vendor/
 
 bugreports
+
+# What the kernel made of a file, kept beside it for the next run
+# (`geop_core_program::cache`): a cache, rebuilt when missing.
+*.geopc

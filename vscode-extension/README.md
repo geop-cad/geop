@@ -25,6 +25,12 @@ VS Code ── webview (web/, built with `--mode vscode`)
   ones as edited (saved or not), and again whenever one changes, so an
   assembly follows its parts live. Files must not place each other in a
   cycle.
+- What a file is made into — a STEP file's bodies — is kept beside it, as
+  `name.STEP.geopc` (`geop serve --cache-root <folder>`), so the next editor
+  opened, or the next session, reads it from there instead of reading the
+  file again. It is only read back by the same build of the kernel. A
+  `.geopc` file is a cache: delete it freely, and keep it out of source
+  control (`*.geopc` in `.gitignore`).
 
 ## Build
 

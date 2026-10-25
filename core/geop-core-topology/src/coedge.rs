@@ -6,7 +6,7 @@ use super::model::{Curve2, Curve3};
 
 /// Whether a coedge traverses its underlying edge in the same direction
 /// (forward: start→end) or the opposite direction (reversed: end→start).
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum Sense {
     Forward,
     Reversed,

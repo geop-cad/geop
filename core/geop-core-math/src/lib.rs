@@ -1,6 +1,7 @@
 pub mod combinatorics;
 pub mod disjoint_set;
 pub mod dual;
+pub mod exact;
 pub mod geop_error;
 pub mod matrix;
 pub mod plain;

@@ -1,0 +1,199 @@
+{
+  "steps": [
+    {
+      "id": "profile",
+      "operation": "add_sketch",
+      "args": {
+        "plane": {
+          "datum": "origin:xy"
+        },
+        "references": [
+          {
+            "curves": {
+              "x": 3,
+              "y": 4
+            },
+            "points": {
+              "origin": 0,
+              "x": 1,
+              "y": 2
+            },
+            "type": "frame"
+          }
+        ],
+        "sketch": {
+          "constraints": {
+            "21": {
+              "curve": 4,
+              "point": 5,
+              "type": "PointOnCurve"
+            },
+            "22": {
+              "curve": 4,
+              "point": 12,
+              "type": "PointOnCurve"
+            }
+          },
+          "curves": {
+            "13": {
+              "construction": false,
+              "end": 6,
+              "start": 5,
+              "type": "Line"
+            },
+            "14": {
+              "construction": false,
+              "end": 7,
+              "start": 6,
+              "type": "Line"
+            },
+            "15": {
+              "construction": false,
+              "end": 8,
+              "start": 7,
+              "type": "Line"
+            },
+            "16": {
+              "construction": false,
+              "end": 9,
+              "start": 8,
+              "type": "Line"
+            },
+            "17": {
+              "construction": false,
+              "end": 10,
+              "start": 9,
+              "type": "Line"
+            },
+            "18": {
+              "construction": false,
+              "end": 11,
+              "start": 10,
+              "type": "Line"
+            },
+            "19": {
+              "construction": false,
+              "end": 12,
+              "start": 11,
+              "type": "Line"
+            },
+            "20": {
+              "construction": false,
+              "end": 5,
+              "start": 12,
+              "type": "Line"
+            },
+            "3": {
+              "construction": true,
+              "end": 1,
+              "fixed": true,
+              "start": 0,
+              "type": "Line"
+            },
+            "4": {
+              "construction": true,
+              "end": 2,
+              "fixed": true,
+              "start": 0,
+              "type": "Line"
+            }
+          },
+          "next_id": 23,
+          "points": {
+            "0": {
+              "fixed": true,
+              "x": 0,
+              "y": 0
+            },
+            "1": {
+              "fixed": true,
+              "x": 1,
+              "y": 0
+            },
+            "10": {
+              "fixed": true,
+              "x": 27,
+              "y": 115
+            },
+            "11": {
+              "fixed": true,
+              "x": 25,
+              "y": 113
+            },
+            "12": {
+              "fixed": true,
+              "x": 0,
+              "y": 113
+            },
+            "2": {
+              "fixed": true,
+              "x": 0,
+              "y": 1
+            },
+            "5": {
+              "fixed": true,
+              "x": 0,
+              "y": 5
+            },
+            "6": {
+              "fixed": true,
+              "x": 22,
+              "y": 0
+            },
+            "7": {
+              "fixed": true,
+              "x": 33,
+              "y": 8
+            },
+            "8": {
+              "fixed": true,
+              "x": 33,
+              "y": 100
+            },
+            "9": {
+              "fixed": true,
+              "x": 27,
+              "y": 111
+            }
+          }
+        }
+      }
+    },
+    {
+      "id": "can",
+      "operation": "revolve",
+      "args": {
+        "axis": {
+          "sketch": {
+            "name": "c4",
+            "target": "/:sketch:profile"
+          }
+        },
+        "extent": {
+          "reversed": false,
+          "side1": {
+            "blind": 360
+          },
+          "symmetric": false
+        },
+        "output": {
+          "solid": {
+            "mode": "new_body"
+          }
+        },
+        "sketch": {
+          "target": "/:sketch:profile"
+        }
+      }
+    },
+    {
+      "id": "wall",
+      "operation": "shell",
+      "args": {
+        "faces": [],
+        "solid": "revolve(can)",
+        "thickness": 0.3
+      }
+    }
+  ]
+}

@@ -16,11 +16,15 @@
 mod mcp;
 
 use clap::{Parser, Subcommand};
-use geop_cad_base::{BuiltPart, editor, outputs, workspace};
+use geop_cad_base::{BuiltPart, editor_with, outputs, workspace_with};
 use geop_core_editor::editor::Rerun;
 use geop_core_editor::output::Output;
 use geop_core_math::geop_error::{GeopError, GeopResult};
-use geop_core_program::{program::Program, workspace::FileStore};
+use geop_core_program::{
+    cache::{CACHE_EXTENSION, Cache, CacheStore},
+    program::Program,
+    workspace::FileStore,
+};
 use geop_ops_assembly::solving::{check as check_mates, solve};
 use std::{
     io::{BufRead, Write},
@@ -56,7 +60,14 @@ enum Command {
 }
 
 #[derive(clap::Args)]
-struct ServeArgs {}
+struct ServeArgs {
+    /// The folder the files the front end sends are named relative to:
+    /// what they are made into is kept there, beside each, in a `.geopc`
+    /// file (see `geop_core_program::cache`). Kept in memory only, if not
+    /// given.
+    #[arg(long, value_name = "DIR")]
+    cache_root: Option<PathBuf>,
+}
 
 #[derive(clap::Args)]
 struct McpArgs {}
@@ -166,6 +177,69 @@ impl FileStore for Disk {
     }
 }
 
+/// Cache files on disk: `path.geopc` under `root` for the file `path`, of
+/// this build of the kernel (see `geop_core_program::cache`).
+struct DiskCache {
+    root: PathBuf,
+    build: String,
+}
+
+impl DiskCache {
+    /// The cache files under `root`, of the executable running: its version,
+    /// and its size and time on disk, so that a kernel built again makes
+    /// again what an older one kept. None if the executable cannot be told
+    /// apart: nothing is then kept on disk.
+    fn of(root: PathBuf) -> Option<Self> {
+        let exe = std::fs::metadata(std::env::current_exe().ok()?).ok()?;
+        let modified = exe
+            .modified()
+            .ok()?
+            .duration_since(std::time::UNIX_EPOCH)
+            .ok()?;
+        let build = format!(
+            "{} {} {}",
+            env!("CARGO_PKG_VERSION"),
+            exe.len(),
+            modified.as_nanos()
+        );
+        Some(Self { root, build })
+    }
+
+    /// What `self` makes of files: kept in it, if there is one, and in
+    /// memory.
+    fn cache(this: Option<Self>) -> Cache {
+        match this {
+            Some(store) => Cache::stored(Box::new(store)),
+            None => Cache::new(),
+        }
+    }
+}
+
+impl CacheStore for DiskCache {
+    fn build(&self) -> &str {
+        &self.build
+    }
+
+    fn read(&self, path: &str) -> Option<String> {
+        std::fs::read_to_string(self.root.join(path)).ok()
+    }
+
+    /// Written whole, then put in place: a run reading it meanwhile, or one
+    /// cut short, sees the old file or the new, never half of one. Not
+    /// written is only made again next time, so it is said on stderr and
+    /// nothing else.
+    fn write(&self, path: &str, text: &str) {
+        let target = self.root.join(path);
+        let partial = target.with_extension(format!("{CACHE_EXTENSION}.{}", std::process::id()));
+        let written =
+            std::fs::write(&partial, text).and_then(|()| std::fs::rename(&partial, &target));
+        if let Err(e) = written {
+            let _ = std::fs::remove_file(&partial);
+            eprintln!("geop: could not keep {}: {e}", target.display());
+        }
+    }
+}
+
 /// The program at `path`, built, its parts where its mates hold them, and
 /// the mates the program's state did not hold. A stale state — a file it
 /// places changed since it was saved — is solved for here, not in the
@@ -173,7 +247,7 @@ impl FileStore for Disk {
 fn build(path: &Path) -> GeopResult<(Program, BuiltPart, Vec<String>)> {
     let path = path.to_string_lossy();
     // A standard part — `std:iso4032_hex_nut.geop` — builds too.
-    let workspace = workspace(Disk);
+    let workspace = workspace_with(Disk, DiskCache::cache(DiskCache::of(PathBuf::new())));
     let mut program = Program::from_json(&workspace.files().read(&path)?)?;
     let mut built = geop_cad_base::build(&program, &path, workspace.clone())?;
     let report = check_mates(&built.part.current())?;
@@ -297,7 +371,7 @@ fn export_examples(args: &ExamplesArgs) -> GeopResult<Vec<Compiled>> {
 /// is then in an unknown state. The front end starts another with the
 /// program it holds (`vscode-extension/src/server.ts`), rather than waiting
 /// for an answer that never comes.
-fn serve(_: &ServeArgs) -> GeopResult<()> {
+fn serve(args: &ServeArgs) -> GeopResult<()> {
     let io_err = |e: std::io::Error| GeopError::new(format!("serving: {e}"));
     // What panicked and where, as the default hook prints it to stderr.
     let panicked = std::sync::Arc::new(std::sync::Mutex::new(String::new()));
@@ -309,7 +383,9 @@ fn serve(_: &ServeArgs) -> GeopResult<()> {
         }
         default_hook(info);
     }));
-    let mut editor = editor();
+    let mut editor = editor_with(DiskCache::cache(
+        args.cache_root.clone().and_then(DiskCache::of),
+    ));
     let stdin = std::io::stdin().lock();
     let mut stdout = std::io::stdout().lock();
     for line in stdin.lines() {
@@ -431,7 +507,7 @@ mod tests {
     /// is waiting for exactly one line per line it sent.
     #[test]
     fn serve_answers_every_command_with_one_line() {
-        let mut editor = editor();
+        let mut editor = geop_cad_base::editor();
         let shown = editor.handle_json(r#"{"command": "show"}"#).unwrap();
         let shown: serde_json::Value = serde_json::from_str(&shown).unwrap();
         assert!(shown["error"].is_null(), "{shown}");

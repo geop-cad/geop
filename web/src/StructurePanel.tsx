@@ -54,7 +54,7 @@ export function StructurePanel({ items, enabled, onVisibility, onLight }: Props)
                 onMouseEnter={() => item.elements.length > 0 && onLight(item.elements)}
                 onMouseLeave={() => item.elements.length > 0 && onLight([])}
               >
-                <span className="structure-name">{item.name}</span>
+                <span className="structure-name">{item.label ?? item.name}</span>
                 {item.visible != null && (
                   <button
                     className="structure-eye"

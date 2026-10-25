@@ -23,10 +23,10 @@ JSON-RPC 2.0, one message per line, newline-delimited, no framing headers.
 
 | tool | what it does |
 |---|---|
-| `new_part` | An empty part. Every part has the datum `origin`, whose planes sketches are drawn on. |
+| `new_part` | An empty part. Every part has the datum `origin`, whose planes sketches are drawn on (`{"datum": "origin:xy"}`, `origin:yz`, `origin:zx`). |
 | `load_program` | Replace the part with a `.geop` file (`path`; the other `.geop` files next to it are read too, for the parts it places) or a program's text (`text`). |
-| `list_operations` | Every operation: its `kind` (what `add_step` takes), label, group, doc, the arguments a new step starts with (`default_args`) and the editor's form for it (`form`: each field's key, control, label, value; a reference field says which element kinds it accepts). |
-| `add_step` | Append a step: `kind`, `args` (the step's saved JSON, as a `.geop` file holds it), optional `id`. Answers with every step's status. |
+| `list_operations` | Every operation: its `kind` (what `add_step` takes), label, group and doc. Given a `kind`, that operation alone, with the arguments a new step starts with (`default_args`) and the editor's form for it (`form`: each field's key, control, label, value; a reference field says which element kinds it accepts). |
+| `add_step` | Add a step at the end, or before the step `before`: `kind`, `args` (the step's saved JSON, as a `.geop` file holds it), optional `id`. Arguments that do not read are refused; a step that reads but does not build is added, with its error. Answers with every step's status. |
 | `edit_step` | Set some of a step's arguments: the keys of `args` replace those of the step, the rest stay. The program is rebuilt from there. |
 | `delete_step` | Remove a step. Steps that referred to what it built fail and say so. |
 | `run` | Run the whole program: every step's summary, whether it ran and its error with the kernel's context, and the part's solids. |
@@ -48,14 +48,17 @@ Steps refer to what earlier steps built by stable names, never by ids the
 kernel assigns. The step `box` of an extrusion makes the solid
 `extrude(box)`, its caps `extrude(box,start)` and `extrude(box,end)`, and
 its side faces after the sketch's curves. `list_elements` gives these
-names; a face is referred to as `{"type": "Face", "name": "extrude(box,end)"}`,
-an edge as `{"type": "Edge", "name": ...}`, a sketch as
+names; a face is referred to as `{"face": "extrude(box,end)"}`, an edge to
+blend by its name in the step's `edges`, a sketch as
 `{"target": "/:sketch:<id>"}`, and a plane of the origin as
-`{"type": "Datum", "name": "origin", "component": {"plane": "z"}}`.
+`{"datum": "origin:xy"}`. A step naming a target no step before it produces
+fails with the targets there are.
 
-The quickest way to learn an operation's arguments is `list_operations`:
-its `default_args` are exactly the JSON `add_step` takes, with the editor's
-defaults filled in, and `form` says what each field is. The built-in
+The quickest way to learn an operation's arguments is `list_operations`
+with its `kind`: its `default_args` are exactly the JSON `add_step` takes,
+with the editor's defaults filled in and its references blank (an
+extrusion's sketch is `/:sketch:`, to be completed with the sketch's step
+id), and `form` says what each field is. The built-in
 examples are another source: `geop examples --out-dir examples` writes every
 one as a `.geop` file.
 

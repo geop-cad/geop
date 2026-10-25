@@ -21,6 +21,8 @@ use geop_core_math::{
 use geop_core_topology::validation::{ValidationParameters, validate_fast};
 use geop_ops_model::parameters::file_choices;
 use geop_ops_model::{BodyNames, ModelOperation, NamedModel, Namer, build_model};
+use std::rc::Rc;
+
 use serde::{Deserialize, Serialize};
 
 use crate::import::{ImportedBody, read_step};
@@ -121,9 +123,10 @@ pub fn add_bodies(
 }
 
 /// The bodies of a STEP file, as read: the value of an import's target
-/// [`imported`].
+/// [`imported`], shared with every other build reading the same file (see
+/// [`read`]).
 #[derive(Clone, Debug, PartialEq)]
-pub struct Imported(pub Vec<ImportedBody>);
+pub struct Imported(pub Rc<Vec<ImportedBody>>);
 
 /// Each import step's own.
 impl Target for Imported {}
@@ -152,12 +155,17 @@ pub fn read_imported<'a>(reader: &Reader<'a>, step: &str) -> GeopResult<&'a Impo
     reader.retrieve_element(&ElementReference::whole(imported(step)))
 }
 
+/// What a STEP file reads as, as its workspace keeps it (see
+/// [`geop_core_program::cache`]).
+const STEP_BODIES: &str = "step_bodies";
+
 /// The bodies of the file `file` the step `step` reads, the read recorded:
-/// read again once the file changes.
+/// read again once the file changes. A text is read once for every build
+/// of the workspace — a step's preview, the program it is committed to, a
+/// part placed from it — and, kept on disk, for every run of the kernel.
 fn read(reader: &Reader, (step, file): &(String, String)) -> GeopResult<Imported> {
     let ctx = with_context!("import_step({step}, file={file:?})");
-    let (_, text) = reader.read_file(file).with_context(ctx)?;
-    let bodies = read_step(&text).with_context(ctx)?;
+    let (_, bodies) = (reader.read_file_as(file, STEP_BODIES, read_step)).with_context(ctx)?;
     if bodies.is_empty() {
         return Err(GeopError::new(format!("{file} has no solids or sheets"))).with_context(ctx);
     }

@@ -8,6 +8,7 @@ type FromPage =
   | { type: "ready" }
   | { type: "command"; id: number; command: string }
   | { type: "program"; program: unknown }
+  | { type: "file"; path: string; program: unknown }
   | { type: "save"; file: { name: string; text?: string; bytes?: string } }
   | { type: "add"; id: number; name: string; text: string };
 
@@ -140,6 +141,9 @@ export class GeopEditorProvider implements vscode.CustomTextEditorProvider {
       // as they are now: the program as the page last wrote it.
       server = new GeopServer(
         this.executable(),
+        // What the folder's files are made into — a STEP file's bodies —
+        // kept beside them, `.geopc`, for the next kernel to read.
+        folder.scheme === "file" ? ["--cache-root", folder.fsPath] : [],
         (text) => this.log.append(text),
         async () => restoreCommands(await allFiles(), document.getText(), pathOf(document.uri)),
       );
@@ -226,6 +230,24 @@ export class GeopEditorProvider implements vscode.CustomTextEditorProvider {
             latest = message.program;
             if (!writing) await write();
             break;
+          case "file": {
+            // Another program file of the folder — a placed part's, a step
+            // of it edited here — written as an edit of its document, which
+            // VS Code then has unsaved, as if edited in its own editor.
+            const uri = vscode.Uri.joinPath(folder, message.path);
+            if (pathOf(uri).startsWith("..")) break;
+            try {
+              const other = await vscode.workspace.openTextDocument(uri);
+              const text = JSON.stringify(message.program, null, 2) + "\n";
+              if (other.getText() === text) break;
+              const edit = new vscode.WorkspaceEdit();
+              edit.replace(uri, new vscode.Range(0, 0, other.lineCount, 0), text);
+              await vscode.workspace.applyEdit(edit);
+            } catch (e) {
+              this.log.appendLine(`could not write ${uri.fsPath}: ${e}`);
+            }
+            break;
+          }
           case "add": {
             // A file the user chose in a file field, stored next to the
             // document — under another name if one of its name there holds

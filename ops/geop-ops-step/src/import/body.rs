@@ -41,6 +41,8 @@
 
 use std::collections::HashMap;
 
+use serde::{Deserialize, Serialize};
+
 use geop_core_geometry::{
     nurb_curve::{NurbCurve, NurbCurve2D, NurbCurve3D, loop_signed_area},
     nurb_surface::NurbSurface3D,
@@ -73,8 +75,10 @@ use super::{
 
 /// A body read from a file, ready to build: its description, and the name
 /// of every entity in it — the arguments a step's names are made of, as
-/// `["f3", "q1"]` for the second sector of the file's fourth face.
-#[derive(Clone, Debug, PartialEq)]
+/// `["f3", "q1"]` for the second sector of the file's fourth face. It
+/// serializes exactly, as its body does: what a file read as is kept
+/// (`geop_core_program::cache`).
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct ImportedBody {
     /// What the file calls it.
     pub label: String,
@@ -89,7 +93,7 @@ pub struct ImportedBody {
 
 /// What [`heal`] rebuilt of a body where its file disagrees with itself
 /// further than the kernel can carry, and how far it moved.
-#[derive(Clone, Debug, Default, PartialEq)]
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub struct Healing {
     /// Each vertex moved to where its faces meet, and how far.
     pub vertices: Vec<(String, f64)>,

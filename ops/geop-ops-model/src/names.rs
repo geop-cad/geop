@@ -225,19 +225,13 @@ pub fn origin_of(name: &str) -> Option<&str> {
 pub const LONGEST_ARGUMENT: usize = 160;
 
 /// A long argument of a name, as the name spells it: `#` and 32 hex
-/// digits, a 128-bit FNV-1a hash of it. A hash rather than a counter, so
-/// that a name still depends only on what the entity was made from; FNV
-/// written out here rather than the standard library's hasher, which may
-/// change between Rust versions, so that a saved program's names keep
-/// meaning the same entities.
+/// digits, its digest ([`geop_core_program::cache::digest`]). A hash
+/// rather than a counter, so that a name still depends only on what the
+/// entity was made from, and one that does not change between Rust
+/// versions, so that a saved program's names keep meaning the same
+/// entities.
 pub fn digest(text: &str) -> String {
-    const PRIME: u128 = 0x0000000001000000000000000000013B;
-    let mut hash: u128 = 0x6c62272e07bb014262b821756295c58d;
-    for byte in text.bytes() {
-        hash ^= u128::from(byte);
-        hash = hash.wrapping_mul(PRIME);
-    }
-    format!("#{hash:032x}")
+    format!("#{:032x}", geop_core_program::cache::digest(text))
 }
 
 #[cfg(test)]

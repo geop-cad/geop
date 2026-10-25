@@ -1,5 +1,6 @@
 pub mod aabb;
 pub mod contains;
+mod exact;
 mod fat_line;
 pub mod intersection;
 mod knot_insertion;

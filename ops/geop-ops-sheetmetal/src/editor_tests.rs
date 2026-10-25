@@ -69,11 +69,14 @@ fn new_edge_flange_picks_its_edge_and_unfolds() {
             kind: "flat_pattern".into(),
         },
     );
-    let update = handled(&mut editor, Command::Commit);
+    handled(&mut editor, Command::Commit);
     let step = editor.program().steps.last().unwrap();
     assert_eq!(step.operation, "flat_pattern");
     assert_eq!(args::<FlatPatternArgs>(step).solid, solid(flanged));
-    let scene = update.scene.expect("the scene is sent anew");
+    let scene = editor
+        .handle(Command::Show)
+        .scene
+        .expect("the scene is sent anew");
     assert!(
         scene
             .part
@@ -133,26 +136,32 @@ fn sheet_metal_cut_hem_and_cutting_export() {
             },
         },
     );
-    let update = handled(&mut editor, Command::Commit);
+    handled(&mut editor, Command::Commit);
     let step = editor.program().steps.last().unwrap().clone();
     assert_eq!(step.operation, "sheet_cut");
     let cut: SheetCutArgs = args(&step);
     assert_eq!(cut.sketch, whole_sketch("flange_hole"));
     assert_eq!(cut.face, Some(element("edge_flange(back,flange,a)")));
-    let scene = update.scene.expect("the scene is sent anew");
+    let scene = editor
+        .handle(Command::Show)
+        .scene
+        .expect("the scene is sent anew");
     assert_eq!(scene.part.solids, [format!("sheet_cut({})", step.id)]);
 
     handled(&mut editor, Command::New { kind: "hem".into() });
     handled(&mut editor, click_at(from_above(2.0, 0.4)));
     handled(&mut editor, dialog("kind", Value::Choice("open".into())));
     handled(&mut editor, dialog("gap", Value::Number(0.06)));
-    let update = handled(&mut editor, Command::Commit);
+    handled(&mut editor, Command::Commit);
     let step = editor.program().steps.last().unwrap().clone();
     assert_eq!(step.operation, "hem");
     let hem: HemArgs = args(&step);
     assert_eq!(hem.edge, Some(edge("base_flange(plate,outline,c5,b)")));
     assert_eq!((hem.kind, hem.gap), (HemKind::Open, 0.06));
-    let scene = update.scene.expect("the scene is sent anew");
+    let scene = editor
+        .handle(Command::Show)
+        .scene
+        .expect("the scene is sent anew");
     assert_eq!(scene.part.solids, [format!("hem({})", step.id)]);
 
     let json = editor

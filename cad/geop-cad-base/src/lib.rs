@@ -10,4 +10,7 @@ pub mod registry;
 mod tests;
 
 pub use geop_core_editor::editor::{Command, Editor, Update};
-pub use registry::{BuiltPart, Workspace, build, editor, outputs, registry, runner, workspace};
+pub use registry::{
+    BuiltPart, Workspace, build, editor, editor_with, outputs, registry, runner, workspace,
+    workspace_with,
+};

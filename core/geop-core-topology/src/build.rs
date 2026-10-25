@@ -12,6 +12,8 @@
 
 use std::collections::HashMap;
 
+use serde::{Deserialize, Serialize};
+
 use geop_core_geometry::nurb_surface::NurbSurface3D;
 use geop_core_math::{
     geop_error::{GeopError, GeopResult},
@@ -26,9 +28,12 @@ use crate::{
 };
 
 /// A body to build, its entities referring to each other by their index in
-/// the lists here: a solid, a sheet, or — with no faces — a wire.
-#[derive(Clone, Debug, PartialEq)]
+/// the lists here: a solid, a sheet, or — with no faces — a wire. It
+/// serializes exactly (see [`geop_core_math::exact`]): a body kept to be
+/// built again is the body that was described.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct BodySpec {
+    #[serde(with = "geop_core_math::exact")]
     pub vertices: Vec<Vector3>,
     pub edges: Vec<EdgeSpec>,
     pub faces: Vec<FaceSpec>,
@@ -40,16 +45,18 @@ pub struct BodySpec {
 }
 
 /// An edge: its curve, running from vertex `start` to vertex `end`.
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct EdgeSpec {
+    #[serde(with = "geop_core_math::exact")]
     pub curve: Curve3,
     pub start: usize,
     pub end: usize,
 }
 
 /// A face: its surface, bounded by its `outer` loop and with its `holes`.
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct FaceSpec {
+    #[serde(with = "geop_core_math::exact")]
     pub surface: NurbSurface3D,
     pub outer: Vec<CoedgeSpec>,
     pub holes: Vec<Vec<CoedgeSpec>>,
@@ -57,15 +64,16 @@ pub struct FaceSpec {
 
 /// One coedge of a loop, in the order the loop runs, with its pcurve on the
 /// loop's face.
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct CoedgeSpec {
     pub on: CoedgeOn,
+    #[serde(with = "geop_core_math::exact")]
     pub pcurve: Curve2,
 }
 
 /// What a [`CoedgeSpec`] runs along: an edge, in a sense, or — a degenerate
 /// coedge, see [`CoedgeGeometry::Vertex`] — a single vertex.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum CoedgeOn {
     Edge(usize, Sense),
     Vertex(usize),

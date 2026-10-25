@@ -25,7 +25,7 @@ apart (see Scripts).
 | `core/geop-core-topology` | the B-rep, building, editing and validation, wires |
 | `core/geop-core-rasterize` | a model as a triangle mesh, STL, debug renderings |
 | `core/geop-core-sketch` | 2-D constraint sketches: entities, constraints as residuals, profiles, dimensions in a plane |
-| `core/geop-core-program` | a program, its values and the part it builds: a memo table of nodes made by `StepContext::produce`, placed parts, the runner, the workspace of files; feature `testing`: `assert_incremental`, `assert_round_trips` |
+| `core/geop-core-program` | a program, its values and the part it builds: a memo table of nodes made by `StepContext::produce`, placed parts, the runner, the workspace of files and the `Cache` of what they were made into (`.geopc` beside a file, given a `CacheStore`); feature `testing`: `assert_incremental`, `assert_round_trips` |
 | `core/geop-core-editor` | what an operation is and how it is edited (`PartOperation`, `EditForm`), what an editor draws (`view`), exporters and inspectors (`output`), the editor engine over a `Registry`; feature `testing`: an editor driven as a front end drives it |
 | `lib/geop-lib-sheet` | the sheets drawings and flat patterns are written on: SVG, DXF |
 | `lib/geop-lib-booleans` | booleans and the remesh under them, split, imprint, trim up to the next face, a step's `Combine` |

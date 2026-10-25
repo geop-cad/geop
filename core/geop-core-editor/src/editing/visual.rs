@@ -2,7 +2,8 @@
 //! [`Presentation`], what an editor shows of a step.
 
 use geop_core_math::{
-    primitives::CoordinateSystem,
+    geop_error::GeopResult,
+    primitives::{CoordinateSystem, Motion},
     scalars::{Scalar, as_f64},
     vector::Vector3,
 };
@@ -139,6 +140,72 @@ pub struct Visual {
     /// the drag's last event left it.
     #[serde(skip)]
     pub from_grab: bool,
+}
+
+impl Shape {
+    /// The shape moved by `motion`, out of the part placed as `instance`
+    /// in the part drawn: drawn where that part is placed.
+    pub fn placed(&self, instance: &str, motion: &Motion) -> Self {
+        let at = |p: &Vector3| motion.apply(p);
+        match self {
+            Shape::Point { at: p } => Shape::Point { at: at(p) },
+            Shape::Polyline { points } => Shape::Polyline {
+                points: points.iter().map(at).collect(),
+            },
+            Shape::Triangles { triangles } => Shape::Triangles {
+                triangles: triangles.iter().map(|t| t.map(|p| at(&p))).collect(),
+            },
+            Shape::Label {
+                at: p,
+                text,
+                offset,
+            } => Shape::Label {
+                at: at(p),
+                text: text.clone(),
+                offset: motion.rotate(offset),
+            },
+            Shape::Handle { at: p, direction } => Shape::Handle {
+                at: at(p),
+                direction: motion.rotate(direction),
+            },
+            Shape::Instance { name } => Shape::Instance {
+                name: geop_core_program::placed::instance_path(instance, name),
+            },
+            Shape::Triad { at: p, axes } => Shape::Triad {
+                at: at(p),
+                axes: axes.map(|axis| motion.rotate(&axis)),
+            },
+        }
+    }
+}
+
+impl Presentation {
+    /// The presentation of a step of the part placed as `instance` in the
+    /// part drawn, `motion` where it is placed: what it draws, its gizmo,
+    /// its prompt and its plane moved there, and what it lights the same
+    /// elements of that instance. What it asks to hide is of its own part,
+    /// which is drawn as an instance: it is drawn.
+    pub fn placed(mut self, instance: &str, motion: &Motion) -> GeopResult<Self> {
+        for visual in &mut self.visuals {
+            visual.shape = visual.shape.placed(instance, motion);
+        }
+        self.highlights = (self.highlights.iter())
+            .map(|picked| picked.behind(instance))
+            .collect();
+        self.focus = self
+            .focus
+            .map(|focus| motion.apply_frame(&focus))
+            .transpose()?;
+        if let Some(sheet) = &mut self.sheet {
+            sheet.center = motion.apply(&sheet.center);
+        }
+        if let Some(prompt) = &mut self.prompt {
+            prompt.at = motion.apply(&prompt.at);
+        }
+        self.gizmo = self.gizmo.map(|gizmo| gizmo.moved(motion));
+        self.hidden.clear();
+        Ok(self)
+    }
 }
 
 impl Visual {

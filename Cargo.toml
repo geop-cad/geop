@@ -69,7 +69,7 @@ geop-ops-drawing = { path = "ops/geop-ops-drawing" }
 geop-ops-assembly = { path = "ops/geop-ops-assembly" }
 geop-ops-inspect = { path = "ops/geop-ops-inspect" }
 geop-ops-subd = { path = "ops/geop-ops-subd" }
-serde = { version = "1", features = ["derive"] }
+serde = { version = "1", features = ["derive", "rc"] }
 geop-ops-sheetmetal = { path = "ops/geop-ops-sheetmetal" }
 geop-ops-plastic = { path = "ops/geop-ops-plastic" }
 geop-ops-step = { path = "ops/geop-ops-step" }

@@ -284,6 +284,13 @@ fn world() -> [Vector3; 3] {
 }
 
 impl GizmoView {
+    /// The gizmo moved by `motion`: drawn where the part it is of is placed.
+    pub fn moved(mut self, motion: &geop_core_math::primitives::Motion) -> Self {
+        self.at = motion.apply(&self.at);
+        self.axes = self.axes.map(|axis| motion.rotate(&axis));
+        self
+    }
+
     /// `gizmo` turned as `orientation` says.
     pub fn of(gizmo: &Gizmo, orientation: Orientation) -> Self {
         let axes = match (orientation, gizmo.axes) {

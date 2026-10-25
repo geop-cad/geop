@@ -257,7 +257,8 @@ impl<T: Number> Quaternion<T> {
 }
 
 /// A rigid motion — where a body sits: a point `p` of it is at
-/// `R p + position`, with `R` the rotation of a unit quaternion — in the
+/// `R p + position`, with `R` the rotation of a quaternion, which need not
+/// be unit (see [`Pose::apply`]) — in the
 /// number type `T`. Held as the two themselves, so that what is stored is
 /// exactly what was set, and a pose read and written again is written
 /// exactly as it was read.
@@ -354,7 +355,9 @@ impl<T: Number> Pose<T> {
         self.position
     }
 
-    /// Its rotation, as a unit quaternion.
+    /// Its rotation's quaternion: unit as [`Pose::new`] makes it, as read
+    /// from a file otherwise — a quaternion of any norm but zero stands for
+    /// the rotation it divides out (see [`Pose::apply`]).
     pub fn rotation(&self) -> Quaternion<T> {
         self.rotation
     }
@@ -373,7 +376,10 @@ impl<T: Number> Pose<T> {
     /// difference of the other two is determined; the split is arbitrary
     /// but exact.
     pub fn euler_degrees(&self) -> [f64; 3] {
-        let [w, x, y, z] = self.rotation().components().map(|c| c.to_f64());
+        // The unit quaternion of its rotation, which it need not be itself.
+        let q = self.rotation().components().map(|c| c.to_f64());
+        let norm = q.iter().map(|c| c * c).sum::<f64>().sqrt();
+        let [w, x, y, z] = q.map(|c| c / norm);
         // The rotation matrix's first column and last row.
         let (r00, r10, r20) = (
             1.0 - 2.0 * (y * y + z * z),
@@ -412,16 +418,18 @@ impl<T: Number> Pose<T> {
         }
     }
 
-    /// The pose that undoes this one.
+    /// The pose that undoes this one. Its rotation is the inverse
+    /// quaternion, `q̄ / |q|²`, so that a pose composed with its inverse is
+    /// the identity whatever `q`'s norm — and norms do not grow along a
+    /// chain of poses undone and done again.
     pub fn inverse(&self) -> Pose<T> {
-        let rotation = self.rotation.conj();
-        let turned = rotation
+        let conj = self.rotation.conj();
+        let turned = conj
             .mul(&Quaternion::pure(&self.position))
-            .mul(&self.rotation)
-            .vector();
+            .mul(&self.rotation);
         Pose {
-            rotation,
-            position: turned.neg(),
+            rotation: self.unturned(conj),
+            position: self.unturned(turned).vector().neg(),
         }
     }
 
@@ -498,13 +506,31 @@ impl<T: Number> Pose<T> {
         Ok(Pose { rotation, position })
     }
 
-    /// The point `p` moved by the pose.
+    /// The point `p` moved by the pose: turned by the rotation its
+    /// quaternion stands for, `q p q̄ / |q|²`, then moved.
     pub fn apply(&self, p: &Vector3<T>) -> Vector3<T> {
         let r = &self.rotation;
-        r.mul(&Quaternion::pure(p))
-            .mul(&r.conj())
-            .vector()
-            .add(&self.position)
+        let turned = self.unturned(r.mul(&Quaternion::pure(p)).mul(&r.conj()));
+        turned.vector().add(&self.position)
+    }
+
+    /// `q` divided by the norm squared of the pose's quaternion: what a
+    /// product with it and its conjugate turns by. A pose's quaternion
+    /// stands for its rotation whatever its norm — a file keeps it as read,
+    /// a solver's step leaves it a hair off unit — but a product with it
+    /// scales by its norm squared. Exactly unit, nothing is divided, and
+    /// nothing widened.
+    fn unturned(&self, q: Quaternion<T>) -> Quaternion<T> {
+        let n = self.rotation.norm_sq();
+        if n.is_exactly(T::ONE) {
+            return q;
+        }
+        // A pose's quaternion is not zero (see `Pose::new` and its reader).
+        q.scale(
+            T::ONE
+                .div(n)
+                .expect("a pose's rotation is not the zero quaternion"),
+        )
     }
 
     /// Turning by `radians` about the line through `point` along the unit
@@ -1057,5 +1083,29 @@ mod tests {
                 );
             }
         }
+    }
+
+    /// A quaternion off unit — as a file keeps it — stands for the rotation
+    /// of its unit one: a pose with it moves points as that one does, and
+    /// composed with its inverse is the identity, its norm not compounded.
+    #[test]
+    fn a_rotation_off_unit_moves_points_as_its_unit_one() {
+        let saved: Pose = serde_json::from_value(serde_json::json!({
+            "position": [1.0, -7.25, 2.0],
+            "rotation": [1.09, 0.2, -0.3, 0.1],
+        }))
+        .unwrap();
+        let unit = Pose::new(saved.position(), saved.rotation()).unwrap();
+        let p = [3.0, 4.0, -5.0];
+        let moved = unit.apply(&v(p)).to_f64_array();
+        assert!(
+            encloses(&saved.apply(&v(p)), moved),
+            "{:?}",
+            saved.apply(&v(p))
+        );
+        let back = saved.inverse().compose(&saved);
+        assert!(encloses(&back.apply(&v(p)), p), "{back:?}");
+        assert!(back.rotation().norm_sq().could_be_equal(Scalar::ONE));
+        assert!(encloses(&saved.inverse().apply(&saved.apply(&v(p))), p));
     }
 }

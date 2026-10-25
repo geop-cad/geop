@@ -2,6 +2,7 @@ import { useState } from "react";
 import { ColorInput } from "./controls";
 import type { Material, Parameter, Parameters, ParamValue } from "./geop";
 import { Icon } from "./icons";
+import { FACE_COLOR } from "./partScene";
 
 interface Props {
   parameters: Parameters;
@@ -294,7 +295,7 @@ export function ParametersPanel({
       <div className="parameter-row">
         <span className="parameter-kind">
           <ColorInput
-            value={parameters.color ?? "#4472c4"}
+            value={parameters.color ?? `#${FACE_COLOR.toString(16).padStart(6, "0")}`}
             title="The part's colour"
             onChange={(color) => onChange({ ...parameters, color })}
           />

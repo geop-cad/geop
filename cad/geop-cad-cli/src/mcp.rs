@@ -32,9 +32,14 @@ const PROTOCOL_VERSION: &str = "2025-06-18";
 const INSTRUCTIONS: &str = "geop is a parametric CAD kernel. A part is a program of steps, each an \
 operation with arguments; steps refer to what earlier steps built by stable names such as \
 `extrude(box)` (the solid the step `box` extruded) or `extrude(box,end)` (its end cap). Start \
-with `new_part` or `load_program`, see what operations there are and how their arguments look \
-with `list_operations`, add steps with `add_step`, check `run` for errors, find names for \
-references with `list_elements`, and finish with `export` or `save`.";
+with `new_part` or `load_program`, see what operations there are with `list_operations` and how \
+one's arguments look with `list_operations` given its `kind`, add steps with `add_step`, check \
+`run` for errors, find names for references with `list_elements`, and finish with `export` or \
+`save`. A sketch is drawn on a plane such as `{\"datum\": \"origin:xy\"}` (or `origin:yz`, \
+`origin:zx`). A step names what another step built by its target, `/:<target>:<step id>`: the \
+sketch the step `base` drew is `{\"target\": \"/:sketch:base\"}`, and a reference left blank in \
+`default_args` (`/:sketch:`) has to be filled in. A step that names a target no step before it \
+produces says which targets there are.";
 
 /// One editor, driven by tools, and what a front end would keep of its
 /// answers: the last scene (the part's elements by name) and the file.
@@ -77,14 +82,14 @@ fn tools() -> Value {
     let string = |description: &str| json!({ "type": "string", "description": description });
     let object = |description: &str| json!({ "type": "object", "description": description });
     json!({ "tools": [
-        tool("new_part", "Start a new, empty part. Every part has the coordinate-system datum `origin`, whose planes a sketch is drawn on: {\"type\": \"Datum\", \"name\": \"origin\", \"component\": {\"plane\": \"z\"}}.",
+        tool("new_part", "Start a new, empty part. Every part has the coordinate-system datum `origin`, whose planes a sketch is drawn on, as `add_sketch`'s `plane`: {\"datum\": \"origin:xy\"}, {\"datum\": \"origin:yz\"} or {\"datum\": \"origin:zx\"}.",
             json!({}), &[]),
         tool("load_program", "Replace the part with a program: the `.geop` file at `path` (the other `.geop` files next to it are read too, for the parts it places), or the program `text` itself.",
             json!({ "path": string("A .geop file on disk."), "text": string("A program as JSON, as a .geop file holds it.") }), &[]),
-        tool("list_operations", "Every operation a step can be: its kind (what `add_step` takes), label, group, what it does, the arguments a new step starts with (`default_args`, the JSON `add_step` takes) and the form the editor shows for it (`form`: each field's key, control, label, value and, for a reference, the kinds of elements it accepts).",
-            json!({}), &[]),
-        tool("add_step", "Append a step of the operation `kind` with `args` (its saved JSON, see `list_operations`), after the steps that run now. Answers with every step's status: an error names the step and what went wrong.",
-            json!({ "kind": string("The operation, e.g. `add_sketch`, `extrude`, `fillet`."), "args": object("The step's arguments as saved in a .geop file."), "id": string("The step's id (letters, digits, `_`, `-`, `.`); chosen from the operation's label if left out. Later steps refer to what this one builds by it, e.g. `extrude(<id>)`.") }),
+        tool("list_operations", "Every operation a step can be: its kind (what `add_step` takes), label, group and what it does. Given a `kind`, that operation alone, with the arguments a new step starts with (`default_args`, the JSON `add_step` takes) and the form the editor shows for it (`form`: each field's key, control, label, value and, for a reference, the kinds of elements it accepts).",
+            json!({ "kind": string("The operation to describe in full, e.g. `extrude`.") }), &[]),
+        tool("add_step", "Add a step of the operation `kind` with `args` (its saved JSON, see `list_operations` with `kind`) at the end of the program, or before the step `before`. A step whose arguments do not read is refused and not added; one that reads but does not build is added, and its error says why. Answers with every step's status: an error names the step and what went wrong.",
+            json!({ "kind": string("The operation, e.g. `add_sketch`, `extrude`, `fillet`."), "args": object("The step's arguments as saved in a .geop file."), "id": string("The step's id (letters, digits, `_`, `-`, `.`); chosen from the operation's label if left out. Later steps refer to what this one builds by it, e.g. `extrude(<id>)`."), "before": string("The step to add it before; the end of the program if left out.") }),
             &["kind", "args"]),
         tool("edit_step", "Change the step `id`: the keys of `args` replace those of its arguments (the others stay), so one dimension can be changed alone. The program is rebuilt from that step on.",
             json!({ "id": string("The step to change."), "args": object("The arguments to set.") }), &["id", "args"]),
@@ -92,7 +97,7 @@ fn tools() -> Value {
             json!({ "id": string("The step to remove.") }), &["id"]),
         tool("run", "Run the whole program and report every step: its summary, whether it ran, and its error with the kernel's context if it failed; and the solids the part has.",
             json!({}), &[]),
-        tool("list_elements", "The names of the part's elements as they are now, for typed references: solids, faces (with their solid), edges (with their faces), vertices, sketches, datums and what else the part lists (threads, placed parts). A face is referred to as {\"type\": \"Face\", \"name\": ...}, an edge as {\"type\": \"Edge\", \"name\": ...}.",
+        tool("list_elements", "The names of the part's elements as they are now, for typed references: solids, faces (with their solid), edges (with their faces), vertices, sketches, datums and what else the part lists (threads, placed parts). A face is referred to by its name, as a sketch's plane {\"face\": ...}; an edge by its name, as in a fillet's `edges`.",
             json!({}), &[]),
         tool("inspect", "Ask about the part: `mass_properties` (volume, area, mass, centre of mass, inertia of every solid), `interference` (which solids overlap), or `measure` with `elements` (a point, a length, an area, a radius; the distance and angle between two).",
             json!({ "inspector": { "type": "string", "enum": ["mass_properties", "interference", "measure"] }, "elements": { "type": "array", "description": "For `measure`: one or two elements, each {\"kind\": \"vertex\"|\"edge\"|\"face\"|\"datum\", \"name\": ...}.", "items": { "type": "object", "properties": { "kind": string("vertex, edge, face or datum"), "name": string("Its name, from list_elements") }, "required": ["kind", "name"] } } }),
@@ -236,7 +241,7 @@ impl McpServer {
                     self.status()
                 }
             }
-            "list_operations" => self.list_operations(),
+            "list_operations" => self.list_operations(args.get("kind").and_then(Value::as_str)),
             "add_step" => {
                 let kind = text("kind")?;
                 let step_args = (args.get("args").cloned())
@@ -246,11 +251,16 @@ impl McpServer {
                     Some(id) => id.to_string(),
                     None => program.fresh_id(&kind),
                 };
-                program.steps.push(geop_core_program::program::ProgramStep {
+                let at = match args.get("before").and_then(Value::as_str) {
+                    Some(before) => program.index_of(before)?,
+                    None => program.steps.len(),
+                };
+                let step = geop_core_program::program::ProgramStep {
                     id: id.clone(),
                     operation: kind,
                     args: step_args,
-                });
+                };
+                program.steps.insert(at, step);
                 self.send_ok(Command::Load {
                     program,
                     path: None,
@@ -384,42 +394,62 @@ impl McpServer {
         }))
     }
 
-    /// Every operation, with the arguments a new step of it starts with and
+    /// Every operation, by kind, label, group and what it does; or the one
+    /// of `kind` alone, with the arguments a new step of it starts with and
     /// the form it is edited through.
-    fn list_operations(&mut self) -> GeopResult<Value> {
+    fn list_operations(&mut self, kind: Option<&str>) -> GeopResult<Value> {
         let shown = self.send_ok(Command::Show)?;
         let program = shown
             .program
             .ok_or_else(|| GeopError::new("the editor showed no program"))?;
-        let mut operations = Vec::new();
-        for listed in &program.operations {
-            let kind = listed.kind.to_string();
-            let opened = self.send(Command::New { kind: kind.clone() });
-            let (default_args, form, missing, doc) = match (&opened.error, &opened.step) {
-                (None, Some(step)) => {
-                    let args = self.editor.editing().map(|s| s.args.clone());
-                    let form = serde_json::to_value(&step.presentation.dialog)
-                        .map_err(|e| GeopError::new(format!("the form of `{kind}`: {e}")))?;
-                    (args, form, step.missing.clone(), step.doc)
-                }
-                _ => (None, Value::Null, Vec::new(), ""),
-            };
-            if opened.error.is_none() {
-                self.send(Command::Cancel);
-            }
-            operations.push(json!({
-                "kind": kind,
-                "label": listed.info.label,
-                "group": listed.info.group,
-                "tier": listed.info.tier,
-                "doc": if doc.is_empty() { listed.info.doc } else { doc },
-                "experimental": listed.info.experimental,
-                "default_args": default_args,
-                "missing": missing,
-                "form": form,
-            }));
+        let Some(kind) = kind else {
+            let operations: Vec<Value> = (program.operations.iter())
+                .map(|listed| {
+                    json!({
+                        "kind": listed.kind.to_string(),
+                        "label": listed.info.label,
+                        "group": listed.info.group,
+                        "doc": listed.info.doc,
+                        "experimental": listed.info.experimental,
+                    })
+                })
+                .collect();
+            return Ok(json!({ "operations": operations }));
+        };
+        let listed = (program.operations.iter())
+            .find(|listed| listed.kind == kind)
+            .ok_or_else(|| {
+                let kinds: Vec<String> = (program.operations.iter())
+                    .map(|listed| listed.kind.to_string())
+                    .collect();
+                GeopError::new(format!(
+                    "there is no operation `{kind}`; there are {}",
+                    kinds.join(", ")
+                ))
+            })?;
+        let opened = self.send(Command::New {
+            kind: kind.to_string(),
+        });
+        if let Some(error) = opened.error {
+            return Err(GeopError::new(error).with_context(format!("opening a new `{kind}`")));
         }
-        Ok(json!({ "operations": operations }))
+        let step = (opened.step)
+            .ok_or_else(|| GeopError::new(format!("a new `{kind}` opened no step")))?;
+        let default_args = self.editor.editing().map(|s| s.args.clone());
+        self.send(Command::Cancel);
+        let form = serde_json::to_value(&step.presentation.dialog)
+            .map_err(|e| GeopError::new(format!("the form of `{kind}`: {e}")))?;
+        Ok(json!({
+            "kind": kind,
+            "label": listed.info.label,
+            "group": listed.info.group,
+            "tier": listed.info.tier,
+            "doc": if step.doc.is_empty() { listed.info.doc } else { step.doc },
+            "experimental": listed.info.experimental,
+            "default_args": default_args,
+            "missing": step.missing,
+            "form": form,
+        }))
     }
 
     /// The scene as last drawn.

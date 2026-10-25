@@ -17,7 +17,7 @@ use std::{
 use geop_core_math::geop_error::{GeopError, GeopResult};
 
 use crate::{
-    placed::{PlacedPart, placed},
+    placed::{PLACED, PlacedPart, placed},
     reader::{Reader, Recording},
     runner::Runner,
     target::{Node, Read, Target, TargetReference, next_version},
@@ -168,6 +168,19 @@ impl Part {
             .max_by_key(|(at, _)| *at)
     }
 
+    /// The version of every target a reader before `before` sees, by
+    /// name (see [`Reader::seen`]).
+    pub(crate) fn versions(&self, before: usize, own: Option<&str>) -> Vec<(String, u64)> {
+        let mut versions: Vec<(String, u64)> = (self.nodes.keys())
+            .filter_map(|name| {
+                let (_, node) = self.visible(name, before, own)?;
+                Some((name.clone(), node.version))
+            })
+            .collect();
+        versions.sort();
+        versions
+    }
+
     /// Every target a reader before `before` sees a node of a `T` of,
     /// produced or failed, in the order the steps produced them — of one
     /// step, by name.
@@ -187,6 +200,21 @@ impl Part {
         (found.into_iter())
             .map(|(_, name, node)| (name, node))
             .collect()
+    }
+
+    /// The parts placed in the finished part — not in those — in the order
+    /// the steps placed them: each by its instance name, with the step that
+    /// placed it and its build.
+    pub fn placed(&self) -> Vec<(&str, &str, &PlacedPart)> {
+        (self
+            .listed(TypeId::of::<PlacedPart>(), self.ran, None)
+            .into_iter())
+        .filter_map(|(name, node)| {
+            let instance = name.strip_prefix(PLACED)?;
+            let placed = node.get::<PlacedPart>(name).ok()?;
+            Some((instance, node.step.as_str(), placed))
+        })
+        .collect()
     }
 
     /// The part placed as `instance` that a reader before `before` sees.

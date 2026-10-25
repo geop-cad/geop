@@ -752,6 +752,24 @@ button.inline {
 .timeline li.step-box.dragging {
   opacity: 0.35;
 }
+/* A step of a part placed by the step above, edited where it is placed:
+   indented under it, and clicked rather than dragged. */
+.timeline li.step-box.step-placed {
+  margin-left: 18px;
+  padding-top: 3px;
+  padding-bottom: 3px;
+  font-size: 0.9em;
+  cursor: pointer;
+  background: #1f1f1f;
+}
+.timeline .step-unfold {
+  flex-shrink: 0;
+  padding: 0 4px;
+  background: none;
+  border: none;
+  color: inherit;
+  cursor: pointer;
+}
 
 .timeline .step-copy,
 .timeline .step-remove {

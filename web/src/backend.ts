@@ -31,6 +31,8 @@ export interface Host {
   onFiles(onFiles: (files: Record<string, string | null>) => void): void;
   /** The program is now this (a JSON value): write it to the document. */
   programChanged(program: unknown): void;
+  /** The program file `path` of the workspace — another than the document — is now `program`: write it there. */
+  fileChanged(path: string, program: unknown): void;
   /** Offer to save `file`, an exported file, next to the document. */
   saveFile(file: ExportedFile): void;
   /**

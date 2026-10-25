@@ -69,6 +69,9 @@ export const host: Host = {
   programChanged(program) {
     vscode.postMessage({ type: "program", program });
   },
+  fileChanged(path, program) {
+    vscode.postMessage({ type: "file", path, program });
+  },
   saveFile(file) {
     vscode.postMessage({ type: "save", file });
   },

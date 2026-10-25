@@ -12,7 +12,9 @@
 //! its inner copy is what the opening leaves of it. A vertex moves to where
 //! the offsets of the faces around it meet, an edge to where the offsets of
 //! its two faces meet — a line from one moved vertex to the other for a
-//! straight edge, an arc around the same axis for a circular one.
+//! straight edge, an arc around the same axis for a circular one. A vertex
+//! on the axis of a revolved face, at its pole, moves to the pole of the
+//! face's inner copy: for a cone's apex, the offset cone's apex.
 //!
 //! **The opening.** Where a face `F` is taken away, its inner copy `F'`
 //! lies on `F`'s own surface, inside it, and what is left of `F` is `F`
@@ -375,6 +377,28 @@ impl<'a> Hollow<'a> {
                     .iter()
                     .map(|&(f, uv)| (&inner_surfaces[f], (uv[0], uv[1])))
                     .collect();
+                // A vertex at a pole of its faces — on the axis of a
+                // revolved face — moves to the pole of their inner copies:
+                // the topology puts it there. A cone's apex has no normal,
+                // and the nearest points of the inner cone to it are a
+                // ring round the axis, not its apex.
+                let poles: Vec<_> = pieces.iter().map(|(s, (u, v))| s.pole_at(*u, *v)).collect();
+                if let Some(pole) = poles.iter().flatten().next() {
+                    let removed_at = |i: usize| removed[around[v][i].0];
+                    if (0..pieces.len()).any(|i| removed_at(i) != removed_at(0)) {
+                        return Err(GeopError::new(format!(
+                            "at vertex {}, faces taken away and faces kept meet at a pole: opening part of a revolved face round its axis is not supported",
+                            names.vertices[v]
+                        )));
+                    }
+                    if !poles.iter().all(|p| p.is_some_and(|p| p.could_be_equal(pole))) {
+                        return Err(GeopError::new(format!(
+                            "vertex {} is at a pole of some of its faces' inner copies and not of others, or of poles apart: {poles:?}",
+                            names.vertices[v]
+                        )));
+                    }
+                    return Ok(Some(*pole));
+                }
                 let mut offsets = Vec::new();
                 for group in tangent_groups(&pieces)? {
                     let f = |i: usize| around[v][i].0;
@@ -1143,9 +1167,11 @@ pub fn pcurve(
 }
 
 /// `surface` over three times its domain in each direction it is straight
-/// in — degree 1, two rows of control points of equal weights, neither of
-/// them a pole — extended
+/// in — degree 1, two rows of control points of equal weights — extended
 /// linearly: the same points at the same `(u, v)`, and more around them.
+/// It is not extended past a row that is a single point, a pole like a
+/// disc's center: the pole would end up inside the patch, where it has no
+/// normal, and the inner copy of a vertex there is that pole.
 ///
 /// A face's inner copy can reach past the face where they meet at an
 /// inward corner — or, for a plane cut off by the box around the profile,
@@ -1173,8 +1199,6 @@ pub fn extended(mut surface: NurbSurface3D) -> GeopResult<NurbSurface3D> {
         if !(0..other).all(|j| cps[index(0, j)][3].could_be_equal(cps[index(1, j)][3])) {
             continue;
         }
-        // A row that is a single point — a pole, like a disc's center —
-        // would end up inside the extended patch, where it has no normal.
         let pole = |row: usize| -> GeopResult<bool> {
             let first = cps[index(row, 0)].dehomogenized()?;
             for j in 1..other {
@@ -1184,15 +1208,20 @@ pub fn extended(mut surface: NurbSurface3D) -> GeopResult<NurbSurface3D> {
             }
             Ok(true)
         };
-        if pole(0)? || pole(1)? {
+        let (start, end) = (!pole(0)?, !pole(1)?);
+        if !start && !end {
             continue;
         }
         let mut control_points = cps.clone();
         for j in 0..other {
             let (a, b) = (cps[index(0, j)], cps[index(1, j)]);
             let two = |p: &Vector<4>| p.prod_scalar(Scalar::TWO);
-            control_points[index(0, j)] = two(&a).sub(&b);
-            control_points[index(1, j)] = two(&b).sub(&a);
+            if start {
+                control_points[index(0, j)] = two(&a).sub(&b);
+            }
+            if end {
+                control_points[index(1, j)] = two(&b).sub(&a);
+            }
         }
         let knots = if along_u {
             &surface.knot_vector_u
@@ -1201,7 +1230,8 @@ pub fn extended(mut surface: NurbSurface3D) -> GeopResult<NurbSurface3D> {
         };
         let (lo, hi) = (knots[1], knots[2]);
         let width = hi.sub(lo);
-        let (lo, hi) = (lo.sub(width), hi.add(width));
+        let lo = if start { lo.sub(width) } else { lo };
+        let hi = if end { hi.add(width) } else { hi };
         let knots = vec![lo, lo, hi, hi];
         surface = if along_u {
             NurbSurface3D::try_new(

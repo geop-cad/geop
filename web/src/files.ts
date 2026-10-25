@@ -66,6 +66,12 @@ export function saveWorkspace(workspace: Workspace) {
 }
 
 /** Whether `path` names a program: a `.geop` file. Every other file is data a program reads. */
+/** What a program file is called, without its folder and extension: `parts/base.geop` is `base`. */
+export function programName(path: string): string {
+  const file = path.split("/").pop() ?? path;
+  return file.endsWith(".geop") ? file.slice(0, -".geop".length) : file;
+}
+
 export function isProgram(path: string): boolean {
   return path.endsWith(".geop");
 }

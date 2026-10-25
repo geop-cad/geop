@@ -8,7 +8,11 @@ use geop_core_editor::{
 use geop_core_math::geop_error::GeopResult;
 use geop_core_program::{placed::Located, reader::Reader};
 
-use geop_ops_model::placed::{drawn, placed_parts};
+use geop_ops_model::{
+    parameters::instances,
+    placed::{drawn, placed_parts},
+};
+use std::collections::BTreeMap;
 
 use crate::placed::draw_instances;
 
@@ -22,11 +26,23 @@ impl Drawer for AssemblyDrawer {
         draw_instances(reader, view)
     }
 
+    /// Each part placed in it, called after its file too: `base: part2`.
     fn structure(&self, reader: &Reader) -> GeopResult<Vec<StructureItem>> {
         let placed = placed_parts(reader).unwrap_or_default();
+        let files: BTreeMap<&str, &str> = (instances(reader).unwrap_or_default().into_iter())
+            .map(|(name, instance)| (name, instance.file.as_str()))
+            .collect();
         Ok((placed.iter())
             .filter(|p| p.parent.is_none())
-            .map(|p| StructureItem::drawn("part", "Placed parts", &p.name))
+            .map(|p| {
+                let item = StructureItem::drawn("part", "Placed parts", &p.name);
+                let Some(file) = files.get(p.name.as_str()) else {
+                    return item;
+                };
+                let file = file.rsplit('/').next().unwrap_or(file);
+                let stem = file.strip_suffix(".geop").unwrap_or(file);
+                item.labelled(format!("{stem}: {}", p.name))
+            })
             .collect())
     }
 

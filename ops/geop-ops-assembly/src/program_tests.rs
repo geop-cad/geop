@@ -449,7 +449,13 @@ fn a_placed_part_is_dragged() {
     });
     program.state.insert(pose_state("pin"), at([3.5, 1.0, 0.0]));
     let mut editor = editor_on(program);
-    handled(&mut editor, Command::Open { id: "pin".into() });
+    handled(
+        &mut editor,
+        Command::Open {
+            id: "pin".into(),
+            placed: None,
+        },
+    );
     handled(
         &mut editor,
         Command::Event {
@@ -479,7 +485,13 @@ fn a_fixed_part_follows_a_drag_of_several_events() {
     });
     program.state.insert(pose_state("pin"), at([3.5, 1.0, 0.0]));
     let mut editor = editor_on(program);
-    handled(&mut editor, Command::Open { id: "pin".into() });
+    handled(
+        &mut editor,
+        Command::Open {
+            id: "pin".into(),
+            placed: None,
+        },
+    );
     for (to, done) in [((4.0, 1.0), false), ((4.5, 1.0), false), ((5.0, 1.0), true)] {
         handled(
             &mut editor,
@@ -509,7 +521,13 @@ fn a_fixed_mate_added_in_the_dialog_holds_the_part() {
     });
     program.state.insert(pose_state("pin"), at([3.5, 1.0, 0.0]));
     let mut editor = editor_on(program);
-    handled(&mut editor, Command::Open { id: "pin".into() });
+    handled(
+        &mut editor,
+        Command::Open {
+            id: "pin".into(),
+            placed: None,
+        },
+    );
     handled(
         &mut editor,
         dialog("add_mate", Value::Choice("fixed".into())),
@@ -742,7 +760,10 @@ fn a_mate_added_moves_the_part_of_its_step() {
     });
     program.state.insert(pose_state("pin"), at([3.5, 1.0, 0.0]));
     let mut editor = editor_on(program);
-    editor.handle(Command::Open { id: "pin".into() });
+    editor.handle(Command::Open {
+        id: "pin".into(),
+        placed: None,
+    });
     for (id, mate) in &mates {
         editor.handle(dialog(
             "add_mate",
@@ -858,7 +879,10 @@ fn a_file_left_is_placed_as_it_was_edited() {
 #[test]
 fn a_drag_is_answered_quickly() {
     let mut editor = editor_on(examples::pin_in_plate_assembly());
-    editor.handle(Command::Open { id: "pin".into() });
+    editor.handle(Command::Open {
+        id: "pin".into(),
+        placed: None,
+    });
     let start = std::time::Instant::now();
     let events = 10;
     for i in 0..events {
@@ -1293,7 +1317,10 @@ fn placed_datums_show_only_while_placing() {
     let shown = hidden(editor.handle(Command::Show));
     assert!(shown.contains(&"/pin:origin".to_string()), "{shown:?}");
     assert!(shown.contains(&"/plate:origin".to_string()), "{shown:?}");
-    let placing = hidden(editor.handle(Command::Open { id: "pin".into() }));
+    let placing = hidden(editor.handle(Command::Open {
+        id: "pin".into(),
+        placed: None,
+    }));
     assert!(
         !placing.iter().any(|name| name.starts_with('/')),
         "{placing:?}"
@@ -1772,7 +1799,10 @@ fn a_joint_between_frames_on_two_walls_puts_the_pin_in_the_hole() {
     });
     program.state.insert(pose_state("pin"), at([3.5, 1.0, 0.0]));
     let mut editor = editor_on(program);
-    editor.handle(Command::Open { id: "pin".into() });
+    editor.handle(Command::Open {
+        id: "pin".into(),
+        placed: None,
+    });
     editor.handle(dialog("add_mate", Value::Choice("revolute".into())));
     let frames = mates["m1"]
         .entities
@@ -1820,7 +1850,10 @@ fn a_coupling_offers_the_joints_that_move_as_it_needs() {
             path: Some("arm.geop".into()),
         },
     );
-    editor.handle(Command::Open { id: "hand".into() });
+    editor.handle(Command::Open {
+        id: "hand".into(),
+        placed: None,
+    });
     let step = editor
         .handle(dialog("add_mate", Value::Choice("gear".into())))
         .step
@@ -1862,7 +1895,10 @@ fn a_joint_is_made_by_clicking_where_its_frames_go() {
     });
     program.state.insert(pose_state("pin"), at([3.5, 1.0, 0.0]));
     let mut editor = editor_on(program);
-    editor.handle(Command::Open { id: "pin".into() });
+    editor.handle(Command::Open {
+        id: "pin".into(),
+        placed: None,
+    });
     editor.handle(dialog("add_mate", Value::Choice("revolute".into())));
     // The frames to pick are waited for: nothing to press first.
     let armed = editor.handle(Command::Event {

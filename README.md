@@ -54,24 +54,27 @@ Taken from [ROADMAP.md](ROADMAP.md), which also says what is next.
 {
   "steps": [
     { "id": "outline", "operation": "add_sketch",
-      "args": { "plane": { "type": "Datum", "name": "origin", "component": { "plane": "z" } },
+      "args": { "plane": { "datum": "origin:xy" },
                 "sketch": { "points": { ... }, "curves": { ... }, "constraints": { ... } } } },
     { "id": "box", "operation": "extrude",
-      "args": { "sketch": "outline", "distance": 1.0, "symmetric": false,
-                "combine": { "mode": "new_body" } } },
+      "args": { "sketch": { "target": "/:sketch:outline" },
+                "extent": { "side1": { "blind": 1.0 }, "symmetric": false, "reversed": false },
+                "output": { "solid": { "mode": "new_body" } } } },
     { "id": "hole_sketch", "operation": "add_sketch",
-      "args": { "plane": { "type": "Face", "name": "extrude(box,end)" }, "sketch": { ... } } },
+      "args": { "plane": { "face": "extrude(box,end)" }, "sketch": { ... } } },
     { "id": "hole", "operation": "extrude",
-      "args": { "sketch": "hole_sketch", "distance": -0.5, "symmetric": false,
-                "combine": { "mode": "difference", "target": "extrude(box)" } } }
+      "args": { "sketch": { "target": "/:sketch:hole_sketch" },
+                "extent": { "side1": { "blind": -0.5 }, "symmetric": false, "reversed": false },
+                "output": { "solid": { "mode": "with", "op": "difference", "target": "extrude(box)" } } } }
   ]
 }
 ```
 
-Whatever a step builds on is an *entity reference*: a `Vertex`, `Edge`, `Face`,
-`Solid`, `Sketch` or `Datum` by name. Every part starts with the datum
-`origin`; one of its axes or planes is `{"type": "Datum", "name": "origin",
-"component": {"plane": "z"}}`. A program places the parts other files build
+Whatever a step builds on is named: a face as `{"face": "extrude(box,end)"}`,
+an edge to blend by its name in the step's `edges`, a
+sketch another step drew as `{"target": "/:sketch:<id>"}`. Every part starts
+with the datum `origin`; its planes are `{"datum": "origin:xy"}`, `origin:yz`
+and `origin:zx`. A program places the parts other files build
 with `add_part` and mates their entities (`pin/extrude(pin,start)`); where
 each placed part is, is the program's `state`, solved after every edit.
 `geop compile assembly.geop` reads the placed files next to it.

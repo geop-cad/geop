@@ -63,7 +63,10 @@ fn new_boundary_surface_picks_edges_then_thickens() {
     let boundary: crate::BoundarySurfaceArgs = args(&step);
     assert_eq!(boundary.edges.len(), 4, "{boundary:?}");
     let sheet = format!("boundary({})", step.id);
-    let scene = update.scene.expect("the scene is sent anew");
+    let scene = editor
+        .handle(Command::Show)
+        .scene
+        .expect("the scene is sent anew");
     let faces = |scene: &geop_core_editor::editor::SceneState| -> Vec<String> {
         scene.part.faces.iter().map(|f| f.name.clone()).collect()
     };
@@ -83,7 +86,10 @@ fn new_boundary_surface_picks_edges_then_thickens() {
     let thicken: crate::ThickenArgs = args(&step);
     assert_eq!(thicken.face.name(), sheet);
     assert_eq!(thicken.thickness, 0.2);
-    let scene = update.scene.expect("the scene is sent anew");
+    let scene = editor
+        .handle(Command::Show)
+        .scene
+        .expect("the scene is sent anew");
     let slab = format!("thicken({})", step.id);
     assert!(scene.part.solids.contains(&slab), "{:?}", scene.part.solids);
     assert!(!faces(&scene).contains(&sheet));
@@ -205,7 +211,10 @@ fn a_uv_surface_picks_its_curves_by_clicks() {
         args.v_curves,
         [edge("sketch3d(across,c5)"), edge("sketch3d(across,c2)")]
     );
-    let scene = update.scene.expect("the scene is sent anew");
+    let scene = editor
+        .handle(Command::Show)
+        .scene
+        .expect("the scene is sent anew");
     let faces: Vec<&str> = scene.part.faces.iter().map(|f| f.name.as_str()).collect();
     assert!(faces.contains(&"network(uv_surface1)"), "{faces:?}");
     let part = model_of(&built(&editor).unwrap());

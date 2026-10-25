@@ -588,7 +588,8 @@ export interface Prompt {
 export type Command =
   | { command: "show" }
   | { command: "new"; kind: string }
-  | { command: "open"; id: string }
+  /** Open the step `id` — of the part placed as `placed`, if given, where it is placed. */
+  | { command: "open"; id: string; placed?: string }
   | { command: "event"; event: EditEvent }
   | { command: "commit" }
   | { command: "cancel" }
@@ -678,6 +679,16 @@ export interface StepInfo {
   /** Whether it runs: it is before where the program runs to. */
   runs: boolean;
   editing: boolean;
+  /** The parts it placed, each with its program's steps, to edit where it is placed. */
+  placed: PlacedSteps[];
+}
+
+/** A part a step placed: what it is placed as, from which file, and that file's steps. */
+export interface PlacedSteps {
+  instance: string;
+  /** The file it is placed from, as the workspace names it. */
+  file: string;
+  steps: StepInfo[];
 }
 
 export interface ProgramState {
@@ -734,7 +745,10 @@ export interface StructureItem {
   kind: StructureKind;
   /** What a list calls the things of its kind: `Datums`. */
   kind_label: string;
+  /** What it is shown and hidden by. */
   name: string;
+  /** What it is called, if not its name: a placed part after its file too, `base: part2`. */
+  label: string | null;
   visible: boolean | null;
   /** The entities it is between: lit while it is pointed at. */
   elements: PickedElement[];
@@ -758,8 +772,10 @@ export interface SceneState {
   all: boolean;
   /** The names of the placed parts gone since the last scene. */
   removed: string[];
-  /** The views of the components the last scene's placed parts did not use, by key. */
+  /** The views of the components the viewer does not have, by key: kept until `forgotten`. */
   components: Record<string, PartView>;
+  /** The components to forget: no placed part has used them for longest. */
+  forgotten: string[];
 }
 
 /** The placed parts drawn, by name, and the views of the components they are drawn from, by key. */
@@ -770,19 +786,16 @@ export interface Placed {
 
 /**
  * `placed` with `scene`'s changes: its placed parts added, moved and
- * removed, and the components they use — those no placed part uses any
- * more forgotten, as the kernel forgets having sent them.
+ * removed, and the components it sent kept — those of a part that left the
+ * scene too, until the kernel says to forget them, so a part that shows
+ * again is not sent again.
  */
 export function applyScene(placed: Placed, scene: SceneState): Placed {
   const instances = scene.all ? new Map<string, ViewInstance>() : new Map(placed.instances);
   for (const name of scene.removed) instances.delete(name);
   for (const instance of scene.instances) instances.set(instance.name, instance);
-  const known = { ...placed.components, ...scene.components };
-  const components: Record<string, PartView> = {};
-  for (const instance of instances.values()) {
-    const view = known[instance.component];
-    if (view) components[instance.component] = view;
-  }
+  const components = { ...(scene.all ? {} : placed.components), ...scene.components };
+  for (const key of scene.forgotten) delete components[key];
   return { instances, components };
 }
 
@@ -813,6 +826,8 @@ export interface Update {
   step: StepState | null;
   /** The program files the command added, the one now edited first. */
   files: { path: string; program: Program }[] | null;
+  /** The other program files the command changed — a placed part's step committed — to keep. */
+  written: { path: string; program: Program }[] | null;
   /** What the drag or pick tool shows, while it is in hand and no step is edited. */
   tool: Presentation | null;
   /** The file `export` wrote, or `copy` copied. */

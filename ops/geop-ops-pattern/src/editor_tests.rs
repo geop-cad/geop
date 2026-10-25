@@ -68,7 +68,7 @@ fn new_linear_pattern_dragged_by_its_spacing_handle() {
         },
     });
     handled(&mut editor, dialog("count", Value::Number(4.0)));
-    let update = handled(&mut editor, Command::Commit);
+    handled(&mut editor, Command::Commit);
     let args = args::<crate::LinearPatternArgs>(editor.program().steps.last().unwrap());
     assert_eq!(args.first.count, 4.0.into());
     match &args.first.spacing {
@@ -78,7 +78,8 @@ fn new_linear_pattern_dragged_by_its_spacing_handle() {
         }
         other => panic!("{other:?}"),
     }
-    let solids: Vec<String> = update
+    let solids: Vec<String> = editor
+        .handle(Command::Show)
         .scene
         .expect("the scene changed")
         .structure
@@ -149,7 +150,7 @@ fn new_linear_pattern_picks_a_feature_by_its_wall() {
     assert_eq!(args.seeds.features, [crate::feature("hole")]);
     assert!(args.seeds.bodies.is_empty());
     let scene = editor
-        .handle(Command::Seek { marker: None })
+        .handle(Command::Show)
         .scene
         .expect("the scene is sent");
     let id = editor.program().steps.last().unwrap().id.clone();

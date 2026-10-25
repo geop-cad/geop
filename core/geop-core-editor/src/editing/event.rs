@@ -1,7 +1,8 @@
 //! [`StepEditEvent`]: what the user did, as an operation receives it.
 
 use geop_core_math::{
-    primitives::Ray,
+    geop_error::GeopResult,
+    primitives::{Motion, Ray},
     scalars::{Scalar, as_f64},
     vector::Vector3,
 };
@@ -53,6 +54,20 @@ pub struct Pointer {
 }
 
 impl Pointer {
+    /// The pointer moved by `motion`: into the frame of a part placed in
+    /// the part drawn, for a step of it to be edited where it is placed. A
+    /// rigid motion leaves its reach as it is.
+    pub fn moved(&self, motion: &Motion) -> GeopResult<Self> {
+        let ray = Ray::try_new(
+            motion.apply(self.ray.origin()),
+            motion.rotate(self.ray.dir()),
+        )?;
+        Ok(Pointer {
+            ray,
+            reach: self.reach,
+        })
+    }
+
     /// `reaches` of the pointer's reach, `t` along its ray.
     pub fn reach_at(&self, reaches: f64, t: Scalar) -> Scalar {
         self.reach.at(t).mul(Scalar::from_f64(reaches))
@@ -205,6 +220,40 @@ pub enum StepEditEvent {
 }
 
 impl StepEditEvent {
+    /// The event with its pointers moved by `motion` (see
+    /// [`Pointer::moved`]); one without a pointer, as it is.
+    pub fn moved(&self, motion: &Motion) -> GeopResult<Self> {
+        Ok(match self {
+            StepEditEvent::Hover { pointer, shift } => StepEditEvent::Hover {
+                pointer: pointer.moved(motion)?,
+                shift: *shift,
+            },
+            StepEditEvent::Click {
+                pointer,
+                button,
+                double,
+                shift,
+            } => StepEditEvent::Click {
+                pointer: pointer.moved(motion)?,
+                button: *button,
+                double: *double,
+                shift: *shift,
+            },
+            StepEditEvent::Drag {
+                from,
+                to,
+                done,
+                shift,
+            } => StepEditEvent::Drag {
+                from: from.moved(motion)?,
+                to: to.moved(motion)?,
+                done: *done,
+                shift: *shift,
+            },
+            other => other.clone(),
+        })
+    }
+
     /// The dialog field this event uses, and its value.
     pub fn dialog(&self) -> Option<(&str, &Value)> {
         match self {

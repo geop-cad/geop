@@ -65,7 +65,7 @@ impl<'a> EditorContext<'a> {
 
     /// The part as last drawn: what a tool picks in.
     pub fn drawn(&self) -> Option<&PartView> {
-        self.editor.drawn.as_ref()
+        self.editor.drawn.as_deref()
     }
 
     /// How many times the editor has run the program: what the part is
@@ -93,8 +93,8 @@ impl<'a> EditorContext<'a> {
             runner: &editor.build.runner,
             part: &mut editor.build.part,
             program: match &editor.open {
-                Some(open) => &open.program,
-                None => &editor.file,
+                Some(open) if open.within.is_none() => &open.program,
+                _ => &editor.file,
             },
         }
     }
@@ -118,7 +118,10 @@ impl<'a> EditorContext<'a> {
         if let Some(marked) = marked {
             editor.marker = Some(editor.file.index_of(&marked)?);
         }
-        if let Some(open) = &mut editor.open {
+        // A step of a placed part is of another program.
+        if let Some(open) = &mut editor.open
+            && open.within.is_none()
+        {
             edit(&mut open.program)?;
             open.index = (open.program.steps.iter().position(|s| s.id == open.id))
                 .ok_or_else(|| GeopError::new(format!("no step {:?}", open.id)))?;

@@ -194,7 +194,13 @@ impl Stepping {
 
     /// The step `id` of the program `editor` edits, opened again.
     pub fn open(editor: Editor, id: &str) -> Self {
-        Self::after(editor, Command::Open { id: id.into() })
+        Self::after(
+            editor,
+            Command::Open {
+                id: id.into(),
+                placed: None,
+            },
+        )
     }
 
     /// A new step of the operation `kind`, after the program `editor`

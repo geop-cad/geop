@@ -101,8 +101,12 @@ impl Program {
 
     /// The program the file `text` holds, its ids checked (see
     /// [`Program::validate_ids`]). What its steps are is checked against
-    /// the operations they are run in ([`Program::validate`]).
+    /// the operations they are run in ([`Program::validate`]). An empty
+    /// file, as one is when just made, is the empty program.
     pub fn from_json(text: &str) -> GeopResult<Self> {
+        if text.trim().is_empty() {
+            return Ok(Self::new());
+        }
         let program: Self = serde_json::from_str(text)
             .map_err(|e| GeopError::new(format!("reading a program: {e}")))?;
         program.validate_ids()?;

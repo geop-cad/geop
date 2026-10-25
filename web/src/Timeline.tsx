@@ -14,6 +14,8 @@ import { Icon } from "./icons";
 /** One step as the timeline shows it. */
 export interface TimelineStep {
   id: string;
+  /** What it is called: its id, or — placing a part — the file and its id, `base: part2`. */
+  name: string;
   /** Its operation's icon, the kernel's markup (see [[Icon]]), or none. */
   icon: string | null;
   /** Shown on hover: what the step is and does. */
@@ -23,6 +25,14 @@ export interface TimelineStep {
   dim: boolean;
   /** Being written by the open form. */
   editing: boolean;
+  /** The parts it placed, with their programs' steps: each to edit where it is placed. */
+  placed: TimelinePlaced[];
+}
+
+/** A part a step placed, as the timeline lists it under that step. */
+export interface TimelinePlaced {
+  instance: string;
+  steps: Omit<TimelineStep, "placed" | "dim">[];
 }
 
 interface Props {
@@ -32,6 +42,8 @@ interface Props {
   /** Whether anything can be clicked or dragged. */
   enabled: boolean;
   onEdit: (index: number) => void;
+  /** Edit the step `id` of the part placed as `instance`, where it is placed. */
+  onEditPlaced: (instance: string, id: string) => void;
   onRemove: (index: number) => void;
   /** Copy step `index` to the clipboard, to paste with Ctrl+V. */
   onCopy: (index: number) => void;
@@ -53,7 +65,17 @@ interface Press {
   moved: boolean;
 }
 
-export function Timeline({ steps, seeker, enabled, onEdit, onRemove, onCopy, onMove, onSeek }: Props) {
+export function Timeline({ steps, seeker, enabled, onEdit, onEditPlaced, onRemove, onCopy, onMove, onSeek }: Props) {
+  /** The steps whose placed parts' steps are listed — and any with one being edited. */
+  const [unfolded, setUnfolded] = useState<Set<string>>(new Set());
+  const listed = (step: TimelineStep) =>
+    unfolded.has(step.id) || step.placed.some((p) => p.steps.some((s) => s.editing));
+  const unfold = (id: string) =>
+    setUnfolded((was) => {
+      const next = new Set(was);
+      if (!next.delete(id)) next.add(id);
+      return next;
+    });
   const listRef = useRef<HTMLOListElement>(null);
   const pressRef = useRef<Press | null>(null);
   /** The drag being drawn, and the slot it would drop into. */
@@ -153,7 +175,18 @@ export function Timeline({ steps, seeker, enabled, onEdit, onRemove, onCopy, onM
             <Icon name={step.icon} />
           </span>
         )}
-        <span className="step-name">{step.id}</span>
+        {step.placed.length > 0 && (
+          <button
+            className="step-unfold"
+            title={listed(step) ? "Hide the placed part's steps" : "Show the placed part's steps, to edit them here"}
+            aria-expanded={listed(step)}
+            onPointerDown={(e) => e.stopPropagation()}
+            onClick={() => unfold(step.id)}
+          >
+            {listed(step) ? "▾" : "▸"}
+          </button>
+        )}
+        <span className="step-name">{step.name}</span>
         <button
           className="step-copy"
           disabled={!enabled}
@@ -176,6 +209,34 @@ export function Timeline({ steps, seeker, enabled, onEdit, onRemove, onCopy, onM
         </button>
       </li>,
     );
+    // Not boxes of the program: a drag counts only those (`data-step`).
+    if (listed(step)) {
+      for (const placed of step.placed) {
+        for (const inner of placed.steps) {
+          rows.push(
+            <li
+              key={`${step.id}/${placed.instance}/${inner.id}`}
+              className={[
+                "step-box",
+                "step-placed",
+                inner.error ? "op-error" : "",
+                inner.editing ? "step-editing" : "",
+                enabled ? "" : "disabled",
+              ].join(" ")}
+              title={inner.error ? `${inner.title}\n\n${inner.error}` : inner.title}
+              onClick={() => enabled && onEditPlaced(placed.instance, inner.id)}
+            >
+              {inner.icon && (
+                <span className="step-icon">
+                  <Icon name={inner.icon} />
+                </span>
+              )}
+              <span className="step-name">{inner.name}</span>
+            </li>,
+          );
+        }
+      }
+    }
   });
   if (dropSlot === steps.length) rows.push(<li key="drop" className="drop-indicator" />);
   if (seekerSlot === steps.length) rows.push(seekerRow);

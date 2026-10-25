@@ -122,6 +122,8 @@ export class GeopServer {
 
   constructor(
     private readonly executable: string,
+    /** What `geop serve` is told besides: where it keeps what files are made into. */
+    private readonly args: string[],
     private readonly onStderr: (text: string) => void,
     private readonly restore: () => Promise<string[]>,
   ) {
@@ -145,7 +147,7 @@ export class GeopServer {
   }
 
   private spawn(): Kernel {
-    const child = spawn(this.executable, ["serve"], { stdio: ["pipe", "pipe", "pipe"] });
+    const child = spawn(this.executable, ["serve", ...this.args], { stdio: ["pipe", "pipe", "pipe"] });
     const kernel: Kernel = new Kernel(child, this.onStderr, (reason) => this.crashed(kernel, reason));
     return kernel;
   }

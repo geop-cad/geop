@@ -34,6 +34,7 @@ import {
   dataExtensions,
   isData,
   isProgram,
+  programName,
 } from "./files";
 import { InspectPanel } from "./InspectPanel";
 import { sectionPlane, type Section } from "./section";
@@ -161,6 +162,11 @@ function App() {
       if (update.program) {
         setProgram(update.program);
         trackFailures(update.program.steps);
+      }
+      // A placed part's step committed: its file is kept where files are.
+      for (const file of update.written ?? []) {
+        if (host) host.fileChanged(file.path, file.program);
+        else setWorkspace((w) => ({ ...w, files: { ...w.files, [file.path]: programText(file.program) } }));
       }
       if (!host && update.files) {
         const added = Object.fromEntries(update.files.map((f) => [f.path, programText(f.program)]));
@@ -613,13 +619,27 @@ function App() {
   const triangleCount =
     triangles(scene?.part) +
     instances.reduce((n, i) => n + triangles(components[i.component]), 0);
+  const iconOf = (kind: string) => infos.find((info) => info.kind === kind)?.icon ?? null;
   const timelineSteps: TimelineStep[] = steps.map((s) => ({
     id: s.id,
-    icon: infos.find((info) => info.kind === s.kind)?.icon ?? null,
+    // A step placing one part is called after its file too: `base: part2`.
+    name: s.placed.length === 1 ? `${programName(s.placed[0].file)}: ${s.id}` : s.id,
+    icon: iconOf(s.kind),
     title: `${s.label}: ${s.summary}`,
     error: s.error,
     dim: !s.editing && !s.runs,
     editing: s.editing,
+    placed: s.placed.map((p) => ({
+      instance: p.instance,
+      steps: p.steps.map((inner) => ({
+        id: inner.id,
+        name: inner.id,
+        icon: iconOf(inner.kind),
+        title: `${programName(p.file)}: ${inner.label}: ${inner.summary}`,
+        error: inner.error,
+        editing: inner.editing,
+      })),
+    })),
   }));
 
   const inHand = program?.tool ?? null;
@@ -651,6 +671,7 @@ function App() {
         seeker={program?.marker ?? stepCount}
         enabled={wasmReady && step == null}
         onEdit={(i) => void open({ command: "open", id: steps[i].id })}
+        onEditPlaced={(placed, id) => void open({ command: "open", id, placed })}
         onRemove={(i) => dispatch({ command: "remove", id: steps[i].id })}
         onCopy={(i) => void copyStep(steps[i].id)}
         onMove={(i, to) => dispatch({ command: "move", id: steps[i].id, index: to })}

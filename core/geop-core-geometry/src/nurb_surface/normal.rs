@@ -112,6 +112,36 @@ impl NurbSurface<4> {
         ])
     }
 
+    /// The point the boundary row at the start (`first`) or end of the
+    /// `u` (`u_fixed`) or `v` domain collapses to, and the row next to it.
+    /// `None` if that row is no pole.
+    fn pole(&self, u_fixed: bool, first: bool) -> Option<(Vector3, Vec<Vector<4>>)> {
+        let [edge, next] = self.boundary_rows(u_fixed, first)?;
+        let edge = dehomogenize::<4, 3>(&edge);
+        edge.iter()
+            .all(|p| p.could_be_equal(&edge[0]))
+            .then(|| (edge[0], next))
+    }
+
+    /// The boundary rows `(u, v)` touches, as `(u_fixed, first)`.
+    fn rows_touching(&self, u: Scalar, v: Scalar) -> Vec<(bool, bool)> {
+        let ((u0, u1), (v0, v1)) = (self.domain_u(), self.domain_v());
+        [(false, v, v0, true), (false, v, v1, false), (true, u, u0, true), (true, u, u1, false)]
+            .into_iter()
+            .filter(|&(_, t, end, _)| t.could_be_equal(end))
+            .map(|(u_fixed, _, _, first)| (u_fixed, first))
+            .collect()
+    }
+
+    /// The pole `(u, v)` lies on: the point a boundary row it touches
+    /// collapses to. `None` if it touches no pole.
+    pub fn pole_at(&self, u: Scalar, v: Scalar) -> Option<Vector3> {
+        self.rows_touching(u, v)
+            .into_iter()
+            .find_map(|(u_fixed, first)| self.pole(u_fixed, first))
+            .map(|(pole, _)| pole)
+    }
+
     /// The normal at a pole: the boundary row at the start (`first`) or end
     /// of the `u` (`u_fixed`) or `v` domain, if it collapses to a single
     /// point `P`. `None` if that row is no pole.
@@ -125,12 +155,7 @@ impl NurbSurface<4> {
     /// Spokes that are not coplanar — an apex, like a cone's — leave no
     /// single normal: an error, not an arbitrary pick among them.
     fn pole_normal(&self, u_fixed: bool, first: bool) -> Option<GeopResult<Vector3>> {
-        let [edge, next] = self.boundary_rows(u_fixed, first)?;
-        let edge = dehomogenize::<4, 3>(&edge);
-        if !edge.iter().all(|p| p.could_be_equal(&edge[0])) {
-            return None;
-        }
-        let pole = edge[0];
+        let (pole, next) = self.pole(u_fixed, first)?;
         let spokes: Vec<Vector3> = dehomogenize::<4, 3>(&next)
             .iter()
             .map(|x| x.sub(&pole))
@@ -193,15 +218,9 @@ impl NurbSurface<4> {
         if regular.is_ok() {
             return regular;
         }
-        let (u0, u1) = self.domain_u();
-        let (v0, v1) = self.domain_v();
-        for (u_fixed, t, (start, end)) in [(false, v, (v0, v1)), (true, u, (u0, u1))] {
-            for (end_value, first) in [(start, true), (end, false)] {
-                if t.could_be_equal(end_value)
-                    && let Some(normal) = self.pole_normal(u_fixed, first)
-                {
-                    return normal;
-                }
+        for (u_fixed, first) in self.rows_touching(u, v) {
+            if let Some(normal) = self.pole_normal(u_fixed, first) {
+                return normal;
             }
         }
         regular

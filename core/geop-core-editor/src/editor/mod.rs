@@ -29,18 +29,25 @@ mod protocol;
 mod tests;
 
 pub use context::{Changed, EditorContext, Rerun};
-pub use protocol::{Command, File, ProgramState, SceneState, StepInfo, StepState, Update};
+pub use protocol::{
+    Command, File, PlacedSteps, ProgramState, SceneState, StepInfo, StepState, Update,
+};
 
 use geop_core_program::{
+    cache::Cache,
     element::PickedElement,
     operation_registry::OperationRegistry,
+    part::Part,
+    placed::PlacedPart,
     program::{Program, ProgramStep},
-    reader::Reader,
+    reader::{Reader, Seen},
+    runner::Runner,
     values::StateValues,
-    workspace::{FileStoreMut, Files, Location},
+    workspace::{FileStoreMut, Files, Location, Workspace},
 };
 use std::{
-    collections::{BTreeMap, HashMap, HashSet},
+    cell::RefCell,
+    collections::{BTreeMap, HashMap},
     rc::Rc,
 };
 
@@ -55,6 +62,7 @@ use crate::{
 use build::Build;
 use geop_core_math::{
     geop_error::{GeopError, GeopResult},
+    primitives::Pose,
     scalars::Scalar,
     vector::Vector3,
 };
@@ -62,6 +70,18 @@ use geop_core_math::{
 /// How many files' builds an editor keeps (see `Editor::builds`): each
 /// holds every step's part, so a few large files are as many as fit.
 const KEPT_BUILDS: usize = 6;
+
+/// A part drawn, by what it was made of (see [`Reader::seen`]).
+type Drawing = (Seen, Rc<PartView>);
+
+/// How many components no placed part uses a viewer keeps (see
+/// [`SceneState::forgotten`]).
+const KEPT_COMPONENTS: usize = 8;
+
+/// How many drawings an editor keeps (see `Editor::drawings`): the part
+/// before the step edited, the part with it, and those of the last steps
+/// opened.
+const KEPT_DRAWINGS: usize = 4;
 
 /// The files an editor reads the programs it places parts from, and
 /// writes the files it is sent to: whatever its front end keeps, with
@@ -88,7 +108,7 @@ struct Open {
     editor: StepEditor,
     /// What picks test against, as drawn: the part before it, or what it
     /// builds (see [`crate::editable::OperationInfo::picks_built`]).
-    view: PartView,
+    view: Rc<PartView>,
     /// The step as it was before each edit made to it since it was opened,
     /// with the program's state: what undo goes back to while it is edited.
     undo: Vec<Edited>,
@@ -96,6 +116,30 @@ struct Open {
     /// The step as it was when the drag going on started: a drag is one
     /// edit, however many events it takes.
     dragging: Option<Edited>,
+    /// For a step of a part placed in the program, where it is placed:
+    /// `program` is then that part's, and the program run is the file's.
+    within: Option<Within>,
+}
+
+/// A step of a part placed in the program, edited where it is placed: the
+/// program run is the file's, the placed part's program — the step's edits
+/// in it — put in the workspace in place of its file, so the part placed
+/// is built anew and nothing else is. Its edits are made in the placed
+/// part's own coordinates: what the pointer does is moved there, and what
+/// the step shows moved out to where the part is placed.
+struct Within {
+    /// The instance it is placed as.
+    instance: String,
+    /// Where its program is: its file, and the files placing it.
+    location: Location,
+    /// The file's text when the step was opened: what cancelling puts back.
+    text: String,
+    /// Its program's runner.
+    runner: Runner,
+    /// The part placed, as the last run built it.
+    part: Rc<Part>,
+    /// Where it is placed in the part drawn.
+    pose: Pose,
 }
 
 impl Open {
@@ -119,10 +163,13 @@ struct InHand {
 
 /// Which part is drawn, and without what — or, for a step edited on a
 /// sheet of its own, no part, the viewer framing the sheet: when it is the
-/// same as last time, the scene is not sent again.
+/// same as last time, the scene is not sent again. The part is told by
+/// what it is made of (see [`Reader::seen`]), not by when it was last
+/// built: the part before a sketch is the same however the sketch changes,
+/// and a whole assembly is not sent again for every line drawn on it.
 #[derive(Clone, PartialEq)]
 struct Shown {
-    run: u64,
+    seen: Seen,
     steps: usize,
     hidden: Vec<String>,
     /// The sheet's centre and size.
@@ -151,7 +198,7 @@ pub struct Editor {
     /// opened again, a file takes up its steps as they were built, rather
     /// than building them all again. At most [`KEPT_BUILDS`].
     builds: Vec<(String, Build)>,
-    /// Counts runs, so a scene is resent only after one.
+    /// Counts runs (see [`EditorContext::runs`]).
     run: u64,
     /// What each step that ran builds on (see [`crate::editing::Dialog::picked`]),
     /// with the step it was read from: what a step picked is in its
@@ -161,19 +208,32 @@ pub struct Editor {
     shown: Option<Shown>,
     /// The files the last command added, for the update to say.
     added: Option<Vec<File>>,
+    /// The other files the last command changed, for the update to carry.
+    written: Vec<File>,
     /// The file the last command wrote, for the update to carry.
     exported: Option<Export>,
     /// The placed parts the viewer was sent, by name: the key of the
     /// component each is drawn from, and where it is, as sent — `None`
     /// when the viewer may have none (see [`SceneState`]).
     placed: Option<HashMap<String, (String, [f64; 12])>>,
+    /// The components the viewer has, by key: the scene each was last used
+    /// in (see [`SceneState::forgotten`]).
+    components: BTreeMap<String, u64>,
+    /// How many scenes were sent.
+    scenes: u64,
     /// The tool in hand, if one is.
     tool: Option<InHand>,
     /// The inspector the last command asked, and what it told it: to answer
     /// once it has run.
     asked: Option<(String, serde_json::Value)>,
     /// The part as last drawn: what a tool picks from.
-    drawn: Option<PartView>,
+    drawn: Option<Rc<PartView>>,
+    /// The last parts drawn, by what they were made of (see
+    /// [`Reader::seen`]): a part drawn again is drawn as it was, not
+    /// tessellated again — opening a sketch on an assembly, or closing it,
+    /// draws the same assembly. At most [`KEPT_DRAWINGS`], the last drawn
+    /// last.
+    drawings: RefCell<Vec<Drawing>>,
     /// What the user chose to show or hide, by name, over what the editor
     /// would by itself (see [`Editor::hidden`]).
     visibility: BTreeMap<String, bool>,
@@ -181,12 +241,23 @@ pub struct Editor {
 
 impl Editor {
     /// An editor of what `registry` offers, editing a program of no steps,
-    /// the files it places parts from read from `files`.
+    /// the files it places parts from read from `files`, what they are made
+    /// into kept in memory.
     pub fn new(registry: Registry, files: impl FileStoreMut + 'static) -> Self {
+        Self::with_cache(registry, files, Cache::new())
+    }
+
+    /// [`Editor::new`], what its files are made into kept in `cache`: a
+    /// host process's, kept on disk too.
+    pub fn with_cache(
+        registry: Registry,
+        files: impl FileStoreMut + 'static,
+        cache: Cache,
+    ) -> Self {
         let operations = Rc::new(registry.operations());
         let files: Box<dyn FileStoreMut> = Box::new(files);
         Self {
-            workspace: Files::new(files, operations.clone()),
+            workspace: Files::with_cache(files, operations.clone(), cache),
             build: Build::new(&operations),
             registry: Rc::new(registry),
             operations,
@@ -202,11 +273,15 @@ impl Editor {
             references: Vec::new(),
             shown: None,
             added: None,
+            written: Vec::new(),
             exported: None,
             placed: None,
+            components: BTreeMap::new(),
+            scenes: 0,
             tool: None,
             asked: None,
             drawn: None,
+            drawings: RefCell::default(),
             visibility: BTreeMap::new(),
         }
     }
@@ -269,20 +344,76 @@ impl Editor {
     /// with their state (see [`Self::current`]), keeping how far it ran and
     /// why steps failed.
     fn run_to(&mut self, end: Option<usize>) {
+        self.run_staged(end, self.preview);
+    }
+
+    /// [`Self::run_to`], a step of a placed part edited put in its file
+    /// first — as edited, if `edited`, else as it was — and the part placed
+    /// taken as built. As edited, the file ends at the step, as a step of
+    /// the program's own is edited: the steps after it are built once the
+    /// edit is done (`whole`).
+    fn run_staged(&mut self, end: Option<usize>, edited: bool) {
+        self.run_placed(end, edited, false);
+    }
+
+    /// [`Self::run_staged`], a placed part's file — as edited — whole, if
+    /// `whole`: what a commit builds.
+    fn run_placed(&mut self, end: Option<usize>, edited: bool, whole: bool) {
         self.give();
+        if let Some(open) = &self.open
+            && let Some(within) = &open.within
+        {
+            let mut program = open.program.clone();
+            if !whole {
+                program.steps.truncate(open.index + 1);
+            }
+            let text = match edited {
+                true => program.to_json().ok(),
+                false => None,
+            };
+            let text = text.unwrap_or_else(|| within.text.clone());
+            self.workspace.write(&within.location.file, Some(text));
+        }
         let program = match &self.open {
-            Some(open) => &open.program,
-            None => &self.file,
+            Some(open) if open.within.is_none() => &open.program,
+            _ => &self.file,
         };
         self.build.run(program, end);
+        if let Some(open) = &mut self.open
+            && let Some(within) = &mut open.within
+            && let Some((_, _, placed)) = (self.build.part.placed().into_iter())
+                .find(|(instance, _, _)| *instance == within.instance)
+        {
+            within.part = placed.part.clone();
+        }
     }
 
     /// The steps run now, and the state they run with: the step being
-    /// edited's, or the program's.
+    /// edited's, or the program's — for a step of a placed part, the
+    /// program's.
     fn current(&self) -> &Program {
         match &self.open {
-            Some(open) => &open.program,
-            None => &self.file,
+            Some(open) if open.within.is_none() => &open.program,
+            _ => &self.file,
+        }
+    }
+
+    /// The runner and the part the step `open` is edited with: the
+    /// program's, or, for a step of a placed part, that part's.
+    fn edited_with<'s>(&'s self, open: &'s Open) -> (&'s Runner, &'s Part) {
+        match &open.within {
+            Some(within) => (&within.runner, &within.part),
+            None => (&self.build.runner, &self.build.part),
+        }
+    }
+
+    /// Why the step `open` does not build, if it does not.
+    fn step_error(&self, open: &Open) -> Option<String> {
+        match &open.within {
+            Some(within) => (within.part.failures().iter())
+                .find(|(step, _)| *step == open.id)
+                .map(|(_, e)| e.clone()),
+            None => self.build.step_error(open.index, &open.id),
         }
     }
 
@@ -322,7 +453,7 @@ impl Editor {
             }
         }
         let shown = Shown {
-            run: self.run,
+            seen: self.shown_part(steps).seen(),
             steps,
             hidden,
             sheet: (step.as_ref())
@@ -355,6 +486,7 @@ impl Editor {
             tool: self.tool_presentation(step.is_none()),
             step,
             files: self.added.take(),
+            written: (!self.written.is_empty()).then(|| std::mem::take(&mut self.written)),
             inspection,
             export: self.exported.take(),
         }
@@ -365,19 +497,22 @@ impl Editor {
     fn scene(&mut self, shown: Shown) -> SceneState {
         self.shown = Some(shown.clone());
         let part = match shown.sheet {
-            Some((center, size)) => PartView::blank(Extent {
+            Some((center, size)) => Rc::new(PartView::blank(Extent {
                 center: Vector3::from_array(center.map(Scalar::from_f64)),
                 size: Scalar::from_f64(size),
-            }),
+            })),
             None => self.view_of(shown.steps),
         };
         let before = self.placed.take();
         let all = before.is_none();
         let before = before.unwrap_or_default();
+        if all {
+            self.components.clear();
+        }
+        self.scenes += 1;
         let mut placed = HashMap::new();
         let mut instances = Vec::new();
         let mut components = BTreeMap::new();
-        let used: HashSet<&String> = before.values().map(|(key, _)| key).collect();
         for instance in &part.instances {
             let f = &instance.frame;
             let frame = [f.origin(), f.u(), f.v(), f.w()].map(|p| p.to_array().map(|c| c.to_f64()));
@@ -389,11 +524,24 @@ impl Editor {
             if before.get(&instance.name) != Some(&drawn) {
                 instances.push(instance.clone());
             }
-            if !used.contains(&instance.component) && !components.contains_key(&instance.component)
-            {
-                components.insert(instance.component.clone(), (*instance.view).clone());
+            let used = (self.components).insert(instance.component.clone(), self.scenes);
+            if used.is_none() {
+                components.insert(instance.component.clone(), instance.view.clone());
             }
             placed.insert(instance.name.clone(), drawn);
+        }
+        // Of those no placed part uses now, the viewer keeps the last used.
+        let mut unused: Vec<(u64, String)> = (self.components.iter())
+            .filter(|(_, used)| **used < self.scenes)
+            .map(|(key, used)| (*used, key.clone()))
+            .collect();
+        unused.sort();
+        let forget = unused.len().saturating_sub(KEPT_COMPONENTS);
+        let forgotten: Vec<String> = (unused.into_iter().take(forget))
+            .map(|(_, key)| key)
+            .collect();
+        for key in &forgotten {
+            self.components.remove(key);
         }
         let mut removed: Vec<String> = (before.keys())
             .filter(|name| !placed.contains_key(*name))
@@ -413,6 +561,7 @@ impl Editor {
             all,
             removed,
             components,
+            forgotten,
         }
     }
 
@@ -423,10 +572,12 @@ impl Editor {
         date: &str,
         ask: impl FnOnce(&crate::output::Outputs, &mut Output) -> GeopResult<T>,
     ) -> GeopResult<T> {
-        let editing = self.open.as_ref().map(|open| open.id.clone());
+        let editing = (self.open.as_ref())
+            .filter(|open| open.within.is_none())
+            .map(|open| open.id.clone());
         let file = match &self.open {
-            Some(open) => &open.program,
-            None => &self.file,
+            Some(open) if open.within.is_none() => &open.program,
+            _ => &self.file,
         };
         let mut output = Output {
             runner: &self.build.runner,
@@ -466,12 +617,14 @@ impl Editor {
     /// or one already there — to edit.
     fn open(&mut self, program: Program, index: usize, id: String, new: bool) -> GeopResult<()> {
         // It runs once before it is edited: an editor edits a step against
-        // the part before it, as the last run left it.
+        // the part before it, as the last run left it — and with what it
+        // builds, if it is previewed.
         self.give();
-        self.build.run(&program, Some(index + 1));
+        self.build
+            .run(&program, Some(index + usize::from(self.preview)));
         let Build { runner, part, .. } = &self.build;
         let editor = StepEditor::new(self.registry.editors(), runner, part, &program, &id, new)?;
-        let view = self.registry.draw(&self.build.view_at(&program, index))?;
+        let view = self.draw(&self.build.view_at(&program, index))?;
         self.open = Some(Open {
             index,
             id,
@@ -482,6 +635,59 @@ impl Editor {
             undo: Vec::new(),
             redo: Vec::new(),
             dragging: None,
+            within: None,
+        });
+        Ok(())
+    }
+
+    /// Opens the step `id` of the part placed as `instance` in the program,
+    /// to edit where it is placed (see [`Within`]).
+    fn open_placed(&mut self, instance: String, id: String) -> GeopResult<()> {
+        let ctx =
+            |e: GeopError| e.with_context(format!("open_placed(instance={instance}, id={id})"));
+        self.run_to(self.marker);
+        let (part, location) = (self.build.part.placed().into_iter())
+            .find(|(placed, _, _)| *placed == instance)
+            .map(|(_, _, placed)| (placed.part.clone(), placed.location.clone()))
+            .ok_or_else(|| GeopError::new(format!("no part is placed as `{instance}`")))
+            .map_err(ctx)?;
+        let program = (*self.workspace.program(&location.file).map_err(ctx)?).clone();
+        let text = self.workspace.files().read(&location.file).map_err(ctx)?;
+        let index = program.index_of(&id).map_err(ctx)?;
+        let pose = (self.draw(&self.build.part.current())?.instances.iter())
+            .find(|placed| placed.name == instance)
+            .map(|placed| placed.pose)
+            .ok_or_else(|| GeopError::new(format!("the part placed as `{instance}` is not drawn")))
+            .map_err(ctx)?;
+        let runner = self.build.runner.nested(location.clone());
+        let editor = StepEditor::new(
+            self.registry.editors(),
+            &runner,
+            &part,
+            &program,
+            &id,
+            false,
+        )
+        .map_err(ctx)?;
+        let view = self.draw(&part.before(&id))?;
+        self.open = Some(Open {
+            index,
+            id,
+            new: false,
+            program,
+            editor,
+            view,
+            undo: Vec::new(),
+            redo: Vec::new(),
+            dragging: None,
+            within: Some(Within {
+                instance,
+                location,
+                text,
+                runner,
+                part,
+                pose,
+            }),
         });
         Ok(())
     }
@@ -519,11 +725,20 @@ impl Editor {
                 self.open(program, index, id, true)?;
                 Changed::Run
             }
-            Command::Open { id } => {
+            Command::Open { id, placed: None } => {
                 self.idle()?;
                 self.tool = None;
                 let index = self.file.index_of(&id)?;
                 self.open(self.file.clone(), index, id, false)?;
+                Changed::Run
+            }
+            Command::Open {
+                id,
+                placed: Some(instance),
+            } => {
+                self.idle()?;
+                self.tool = None;
+                self.open_placed(instance, id)?;
                 Changed::Run
             }
             Command::Event { event } => {
@@ -536,12 +751,21 @@ impl Editor {
                     return changed;
                 };
                 let before = open.edited()?;
+                // A step of a placed part is edited in its own coordinates.
+                let (event, runner, part) = match &open.within {
+                    Some(within) => (
+                        event.moved(&within.pose.inverse().motion())?,
+                        &within.runner,
+                        &*within.part,
+                    ),
+                    None => (event, &self.build.runner, &self.build.part),
+                };
                 let editing = Editing {
                     editors: self.registry.editors(),
-                    runner: &self.build.runner,
-                    part: &self.build.part,
+                    runner,
+                    part,
                     program: &mut open.program,
-                    scene: &open.view,
+                    scene: &*open.view,
                 };
                 open.editor.handle(editing, &event)?;
                 let after = open.edited()?;
@@ -554,17 +778,19 @@ impl Editor {
                     open.undo.push(start);
                     open.redo.clear();
                 }
-                // A drag changes neither, but what it pulls moves the parts.
-                let pulls = !(open
-                    .editor
-                    .form(
-                        self.registry.editors(),
-                        &self.build.runner,
-                        &self.build.part,
-                        &open.program,
-                    )?
-                    .pulls
-                    .is_empty());
+                // A drag changes neither, but what it pulls moves the parts —
+                // of the program's own steps: a placed part's pulls nothing.
+                let pulls = open.within.is_none()
+                    && !(open
+                        .editor
+                        .form(
+                            self.registry.editors(),
+                            &self.build.runner,
+                            &self.build.part,
+                            &open.program,
+                        )?
+                        .pulls
+                        .is_empty());
                 match before == after && !pulls {
                     true => Changed::Nothing,
                     false => Changed::Step,
@@ -582,11 +808,34 @@ impl Editor {
                         missing.join(" and ")
                     )));
                 }
-                if let Some(error) = self.build.step_error(open.index, &open.id) {
+                // Not previewed, it was not built: it is now, once.
+                let index = open.index;
+                let placed = open.within.is_some();
+                if !self.preview || placed {
+                    match placed {
+                        true => self.run_placed(self.marker, true, true),
+                        false => self.run_to(Some(index + 1)),
+                    }
+                }
+                let Some(open) = &self.open else {
+                    return Err(GeopError::new("no step is being edited"));
+                };
+                if let Some(error) = self.step_error(open) {
                     return Err(GeopError::new(format!("the step does not build: {error}")));
                 }
                 let committed = open.program.clone();
                 committed.validate(&self.build.runner.registry)?;
+                // A step of a placed part is committed to that part's file,
+                // which the front end is given to keep.
+                if let Some(within) = &open.within {
+                    let path = within.location.file.clone();
+                    self.written.push(File {
+                        path,
+                        program: committed,
+                    });
+                    self.open = None;
+                    return Ok(Changed::Run);
+                }
                 self.file = committed;
                 if open.new
                     && let Some(marker) = &mut self.marker
@@ -597,12 +846,16 @@ impl Editor {
                 Changed::Program
             }
             Command::Cancel => {
-                self.open = None;
+                // A placed part's file goes back to what it was.
+                if let Some(within) = self.open.take().and_then(|open| open.within) {
+                    (self.workspace).write(&within.location.file, Some(within.text));
+                }
                 Changed::Run
             }
+            // Off, the step edited is no longer built; on, it is built again.
             Command::Preview { preview } => {
                 self.preview = preview;
-                Changed::Nothing
+                Changed::Run
             }
             Command::Panel { key, payload } => {
                 let registry = self.registry.clone();
@@ -711,10 +964,13 @@ impl Editor {
                 // changed.
                 // What the step being edited is built on may have changed.
                 if let Some(index) = self.open.as_ref().map(|open| open.index) {
-                    self.run_to(Some(index));
-                    let registry = self.registry.clone();
-                    if let Some(open) = &mut self.open {
-                        open.view = registry.draw(&self.build.view_at(&open.program, index))?;
+                    let placed = (self.open.as_ref()).is_some_and(|open| open.within.is_some());
+                    self.run_to(if placed { self.marker } else { Some(index) });
+                    if let Some(open) = &self.open {
+                        let view = self.draw(&self.picks_in(open))?;
+                        if let Some(open) = &mut self.open {
+                            open.view = view;
+                        }
                     }
                 }
                 Changed::Run
@@ -848,9 +1104,14 @@ impl Editor {
         };
         // Up to the step edited first: what it pulls is known from the part
         // it is applied to.
-        self.run_to(self.open.as_ref().map(|open| open.index + 1));
+        self.run_to(match &self.open {
+            Some(open) if open.within.is_none() => Some(self.runs_to(open)),
+            _ => None,
+        });
+        // A step not previewed is not built, and pulls nothing along; nor
+        // does a step of a placed part, whose state is its own.
         let pulls = match &self.open {
-            Some(open) => (open.editor.form(
+            Some(open) if self.preview && open.within.is_none() => (open.editor.form(
                 self.registry.editors(),
                 &self.build.runner,
                 &self.build.part,
@@ -858,7 +1119,7 @@ impl Editor {
             ))
             .map(|form| form.pulls)
             .unwrap_or_default(),
-            None => Vec::new(),
+            _ => Vec::new(),
         };
         // The whole program, when the state it solves for may move: with no
         // step edited, or while the step edited pulls, which carries what
@@ -889,8 +1150,8 @@ impl Editor {
             return;
         }
         match &mut self.open {
-            Some(open) => open.program.state = next,
-            None => self.file.state = next,
+            Some(open) if open.within.is_none() => open.program.state = next,
+            _ => self.file.state = next,
         }
     }
 
@@ -904,12 +1165,19 @@ impl Editor {
         }
     }
 
+    /// How far the program runs while `open` is edited: through it, if it
+    /// is previewed — otherwise it is not built at all, however long it
+    /// would take, until it is committed or previewed again.
+    fn runs_to(&self, open: &Open) -> usize {
+        open.index + usize::from(self.preview)
+    }
+
     /// Runs what is shown: the program up to and including the step being
-    /// edited, or as far as it runs.
+    /// edited, if it is previewed, or as far as it runs.
     fn rerun(&mut self) {
         self.run_to(match &self.open {
-            Some(open) => Some(open.index + 1),
-            None => self.marker,
+            Some(open) if open.within.is_none() => Some(self.runs_to(open)),
+            _ => self.marker,
         });
         self.run += 1;
         let steps = self.current().clone();
@@ -934,7 +1202,7 @@ impl Editor {
             .collect();
         if let Some(open) = &self.open
             && self.picks_built(open)
-            && let Ok(view) = self.registry.draw(&self.picks_in(open))
+            && let Ok(view) = self.draw(&self.picks_in(open))
             && let Some(open) = &mut self.open
         {
             open.view = view;
@@ -943,9 +1211,14 @@ impl Editor {
 
     /// What the step being edited shows.
     fn presentation(&self, open: &Open) -> GeopResult<Presentation> {
-        let Build { runner, part, .. } = &self.build;
+        let (runner, part) = self.edited_with(open);
         let editors = self.registry.editors();
-        (open.editor).presentation(editors, runner, part, &open.program, &open.view)
+        let presentation =
+            (open.editor).presentation(editors, runner, part, &open.program, &*open.view)?;
+        match &open.within {
+            Some(within) => presentation.placed(&within.instance, &within.pose.motion()),
+            None => Ok(presentation),
+        }
     }
 
     /// What the operation `kind` is called.
@@ -968,9 +1241,10 @@ impl Editor {
             label: info.label,
             doc: info.doc,
             id: (!open.new).then(|| open.id.clone()),
-            error: missing
-                .is_empty()
-                .then(|| self.build.step_error(open.index, &open.id))
+            // A step not previewed is not built, so whether it builds is not
+            // known until it is committed.
+            error: (missing.is_empty() && self.preview)
+                .then(|| self.step_error(open))
                 .flatten(),
             missing,
             presentation,
@@ -985,7 +1259,7 @@ impl Editor {
     /// then what is drawn is drawn a second time, in the plane.
     fn shown_steps(&self, step: Option<&StepState>) -> usize {
         match (&self.open, step) {
-            (Some(open), Some(step)) => {
+            (Some(open), Some(step)) if open.within.is_none() => {
                 let preview = self.preview
                     && step.missing.is_empty()
                     && step.error.is_none()
@@ -1007,14 +1281,18 @@ impl Editor {
         let picks_built = (open.step().ok())
             .and_then(|step| self.registry.editors().info(&step.operation))
             .is_some_and(|listed| listed.info.picks_built);
-        picks_built && self.build.step_error(open.index, &open.id).is_none()
+        picks_built && self.step_error(open).is_none()
     }
 
     /// The part the step `open` picks from: the part before it — or, for
     /// one that picks from what it builds, that, once it builds.
-    fn picks_in(&self, open: &Open) -> Reader<'_> {
-        let index = open.index + usize::from(self.picks_built(open));
-        self.build.view_at(&open.program, index)
+    fn picks_in<'s>(&'s self, open: &'s Open) -> Reader<'s> {
+        let built = self.picks_built(open);
+        match &open.within {
+            Some(within) if built => within.part.after(&open.id),
+            Some(within) => within.part.before(&open.id),
+            None => (self.build).view_at(&open.program, open.index + usize::from(built)),
+        }
     }
 
     /// What the shown steps built on — sketches, and datums as a whole —
@@ -1068,46 +1346,124 @@ impl Editor {
     }
 
     /// The part `steps` steps build, as drawn.
-    fn view_of(&self, steps: usize) -> PartView {
-        (self.registry.draw(&self.shown_part(steps))).unwrap_or_else(|_| {
-            PartView::blank(Extent {
+    fn view_of(&self, steps: usize) -> Rc<PartView> {
+        (self.draw(&self.shown_part(steps))).unwrap_or_else(|_| {
+            Rc::new(PartView::blank(Extent {
                 center: Vector3::zero(),
                 size: Scalar::from_f64(EMPTY_EXTENT),
-            })
+            }))
         })
     }
 
-    fn program_state(&self) -> GeopResult<ProgramState> {
-        let editing = (self.open.as_ref())
-            .filter(|o| !o.new)
-            .map(|o| o.id.as_str());
-        let runs_to = match &self.open {
-            Some(open) => open.index,
-            None => self.marker.unwrap_or(self.file.steps.len()),
+    /// The part `reader` reads, as the registry draws it: as it was drawn
+    /// last, if it is made of the same (see [`Self::drawings`]).
+    fn draw(&self, reader: &Reader) -> GeopResult<Rc<PartView>> {
+        let seen = reader.seen();
+        let mut drawings = self.drawings.borrow_mut();
+        let view = match drawings.iter().position(|(drawn, _)| *drawn == seen) {
+            Some(k) => drawings.remove(k).1,
+            None => Rc::new(self.registry.draw(reader)?),
         };
+        drawings.push((seen, view.clone()));
+        if drawings.len() > KEPT_DRAWINGS {
+            drawings.remove(0);
+        }
+        Ok(view)
+    }
+
+    /// The steps of `program`, as `runner` last ran it on `part`: those
+    /// before `runs_to` ran, failing as `error` says, the one `editing`
+    /// edited — and, `placing`, each with the steps of the parts it placed,
+    /// to edit where they are placed.
+    #[allow(
+        clippy::too_many_arguments,
+        reason = "one listing, of the program or of a placed part"
+    )]
+    fn listed_steps(
+        &self,
+        runner: &Runner,
+        part: &Part,
+        program: &Program,
+        runs_to: usize,
+        editing: Option<&str>,
+        error: impl Fn(&str) -> Option<String>,
+        placing: bool,
+    ) -> Vec<StepInfo> {
         let editors = self.registry.editors();
-        let steps = (self.file.steps.iter().enumerate())
+        let placed = if placing { part.placed() } else { Vec::new() };
+        (program.steps.iter().enumerate())
             .map(|(i, step)| {
                 let listed = editors.info(&step.operation);
                 // A summary is of the step's arguments, not of what it
                 // built (see [`crate::editable::Editors::listed`]).
-                let summary =
-                    (editors.listed(&self.build.runner, &self.build.part, &self.file, &step.id))
-                        .map(|form| form.dialog.summary())
-                        .unwrap_or_default();
+                let summary = (editors.listed(runner, part, program, &step.id))
+                    .map(|form| form.dialog.summary())
+                    .unwrap_or_default();
+                let placed = (placed.iter())
+                    .filter(|(_, by, _)| *by == step.id)
+                    .filter_map(|(instance, _, placed)| self.placed_steps(instance, placed))
+                    .collect();
                 StepInfo {
                     id: step.id.clone(),
                     kind: listed.as_ref().map_or("", |l| l.kind),
                     label: listed.as_ref().map_or("", |l| l.info.label),
                     summary,
-                    error: (i < runs_to)
-                        .then(|| self.build.errors.get(&step.id).cloned())
-                        .flatten(),
+                    error: (i < runs_to).then(|| error(&step.id)).flatten(),
                     runs: i < runs_to,
                     editing: editing == Some(step.id.as_str()),
+                    placed,
                 }
             })
-            .collect();
+            .collect()
+    }
+
+    /// The steps of the part placed as `instance`, built as `placed`: none
+    /// if its program cannot be read.
+    fn placed_steps(&self, instance: &str, placed: &PlacedPart) -> Option<PlacedSteps> {
+        let file = placed.location.file.clone();
+        let open = (self.open.as_ref())
+            .filter(|open| (open.within.as_ref()).is_some_and(|w| w.instance == instance));
+        // The one edited is listed as edited, all of it: its file holds it
+        // only as far as the step edited, while it is.
+        let program = match open {
+            Some(open) => Rc::new(open.program.clone()),
+            None => self.workspace.program(&file).ok()?,
+        };
+        let editing = open.map(|open| open.id.as_str());
+        let failures = placed.part.failures();
+        let error = |id: &str| {
+            (failures.iter())
+                .find(|(step, _)| step == id)
+                .map(|(_, e)| e.clone())
+        };
+        let runner = self.build.runner.nested(placed.location.clone());
+        let steps = self.listed_steps(
+            &runner,
+            &placed.part,
+            &program,
+            program.steps.len(),
+            editing,
+            error,
+            false,
+        );
+        Some(PlacedSteps {
+            instance: instance.to_string(),
+            file,
+            steps,
+        })
+    }
+
+    fn program_state(&self) -> GeopResult<ProgramState> {
+        let own = self.open.as_ref().filter(|open| open.within.is_none());
+        let editing = own.filter(|open| !open.new).map(|open| open.id.as_str());
+        let runs_to = match own {
+            Some(open) => open.index,
+            None => self.marker.unwrap_or(self.file.steps.len()),
+        };
+        let editors = self.registry.editors();
+        let errors = |id: &str| self.build.errors.get(id).cloned();
+        let (runner, part) = (&self.build.runner, &self.build.part);
+        let steps = self.listed_steps(runner, part, &self.file, runs_to, editing, errors, true);
         let mut operations = editors.infos();
         operations.sort_by_key(|listed| (listed.info.group, listed.info.tier));
         let part = self.part();

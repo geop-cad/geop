@@ -259,7 +259,10 @@ fn offset_plane_dragged_by_its_handle() {
         program,
         path: None,
     });
-    let update = editor.handle(Command::Open { id: "plane".into() });
+    let update = editor.handle(Command::Open {
+        id: "plane".into(),
+        placed: None,
+    });
     let step = update.step.expect("the plane is edited");
     let (at, direction) = step
         .presentation

@@ -71,7 +71,7 @@ fn new_draft_picks_its_faces_and_neutral_plane() {
     );
     assert_eq!(args.angle, 5.0);
     let scene = editor
-        .handle(Command::Seek { marker: None })
+        .handle(Command::Show)
         .scene
         .expect("the scene is sent");
     assert!(
@@ -107,7 +107,10 @@ fn new_rib_grows_from_the_newest_sketch() {
     );
     assert_eq!(args.solid.name(), "shell(s)");
     assert!(args.flipped);
-    let scene = update.scene.expect("the scene is sent anew");
+    let scene = editor
+        .handle(Command::Show)
+        .scene
+        .expect("the scene is sent anew");
     assert!(
         scene.part.solids.iter().any(|s| s.starts_with("rib(")),
         "{:?}",

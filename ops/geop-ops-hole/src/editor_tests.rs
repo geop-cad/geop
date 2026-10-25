@@ -70,10 +70,16 @@ fn new_hole_from_the_dialog() {
     assert_eq!(scene.part.solids, ["hole(hole1)"]);
 
     // Tapped instead: the scene draws its cosmetic thread.
-    editor.handle(Command::Open { id: "hole1".into() });
+    editor.handle(Command::Open {
+        id: "hole1".into(),
+        placed: None,
+    });
     editor.handle(dialog("kind", Value::Choice("tapped".into())));
-    let update = handled(&mut editor, Command::Commit);
-    let scene = update.scene.expect("the scene changed");
+    handled(&mut editor, Command::Commit);
+    let scene = editor
+        .handle(Command::Show)
+        .scene
+        .expect("the scene changed");
     assert_eq!(scene.part.annotations.len(), 1);
     assert_eq!(scene.part.annotations[0].label, "M5x0.8");
 }

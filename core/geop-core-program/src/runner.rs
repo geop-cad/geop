@@ -189,8 +189,9 @@ impl Runner {
         self.shared.counts.set(counts);
     }
 
-    /// The runner of the part placed from the file of `location`.
-    pub(crate) fn nested(&self, location: Location) -> Runner {
+    /// The runner of the part placed from the file of `location`: what an
+    /// editor edits a step of it with.
+    pub fn nested(&self, location: Location) -> Runner {
         Runner {
             registry: self.registry.clone(),
             workspace: self.workspace.clone(),

@@ -369,7 +369,7 @@ fn step_reads_only_targets_defined_before_it() {
     let middle = || middle_frame("step2", "step1_1", "step1_2");
     let not_defined = vec![(
         "step2".to_string(),
-        "no step before here produces target `step1_1`".to_string(),
+        "no step before here produces target `step1_1` (the targets before here: none)".to_string(),
     )];
 
     ok(runner.run(
@@ -708,6 +708,15 @@ fn a_program_reads_back_as_saved() {
         file.get("steps").is_some() && file.get("state").is_some(),
         "{file}"
     );
+}
+
+/// A file just made, empty, is a part of no steps: a part placed from it
+/// before it was ever opened is built, as the editors open it.
+#[test]
+fn an_empty_file_reads_as_an_empty_program() {
+    for text in ["", " \n"] {
+        assert_eq!(Program::from_json(text).unwrap(), Program::new());
+    }
 }
 
 /// Runs edited one after another on one part build what each builds from

@@ -272,6 +272,7 @@ name = "geop-core-geometry"
 version = "0.1.0"
 dependencies = [
  "geop-core-math",
+ "serde",
 ]
 
 [[package]]
@@ -317,6 +318,7 @@ dependencies = [
  "geop-core-geometry",
  "geop-core-math",
  "imbl",
+ "serde",
 ]
 
 [[package]]

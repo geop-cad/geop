@@ -1,11 +1,18 @@
 //! Shells of bodies users built that once failed.
 
-use geop_core_math::scalars::Scalar;
+use geop_core_math::{
+    primitives::CoordinateSystem,
+    scalars::Scalar,
+    vector::{Vector2, Vector3},
+};
 use geop_core_topology::{Body, FaceId, SolidId};
 use geop_lib_booleans::{RemeshParams, boolean};
-use geop_lib_sweep::shapes::{revolved_cylinder, v3};
+use geop_lib_sweep::{
+    polyline, revolve_at_oriented,
+    shapes::{revolved_cylinder, v3},
+};
 use geop_ops_model::{
-    BooleanOp, NamedModel, Namer,
+    BooleanOp, NamedModel, Namer, Profile,
     testing::{assert_valid, middle},
 };
 
@@ -203,4 +210,85 @@ fn drill_standing_out_leaves_a_traced_rim_the_shell_offsets() {
     let (part, shelled) = shelled_valid(part, solid, &[]);
     // Every face and its inner copy.
     assert_eq!(faces(&part, shelled), 2 * before);
+}
+
+/// The solid `revolved(r)`: `profile` (radius, height) turned a full turn
+/// around `z`, top-down from the axis back to it (see
+/// `geop_lib_sweep::revolve_at_oriented`).
+fn revolved(profile: &[[f64; 2]]) -> (NamedModel, SolidId) {
+    let mut part = NamedModel::new();
+    let points: Vec<_> = profile
+        .iter()
+        .map(|&[r, h]| Vector2::from_array([r, h].map(Scalar::from_f64)))
+        .collect();
+    let [x, y, z] = [0, 1, 2].map(Vector3::axis);
+    let axes = CoordinateSystem::try_new(v3(0., 0., 0.), x, y, z).unwrap();
+    let namer = Namer::new("revolved", "r").unwrap();
+    let solid = revolve_at_oriented(
+        &mut part,
+        &namer,
+        &namer.root(),
+        &Profile::open(polyline(&points).unwrap()),
+        &axes,
+    )
+    .unwrap();
+    assert_valid(&part);
+    (part, solid)
+}
+
+/// Whether `part` has a vertex at `p`.
+fn has_vertex_at(part: &NamedModel, p: [f64; 3]) -> bool {
+    let p = Vector3::from_array(p.map(Scalar::from_f64));
+    part.topology()
+        .vertices
+        .values()
+        .any(|vertex| vertex.point.sub(&p).norm().to_f64() < 1e-9)
+}
+
+/// A drink can, a revolve of its profile: a lid sunk below the rim, and a
+/// base pushed up into a cone in the middle. Shelled closed all round, it
+/// failed twice over.
+///
+/// > Cannot normalize zero-length vector ... the normal at the foot point
+/// > ... moving vertex revolve(can,profile,p5) inward
+///
+/// `p5` is the cone's apex on the axis. Its inner copy, offset along the
+/// cone's normal, left the axis: the inner surface was a cone with a hole
+/// round the axis, extended across it to meet itself, and the vertex was
+/// sent to where it crossed, a point of the patch with no normal. The
+/// offset now keeps an apex on the axis, as the offset cone's apex, and a
+/// vertex at a pole moves to the pole of its faces' inner copies.
+///
+/// > its curve ... is not on the offset of face revolve(can,profile,c19,q3)
+///
+/// The lid meets the slope up to the rim at an inward corner, so the lid's
+/// inner copy reaches past the lid. The lid is a disc, and a surface with a
+/// pole was not extended at all; it now is, away from the pole.
+#[test]
+fn a_can_with_a_sunk_lid_and_a_cone_pushed_into_its_base() {
+    let (mut part, solid) = revolved(&[
+        [0., 1.9],
+        [0.8, 1.9],
+        [0.9, 2.],
+        [1., 2.],
+        [1., 0.],
+        [0., 0.3],
+    ]);
+    let namer = Namer::new("shell", "s").unwrap();
+    shell(&mut part, &namer, solid, &[], Scalar::from_f64(0.02)).unwrap();
+    assert_valid(&part);
+    // The inner apex is the offset cone's: `0.02 √(1 + 0.3²)` above the
+    // outer one.
+    assert!(has_vertex_at(&part, [0., 0., 0.3 + 0.02 * 1.09f64.sqrt()]));
+}
+
+/// A cone standing on its base, shelled closed: its tip is an apex too,
+/// and moves down the axis to the inner cone's tip, `0.1 √5` below it.
+#[test]
+fn a_cone_closed_all_round() {
+    let (mut part, solid) = revolved(&[[0., 2.], [1., 0.], [0., 0.]]);
+    let namer = Namer::new("shell", "s").unwrap();
+    shell(&mut part, &namer, solid, &[], Scalar::from_f64(0.1)).unwrap();
+    assert_valid(&part);
+    assert!(has_vertex_at(&part, [0., 0., 2. - 0.1 * 5f64.sqrt()]));
 }

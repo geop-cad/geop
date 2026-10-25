@@ -1,7 +1,7 @@
 //! What an [`super::Editor`] is told ([`Command`]) and what it answers
 //! ([`Update`]): the protocol every front end speaks, as JSON.
 
-use std::collections::BTreeMap;
+use std::{collections::BTreeMap, rc::Rc};
 
 use geop_core_math::geop_error::{GeopError, GeopResult};
 use geop_core_program::program::Program;
@@ -26,9 +26,13 @@ pub enum Command {
     New {
         kind: String,
     },
-    /// Start editing the step `id`.
+    /// Start editing the step `id` — of the program, or, given `placed`,
+    /// of the part placed as that instance, where it is placed (see
+    /// [`StepInfo::placed`]).
     Open {
         id: String,
+        #[serde(default)]
+        placed: Option<String>,
     },
     /// Something the user did to the step being edited — or, with none,
     /// with the tool in hand.
@@ -180,6 +184,19 @@ pub struct StepInfo {
     pub runs: bool,
     /// Whether it is the step being edited.
     pub editing: bool,
+    /// The parts it placed, each with its program's steps, to edit where
+    /// it is placed ([`Command::Open`] with `placed`).
+    pub placed: Vec<PlacedSteps>,
+}
+
+/// A part a step placed, as the program shows it: what it is placed as,
+/// from which file, and the steps of that file's program.
+#[derive(Clone, Debug, PartialEq, Serialize)]
+pub struct PlacedSteps {
+    pub instance: String,
+    /// The file it is placed from, as the workspace names it.
+    pub file: String,
+    pub steps: Vec<StepInfo>,
 }
 
 /// The program, as shown.
@@ -229,7 +246,7 @@ pub struct ProgramState {
 #[derive(Clone, Debug, Serialize)]
 pub struct SceneState {
     /// The part, without the parts placed in it: those are `instances`.
-    pub part: PartView,
+    pub part: Rc<PartView>,
     /// The sketches and datums the steps shown have used: what was made
     /// from them shows them now. None of a kind while it is being picked.
     pub hidden: Vec<String>,
@@ -242,11 +259,15 @@ pub struct SceneState {
     /// The names of the placed parts drawn last time and gone now.
     pub removed: Vec<String>,
     /// The views of the components the placed parts are drawn from, by key
-    /// (see [`ViewInstance::component`]), that the last scene's did not
-    /// use. A viewer keeps those the placed parts drawn use, and forgets
-    /// the others: a component no placed part uses any more is sent again
-    /// once one does.
-    pub components: BTreeMap<String, PartView>,
+    /// (see [`ViewInstance::component`]), that the viewer does not have:
+    /// each is sent once, and kept until it is `forgotten`.
+    pub components: BTreeMap<String, Rc<PartView>>,
+    /// The components the viewer forgets now: none of its placed parts has
+    /// used them for longest. One is sent again once a placed part uses it.
+    /// Those of a part that leaves the scene for a while are kept, so that
+    /// editing a step before a large part placed after it does not send
+    /// that part again when it shows again.
+    pub forgotten: Vec<String>,
     /// What the part has beyond its faces, to list and show or hide (see
     /// [`crate::registry::Drawer::structure`]).
     pub structure: Vec<StructureItem>,
@@ -292,6 +313,10 @@ pub struct Update {
     pub step: Option<StepState>,
     /// The program files the command added, the one now edited first.
     pub files: Option<Vec<File>>,
+    /// The program files besides the one edited the command changed — a
+    /// step of a placed part committed to its file — for the front end to
+    /// keep: none if it changed none.
+    pub written: Option<Vec<File>>,
     /// The file [`Command::Export`] wrote, or [`Command::Copy`] copied.
     pub export: Option<Export>,
     /// What the tool in hand shows, while no step is edited: the drag

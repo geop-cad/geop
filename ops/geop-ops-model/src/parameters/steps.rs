@@ -68,7 +68,7 @@ impl PartOperation for DefineParameters {
         "Parameters",
         "The numbers the design is given by, which a program placing the part may set.",
         OperationGroup::Part,
-        OperationTier::Menu,
+        OperationTier::Small,
     )
     .icon(crate::parameters::icons::PARAMETERS);
     type Args = DefineParametersArgs;
@@ -294,7 +294,7 @@ impl PartOperation for LookupTable {
         "Table",
         "A table of the variants of a part family — screw sizes, say — of which a program placing the part picks one by name.",
         OperationGroup::Part,
-        OperationTier::Menu,
+        OperationTier::Small,
     )
     .icon(crate::parameters::icons::LOOKUP_TABLE);
     type Args = LookupTableArgs;
@@ -540,7 +540,7 @@ impl PartOperation for PartProperties {
         "Properties",
         "What the part is called and ordered as, its colour, and what it is made of.",
         OperationGroup::Part,
-        OperationTier::Menu,
+        OperationTier::Small,
     )
     .icon(crate::parameters::icons::PROPERTIES);
     type Args = PartPropertiesArgs;

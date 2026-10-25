@@ -17,9 +17,12 @@ use geop_core_math::{
     vector::Vector3,
 };
 use geop_core_program::{
+    cache::{Cache, CacheStore},
+    element::ElementReference,
     operation_registry::OperationRegistry,
     part::Part,
     program::Program,
+    reader::Reader,
     runner::Runner,
     values::{StateValue, pose_state},
     workspace::{Files, Location, Workspace},
@@ -28,7 +31,11 @@ use geop_core_topology::{
     Model,
     validation::{ValidationParameters, validate},
 };
-use std::{cell::Cell, collections::BTreeMap, rc::Rc};
+use std::{
+    cell::{Cell, RefCell},
+    collections::BTreeMap,
+    rc::Rc,
+};
 
 use geop_lib_fixtures::{PrimitiveArgs, drilled_box};
 use geop_lib_stdlib::WithStandardParts;
@@ -44,7 +51,7 @@ use geop_ops_model::{
 };
 use geop_ops_sketch::AddSketch;
 
-use crate::{ImportStep, ImportStepArgs, add_bodies, read_step, write_part, write_step};
+use crate::{ImportStep, ImportStepArgs, Imported, add_bodies, read_step, write_part, write_step};
 
 /// `model` as the text of a STEP file whose product is `name`.
 fn written(model: &NamedModel, name: &str) -> String {
@@ -1212,7 +1219,8 @@ fn a_part_exported_as_step_is_imported_back() {
     let update = editor.handle(Command::Commit);
     assert!(update.error.is_none(), "{:?}", update.error);
     let id = editor.program().steps.last().unwrap().id.clone();
-    let solids: Vec<String> = update
+    let solids: Vec<String> = editor
+        .handle(Command::Show)
         .scene
         .expect("the scene changed")
         .structure
@@ -1221,6 +1229,94 @@ fn a_part_exported_as_step_is_imported_back() {
         .map(|item| item.name)
         .collect();
     assert_eq!(solids, vec![format!("import({id},s0)")]);
+}
+
+/// Cache files kept in memory as a folder on disk keeps them, counting how
+/// many were written: one for every time a file was made into something.
+#[derive(Clone, Default)]
+struct Shelf {
+    files: Rc<RefCell<BTreeMap<String, String>>>,
+    writes: Rc<Cell<usize>>,
+}
+
+impl CacheStore for Shelf {
+    fn build(&self) -> &str {
+        "this build"
+    }
+
+    fn read(&self, path: &str) -> Option<String> {
+        self.files.borrow().get(path).cloned()
+    }
+
+    fn write(&self, path: &str, text: &str) {
+        self.writes.set(self.writes.get() + 1);
+        (self.files.borrow_mut()).insert(path.to_string(), text.to_string());
+    }
+}
+
+/// A STEP file is read once for every build an editor makes of it — the
+/// import's preview, the program it is committed to, and a part placed
+/// from that program in another file, which shares its bodies — and once
+/// for every kernel of one build: another editor, given what the first
+/// kept, reads the same bodies from there, to the bit.
+#[test]
+fn a_step_file_is_read_once_for_every_build_importing_it() {
+    let text = step_file(&mut loaded(editor(), drilled_box()));
+    let shelf = Shelf::default();
+    let open = |program: Program, path: &str| {
+        let cache = Cache::stored(Box::new(shelf.clone()));
+        let mut editor = Editor::with_cache(registry(), WithStandardParts(BTreeMap::new()), cache);
+        let files = BTreeMap::from([("box.step".to_string(), Some(text.clone()))]);
+        assert!(editor.handle(Command::Files { files }).error.is_none());
+        let path = Some(path.to_string());
+        let update = editor.handle(Command::Load { program, path });
+        assert!(update.error.is_none(), "{:?}", update.error);
+        editor
+    };
+    let bodies = |part: Reader, id: &str| -> Imported {
+        let read = ElementReference::whole(crate::imported(id));
+        part.retrieve_element(&read).cloned().unwrap()
+    };
+
+    let mut editor = open(Program::new(), "part.geop");
+    handled(
+        &mut editor,
+        Command::New {
+            kind: "import_step".into(),
+        },
+    );
+    handled(
+        &mut editor,
+        dialog("file", Value::Choice("box.step".into())),
+    );
+    assert_eq!(shelf.writes.get(), 1, "read for the preview");
+    handled(&mut editor, Command::Commit);
+    assert_eq!(shelf.writes.get(), 1, "the preview's bodies committed");
+    let part = editor.program().clone();
+    let id = part.steps[0].id.clone();
+    let read = bodies(editor.part(), &id);
+    assert!(shelf.files.borrow().contains_key("box.step.geopc"));
+
+    let assembly = with_placed(Program::new(), &[("p", "part.geop", at(0.0, 0.0, 0.0))]);
+    let update = editor.handle(Command::Load {
+        program: assembly,
+        path: Some("asm.geop".into()),
+    });
+    assert!(update.error.is_none(), "{:?}", update.error);
+    let placed = bodies(editor.part().placed_part("p").unwrap(), &id);
+    assert!(
+        Rc::ptr_eq(&placed.0, &read.0),
+        "the placed part's bodies shared"
+    );
+    assert_eq!(shelf.writes.get(), 1);
+
+    let other = open(part, "part.geop");
+    assert_eq!(
+        shelf.writes.get(),
+        1,
+        "the other kernel's read from the cache"
+    );
+    assert_eq!(bodies(other.part(), &id), read);
 }
 
 /// A STEP file whose corner lies 3e-4 above where its three faces meet —

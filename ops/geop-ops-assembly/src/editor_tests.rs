@@ -140,9 +140,15 @@ fn placing(placed: AddPartArgs) -> Stepping {
             path: Some("assembly.geop".into()),
         },
     );
-    let shown = handled(&mut editor, Command::Open { id: "b".into() })
-        .step
-        .expect("the step is edited");
+    let shown = handled(
+        &mut editor,
+        Command::Open {
+            id: "b".into(),
+            placed: None,
+        },
+    )
+    .step
+    .expect("the step is edited");
     Stepping { editor, shown }
 }
 
@@ -246,7 +252,10 @@ fn placing_a_part_offers_its_parameters() {
             path: Some("plates.geop".into()),
         },
     );
-    let update = editor.handle(Command::Open { id: "large".into() });
+    let update = editor.handle(Command::Open {
+        id: "large".into(),
+        placed: None,
+    });
     let dialog = update.step.unwrap().presentation.dialog;
     assert!(matches!(
         dialog.get("parameter:color"),
@@ -327,7 +336,13 @@ fn a_revolute_joint_is_dragged_up_to_its_limit() {
     assert_eq!(freedom["parts"]["fore"], 1);
     assert_eq!(freedom["parts"]["hand"], 2);
 
-    handled(&mut editor, Command::Open { id: "fore".into() });
+    handled(
+        &mut editor,
+        Command::Open {
+            id: "fore".into(),
+            placed: None,
+        },
+    );
     // Grabbed halfway along, where nothing lies on it, and dragged round
     // the elbow at (3, 0) to 170°, looking down.
     let down = |[x, y]: [f64; 2]| from_above(x, y);
@@ -354,7 +369,10 @@ fn a_revolute_joint_is_dragged_up_to_its_limit() {
     handled(&mut editor, Command::Commit);
     assert_eq!(state_number(&editor, elbow), 150.0);
     assert!((turn_of(&editor, "fore") - 150.0).abs() < 1e-9);
-    editor.handle(Command::Open { id: "fore".into() });
+    editor.handle(Command::Open {
+        id: "fore".into(),
+        placed: None,
+    });
     let step = editor.handle(dialog("mate:m1", Value::Press)).step.unwrap();
     let Some(Control::Number(angle)) = step.presentation.dialog.get("mate:m1:angle") else {
         panic!("the joint's angle is shown");
@@ -717,7 +735,10 @@ fn placed_parts_are_moved_and_turned_by_the_gizmo() {
     // The second block, slid 10 along the first's `z` axis by its `z`
     // arrow, seen from the side.
     let start = apply(&pose(&editor, "part2"), [0.0; 3]);
-    let update = editor.handle(Command::Open { id: "part2".into() });
+    let update = editor.handle(Command::Open {
+        id: "part2".into(),
+        placed: None,
+    });
     let step = update.step.expect("the second block is edited");
     let gizmo = step.presentation.gizmo.expect("a placed part has a gizmo");
     assert!(gizmo.modes.translate && gizmo.modes.rotate);
@@ -745,7 +766,10 @@ fn placed_parts_are_moved_and_turned_by_the_gizmo() {
 
     // The first block, fixed, turned a quarter about `z` by its ring, seen
     // from above: it goes where it is turned, and the second turns with it.
-    editor.handle(Command::Open { id: "part1".into() });
+    editor.handle(Command::Open {
+        id: "part1".into(),
+        placed: None,
+    });
     let reach = 0.009;
     let round = |degrees: f64| {
         let (s, c) = degrees.to_radians().sin_cos();
@@ -795,7 +819,10 @@ fn hovering_over_an_assembly_draws_no_part() {
     };
     assert_eq!(hover(&mut editor), 0);
     // Nor while a part is placed, which picks in what its step builds.
-    let update = editor.handle(Command::Open { id: "fore".into() });
+    let update = editor.handle(Command::Open {
+        id: "fore".into(),
+        placed: None,
+    });
     assert!(update.error.is_none(), "{:?}", update.error);
     assert_eq!(hover(&mut editor), 0);
 }
@@ -895,4 +922,212 @@ fn the_drag_tool_is_offered_among_the_tools_not_the_operations() {
     );
     let program = handled(&mut editor, Command::Show).program.unwrap();
     assert_eq!(program.tool.as_deref(), Some("drag"));
+}
+
+/// Editing a part placed before another: the other leaves the scene while
+/// the step is edited, and shows again after, without its component sent
+/// again — the viewer keeps it. Moving the part edited sends where it is,
+/// and nothing of what it looks like.
+#[test]
+fn a_part_placed_after_the_one_edited_is_sent_once() {
+    let mut editor = editor();
+    let files = BTreeMap::from([
+        ("cube.geop".to_string(), Some(cube().to_json().unwrap())),
+        (
+            "block.geop".to_string(),
+            Some(drilled_box().to_json().unwrap()),
+        ),
+    ]);
+    handled(&mut editor, Command::Files { files });
+    let mut program = Program::new();
+    program.push("a", args(true, &[]));
+    let block = AddPartArgs {
+        file: "block.geop".into(),
+        ..Default::default()
+    };
+    program.push("b", block.fixed());
+    let path = Some("assembly.geop".into());
+    let loaded = handled(&mut editor, Command::Load { program, path });
+    let scene = loaded.scene.expect("the assembly is drawn");
+    assert_eq!(
+        scene.components.len(),
+        2,
+        "the cube and the block, once each"
+    );
+
+    let open = Command::Open {
+        id: "a".into(),
+        placed: None,
+    };
+    let opened = handled(&mut editor, open.clone());
+    let scene = opened.scene.expect("the part as far as `a`");
+    assert_eq!(scene.removed, ["b"]);
+    let cancelled = handled(&mut editor, Command::Cancel);
+    let shown = cancelled.scene.expect("the block shows again");
+    let names: Vec<&str> = shown.instances.iter().map(|i| i.name.as_str()).collect();
+    assert_eq!(names, ["b"]);
+    assert!(shown.forgotten.is_empty());
+    assert!(shown.components.is_empty(), "the block is not sent again");
+
+    handled(&mut editor, open);
+    let moved = handled(&mut editor, dialog("x", Value::Number(3.0)));
+    let scene = moved.scene.expect("the cube is moved");
+    assert!(
+        scene.components.is_empty(),
+        "nothing is sent of what it looks like"
+    );
+    let names: Vec<&str> = scene.instances.iter().map(|i| i.name.as_str()).collect();
+    assert!(names.contains(&"a"), "{names:?}");
+}
+
+/// The handle of the step `step`'s field `key`, as `step` shows it.
+fn handle_of(step: &geop_core_editor::editor::StepState, key: &str) -> [f64; 3] {
+    (step.presentation.visuals.iter())
+        .find_map(|v| match &v.shape {
+            geop_core_editor::editing::Shape::Handle { at, .. } if v.key == key => {
+                Some(at.to_f64_array())
+            }
+            _ => None,
+        })
+        .unwrap_or_else(|| panic!("no handle for {key}"))
+}
+
+/// A step of a part placed in the program is edited where the part is
+/// placed: listed under the step placing it, opened there, its handles
+/// drawn where the part is, hovered there, and the placed part built anew
+/// as it is edited. Committed, the part's file is handed back to keep, and
+/// the program placing it is as it was; cancelled, the file is as it was.
+#[test]
+fn a_step_of_a_placed_part_is_edited_where_it_is_placed() {
+    let part = geop_ops_extrude_revolve::examples::box_with_drill_hole();
+    let files = BTreeMap::from([("box.geop".to_string(), Some(part.to_json().unwrap()))]);
+    // The step on its own, in its own file: where its handle is.
+    let mut alone = editor();
+    handled(
+        &mut alone,
+        Command::Files {
+            files: files.clone(),
+        },
+    );
+    let path = Some("box.geop".into());
+    handled(
+        &mut alone,
+        Command::Load {
+            program: part.clone(),
+            path,
+        },
+    );
+    let opened = handled(
+        &mut alone,
+        Command::Open {
+            id: "box".into(),
+            placed: None,
+        },
+    );
+    let own = handle_of(&opened.step.expect("the extrusion is edited"), "distance");
+
+    let mut editor = editor();
+    handled(&mut editor, Command::Files { files });
+    let mut program = Program::new();
+    let placing = AddPartArgs {
+        file: "box.geop".into(),
+        ..Default::default()
+    };
+    program.push("a", placing.fixed());
+    let at = Pose::identity().with_position(Vector3::from_array([10.0, 0.0, 0.0].map(n)));
+    program.state.insert(pose_state("a"), StateValue::Pose(at));
+    let path = Some("assembly.geop".into());
+    let loaded = handled(
+        &mut editor,
+        Command::Load {
+            program: program.clone(),
+            path,
+        },
+    );
+    let structure = loaded.scene.expect("the assembly is drawn").structure;
+    let item = (structure.iter())
+        .find(|item| item.name == "a")
+        .expect("the part is listed");
+    assert_eq!(
+        item.label.as_deref(),
+        Some("box: a"),
+        "called after its file too"
+    );
+    let listed = &loaded.program.expect("the program is sent").steps[0];
+    let [placed] = &listed.placed[..] else {
+        panic!("the step places one part: {:?}", listed.placed);
+    };
+    assert_eq!(
+        (placed.instance.as_str(), placed.file.as_str()),
+        ("a", "box.geop")
+    );
+    let ids: Vec<&str> = placed.steps.iter().map(|s| s.id.as_str()).collect();
+    assert_eq!(ids, ["outline", "box", "hole_sketch", "hole"]);
+
+    let open = Command::Open {
+        id: "box".into(),
+        placed: Some("a".into()),
+    };
+    let opened = handled(&mut editor, open.clone());
+    let step = opened.step.expect("the placed part's extrusion is edited");
+    assert_eq!(step.label, "Extrude");
+    let handle = handle_of(&step, "distance");
+    assert_close(handle, [own[0] + 10.0, own[1], own[2]], 1e-9);
+    let editing = opened.program.expect("the program is sent").steps[0].placed[0].steps[1].editing;
+    assert!(editing, "the step is shown edited where it is listed");
+    // Hovered where the part is placed, the handle is grabbed.
+    let over = pointer([handle[0], handle[1], handle[2] + 5.0], [0.0, 0.0, -1.0]);
+    let hovered = handled(
+        &mut editor,
+        Command::Event {
+            event: StepEditEvent::Hover {
+                pointer: over,
+                shift: false,
+            },
+        },
+    );
+    assert!(
+        hovered.step.expect("still edited").presentation.grab,
+        "the handle is under the pointer"
+    );
+
+    let edited = handled(&mut editor, dialog("distance", Value::Number(2.0)));
+    let scene = edited.scene.expect("the placed part is built anew");
+    assert_eq!(scene.components.len(), 1, "its new look");
+    assert!(
+        edited.written.is_none(),
+        "nothing is kept before the commit"
+    );
+    let committed = handled(&mut editor, Command::Commit);
+    let [written] = &committed.written.clone().unwrap_or_default()[..] else {
+        panic!("one file is kept: {:?}", committed.written);
+    };
+    assert_eq!(written.path, "box.geop");
+    let extrusion: geop_ops_extrude_revolve::ExtrudeArgs =
+        step_args(written.program.step("box").unwrap());
+    assert_eq!(
+        extrusion.extent,
+        geop_ops_extrude_revolve::Extents::blind(2.0)
+    );
+    assert_eq!(
+        editor.program(),
+        &program,
+        "the program placing it is as it was"
+    );
+
+    handled(&mut editor, open.clone());
+    handled(&mut editor, dialog("distance", Value::Number(3.0)));
+    handled(&mut editor, Command::Cancel);
+    let reopened = handled(&mut editor, open);
+    let distance = reopened
+        .step
+        .expect("edited again")
+        .presentation
+        .dialog
+        .get("distance")
+        .cloned();
+    assert!(
+        matches!(distance, Some(Control::Number(number)) if number.value == 2.0),
+        "cancelled, the file is as committed"
+    );
 }

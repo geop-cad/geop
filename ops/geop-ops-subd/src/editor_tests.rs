@@ -120,7 +120,7 @@ fn subd_cage_is_shaped_in_the_viewport() {
     }
     let update = editor.handle(Command::Commit);
     assert!(update.error.is_none(), "{:?}", update.error);
-    let program = editor.program();
+    let program = editor.program().clone();
     let last = program.steps.last().unwrap();
     let args: crate::SubdArgs = args(last);
     let top = args.cage.face(9).unwrap();
@@ -129,7 +129,10 @@ fn subd_cage_is_shaped_in_the_viewport() {
         assert!((at[2] - 2.0).abs() < 1e-9, "{at:?}");
     }
     assert_eq!(args.cage.faces.len(), 10);
-    let scene = update.scene.expect("the part changed");
+    let scene = editor
+        .handle(Command::Show)
+        .scene
+        .expect("the part changed");
     assert_eq!(scene.part.solids, [format!("subd({})", last.id)]);
 }
 

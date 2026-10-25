@@ -2189,7 +2189,7 @@ fn sketch_tools_draw_profiles_that_extrude() {
     assert_eq!(regions.len(), 1, "a ring");
     assert_eq!(regions[0].holes.len(), 1, "round the square");
     let id = editor.program().steps.last().unwrap().id.clone();
-    editor.handle(Command::Open { id });
+    editor.handle(Command::Open { id, placed: None });
     extruded(&mut editor);
 }
 
@@ -2300,4 +2300,41 @@ fn a_sketch_is_copied_and_pasted() {
         text: "not steps".into(),
     });
     assert!(refused.error.unwrap().contains("pasting"));
+}
+
+/// A sketch drawn on a part sends the viewer the part once, when it is
+/// opened: a tool chosen or a line drawn sends no scene, since the part
+/// before the sketch is what it was — however large, an assembly is not
+/// sent again for every click — and the sketch opened again sends the very
+/// drawing it sent before, not the part tessellated again.
+#[test]
+fn drawing_on_a_part_sends_the_part_once() {
+    let mut program = drilled_box();
+    let plane = SketchPlane::Datum(origin_plane(FrameAxis::Z));
+    program.push("sketch", AddSketchArgs::new(Some(plane)));
+    let mut editor = loaded(program);
+    let open = Command::Open {
+        id: "sketch".into(),
+        placed: None,
+    };
+    let opened = handled(&mut editor, open.clone());
+    let drawn = opened
+        .scene
+        .expect("the part before the sketch is drawn")
+        .part;
+    let tool = handled(&mut editor, dialog("tool", Value::Choice("line".into())));
+    assert!(tool.scene.is_none(), "a tool chosen sends no scene");
+    for (x, y) in [(1.0, 1.0), (3.0, 1.0), (3.0, 2.0)] {
+        let clicked = handled(&mut editor, click_at(down(x, y)));
+        assert!(clicked.scene.is_none(), "a line drawn sends no scene");
+    }
+    let sketch: AddSketchArgs = args(editor.editing().expect("the sketch is edited"));
+    assert_eq!(sketch.sketch.curves.len(), 2 + 2, "two lines drawn");
+    handled(&mut editor, Command::Cancel);
+    let again = handled(&mut editor, open);
+    let redrawn = again
+        .scene
+        .expect("the part before the sketch is shown")
+        .part;
+    assert!(std::rc::Rc::ptr_eq(&redrawn, &drawn), "drawn as it was");
 }

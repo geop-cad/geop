@@ -5,6 +5,7 @@
 use std::{any::TypeId, cell::RefCell, collections::HashSet, rc::Rc};
 
 use geop_core_math::geop_error::{GeopError, GeopResult};
+use serde::{Serialize, de::DeserializeOwned};
 
 use crate::{
     element::{ElementReference, HasElements, Kind},
@@ -15,7 +16,7 @@ use crate::{
     program::Program,
     runner::Runner,
     target::{Node, Read, TargetReference},
-    values::{Setting, StateValue},
+    values::{Setting, Settings, StateValue, StateValues},
     workspace::Location,
 };
 
@@ -127,6 +128,18 @@ impl<'a> Reader<'a> {
         self.before
     }
 
+    /// What tells the part it reads from another ([`Seen`]): equal for two
+    /// readers exactly when they see the same values — of one part or of
+    /// two — so a view drawn of one is a view of the other: what an editor
+    /// sends a viewer again only when it changed.
+    pub fn seen(&self) -> Seen {
+        Seen {
+            versions: self.part.versions(self.before, self.own),
+            inputs: self.part.inputs.clone(),
+            state: self.part.state.clone(),
+        }
+    }
+
     /// The target being made, if it reads for a make of its own part.
     pub(crate) fn own(&self) -> Option<&'a str> {
         self.own
@@ -169,8 +182,15 @@ impl<'a> Reader<'a> {
             }
             None => {
                 self.record(Read::Absent(name.to_string()));
+                let seen: Vec<String> = (self.part.versions(self.before, self.own).into_iter())
+                    .map(|(seen, _)| format!("`{seen}`"))
+                    .collect();
+                let seen = match seen.is_empty() {
+                    true => "none".to_string(),
+                    false => seen.join(", "),
+                };
                 Err(GeopError::new(format!(
-                    "no step before here produces target `{name}`"
+                    "no step before here produces target `{name}` (the targets before here: {seen})"
                 )))
             }
         }
@@ -389,6 +409,25 @@ impl<'a> Reader<'a> {
         Ok((path, text))
     }
 
+    /// What the file the program of the step being run names `name` reads
+    /// as, as `kind` — a STEP file's bodies — made of its text by `make`,
+    /// and its path: made once for every build its workspace's cache keeps
+    /// it for (see [`crate::cache`]). The read is recorded.
+    pub fn read_file_as<T: Serialize + DeserializeOwned + 'static>(
+        &self,
+        name: &str,
+        kind: &'static str,
+        make: impl FnOnce(&str) -> GeopResult<T>,
+    ) -> GeopResult<(String, Rc<T>)> {
+        let (path, text) = self.read_file(name)?;
+        let cache = (self.runner()?.workspace.as_deref()).and_then(|workspace| workspace.cache());
+        let value = match cache {
+            Some(cache) => cache.made_of(kind, &path, &text, make)?,
+            None => Rc::new(make(&text)?),
+        };
+        Ok((path, value))
+    }
+
     /// The program in the file the program of the step being run names
     /// `name`, and where it would be placed from there (see
     /// [`Runner::program`]). The read is recorded.
@@ -401,6 +440,17 @@ impl<'a> Reader<'a> {
         ));
         Ok((program, location))
     }
+}
+
+/// Everything a [`Reader`] reads from ([`Reader::seen`]): the version of
+/// every target it sees, by name, and the inputs and the state its part
+/// was run with — which a placed part's pose is read from, not built into
+/// its node, so that moving a part builds nothing.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Seen {
+    pub versions: Vec<(String, u64)>,
+    pub inputs: Settings,
+    pub state: StateValues,
 }
 
 /// What `read` read, inside the placed parts it went into.

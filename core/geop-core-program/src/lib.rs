@@ -3,7 +3,7 @@
 //! [`operation_registry`]), the part it builds ([`part`], [`target`],
 //! [`reader`], [`element`]), the parts of other programs it places
 //! ([`placed`]), how it is run ([`runner`]), the files around it
-//! ([`workspace`]), and numbers given as formulas of its parameters
+//! ([`workspace`]) and what their texts were made into ([`cache`]), and numbers given as formulas of its parameters
 //! ([`numeric`]). It knows no operation: those are defined by the crates
 //! built on it, and no target type but a parameter's.
 //!
@@ -50,6 +50,7 @@
     )
 )]
 
+pub mod cache;
 pub mod element;
 pub mod numeric;
 pub mod operation;
