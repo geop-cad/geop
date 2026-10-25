@@ -34,6 +34,8 @@ mod rolling_tests;
 #[cfg(test)]
 mod stress_tests;
 #[cfg(test)]
+mod subd_regression_tests;
+#[cfg(test)]
 mod tests;
 
 use geop_core_editor::registry::Registry;

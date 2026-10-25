@@ -8,6 +8,8 @@
 mod add_sketch3d;
 mod editor;
 mod icons;
+#[cfg(test)]
+mod regression_tests;
 #[cfg(any(test, feature = "testing"))]
 pub mod testing;
 #[cfg(test)]

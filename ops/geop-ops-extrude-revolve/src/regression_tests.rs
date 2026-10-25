@@ -1,7 +1,7 @@
 //! Programs from bug reports, with the coordinates they were reported with:
 //! a "clean" equivalent may not carry the same numerical case at all.
 
-use geop_core_math::{geop_error::GeopResult, primitives::FrameAxis};
+use geop_core_math::{geop_error::GeopResult, primitives::FrameAxis, scalars::Scalar};
 use geop_core_program::{operation_registry::OperationRegistry, program::Program, testing::args};
 use geop_lib_fixtures::{GivenDatum, GivenDatumArgs};
 use geop_ops_model::datums::datum;
@@ -17,7 +17,7 @@ use geop_ops_model::{
 };
 use geop_ops_sketch::AddSketchArgs;
 
-use crate::{Extents, Output, RevolveArgs, RevolveAxis, examples, testing::extrusion};
+use crate::{Extents, LoftArgs, Output, RevolveArgs, RevolveAxis, examples, testing::extrusion};
 
 /// The operations these programs are written in. The datums the reports
 /// built from faces and edges are given at the frames those constructions
@@ -735,4 +735,88 @@ fn wide_plate_with_an_m6_hole() {
     *selected = "M6".into();
     set_parameters(&mut plate, parameters);
     assert_builds_valid(&plate);
+}
+
+/// Two "D" sections lofted — a computer mouse's body, as the surfacing
+/// tutorials start it: on the X plane at `x = 0` a flat bottom line from
+/// `(-1, 0)` to `(1, 0)` under two arcs meeting at the apex `(0, 0.9)`, and
+/// at `x = 2` the same shape wider and taller, its bottom from `(-1.4, 0)`
+/// to `(1.4, 0)` and its apex at `(0, 1.5)`. Both sketches have three
+/// curves and three corners, the corners at the ends of the bottom line.
+///
+/// The second section's arcs each sweep 94°, more than a quarter turn, so
+/// the kernel draws each in two pieces: five curves against the first's
+/// three. The loft makes the counts agree by halving the first section's
+/// longest curves — its bottom line first — and then matches the pieces in
+/// order: the bottom's second half, `c3#half`, is lofted into the first
+/// piece of an arc. The face from it leaves `z = 0`: its far corner is at
+/// `(2, -1.03, 1.05)`, on the dome. The bottom of the body, flat in every
+/// section, is twisted, with no error. Expected: the corners of the
+/// sections — where the curves meet at an angle — match each other, and
+/// the bottom line lofts into the bottom line.
+///
+/// Ruled out: with arcs under a quarter turn in both sections (an apex of
+/// 0.9 at both) the bottom stays flat; it is the kernel's own splitting of
+/// an arc at a quarter turn that makes the counts differ, which a user
+/// cannot see in either sketch.
+#[test]
+#[ignore = "bug: lofting two D sections of three curves each twists the flat bottom, loft(body,s0,c3#half) reaching (2, -1.03, 1.05): an arc over a quarter turn is two pieces, and the loft matches pieces by count rather than the sections' corners"]
+fn loft_of_two_d_sections_keeps_the_bottom_flat() {
+    /// A D on the X plane at `x`: the bottom from `(-w, 0)` to `(w, 0)`,
+    /// two arcs through `(0, h)` over it.
+    fn section(program: &mut Program, name: &str, x: f64, w: f64, h: f64) {
+        program.push(
+            format!("{name}_plane"),
+            GivenDatumArgs::plane([x, 0.0, 0.0], [1.0, 0.0, 0.0]),
+        );
+        let mut s = Sketch::new();
+        let a = s.add_point(n(-w), n(0.0));
+        let b = s.add_point(n(w), n(0.0));
+        let top = s.add_point(n(0.0), n(h));
+        s.add_line(a, b);
+        // The circle through the three points has radius (w² + h²) / 2h;
+        // each arc's sweep is twice the half angle its chord subtends.
+        let r = (w * w + h * h) / (2.0 * h);
+        let sweep = 2.0 * ((w * w + h * h).sqrt() / (2.0 * r)).asin();
+        s.add_arc(b, top, n(sweep));
+        s.add_arc(top, a, n(sweep));
+        program.push(
+            name,
+            AddSketchArgs::on(SketchPlane::Datum(datum(format!("{name}_plane"))), s),
+        );
+    }
+    let mut program = Program::new();
+    section(&mut program, "s0", 0.0, 1.0, 0.9);
+    section(&mut program, "s1", 2.0, 1.4, 1.5);
+    program.push(
+        "body",
+        LoftArgs {
+            profiles: vec![whole_sketch("s0"), whole_sketch("s1")],
+            matches: Vec::new(),
+            guides: Vec::new(),
+            output: Output::Solid(Combine::NewBody),
+        },
+    );
+    let part = program.build_model(registry).unwrap();
+    assert_valid(&part);
+    let model = part.topology();
+    // Every face lofted from the bottom line `c3` (or a piece of it) lies in
+    // z = 0 — the caps `loft(body,start)` and `loft(body,end)` aside.
+    let mut off = Vec::new();
+    for (&id, _) in &model.faces {
+        let name = part.name_of(id).unwrap();
+        if !name.contains(",c3") {
+            continue;
+        }
+        for c in model.iterate_face_coedges(id) {
+            let p = model.coedge_start_vertex(c).unwrap().point;
+            if !p[2].could_be_equal(Scalar::ZERO) {
+                off.push((name.to_string(), p.to_f64_array()));
+            }
+        }
+    }
+    assert!(
+        off.is_empty(),
+        "faces lofted from the bottom line leave z = 0: {off:?}"
+    );
 }
