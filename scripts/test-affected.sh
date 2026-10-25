@@ -11,8 +11,9 @@
 #
 # Files map to the crate whose directory holds them. A crate is affected
 # when it is changed or depends, through normal and build dependencies, on
-# an affected crate; a crate whose tests dev-depend on an affected crate is
-# tested too. A change under core/, or to the workspace's Cargo.toml or
+# an affected crate — an optional dependency counts, since a feature of
+# the editor's composition turns it on; a crate whose tests dev-depend on
+# an affected crate is tested too. A change under core/, or to the workspace's Cargo.toml or
 # Cargo.lock, affects the whole workspace and the script says so instead of
 # listing every crate. Files outside any crate (scripts, docs, web/) are
 # listed and tested by nothing here.

@@ -23,3 +23,5 @@ testing = ["geop-core-topology/testing"]
 
 [dev-dependencies]
 geop-core-topology = { workspace = true, features = ["testing"] }
+# The datums, parameters and sketches drawn and picked as a front end does.
+geop-core-editor = { workspace = true, features = ["testing"] }

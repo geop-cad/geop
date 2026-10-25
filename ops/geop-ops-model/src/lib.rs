@@ -1,3 +1,9 @@
+//! The vocabulary every operation shares: every target a step of one
+//! operation reads of another, the references into it, and how it is
+//! drawn. An operation crate depends on `core/`, `lib/` and this crate
+//! alone, so what one operation reads of another lives here, and the
+//! operation that produces it keeps only its arguments, form and editor.
+//!
 //! A part's topology: the one [`NamedModel`] its steps build, revised by
 //! each in turn ([`model`]) — every vertex, edge, face and solid with a
 //! stable name ([`Namer`]), and the features the steps made — and the
@@ -7,6 +13,13 @@
 //! curves, bodies. A step that builds into the model is a
 //! [`ModelOperation`]; one that builds a tool says how it meets the solid
 //! it is for with a [`Combine`], and how far it goes with an [`Extent`].
+//!
+//! The other targets of a part: its sketches ([`sketch`]) and 3-D sketches
+//! ([`sketch3d`]), its datums ([`datums`]), its parameters and properties
+//! ([`parameters`]), the parts placed in it with their solids and bill of
+//! materials ([`placed`]); and what every operation picks and lays out
+//! alike: any element of the part ([`selection`]), an element of a placed
+//! part with its frame ([`mate_entity`]), instances in a row ([`spacing`]).
 //!
 //! # Topological naming
 //!

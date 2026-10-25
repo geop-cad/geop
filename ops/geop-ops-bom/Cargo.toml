@@ -13,7 +13,7 @@ serde.workspace = true
 serde_json.workspace = true
 
 [dev-dependencies]
-geop-ops-assembly = { workspace = true, features = ["examples"] }
+geop-ops-assembly = { workspace = true, features = ["testing", "examples"] }
 geop-ops-model = { workspace = true, features = ["testing"] }
 geop-lib-sweep = { workspace = true, features = ["testing"] }
 # The example assemblies weighed, the operations they are written in, and

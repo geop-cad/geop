@@ -2,11 +2,21 @@
 
 > Brief overview only — full documentation is coming later.
 
-A part's topology: the one `NamedModel` its steps build, revised by each in
+The vocabulary every operation shares, and the one `ops/` crate an
+operation depends on: every target a step of one operation reads of
+another, the references into it, and how it is drawn. The model itself: a
+part's topology, the one `NamedModel` its steps build, revised by each in
 turn — every vertex, edge, face and solid with a stable name, and the
 features the steps made — the kinds of element a step refers to in it, and
 what those are used as: points, lines, planes, circles, curves, bodies. A
-step that builds into the model is a `ModelOperation`.
+step that builds into the model is a `ModelOperation`. Then the part's
+other targets: its [datums](#datums-datums), its
+[parameters and properties](#parameters-and-properties-parameters), its
+[sketches](#sketches-sketch) and 3-D sketches (`sketch3d`), the parts
+placed in it with their solids and bill of materials (`placed`); and what
+every operation picks and lays out alike: any element of the part
+(`selection::Selected`), an element of a placed part with the frame it
+gives (`mate_entity::MateEntity`), instances in a row (`spacing::Spacing`).
 
 ## The model (`NamedModel`)
 

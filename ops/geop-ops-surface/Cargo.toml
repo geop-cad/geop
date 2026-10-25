@@ -38,6 +38,6 @@ geop-lib-sweep = { workspace = true, features = ["testing"] }
 geop-ops-reference-geometry.workspace = true
 geop-core-sketch.workspace = true
 geop-core-editor = { workspace = true, features = ["testing"] }
-geop-ops-sketch3d.workspace = true
+geop-ops-sketch3d = { workspace = true, features = ["testing"] }
 geop-ops-sketch.workspace = true
 geop-ops-boolean.workspace = true

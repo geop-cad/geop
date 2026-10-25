@@ -16,7 +16,7 @@ geop-lib-booleans.workspace = true
 serde.workspace = true
 
 [dev-dependencies]
-geop-ops-assembly = { workspace = true, features = ["testing"] }
+geop-ops-assembly = { workspace = true, features = ["testing", "examples"] }
 geop-ops-model = { workspace = true, features = ["testing"] }
 geop-core-sketch.workspace = true
 geop-ops-sketch.workspace = true

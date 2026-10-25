@@ -25,7 +25,7 @@ use geop_core_topology::{CoedgeGeometry, FaceId};
 use serde::{Deserialize, Serialize};
 
 /// What a mate holds by: the element `on`, of the part itself or of a part
-/// placed in it, however deep (see [`geop_core_program::instance`]) — and,
+/// placed in it, however deep (see [`geop_core_program::placed`]) — and,
 /// for a joint's frame, the element of the same part the frame sits at: a
 /// corner or a side of a face, an end of an edge (see
 /// [`MateEntity::frame`]). Saved as `{"on": {"face": {"target":

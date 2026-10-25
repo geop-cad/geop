@@ -42,7 +42,7 @@ pub struct PlacedSolid<'a> {
 
 impl PlacedSolid<'_> {
     /// The thickness of the sheet it is bent from (mm), for a sheet-metal
-    /// body (see [`SolidNote::thickness`]).
+    /// body (see [`crate::SolidNote::thickness`]).
     pub fn thickness(&self) -> Option<f64> {
         let own = self.model.name_of(self.solid)?;
         notes_of(&self.reader)?.get(own)?.thickness
@@ -89,7 +89,7 @@ impl Shapes {
 }
 
 /// The solids of the part `reader` reads itself — not of the parts placed in
-/// it, and none only drawn (see [`SolidNote::drawn_only`]) — the oldest
+/// it, and none only drawn (see [`crate::SolidNote::drawn_only`]) — the oldest
 /// first, each named behind `prefix` and placed at `pose`: as the part
 /// placed there at the path `instance` has them.
 pub fn own_solids_at<'a>(

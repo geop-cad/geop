@@ -1,5 +1,5 @@
 //! What a part says of itself besides its shape: the parameters its design
-//! is given by ([`parameters`]) — numbers, and the tables a part family
+//! is given by ([`definition`]) — numbers, and the tables a part family
 //! looks its size up in — and its properties — title, designation,
 //! colour, material — as steps of its program producing targets
 //! ([`steps`]), set by a program placing it through the run's inputs
@@ -7,7 +7,7 @@
 //! renamed in a program ([`program`]); where the parts of its instances are
 //! placed by it ([`instance`](mod@instance)); and the files a field picks
 //! from ([`files`]); the parameters panel of an editor and the colour a
-//! part is drawn in ([`panel`]), which [`register`] offers.
+//! part is drawn in ([`panel`]), which [`crate::register`] offers.
 
 pub mod definition;
 pub mod files;
