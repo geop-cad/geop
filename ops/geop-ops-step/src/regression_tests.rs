@@ -5,15 +5,22 @@
 use geop_core_math::{geop_error::GeopResult, primitives::FrameAxis};
 use geop_core_program::{operation_registry::OperationRegistry, program::Program};
 use geop_lib_fixtures::{Primitive, PrimitiveArgs};
-use geop_ops_model::datums::origin_axis;
+use geop_ops_extrude_revolve::{Extents, ExtrudeArgs, Output};
+use geop_ops_model::datums::{origin_axis, origin_plane};
+use geop_ops_model::sketch::{
+    Sketch, SketchPlane,
+    figures::{on_origin, polygon},
+    whole_sketch,
+};
 use geop_ops_model::spacing::Spacing;
 use geop_ops_model::{
     Combine, NamedModel, Namer,
     testing::{Built, assert_valid},
 };
 use geop_ops_pattern::{
-    Direction, LinearPattern, LinearPatternArgs, Mirror, PatternDirection, Seeds, body,
+    Direction, LinearPattern, LinearPatternArgs, Mirror, MirrorArgs, PatternDirection, Seeds, body,
 };
+use geop_ops_sketch::AddSketchArgs;
 
 use crate::{add_bodies, read_step, write_step};
 
@@ -86,6 +93,61 @@ fn pattern_of_four_overlapping_blocks_joined_round_trips() {
                 spacing: Spacing::step(0.6),
             },
             second: None,
+        },
+    );
+    let part = program.build_model(registry).unwrap();
+    round_trip(&part);
+}
+
+/// An L bracket (the Onshape part tutorial): an L profile sketched on the
+/// X plane and extruded 20, a slot cut into the upright's outer face, and
+/// the half mirrored across that face and joined into the whole bracket —
+/// exported as STEP and imported again.
+///
+/// The bracket builds valid. Read back from STEP, it fails `assert_valid`
+/// with "curve_curve_crossings: exhausted max_nodes=5000 with 2029 pairs
+/// pending; the result would be incomplete", naming no entity. Without the
+/// slot the mirrored L round-trips cleanly; so does a plain block notched
+/// the same way and mirrored across the notched face.
+#[test]
+#[ignore = "bug: a mirrored L bracket with a slot across the mirror face round-trips through STEP into a body validation cannot check (curve_curve_crossings exhausted, no entity named); without the slot it round-trips cleanly"]
+fn mirrored_l_bracket_with_a_slot_round_trips() {
+    let mut program = Program::new();
+    let mut profile = Sketch::new();
+    polygon(
+        &mut profile,
+        &[
+            [0.0, 0.0],
+            [60.0, 0.0],
+            [60.0, 8.0],
+            [8.0, 8.0],
+            [8.0, 50.0],
+            [0.0, 50.0],
+        ],
+    );
+    program.push(
+        "profile",
+        AddSketchArgs::on(on_origin(FrameAxis::X), profile),
+    );
+    program.push(
+        "half",
+        ExtrudeArgs {
+            sketch: whole_sketch("profile"),
+            extent: Extents::blind(20.0),
+            output: Output::Solid(Combine::NewBody),
+        },
+    );
+    // A slot 3 deep into the upright's outer face `y = 0`, 10 along `x`
+    // and 20 up `z`.
+    program.push(
+        "slot",
+        PrimitiveArgs::block([2.0, -3.0, 20.0], [12.0, 3.0, 40.0]).cut("extrude(half)"),
+    );
+    program.push(
+        "whole",
+        MirrorArgs {
+            seeds: Seeds::bodies(vec![body("block(slot)")], Combine::join("block(slot)")),
+            plane: Some(SketchPlane::Datum(origin_plane(FrameAxis::Y))),
         },
     );
     let part = program.build_model(registry).unwrap();
