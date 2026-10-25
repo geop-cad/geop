@@ -114,11 +114,12 @@ fn check_ray_direction_consistency(
                     point,
                     direction,
                     ray_length,
+                    None,
                     params.max_nodes,
                     params.min_subdivision_size,
                     seed,
                 ) {
-                    Ok(Ok(classification)) => classifications.push(classification),
+                    Ok(Ok(ray)) => classifications.push(ray.classification()),
                     // Degenerate direction (grazed a vertex/edge, or an
                     // ambiguous trim hit) — no claim to compare, skip.
                     Ok(Err(_)) => {}

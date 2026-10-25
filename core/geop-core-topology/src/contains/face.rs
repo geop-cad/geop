@@ -57,6 +57,17 @@ pub fn face_contains(
     seed: u64,
 ) -> GeopResult<PointClassification> {
     let face = &model.faces[&face_id];
+    // A hole that is a bare vertex (another body touching the face at a
+    // point) has no pcurve for the loops to find it by: it is a point of
+    // the boundary all the same, and a query that could be it is on it.
+    for boundary in face.boundaries() {
+        if let BoundaryType::Vertex(vertex_id) = boundary {
+            let at = face.surface.evaluate(u, v)?;
+            if at.could_be_equal(&model.get_vertex(vertex_id)?.point) {
+                return Ok(PointClassification::OnVertex);
+            }
+        }
+    }
     let coedges: Vec<CoedgeId> = model.iterate_face_coedges(face_id).collect();
     loops_contain(
         model,

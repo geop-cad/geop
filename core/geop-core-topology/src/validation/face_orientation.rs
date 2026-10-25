@@ -1,7 +1,6 @@
 use geop_core_math::{
-    geop_error::GeopError,
+    geop_error::{GeopError, GeopResult, WithContext},
     scalars::Scalar,
-    solvers::probe::{Probe, halve},
     vector::Vector3,
 };
 
@@ -9,26 +8,18 @@ use crate::{
     FaceId, Model, ShellId, SolidId,
     boundary::BoundaryType,
     contains::{
-        face::face_interior_point,
-        shell::{Classified, PointClassification, solid_contains},
+        face::face_interior_point_where,
+        shell::{Beside, on_solid_boundary_besides, solid_contains_beside},
     },
     uv_loop::loop_signed_area,
     validation::ValidationParameters,
 };
 
-/// Fixed seed for the ray casting behind both checks. `shell_contains` and
-/// `face_interior_point` retry until they find a ray grazing nothing, so
+/// Fixed seed for the ray casting behind both checks. `solid_contains_beside`
+/// and `face_interior_point` retry until they find a ray grazing nothing, so
 /// their answers are seed-independent; a constant keeps validation
 /// reproducible run to run.
 const SEED: u64 = 0x0F1E_0D1E_0000_0001;
-
-/// How many times [`check_normals_point_outward`] may halve its probe
-/// distance. Bounds effort only: every halving is more local than the last,
-/// so the smallest that resolves is the answer. Twelve takes the probe to
-/// about a four-thousandth of the shell's own extent, well below any feature
-/// it is asked about. Twelve takes the probe to about a four-thousandth of the
-/// shell's own extent, well below any feature it is asked about.
-const MAX_HALVINGS: usize = 12;
 
 /// Checks that every face's outer boundary runs counter-clockwise in
 /// `(u, v)` and every hole runs clockwise.
@@ -131,13 +122,8 @@ fn traverses_each_edge_twice(model: &Model, anchor: crate::CoedgeId) -> bool {
 /// the material is on gets the wrong answer, which for a boolean means the
 /// face is kept when it should be dropped, or kept facing into the result.
 ///
-/// Tested by probing just off the surface at an interior point: a step
-/// *against* the normal must land inside the shell, and a step *along* it
-/// outside. The probe distance is a free choice — any distance small enough
-/// to stay within the material works — so it starts from the shell's own
-/// extent and halves until the two probes disagree decisively, exactly as
-/// [`face_interior_point`] halves its way inward. A face too thin to
-/// resolve either way is skipped rather than guessed at.
+/// Decided at an interior point of the face, by which side of the face the
+/// solid is on there (see [`normal_points_outward`]).
 pub fn check_normals_point_outward(
     params: &ValidationParameters,
     errors: &mut Vec<GeopError>,
@@ -151,12 +137,26 @@ pub fn check_normals_point_outward(
             continue;
         };
         for &face_id in &shell.faces {
-            if let Some(Outward::No { point, normal }) =
-                normal_points_outward(params, model, solid_id, shell_id, face_id)
-            {
-                errors.push(GeopError::new(format!(
-                    "face {face_id}'s normal points into solid {solid_id} (from its shell {shell_id}) rather than out of it: at its interior point {point:?} the normal is {normal:?}, and the closest probe that resolved put the solid on the normal's side"
-                )));
+            match normal_points_outward(params, model, solid_id, shell_id, face_id) {
+                Ok(Some(Outward::No(inward))) => {
+                    let Inward {
+                        point,
+                        uv,
+                        derivatives,
+                        normal,
+                        ray,
+                    } = *inward;
+                    errors.push(GeopError::new(format!(
+                        "face {face_id}'s normal points into solid {solid_id} (from its shell {shell_id}) rather than out of it: at its interior point {point:?}, (u, v) = {uv:?} where (S_u, S_v) = {derivatives:?}, the normal is {normal:?}, and the solid is on the normal's side of the face there: the ray along {:?} from it crosses {} face(s) past it, {:?}",
+                        ray.direction,
+                        ray.crossings.len(),
+                        ray.crossings
+                    )));
+                }
+                Ok(_) => {}
+                Err(e) => errors.push(e.with_context(format!(
+                    "face {face_id} of shell {shell_id}, deciding which side of it solid {solid_id} is on"
+                ))),
             }
         }
     }
@@ -167,175 +167,98 @@ pub fn check_normals_point_outward(
 #[derive(Clone, Debug)]
 pub enum Outward {
     Yes,
-    /// It points in: at `point`, inside the face, the normal is `normal`.
-    No {
-        point: Vector3,
-        normal: Vector3,
-    },
+    /// It points in: at `point`, inside the face, the normal is `normal`,
+    /// and `ray`, leaving the face to that side, found the solid.
+    No(Box<Inward>),
+}
+
+/// Where and how a normal was found pointing in (see [`Outward::No`]).
+#[derive(Clone, Debug)]
+pub struct Inward {
+    pub point: Vector3,
+    pub uv: (Scalar, Scalar),
+    /// `(S_u, S_v)` there: the parametrization the normal comes from.
+    pub derivatives: (Vector3, Vector3),
+    pub normal: Vector3,
+    pub ray: Beside,
 }
 
 /// Whether the normal of face `face_id` of shell `shell_id` points out of
-/// the solid `solid_id` — `None` where that cannot be told: a face without
-/// an interior point, or too thin for any probe to resolve.
+/// the solid `solid_id` — `None` for a face without an interior point, which
+/// `check_faces_have_interior` reports, or without one clear of the rest of
+/// the solid's boundary.
 ///
-/// Tested by probing just off the surface at an interior point: a step
-/// *against* the normal must land inside the solid, and a step *along* it
-/// outside. The probe distance is a free choice — any distance small enough
-/// to stay within the material works — so it starts from the shell's own
-/// extent and halves until the two probes disagree decisively, exactly as
-/// [`face_interior_point`] halves its way inward.
+/// Decided at an interior point of the face: the normal points out exactly
+/// when the solid is not on its side of the face there
+/// ([`solid_contains_beside`]). That is a local fact, the limit as the
+/// distance off the face goes to zero, and it is decided by a ray leaving
+/// the face, not by a point some distance off it: on a non-convex solid a
+/// point any fixed distance off the face may lie in another part of it.
+///
+/// The interior point is a free choice, and one on the solid's boundary
+/// elsewhere too is a bad one: a ray from the pole of an inscribed sphere,
+/// lying in the cube's face, passes through that vertex at its start. The
+/// first point offered that is on nothing else is taken
+/// ([`on_solid_boundary_besides`]).
 pub fn normal_points_outward(
     params: &ValidationParameters,
     model: &Model,
     solid_id: SolidId,
     shell_id: ShellId,
     face_id: FaceId,
-) -> Option<Outward> {
-    let face = model.faces.get(&face_id)?;
-    // A face without an interior point is reported by
-    // `check_faces_have_interior`; there is nothing to probe from.
-    let (u, v) = face_interior_point(
+) -> GeopResult<Option<Outward>> {
+    let Some(face) = model.faces.get(&face_id) else {
+        return Ok(None);
+    };
+    let clear = |u: Scalar, v: Scalar| -> GeopResult<bool> {
+        Ok(!on_solid_boundary_besides(
+            model,
+            solid_id,
+            face_id,
+            &face.surface.evaluate(u, v)?,
+            params.max_nodes,
+            params.min_subdivision_size,
+            SEED,
+        )?)
+    };
+    let Ok(Some((u, v))) = face_interior_point_where(
         model,
         face_id,
         params.max_nodes,
         params.min_subdivision_size,
         SEED,
+        clear,
+    ) else {
+        return Ok(None);
+    };
+    let (point, normal) = (face.surface.evaluate(u, v)?, face.surface.normal(u, v)?);
+    let beside = solid_contains_beside(
+        model,
+        solid_id,
+        shell_id,
+        face_id,
+        point,
+        normal,
+        params.max_nodes,
+        params.min_subdivision_size,
+        SEED,
     )
-    .ok()?;
-    let (Ok(point), Ok(normal)) = (face.surface.evaluate(u, v), face.surface.normal(u, v)) else {
-        return None;
-    };
-
-    // Probe both sides, halving all the way down and keeping the *last*
-    // decisive answer rather than the first.
-    //
-    // Which side of a face is solid is a local fact — the limit as the
-    // probe distance goes to zero — and a long probe answers a different
-    // question. On a non-convex solid it reaches right past the local
-    // material into some other part: probing outward from the figure-8's
-    // neck wall by half the model's extent lands inside the *opposite
-    // lobe*, which reads as an inverted normal on a face that is perfectly
-    // correct. Every halving that still resolves is more local than the
-    // one before, so the smallest one that resolves is the answer.
-    // Outward ends the probes; inward is only remembered, for a smaller
-    // probe to overrule.
-    let mut found_inward = false;
-    let outward = halve::<(), GeopError>(shell_extent(model, shell_id), MAX_HALVINGS, |&step| {
-        let outward = point.add(&normal.prod_scalar(step));
-        let inward = point.sub(&normal.prod_scalar(step));
-        if let (Ok(out_class), Ok(in_class)) = (
-            solid_contains(
-                model,
-                solid_id,
-                outward,
-                params.max_nodes,
-                params.min_subdivision_size,
-                SEED,
-                &mut Classified::default(),
-            ),
-            solid_contains(
-                model,
-                solid_id,
-                inward,
-                params.max_nodes,
-                params.min_subdivision_size,
-                SEED,
-                &mut Classified::default(),
-            ),
-        ) {
-            let resolved = match (out_class, in_class) {
-                (PointClassification::Outside, PointClassification::Inside) => Some(true),
-                (PointClassification::Inside, PointClassification::Outside) => Some(false),
-                // Both probes on the same side, or on a boundary: this
-                // distance resolves nothing. Halve and retry.
-                _ => None,
-            };
-            // Inward only if *every* probe that resolved says so. Any
-            // single probe finding solid on the far side is proof the face
-            // is oriented correctly, and no probe distance is trustworthy
-            // on its own: a long one reaches past the local material into
-            // another part of a non-convex solid (the figure-8's neck sees
-            // the opposite lobe), while one near `min_subdivision_size`
-            // cannot tell "just off the face" from "on it". Requiring
-            // unanimity means a false positive needs *every* scale to agree
-            // wrongly, and keeps the answer one-sided: it never calls a
-            // face inward it has any evidence for.
-            match resolved {
-                Some(true) => return Ok(Probe::Found(())),
-                Some(false) => found_inward = true,
-                None => {}
-            }
-        }
-        // Stop once the probe would be closer to the surface than the
-        // containment search can resolve. Below `min_subdivision_size` the
-        // query cannot tell "just off the face" from "on it", so a verdict
-        // there is noise — and since the last decisive verdict wins,
-        // letting the loop run past this floor would hand the answer to
-        // exactly the least reliable probe.
-        Ok(match step.div(Scalar::TWO) {
-            Ok(next) if next.definitely_greater(params.min_subdivision_size) => Probe::Next,
-            _ => Probe::Stop,
-        })
-    });
-    // Halving by two cannot fail, so neither can the probes.
-    if matches!(outward, Ok(Some(()))) {
-        Some(Outward::Yes)
+    .with_context(&|e: GeopError| {
+        e.with_context(format!(
+            "normal_points_outward(face={face_id}, at (u, v) = ({u:?}, {v:?}) of a surface over {:?} x {:?})",
+            face.surface.domain_u(),
+            face.surface.domain_v()
+        ))
+    })?;
+    Ok(Some(if beside.inside {
+        Outward::No(Box::new(Inward {
+            point,
+            uv: (u, v),
+            derivatives: face.surface.derivatives(u, v)?,
+            normal,
+            ray: beside,
+        }))
     } else {
-        found_inward.then_some(Outward::No { point, normal })
-    }
-}
-
-/// A length comparable to the shell's own size, as a starting probe
-/// distance: the largest coordinate extent of its faces' interior points and
-/// the model's vertices, or 1 if there is nothing to measure.
-fn shell_extent(model: &Model, shell_id: crate::ShellId) -> Scalar {
-    let mut lo = None;
-    let mut hi = None;
-    let Some(shell) = model.shells.get(&shell_id) else {
-        return Scalar::ONE;
-    };
-    for &face_id in &shell.faces {
-        for coedge_id in model.iterate_face_coedges(face_id) {
-            let Some(coedge) = model.coedges.get(&coedge_id) else {
-                continue;
-            };
-            let Ok(vertex) = model.coedge_start_vertex(coedge_id) else {
-                let _ = coedge;
-                continue;
-            };
-            for c in 0..3 {
-                lo = Some(match lo {
-                    None => vertex.point[c],
-                    Some(l) => {
-                        if vertex.point[c].definitely_less(l) {
-                            vertex.point[c]
-                        } else {
-                            l
-                        }
-                    }
-                });
-                hi = Some(match hi {
-                    None => vertex.point[c],
-                    Some(h) => {
-                        if vertex.point[c].definitely_greater(h) {
-                            vertex.point[c]
-                        } else {
-                            h
-                        }
-                    }
-                });
-            }
-        }
-    }
-    match (lo, hi) {
-        (Some(l), Some(h)) => {
-            let extent = h.sub(l);
-            if extent.definitely_greater(Scalar::ZERO) {
-                extent
-            } else {
-                Scalar::ONE
-            }
-        }
-        _ => Scalar::ONE,
-    }
+        Outward::Yes
+    }))
 }
