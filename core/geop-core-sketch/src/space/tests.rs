@@ -1,6 +1,6 @@
 //! Solving 3-D sketches and building their curves.
 
-use geop_core_geometry::nurb_curve::NurbCurve;
+use geop_core_geometry::nurb_curve::{NurbCurve, NurbCurve3D};
 use geop_core_math::{
     scalars::Scalar,
     vector::{Vector3, Vector4},
@@ -270,5 +270,148 @@ fn a_line_turned_to_a_new_direction_is_solved_onto_it() {
     assert!(
         (at[0].to_f64() - 1.0).abs() < 1e-9 && (at[1].to_f64() - 1.0).abs() < 1e-9,
         "{at:?}"
+    );
+}
+
+/// Two splines drawn through one point, and a line from the first's start:
+/// the wire cuts both splines at the shared point, into edges that end
+/// exactly there, and leaves the line whole. A spline is split at the knot
+/// of the shared point; an arc with a line from its middle point is rebuilt
+/// as two arcs on its circle.
+#[test]
+fn wire_edges_are_cut_where_curves_share_a_point() {
+    let mut s = Sketch3d::new();
+    let x: Vec<_> = [0.0, 1.0, 2.0, 3.0]
+        .map(|t| s.add_point(v(t, 1.0, 0.0)))
+        .to_vec();
+    let cx = s.add_spline(x.clone());
+    let below = s.add_point(v(1.0, 0.0, 0.0));
+    let above = s.add_point(v(1.0, 2.0, 0.0));
+    let cy = s.add_spline(vec![below, x[1], above]);
+    let up = s.add_point(v(0.0, 1.0, 1.0));
+    let line = s.add_line(x[0], up);
+    let edges = s.wire_edges().unwrap();
+    let edge = |curve, start, end, cut| WireEdge {
+        curve,
+        start,
+        end,
+        cut,
+    };
+    assert_eq!(
+        edges,
+        vec![
+            edge(cx, x[0], x[1], true),
+            edge(cx, x[1], x[3], true),
+            edge(cy, below, x[1], true),
+            edge(cy, x[1], above, true),
+            edge(line, x[0], up, false),
+        ]
+    );
+    let geometry = s.enclose().unwrap();
+    s.check_wire(&geometry).unwrap();
+    for curve in [cx, cy] {
+        let pieces = s.wire_edge_nurbs(curve, &geometry).unwrap();
+        assert_eq!(pieces.len(), 2);
+        let shared = v(1.0, 1.0, 0.0);
+        let at = |piece: &NurbCurve3D, t: Scalar| piece.evaluate(t).unwrap();
+        assert!(at(&pieces[0], Scalar::ONE).could_be_equal(&shared));
+        assert!(at(&pieces[1], Scalar::ZERO).could_be_equal(&shared));
+        // The pieces are the spline: they begin and end where it does, and
+        // the spline's point where it is split is the shared point.
+        let whole = &s.curve_nurbs(curve, &geometry).unwrap()[0];
+        assert!(at(&pieces[0], Scalar::ZERO).could_be_equal(&at(whole, Scalar::ZERO)));
+        assert!(at(&pieces[1], Scalar::ONE).could_be_equal(&at(whole, Scalar::ONE)));
+        assert!(at(whole, whole.knot_vector[4]).could_be_equal(&shared));
+    }
+    assert_eq!(s.wire_edge_nurbs(line, &geometry).unwrap().len(), 1);
+
+    let mut s = Sketch3d::new();
+    let start = s.add_point(v(-1.0, 0.0, 0.0));
+    let middle = s.add_point(v(0.0, 1.0, 0.0));
+    let end = s.add_point(v(1.0, 0.0, 0.0));
+    let arc = s.add_arc(start, middle, end);
+    let up = s.add_point(v(0.0, 1.0, 2.0));
+    s.add_line(middle, up);
+    let geometry = s.enclose().unwrap();
+    let halves = s.wire_edge_nurbs(arc, &geometry).unwrap();
+    assert_eq!(halves.len(), 2);
+    assert!(
+        halves[0]
+            .evaluate(Scalar::ONE)
+            .unwrap()
+            .could_be_equal(&v(0.0, 1.0, 0.0))
+    );
+    assert!(
+        halves[1]
+            .evaluate(Scalar::ZERO)
+            .unwrap()
+            .could_be_equal(&v(0.0, 1.0, 0.0))
+    );
+    for half in &halves {
+        let mid = half.evaluate(Scalar::from_f64(0.5)).unwrap();
+        assert!(mid.norm().could_be_equal(Scalar::ONE), "{mid:?}");
+        assert!(mid[1].definitely_greater(Scalar::ZERO), "{mid:?}");
+    }
+}
+
+/// Curves meeting where neither has a point, two points at one place that
+/// are not one, and curves running along each other are refused by name.
+#[test]
+fn check_wire_refuses_undrawn_meetings() {
+    let mut s = Sketch3d::new();
+    let a = s.add_point(v(0.0, 0.0, 0.0));
+    let b = s.add_point(v(2.0, 2.0, 0.0));
+    let c = s.add_point(v(0.0, 2.0, 0.0));
+    let d = s.add_point(v(2.0, 0.0, 0.0));
+    let rising = s.add_line(a, b);
+    let falling = s.add_line(c, d);
+    let geometry = s.enclose().unwrap();
+    let message = s
+        .check_wire(&geometry)
+        .unwrap_err()
+        .root_message()
+        .to_string();
+    assert!(
+        message.contains(&format!("curves {rising} and {falling} cross at"))
+            && message.contains("neither has a point"),
+        "{message}"
+    );
+
+    let mut s = Sketch3d::new();
+    let a = s.add_point(v(0.0, 0.0, 0.0));
+    let b = s.add_point(v(2.0, 0.0, 0.0));
+    s.add_line(a, b);
+    let c = s.add_point(v(1.0, 0.0, 0.0));
+    let d = s.add_point(v(1.0, 2.0, 0.0));
+    s.add_line(c, d);
+    let e = s.add_point(v(1.0, 0.0, 0.0));
+    s.add_line(c, e);
+    let geometry = s.enclose().unwrap();
+    let message = s
+        .check_wire(&geometry)
+        .unwrap_err()
+        .root_message()
+        .to_string();
+    assert!(
+        message.contains(&format!("points {c} and {e} are both at")),
+        "{message}"
+    );
+
+    let mut s = Sketch3d::new();
+    let a = s.add_point(v(0.0, 0.0, 0.0));
+    let b = s.add_point(v(2.0, 0.0, 0.0));
+    let whole = s.add_line(a, b);
+    let c = s.add_point(v(1.0, 0.0, 0.0));
+    let d = s.add_point(v(3.0, 0.0, 0.0));
+    let along = s.add_line(c, d);
+    let geometry = s.enclose().unwrap();
+    let message = s
+        .check_wire(&geometry)
+        .unwrap_err()
+        .root_message()
+        .to_string();
+    assert!(
+        message.contains(&format!("curves {whole} and {along} run along each other")),
+        "{message}"
     );
 }
