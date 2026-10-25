@@ -540,7 +540,6 @@ mod tests {
             "{:?}",
             integral.value[0]
         );
-        // `ScalInFPA64` is fixed point, at 2^-32, rounding every product.
         assert!(
             integral.value[0].width().to_f64() < 1e-6,
             "{:?}",

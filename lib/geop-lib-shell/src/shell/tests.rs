@@ -220,9 +220,6 @@ fn walls_too_thick_are_refused() {
     assert!(error.root_message().contains("too thick"), "{error:?}");
 }
 
-/// Only in `ScalInF64`: in `ScalInFPA64`'s 32 fractional bits, the normals
-/// a curved face's vertices are moved along come out wide enough that a
-/// moved vertex is wider than validation accepts.
 #[test]
 fn a_sphere_closed_all_round() {
     type S = ScalInF64;

@@ -62,12 +62,10 @@ macro_rules! interval_bound_methods {
 }
 
 pub mod scal_in_f64;
-pub mod scal_in_fpa64;
 
 use core::fmt::Display;
 
 pub use scal_in_f64::ScalInF64;
-pub use scal_in_fpa64::ScalInFPA64;
 
 use crate::geop_error::GeopResult;
 
@@ -454,7 +452,7 @@ pub mod as_f64 {
 
 // ── Test helper trait ─────────────────────────────────────────────────────────
 
-/// Invoke a generic test function once for each concrete scalar
+/// Invoke a generic test function once for the concrete scalar
 /// implementation.  Inside a `#[test]` function, write:
 ///
 /// ```rust,ignore
@@ -465,7 +463,6 @@ pub mod as_f64 {
 macro_rules! for_all_scalars {
     ($fn:ident) => {{
         $fn::<$crate::scalars::ScalInF64>();
-        $fn::<$crate::scalars::ScalInFPA64>();
     }};
 }
 
@@ -481,7 +478,6 @@ mod tests {
             let a = (degrees as f64).to_radians();
             let angle = f(a.sin()).atan2(f(a.cos()));
             assert!(angle.could_be_equal(f(a)), "{degrees}: {angle:?}");
-            // Fixed point resolves 2^-32, plain intervals far finer.
             assert!(angle.width().to_f64() < 1e-8, "{degrees}: {angle:?}");
         }
         // pi itself, enclosed.

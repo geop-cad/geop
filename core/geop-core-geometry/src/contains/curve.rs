@@ -340,9 +340,7 @@ mod tests {
 
     /// `min_subdivision_size` bounds bisection, not accuracy: a point off the
     /// arc by far less than it is still rejected, because clipping keeps
-    /// shrinking the segment until it proves the miss. (The offset stays well
-    /// above `ScalInFPA64`'s 2^-32 resolution, below which a report is the
-    /// honest answer.)
+    /// shrinking the segment until it proves the miss.
     fn check_misses_points_closer_than_min_subdivision_size<S: Scalar>() {
         let f = S::from_f64;
         let r = 1. + 1e-7;

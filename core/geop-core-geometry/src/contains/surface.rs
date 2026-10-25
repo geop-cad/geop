@@ -368,9 +368,7 @@ mod tests {
 
     /// `min_subdivision_size` bounds bisection, not accuracy: a point off the
     /// sphere by far less than it is still rejected, because clipping keeps
-    /// shrinking the patch until it proves the miss. `ScalInF64` only: on
-    /// this rational patch `ScalInFPA64`'s fixed-point arithmetic carries
-    /// ~1e-7 of width, below which a report is its honest answer.
+    /// shrinking the patch until it proves the miss.
     #[test]
     fn misses_points_closer_than_min_subdivision_size() {
         let r = (1. + 1e-10) / 3f64.sqrt();

@@ -217,8 +217,6 @@ mod tests {
         let (values, vectors) = symmetric_eigen3(&a).unwrap();
         for (value, want) in values.iter().zip(d) {
             assert!(value.could_be_equal(S::from_f64(want)), "{values:?}");
-            // `ScalInFPA64`'s square root of a residual at its resolution,
-            // 2^-32, is 2^-16: the widest of the two scalars.
             assert!(value.width().to_f64() < 1e-3, "{values:?}");
         }
         let image = a.mul_vec(&vectors[0]);
