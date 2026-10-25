@@ -168,7 +168,9 @@ impl PartOperation for Primitive {
     ) -> EditForm<'a, PrimitiveArgs> {
         let mut f = EditForm::<PrimitiveArgs>::default();
         args.combine
-            .fields(&mut f, &context.before, |args, combine| args.combine = combine);
+            .fields(&mut f, &context.before, |args, combine| {
+                args.combine = combine
+            });
         f
     }
 }

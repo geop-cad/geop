@@ -48,7 +48,10 @@ fn body_with(body: PrimitiveArgs, features: Vec<(&str, BooleanOp, Shape)>) -> Pr
 
 /// A box of 2 x 2 x 1 on the ground: the solid `block(body)`.
 pub fn block() -> Program {
-    body_with(PrimitiveArgs::block([0.0, 0.0, 0.0], [2.0, 2.0, 1.0]), vec![])
+    body_with(
+        PrimitiveArgs::block([0.0, 0.0, 0.0], [2.0, 2.0, 1.0]),
+        vec![],
+    )
 }
 
 /// A cylinder of radius 1 and height 1.5 around the z axis: the solid
@@ -66,7 +69,11 @@ pub fn sphere() -> Program {
 pub fn block_corner_cut_off() -> Program {
     body_with(
         PrimitiveArgs::block([0.0, 0.0, 0.0], [2.0, 2.0, 1.0]),
-        vec![("corner", BooleanOp::Difference, PrimitiveArgs::prism(&[[1.5, 2.5], [2.5, 1.5], [2.5, 2.5]], 0.0, 1.0).shape)],
+        vec![(
+            "corner",
+            BooleanOp::Difference,
+            PrimitiveArgs::prism(&[[1.5, 2.5], [2.5, 1.5], [2.5, 2.5]], 0.0, 1.0).shape,
+        )],
     )
 }
 
@@ -74,7 +81,11 @@ pub fn block_corner_cut_off() -> Program {
 pub fn block_pocketed() -> Program {
     body_with(
         PrimitiveArgs::block([0.0, 0.0, 0.0], [2.0, 2.0, 1.0]),
-        vec![("pocket", BooleanOp::Difference, PrimitiveArgs::block([0.5, 0.5, 0.6], [1.5, 1.5, 1.0]).shape)],
+        vec![(
+            "pocket",
+            BooleanOp::Difference,
+            PrimitiveArgs::block([0.5, 0.5, 0.6], [1.5, 1.5, 1.0]).shape,
+        )],
     )
 }
 
@@ -82,7 +93,11 @@ pub fn block_pocketed() -> Program {
 pub fn block_stepped() -> Program {
     body_with(
         PrimitiveArgs::block([0.0, 0.0, 0.0], [2.0, 2.0, 1.0]),
-        vec![("step", BooleanOp::Difference, PrimitiveArgs::block([-0.5, 1.5, 0.0], [1.0, 2.5, 0.5]).shape)],
+        vec![(
+            "step",
+            BooleanOp::Difference,
+            PrimitiveArgs::block([-0.5, 1.5, 0.0], [1.0, 2.5, 0.5]).shape,
+        )],
     )
 }
 
@@ -90,7 +105,11 @@ pub fn block_stepped() -> Program {
 pub fn block_drilled() -> Program {
     body_with(
         PrimitiveArgs::block([0.0, 0.0, 0.0], [2.0, 2.0, 1.0]),
-        vec![("hole", BooleanOp::Difference, PrimitiveArgs::cylinder_z([1.0, 1.0, 0.0], 0.4, 1.0).shape)],
+        vec![(
+            "hole",
+            BooleanOp::Difference,
+            PrimitiveArgs::cylinder_z([1.0, 1.0, 0.0], 0.4, 1.0).shape,
+        )],
     )
 }
 
@@ -98,7 +117,11 @@ pub fn block_drilled() -> Program {
 pub fn block_with_boss() -> Program {
     body_with(
         PrimitiveArgs::block([0.0, 0.0, 0.0], [2.0, 2.0, 1.0]),
-        vec![("boss", BooleanOp::Union, PrimitiveArgs::cylinder_z([1.0, 1.0, 1.0], 0.4, 0.5).shape)],
+        vec![(
+            "boss",
+            BooleanOp::Union,
+            PrimitiveArgs::cylinder_z([1.0, 1.0, 1.0], 0.4, 0.5).shape,
+        )],
     )
 }
 
@@ -106,7 +129,11 @@ pub fn block_with_boss() -> Program {
 pub fn cylinder_with_flat() -> Program {
     body_with(
         PrimitiveArgs::cylinder_z([0.0; 3], 1.0, 1.5),
-        vec![("flat", BooleanOp::Difference, PrimitiveArgs::block([0.6, -2.0, 0.0], [2.0, 2.0, 1.5]).shape)],
+        vec![(
+            "flat",
+            BooleanOp::Difference,
+            PrimitiveArgs::block([0.6, -2.0, 0.0], [2.0, 2.0, 1.5]).shape,
+        )],
     )
 }
 
@@ -116,7 +143,8 @@ pub fn cylinder_drilled() -> Program {
         PrimitiveArgs::cylinder_z([0.0; 3], 1.0, 1.5),
         vec![(
             "hole",
-            BooleanOp::Difference, PrimitiveArgs::cylinder_z([0.0; 3], 0.3, 1.5).shape,
+            BooleanOp::Difference,
+            PrimitiveArgs::cylinder_z([0.0; 3], 0.3, 1.5).shape,
         )],
     )
 }
@@ -125,7 +153,11 @@ pub fn cylinder_drilled() -> Program {
 pub fn cylinder_drilled_off_axis() -> Program {
     body_with(
         PrimitiveArgs::cylinder_z([0.0; 3], 1.0, 1.5),
-        vec![("hole", BooleanOp::Difference, PrimitiveArgs::cylinder_z([0.4, 0.0, 0.0], 0.2, 1.5).shape)],
+        vec![(
+            "hole",
+            BooleanOp::Difference,
+            PrimitiveArgs::cylinder_z([0.4, 0.0, 0.0], 0.2, 1.5).shape,
+        )],
     )
 }
 
@@ -133,7 +165,11 @@ pub fn cylinder_drilled_off_axis() -> Program {
 pub fn cylinder_pocketed() -> Program {
     body_with(
         PrimitiveArgs::cylinder_z([0.0; 3], 1.0, 1.5),
-        vec![("pocket", BooleanOp::Difference, PrimitiveArgs::cylinder_z([0.0, 0.0, 1.0], 0.5, 0.5).shape)],
+        vec![(
+            "pocket",
+            BooleanOp::Difference,
+            PrimitiveArgs::cylinder_z([0.0, 0.0, 1.0], 0.5, 0.5).shape,
+        )],
     )
 }
 
@@ -141,7 +177,11 @@ pub fn cylinder_pocketed() -> Program {
 pub fn cylinder_with_boss() -> Program {
     body_with(
         PrimitiveArgs::cylinder_z([0.0; 3], 1.0, 1.5),
-        vec![("boss", BooleanOp::Union, PrimitiveArgs::cylinder_z([0.0, 0.0, 1.5], 0.4, 0.5).shape)],
+        vec![(
+            "boss",
+            BooleanOp::Union,
+            PrimitiveArgs::cylinder_z([0.0, 0.0, 1.5], 0.4, 0.5).shape,
+        )],
     )
 }
 
@@ -149,7 +189,11 @@ pub fn cylinder_with_boss() -> Program {
 pub fn hemisphere() -> Program {
     body_with(
         PrimitiveArgs::sphere([0.0; 3], 1.0),
-        vec![("half", BooleanOp::Difference, PrimitiveArgs::block([-2.0, -2.0, -2.0], [2.0, 2.0, 0.0]).shape)],
+        vec![(
+            "half",
+            BooleanOp::Difference,
+            PrimitiveArgs::block([-2.0, -2.0, -2.0], [2.0, 2.0, 0.0]).shape,
+        )],
     )
 }
 
@@ -157,7 +201,11 @@ pub fn hemisphere() -> Program {
 pub fn sphere_drilled() -> Program {
     body_with(
         PrimitiveArgs::sphere([0.0; 3], 1.0),
-        vec![("hole", BooleanOp::Difference, PrimitiveArgs::cylinder_z([0.0, 0.0, -2.0], 0.3, 4.0).shape)],
+        vec![(
+            "hole",
+            BooleanOp::Difference,
+            PrimitiveArgs::cylinder_z([0.0, 0.0, -2.0], 0.3, 4.0).shape,
+        )],
     )
 }
 
@@ -165,7 +213,11 @@ pub fn sphere_drilled() -> Program {
 pub fn sphere_with_side_cut_off() -> Program {
     body_with(
         PrimitiveArgs::sphere([0.0; 3], 1.0),
-        vec![("side", BooleanOp::Difference, PrimitiveArgs::block([0.5, -2.0, -2.0], [2.0, 2.0, 2.0]).shape)],
+        vec![(
+            "side",
+            BooleanOp::Difference,
+            PrimitiveArgs::block([0.5, -2.0, -2.0], [2.0, 2.0, 2.0]).shape,
+        )],
     )
 }
 
@@ -177,7 +229,8 @@ pub fn sphere_with_boss() -> Program {
         PrimitiveArgs::sphere([0.0; 3], 1.0),
         vec![(
             "boss",
-            BooleanOp::Union, PrimitiveArgs::cylinder_z([0.0; 3], 0.4, 1.5).shape,
+            BooleanOp::Union,
+            PrimitiveArgs::cylinder_z([0.0; 3], 0.4, 1.5).shape,
         )],
     )
 }
@@ -235,7 +288,10 @@ mod tests {
             let (_, solid) = one_solid(&program);
             let last = program.steps.last().unwrap();
             assert_eq!(last.operation, Primitive::KIND, "{name}");
-            assert!(solid.ends_with(&format!("({})", last.id)), "{name}: {solid}");
+            assert!(
+                solid.ends_with(&format!("({})", last.id)),
+                "{name}: {solid}"
+            );
         }
     }
 }

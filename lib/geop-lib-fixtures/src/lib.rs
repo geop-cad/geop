@@ -55,7 +55,10 @@ pub fn register(r: Registry) -> GeopResult<Registry> {
 /// leaves the solid `cylinder(hole)`.
 pub fn drilled_box() -> Program {
     let mut program = Program::new();
-    program.push("box", PrimitiveArgs::block([0.0, 0.0, 0.0], [2.0, 2.0, 1.0]));
+    program.push(
+        "box",
+        PrimitiveArgs::block([0.0, 0.0, 0.0], [2.0, 2.0, 1.0]),
+    );
     program.push(
         "hole",
         PrimitiveArgs::cylinder_z([1.0, 1.0, 0.5], 0.4, 1.0).combined(Combine::cut("block(box)")),
@@ -144,6 +147,29 @@ mod tests {
         }
     }
 
+    /// A block's faces are named as its sweep names them: `start` at the
+    /// bottom, `end` on top, `c0` to `c3` round the sides from the one at
+    /// `-y`.
+    #[test]
+    fn block_faces_are_named_by_side() {
+        use geop_ops_model::testing::face_towards;
+        let mut program = Program::new();
+        program.push("s", PrimitiveArgs::block([0.0, 0.0, 0.0], [2.0, 2.0, 1.0]));
+        let part = program.build_model(registry).unwrap();
+        let solid = part.solid_id("block(s)").unwrap();
+        for (normal, name) in [
+            ([0.0, 0.0, -1.0], "block(s,start)"),
+            ([0.0, 0.0, 1.0], "block(s,end)"),
+            ([0.0, -1.0, 0.0], "block(s,c0)"),
+            ([1.0, 0.0, 0.0], "block(s,c1)"),
+            ([0.0, 1.0, 0.0], "block(s,c2)"),
+            ([-1.0, 0.0, 0.0], "block(s,c3)"),
+        ] {
+            let face = face_towards(&part, solid, normal);
+            assert_eq!(part.name_of(face), Some(name), "{normal:?}");
+        }
+    }
+
     /// A given datum is in the part's datums under the step's name, with
     /// its kind and frame.
     #[test]
@@ -161,14 +187,20 @@ mod tests {
         let datums = read_datums(&part.current()).unwrap();
         let top = datums.get("top").unwrap();
         assert_eq!(top.kind, DatumKind::Plane);
-        assert_eq!(top.frame.w().to_array().map(|c| c.to_f64()), [0.0, 0.0, 1.0]);
+        assert_eq!(
+            top.frame.w().to_array().map(|c| c.to_f64()),
+            [0.0, 0.0, 1.0]
+        );
         let axle = datums.get("axle").unwrap();
         assert_eq!(axle.kind, DatumKind::Axis);
         assert_eq!(
             axle.frame.origin().to_array().map(|c| c.to_f64()),
             [1.0, 0.0, 0.0]
         );
-        assert_eq!(axle.frame.w().to_array().map(|c| c.to_f64()), [0.0, 1.0, 0.0]);
+        assert_eq!(
+            axle.frame.w().to_array().map(|c| c.to_f64()),
+            [0.0, 1.0, 0.0]
+        );
         assert!(model_of(&part).solid_names().is_empty());
         assert_round_trips(Rc::new(registry().unwrap()), None, &program);
     }

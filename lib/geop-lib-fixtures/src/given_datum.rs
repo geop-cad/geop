@@ -84,7 +84,8 @@ impl GivenDatumArgs {
 
     /// The datum it describes.
     fn datum(&self) -> GeopResult<Datum> {
-        let frame = CoordinateSystem::try_from_xz(point(self.origin), point(self.x), point(self.z))?;
+        let frame =
+            CoordinateSystem::try_from_xz(point(self.origin), point(self.x), point(self.z))?;
         Ok(Datum {
             kind: self.kind,
             frame,
