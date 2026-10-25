@@ -7,7 +7,8 @@ use geop_core_editor::{
     registry::Registry,
     testing::{dialog, editor_with, from_above},
 };
-use geop_ops_extrude_revolve::{examples::box_with_drill_hole, testing::args};
+use geop_core_program::testing::args;
+use geop_ops_extrude_revolve::examples::box_with_drill_hole;
 
 /// What these tests edit: the drilled box's sketches and extrusions, and
 /// shells.

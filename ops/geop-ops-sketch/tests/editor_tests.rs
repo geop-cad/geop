@@ -19,7 +19,7 @@ use geop_core_math::{
     scalars::{ScalInF64 as S, Scalar},
     vector::{Vector2, Vector3},
 };
-use geop_core_program::{numeric::NumericInput, program::Program};
+use geop_core_program::{numeric::NumericInput, program::Program, testing::args};
 use geop_core_sketch::{
     CurveId, PointId,
     geometry::Arc,
@@ -27,7 +27,11 @@ use geop_core_sketch::{
 };
 use geop_ops_parameters::{Parameter, Parameters, set_parameters};
 use geop_ops_sketch::{
-    AddSketchArgs, Constraint, CurveKind, Sketch, SketchPlane, editor::SketchSession, references,
+    AddSketchArgs, Constraint, CurveKind, Sketch, SketchPlane,
+    editor::SketchSession,
+    figures::on_face,
+    references,
+    references::{Projected, Source},
 };
 
 use geop_core_editor::{
@@ -39,12 +43,11 @@ use geop_core_editor::{
     },
 };
 use geop_ops_datums::origin_plane;
-use geop_ops_extrude_revolve::{
-    examples::box_with_drill_hole,
-    testing::{args, drilled_box, model_of, on_face},
+use geop_ops_extrude_revolve::{examples::box_with_drill_hole, testing::drilled_box};
+use geop_ops_model::{
+    element,
+    testing::{check_valid, model_of},
 };
-use geop_ops_model::{element, testing::check_valid};
-use geop_ops_sketch::references::{Projected, Source};
 use std::collections::BTreeMap;
 
 /// What a sketch is drawn among: the model's, the sketches', the datums',

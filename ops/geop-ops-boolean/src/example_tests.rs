@@ -10,10 +10,9 @@ use geop_core_program::{
     testing::{assert_incremental, assert_round_trips, edit_sequence},
 };
 use geop_core_topology::contains::shell::PointClassification;
-use geop_ops_extrude_revolve::testing::model_of;
 use geop_ops_model::{
     PartDescription,
-    testing::{check_valid, classify},
+    testing::{check_valid, classify, model_of},
 };
 
 use crate::{Split, examples::split_plate};

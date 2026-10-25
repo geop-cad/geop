@@ -9,11 +9,9 @@ use geop_core_editor::{
     testing::{built, click_at, dialog, editor_with, handled, pointer},
     view::drawn,
 };
-use geop_ops_extrude_revolve::{
-    examples::box_with_drill_hole,
-    testing::{args, model_of},
-};
-use geop_ops_model::testing::check_valid;
+use geop_core_program::testing::args;
+use geop_ops_extrude_revolve::examples::box_with_drill_hole;
+use geop_ops_model::testing::{check_valid, model_of};
 
 /// What these tests edit: the drilled box's sketches and extrusions, and
 /// fillets.

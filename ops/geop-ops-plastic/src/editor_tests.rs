@@ -10,7 +10,7 @@ use geop_core_editor::{
     registry::Registry,
     testing::{dialog, pointer},
 };
-use geop_ops_extrude_revolve::testing::args;
+use geop_core_program::testing::args;
 use geop_ops_model::element;
 
 /// What these tests edit: the enclosure's sketches, extrusions, shell and

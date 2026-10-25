@@ -16,13 +16,17 @@ use geop_core_program::{
 };
 use geop_core_sketch::PointId;
 use geop_ops_datums::{ORIGIN, component_name, datums};
-use geop_ops_extrude_revolve::{
-    Extents, ExtrudeArgs, LoftArgs, Output,
-    testing::{Built, n, on_origin, sketch},
+use geop_ops_extrude_revolve::{Extents, ExtrudeArgs, LoftArgs, Output};
+use geop_ops_model::{
+    NamedModel,
+    testing::{Built, assert_valid},
 };
-use geop_ops_model::{NamedModel, testing::assert_valid};
 use geop_ops_reference_geometry::{AddDatum, AddDatumArgs, Construction, Selected};
-use geop_ops_sketch::{Sketch, SketchPlane, whole_sketch};
+use geop_ops_sketch::{
+    AddSketchArgs, Sketch, SketchPlane,
+    figures::{n, on_origin},
+    whole_sketch,
+};
 
 /// The operations these tests' programs are written in.
 fn registry() -> GeopResult<OperationRegistry> {
@@ -86,7 +90,7 @@ fn walls() -> Program {
     let mut program = Program::new();
     program.push(
         "outline",
-        sketch(
+        AddSketchArgs::on(
             z_plane(),
             polygon(&[[0., 0.], [2., 0.], [2., 1.], [0., 1.]]),
         ),
@@ -167,7 +171,7 @@ fn lofted_faces_knit_into_a_solid() {
     let mut program = Program::new();
     program.push(
         "bottom",
-        sketch(
+        AddSketchArgs::on(
             z_plane(),
             polygon(&[[-1., -1.], [1., -1.], [1., 1.], [-1., 1.]]),
         ),
@@ -189,7 +193,7 @@ fn lofted_faces_knit_into_a_solid() {
     circle.add_circle(c, n(0.6));
     program.push(
         "top",
-        sketch(
+        AddSketchArgs::on(
             SketchPlane::Datum(ElementReference::new(datums(), "top_plane")),
             circle,
         ),
@@ -241,7 +245,7 @@ fn curved_panel_round_trips() {
     let registry = std::rc::Rc::new(example_registry().unwrap());
     let program = crate::examples::curved_panel();
     let built = geop_core_program::testing::assert_round_trips(registry, None, &program);
-    let part = geop_ops_extrude_revolve::testing::model_of(&built);
+    let part = geop_ops_model::testing::model_of(&built);
     assert_valid(&part);
     assert_eq!(part.solid_names().len(), 2, "{:?}", part.solid_names());
     for (p, expected) in [

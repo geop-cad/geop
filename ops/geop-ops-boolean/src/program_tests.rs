@@ -10,21 +10,23 @@ use geop_core_math::{
 };
 use geop_core_program::{
     element::ElementReference, operation_registry::OperationRegistry, program::Program,
-    values::Design,
+    testing::as_step, values::Design,
 };
 use geop_ops_datums::origin_axis;
 use geop_ops_edit::{DeleteBody, DeleteBodyArgs, ExtractFace, ExtractFaceArgs};
 use geop_ops_extrude_revolve::{
     Extent, ExtrudeArgs, Output, RevolveArgs, RevolveAxis,
-    testing::{
-        Built, as_step, block_and_post, both_ways, extrude, extrusion, n, on_face, on_origin,
-        one_way, polygon, sketch, two_ways,
-    },
+    testing::{block_and_post, both_ways, extrude, extrusion, one_way, two_ways},
 };
 use geop_ops_model::{
-    BooleanOp, Combine, NamedModel, element, model, solid, testing::assert_valid,
+    BooleanOp, Combine, NamedModel, element, model, solid,
+    testing::{Built, assert_valid},
 };
-use geop_ops_sketch::{Sketch, whole_sketch};
+use geop_ops_sketch::{
+    AddSketchArgs, Sketch,
+    figures::{n, on_face, on_origin, polygon},
+    whole_sketch,
+};
 
 use crate::{Boolean, BooleanArgs, Split, SplitArgs};
 
@@ -57,7 +59,7 @@ fn extract_a_wall_split_with_it_and_delete_the_rest() {
     let wall = format!("extrude(a,big,{})", sides[1]);
     let extracted = format!("extract(x,{wall})");
 
-    let on_xy = |drawn| sketch(on_origin(FrameAxis::Z), drawn);
+    let on_xy = |drawn| AddSketchArgs::on(on_origin(FrameAxis::Z), drawn);
     let mut program = Program::new();
     program.push("big", on_xy(big));
     program.push("a", extrusion("big", two_ways(1.0, 1.0), Combine::NewBody));
@@ -108,9 +110,12 @@ fn boss_on_block_top_face() {
     let c = boss.add_point(n(0.5), n(0.5));
     boss.add_circle(c, n(0.3));
     let mut program = Program::new();
-    program.push("base", sketch(on_origin(FrameAxis::Z), block));
+    program.push("base", AddSketchArgs::on(on_origin(FrameAxis::Z), block));
     program.push("block", extrude("base", 1.0, false));
-    program.push("boss_sketch", sketch(on_face("extrude(block,end)"), boss));
+    program.push(
+        "boss_sketch",
+        AddSketchArgs::on(on_face("extrude(block,end)"), boss),
+    );
     program.push("boss", extrude("boss_sketch", 0.4, false));
     program.push(
         "join",
@@ -142,7 +147,7 @@ fn turned_up_to_walls(walls: &[[[f64; 2]; 4]]) -> GeopResult<NamedModel<Design>>
         let mut wall = Sketch::new();
         polygon(&mut wall, corners);
         let (sketch_id, id) = (format!("wall_sketch{k}"), format!("wall{k}"));
-        program.push(&sketch_id, sketch(on_origin(FrameAxis::Z), wall));
+        program.push(&sketch_id, AddSketchArgs::on(on_origin(FrameAxis::Z), wall));
         program.push(
             &id,
             ExtrudeArgs {
@@ -171,7 +176,10 @@ fn turned_up_to_walls(walls: &[[[f64; 2]; 4]]) -> GeopResult<NamedModel<Design>>
         &mut profile,
         &[[2.0, -1.0], [3.0, -1.0], [3.0, 0.0], [2.0, 0.0]],
     );
-    program.push("profile", sketch(on_origin(FrameAxis::Y), profile));
+    program.push(
+        "profile",
+        AddSketchArgs::on(on_origin(FrameAxis::Y), profile),
+    );
     program.push(
         "arm",
         RevolveArgs {
@@ -222,7 +230,10 @@ fn split_by_a_face_ending_inside_fails() {
     let b = cut.add_point(n(1.0), n(1.0));
     let line = cut.add_line(a, b);
     let program_steps = vec![
-        as_step("cut_sketch", sketch(on_origin(FrameAxis::Y), cut)),
+        as_step(
+            "cut_sketch",
+            AddSketchArgs::on(on_origin(FrameAxis::Y), cut),
+        ),
         as_step(
             "cut",
             ExtrudeArgs {
@@ -272,7 +283,7 @@ fn extrude_up_to_next_from_a_face_of_the_target() {
     ] {
         let mut s = Sketch::new();
         polygon(&mut s, &corners);
-        program.push(id, sketch(on_origin(FrameAxis::Z), s));
+        program.push(id, AddSketchArgs::on(on_origin(FrameAxis::Z), s));
     }
     program.push("lower", between("slab_sketch", 0.0, 1.0));
     program.push("upper", between("slab_sketch", 2.0, 3.0));
@@ -293,7 +304,10 @@ fn extrude_up_to_next_from_a_face_of_the_target() {
     let mut post = Sketch::new();
     let c = post.add_point(n(0.5), n(1.0));
     post.add_circle(c, n(0.3));
-    program.push("post_sketch", sketch(on_face("extrude(lower,end)"), post));
+    program.push(
+        "post_sketch",
+        AddSketchArgs::on(on_face("extrude(lower,end)"), post),
+    );
     program.push(
         "post",
         ExtrudeArgs {

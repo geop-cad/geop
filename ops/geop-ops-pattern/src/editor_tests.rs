@@ -10,8 +10,8 @@ use geop_core_editor::{
     view::drawn,
 };
 use geop_core_math::scalars::{ScalInF64 as S, Scalar};
-use geop_core_program::element::PickedElement;
-use geop_ops_extrude_revolve::{examples::box_with_drill_hole, testing::args};
+use geop_core_program::{element::PickedElement, testing::args};
+use geop_ops_extrude_revolve::examples::box_with_drill_hole;
 use geop_ops_hole::testing::plate_with_hole;
 
 /// What these tests edit: the drilled box and the drilled plate — their

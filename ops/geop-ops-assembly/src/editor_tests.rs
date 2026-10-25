@@ -7,6 +7,7 @@
 use geop_core_program::{
     element::{ElementReference, PickedElement},
     program::Program,
+    testing::{args as step_args, edit_args},
     values::{Design, Setting, StateValue, pose_state},
 };
 use std::collections::BTreeMap;
@@ -28,26 +29,22 @@ use geop_core_math::{
     vector::Vector3,
 };
 use geop_ops_datums::{ORIGIN, component_name, datums};
-use geop_ops_extrude_revolve::Extents;
-use geop_ops_model::Combine;
-use geop_ops_model::testing::assert_close;
+use geop_ops_extrude_revolve::{
+    Extents, ExtrudeArgs, examples::box_with_drill_hole, testing::extrude_sketch,
+};
+use geop_ops_model::{Combine, element, testing::assert_close};
 use geop_ops_reference_geometry::Selected;
+use geop_ops_sketch::figures::{on_origin, rectangle_outline};
 
 use geop_core_editor::{
     editor::Command,
     testing::{Stepping, dialog, drag_gizmo, from_above, handled, pointer},
 };
-use geop_ops_extrude_revolve::{
-    ExtrudeArgs,
-    examples::box_with_drill_hole,
-    testing::{args as step_args, edit_args, extrude_sketch, on_origin, rectangle},
-};
-use geop_ops_model::element;
 
 /// The unit cube from the origin to `(1, 1, 1)`, as a program.
 fn cube() -> Program {
     let mut program = Program::new();
-    let square = rectangle(0.0, 0.0, 1.0, 1.0);
+    let square = rectangle_outline(0.0, 0.0, 1.0, 1.0);
     let (extent, combine) = (Extents::blind(1.0), Combine::NewBody);
     extrude_sketch(
         &mut program,

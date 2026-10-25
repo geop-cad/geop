@@ -20,6 +20,7 @@ serde.workspace = true
 [dev-dependencies]
 serde_json.workspace = true
 geop-ops-model = { workspace = true, features = ["testing"] }
+geop-core-program = { workspace = true, features = ["testing"] }
 geop-core-editor = { workspace = true, features = ["testing"] }
 # Parts to sketch on, extruded from sketches: the integration tests'
 # programs (the extrusion depends on this crate, so they are not unit

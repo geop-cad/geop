@@ -28,6 +28,7 @@ serde.workspace = true
 [dev-dependencies]
 geop-ops-assembly = { workspace = true, features = ["testing"] }
 geop-ops-model = { workspace = true, features = ["testing"] }
+geop-core-program = { workspace = true, features = ["testing"] }
 geop-lib-sweep = { workspace = true, features = ["testing"] }
 serde_json.workspace = true
 # The example parts and assemblies drawn, the operations they are written

@@ -14,6 +14,7 @@ use geop_core_program::{
     program::{Program, ProgramStep},
     reader::Reader,
     runner::Runner,
+    testing::{assert_incremental, assert_round_trips, edit_args, edit_sequence},
     values::{Design, Setting, StateValue, StateValues, pose_state},
     workspace::{self, FileStore, Files, Location},
 };
@@ -30,15 +31,16 @@ use geop_core_math::{
     scalars::{ScalInF64 as S, Scalar},
     vector::Vector3,
 };
-use geop_core_program::testing::{assert_incremental, assert_round_trips, edit_sequence};
 use geop_core_sketch::PointId;
 use geop_ops_datums::{ORIGIN, component_name, datum};
 use geop_ops_extrude_revolve::{
     ExtrudeArgs,
     examples::{box_with_drill_hole, parametric_plate},
-    testing::{edit_args, model_of},
 };
-use geop_ops_model::{Point, element, read_model, testing::assert_close};
+use geop_ops_model::{
+    Point, element, read_model,
+    testing::{assert_close, model_of},
+};
 use geop_ops_parameters::{COLOR, instances, read_properties};
 use geop_ops_pattern::spacing::Spacing;
 use geop_ops_reference_geometry::{AddDatumArgs, Construction, Selected};

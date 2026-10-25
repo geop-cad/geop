@@ -13,9 +13,9 @@ use geop_core_editor::{
     testing::{dialog, loaded, pointer},
 };
 use geop_core_math::scalars::Scalar;
-use geop_core_program::program::Program;
+use geop_core_program::{program::Program, testing::args};
 use geop_lib_stdlib::WithStandardParts;
-use geop_ops_extrude_revolve::{examples::box_with_drill_hole, testing::args};
+use geop_ops_extrude_revolve::examples::box_with_drill_hole;
 
 use crate::{Annotation, DrawnView, EdgeShape, Pickable, ViewKind};
 
@@ -311,7 +311,7 @@ fn a_drawing_is_annotated_on_its_sheet_and_downloaded() {
     assert!(!committed.scene.expect("a scene").part.faces.is_empty());
     let step = editor.program().steps.last().unwrap();
     assert_eq!(step.operation, "drawing");
-    let args: crate::DrawingArgs = geop_ops_extrude_revolve::testing::args(step);
+    let args: crate::DrawingArgs = geop_core_program::testing::args(step);
     assert_eq!((args.views.len(), args.annotations.len()), (3, 2));
     assert_eq!(args.name, "Drilled box");
 }

@@ -1,8 +1,8 @@
 //! What the tests of the operations share about the model: checking it
 //! valid and drawn as its trims say, finding its entities by where they
-//! are, the model an editor shows, and building a part of a model given
-//! and one step. Only built for tests: with `testing`, or in this crate's
-//! own.
+//! are, the model an editor shows, building a part of a model given and
+//! steps run on it one by one, and the model a program builds. Only built
+//! for tests: with `testing`, or in this crate's own.
 
 // Helpers of tests fail as tests do: by panicking, naming what is wrong.
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
@@ -14,8 +14,8 @@ use geop_core_math::{
     vector::Vector3,
 };
 use geop_core_program::{
-    operation::Operation, operation_registry::OperationRegistry, part::Part, reader::Reader,
-    runner::Runner, values::Design,
+    operation::Operation, operation_registry::OperationRegistry, part::Part, program::Program,
+    reader::Reader, runner::Runner, values::Design,
 };
 use geop_core_rasterize::{
     face_triangles_uv, rasterize,
@@ -348,6 +348,14 @@ pub fn given_part(model: &NamedModel<Design>) -> GeopResult<Part> {
 /// The id of the step that gives a part its model, in [`given_part`].
 pub const GIVEN: &str = "given";
 
+/// Runs `O`'s step `step` with `args` on `part`, after the steps it ran:
+/// the next step of a program built one step at a time, on a model given
+/// (see [`given_part`]).
+pub fn run_step<O: Operation>(part: &mut Part, step: &str, args: &O::Args) -> GeopResult<()> {
+    let runner = Runner::new(OperationRegistry::default());
+    runner.run_step(part, step, |ctx| O::run(ctx, args))
+}
+
 /// What `O`'s step `step` with `args` makes of `model`, as a program of two
 /// steps would build it — the model given, then the step — together with
 /// what else the step made: the part, after its one run. For an
@@ -358,9 +366,47 @@ pub fn apply<O: Operation>(
     args: &O::Args,
 ) -> GeopResult<Part> {
     let mut part = given_part(&model)?;
-    let runner = Runner::new(OperationRegistry::default());
-    runner.run_step(&mut part, step, |ctx| O::run(ctx, args))?;
+    run_step::<O>(&mut part, step, args)?;
     Ok(part)
+}
+
+// ── Parts built by programs ─────────────────────────────────────────────────
+
+/// A runner of programs written in the operations `registry` makes, as
+/// the file `part.geop` — of a workspace of no other files.
+pub fn runner_of(registry: OperationRegistry) -> Runner {
+    let mut runner = Runner::new(registry);
+    runner.location.file = "part.geop".into();
+    runner
+}
+
+/// Building a program on its own, written in the operations `registry`
+/// makes.
+pub trait Built {
+    /// The part the program builds.
+    fn built(&self, registry: fn() -> GeopResult<OperationRegistry>) -> GeopResult<Part>;
+
+    /// The model the program builds, or why a step fails.
+    fn build_model(
+        &self,
+        registry: fn() -> GeopResult<OperationRegistry>,
+    ) -> GeopResult<NamedModel<Design>> {
+        Ok(model_of(&self.built(registry)?))
+    }
+}
+
+impl Built for Program {
+    fn built(&self, registry: fn() -> GeopResult<OperationRegistry>) -> GeopResult<Part> {
+        let runner = runner_of(registry()?);
+        let mut part = Part::default();
+        self.run(&runner, &mut part)?;
+        Ok(part)
+    }
+}
+
+/// The model `part` holds: empty if it built no topology.
+pub fn model_of(part: &Part) -> NamedModel<Design> {
+    (read_model(&part.current()).map(|model| model.into_owned())).unwrap_or_default()
 }
 
 /// The model `O`'s step `step` with `args` leaves of `model` (see

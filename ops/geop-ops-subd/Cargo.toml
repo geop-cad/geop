@@ -18,7 +18,8 @@ serde.workspace = true
 geop-core-program = { workspace = true, features = ["testing"] }
 geop-ops-model = { workspace = true, features = ["testing"] }
 serde_json.workspace = true
-geop-ops-extrude-revolve = { workspace = true, features = ["testing"] }
-geop-ops-boolean.workspace = true
+# A block, and its union with a SubD body: a solid like any other.
+geop-lib-sweep = { workspace = true, features = ["testing"] }
+geop-lib-booleans.workspace = true
 geop-core-editor = { workspace = true, features = ["testing"] }
 geop-ops-datums.workspace = true

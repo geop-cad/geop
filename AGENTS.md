@@ -863,12 +863,23 @@ incrementally (its `tests.rs`).
 
 Shared test helpers live in `geop_core_editor::testing` (feature `testing`:
 an editor driven as a front end drives it), `geop_core_program::testing`
-(`assert_round_trips`, `assert_incremental`), `geop_ops_model::testing`
-(feature `testing`: validity, entities by where they are, applying an
-operation to a part), `geop_lib_sweep::shapes` (basic solids) and
-`geop_ops_extrude_revolve::testing` (feature `testing`: sketches, the steps
-extruding them, building a program in the operations of a registry): look
-there before writing an `assert_valid`, a cube or a `v3` of your own.
+(a step's arguments as their type, `assert_round_trips`,
+`assert_incremental`), `geop_ops_model::testing` (feature `testing`:
+validity, entities by where they are, a part of a model given with steps
+run on it one by one, the model a program builds — `Built`, `model_of`),
+`geop_lib_sweep::shapes` (basic solids: blocks, cylinders, spheres),
+`geop_ops_sketch::figures` (sketches of figures and the planes to sketch
+on) and `geop_ops_extrude_revolve::testing` (feature `testing`: the steps
+extruding sketches, and the bodies a sketch and an extrusion or two build):
+look there before writing an `assert_valid`, a cube or a `v3` of your own.
+
+A test that only needs a solid builds it with `geop_lib_sweep::shapes` and
+runs its step on it (`given_part`, `run_step`), not by sketching and
+extruding it through the program machinery: a dev-dependency on
+`geop-ops-extrude-revolve` makes the crate's tests run again whenever the
+extrusion changes. It is for tests of the interaction with an extrusion as
+a step — a tool combined with a previous extrusion, an example program
+that extrudes, an editor test clicking on an extruded body's face.
 
 ## Where things go
 

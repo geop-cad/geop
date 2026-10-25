@@ -55,10 +55,8 @@ mod steps;
 mod tables;
 
 pub use drawing::Drawing;
-pub use steps::outline_plane;
-
-#[cfg(test)]
-mod tests;
+pub use drive::TEETH;
+pub use steps::{SIZE, outline_plane};
 
 use geop_core_program::{
     program::Program,

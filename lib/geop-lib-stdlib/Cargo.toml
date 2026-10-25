@@ -19,9 +19,12 @@ geop-ops-reference-geometry.workspace = true
 geop-ops-extrude-revolve.workspace = true
 geop-ops-pattern.workspace = true
 
+# The standard parts' tests place them in assemblies, and
+# `geop-ops-assembly` depends on this crate for its examples: so they are
+# integration tests (`tests/`), which link one copy of this crate.
 [dev-dependencies]
 geop-core-editor.workspace = true
 geop-core-topology.workspace = true
+geop-core-program = { workspace = true, features = ["testing"] }
 geop-ops-model = { workspace = true, features = ["testing"] }
-geop-ops-extrude-revolve = { workspace = true, features = ["testing"] }
 geop-ops-assembly.workspace = true

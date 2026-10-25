@@ -13,17 +13,18 @@ use geop_core_program::{
 use geop_ops_datums::{ORIGIN, component_name, datums};
 use geop_ops_extrude_revolve::{
     Extents, LoftArgs, Output,
-    testing::{
-        Built, disc, drilled_box, extrusion, n, on_face, on_origin, outline, rectangle, sketch,
-    },
+    testing::{drilled_box, extrusion},
 };
-use geop_ops_model::Combine;
 use geop_ops_model::{
-    NamedModel, model,
-    testing::{assert_valid, check_valid, edges_where, has_vertex, middle},
+    Combine, NamedModel, model,
+    testing::{Built, assert_valid, check_valid, edges_where, has_vertex, middle},
 };
 use geop_ops_reference_geometry::{AddDatum, AddDatumArgs, Construction, Selected};
-use geop_ops_sketch::{Sketch, SketchPlane, whole_sketch};
+use geop_ops_sketch::{
+    AddSketchArgs, Sketch, SketchPlane,
+    figures::{disc, n, on_face, on_origin, outline, rectangle_outline},
+    whole_sketch,
+};
 
 /// The operations these tests' programs are written in.
 fn registry() -> GeopResult<OperationRegistry> {
@@ -159,7 +160,7 @@ fn l_block() -> Program {
         [0.0, 2.0],
     ]);
     let mut program = Program::new();
-    program.push("outline", sketch(on_origin(FrameAxis::Z), s));
+    program.push("outline", AddSketchArgs::on(on_origin(FrameAxis::Z), s));
     program.push(
         "block",
         extrusion("outline", Extents::blind(1.0), Combine::NewBody),
@@ -213,15 +214,18 @@ fn chamfer_l_block_inner_edge() {
 /// rounded at once.
 #[test]
 fn fillet_boss_on_block() {
-    let block = rectangle(0.0, 0.0, 1.0, 1.0);
+    let block = rectangle_outline(0.0, 0.0, 1.0, 1.0);
     let boss = disc([0.5, 0.5], 0.3);
     let mut program = Program::new();
-    program.push("base", sketch(on_origin(FrameAxis::Z), block));
+    program.push("base", AddSketchArgs::on(on_origin(FrameAxis::Z), block));
     program.push(
         "block",
         extrusion("base", Extents::blind(1.0), Combine::NewBody),
     );
-    program.push("boss_sketch", sketch(on_face("extrude(block,end)"), boss));
+    program.push(
+        "boss_sketch",
+        AddSketchArgs::on(on_face("extrude(block,end)"), boss),
+    );
     program.push(
         "boss",
         extrusion(
@@ -267,7 +271,7 @@ fn stepped_block() -> Program {
     let ground = on_origin(FrameAxis::Z);
     program.push(
         "outline",
-        sketch(ground.clone(), rectangle(0.0, 0.0, 2.0, 2.0)),
+        AddSketchArgs::on(ground.clone(), rectangle_outline(0.0, 0.0, 2.0, 2.0)),
     );
     program.push(
         "block",
@@ -275,7 +279,7 @@ fn stepped_block() -> Program {
     );
     program.push(
         "step_outline",
-        sketch(ground, rectangle(-0.5, 1.5, 1.0, 2.5)),
+        AddSketchArgs::on(ground, rectangle_outline(-0.5, 1.5, 1.0, 2.5)),
     );
     program.push(
         "step",
@@ -331,14 +335,20 @@ fn fillet_edges_ending_at_a_wall() {
 /// into its top.
 fn pocketed_block() -> Program {
     let mut program = Program::new();
-    let outline = rectangle(0.0, 0.0, 2.0, 2.0);
-    program.push("outline", sketch(on_origin(FrameAxis::Z), outline));
+    let outline = rectangle_outline(0.0, 0.0, 2.0, 2.0);
+    program.push(
+        "outline",
+        AddSketchArgs::on(on_origin(FrameAxis::Z), outline),
+    );
     program.push(
         "block",
         extrusion("outline", Extents::blind(1.0), Combine::NewBody),
     );
     let top = on_face("extrude(block,end)");
-    program.push("pocket_outline", sketch(top, rectangle(0.5, 0.5, 1.5, 1.5)));
+    program.push(
+        "pocket_outline",
+        AddSketchArgs::on(top, rectangle_outline(0.5, 0.5, 1.5, 1.5)),
+    );
     program.push(
         "pocket",
         extrusion(
@@ -486,7 +496,7 @@ fn square_to_circle() -> Program {
 fn lofted(bottom: Sketch, top: Sketch) -> Program {
     let mut program = Program::new();
     let xy = on_origin(FrameAxis::Z);
-    program.push("bottom", sketch(xy.clone(), bottom));
+    program.push("bottom", AddSketchArgs::on(xy.clone(), bottom));
     program.push(
         "top_plane",
         AddDatumArgs {
@@ -501,7 +511,7 @@ fn lofted(bottom: Sketch, top: Sketch) -> Program {
     );
     program.push(
         "top",
-        sketch(
+        AddSketchArgs::on(
             SketchPlane::Datum(ElementReference::new(datums(), "top_plane")),
             top,
         ),
@@ -580,7 +590,7 @@ fn slot() -> Program {
     s.add_line(p[2], p[3]);
     s.add_arc(p[3], p[0], n(std::f64::consts::PI));
     let mut program = Program::new();
-    program.push("outline", sketch(on_origin(FrameAxis::Z), s));
+    program.push("outline", AddSketchArgs::on(on_origin(FrameAxis::Z), s));
     program.push(
         "slot",
         extrusion("outline", Extents::blind(1.0), Combine::NewBody),

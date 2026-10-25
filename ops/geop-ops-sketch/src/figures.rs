@@ -1,13 +1,16 @@
 //! Figures drawn into a sketch the way the examples and tests write them
 //! down: closed polygons, rectangles and circles, fully constrained where
-//! the figure says so, and a sketch solved once it is drawn. Every number
-//! is design data ([`n`]).
+//! the figure says so, and a sketch solved once it is drawn; sketches of
+//! one figure, unconstrained, as a test draws a body's outline; and the
+//! planes a test sketches on. Every number is design data ([`n`]).
 
-use geop_core_math::scalars::Scalar;
-use geop_core_program::values::Design;
+use geop_core_math::{primitives::FrameAxis, scalars::Scalar};
+use geop_core_program::{element::ElementReference, values::Design};
 use geop_core_sketch::{CurveId, PointId};
+use geop_ops_datums::origin_plane;
+use geop_ops_model::model;
 
-use crate::{Constraint, Sketch};
+use crate::{Constraint, Sketch, SketchPlane};
 
 /// `[x, y]`, as a figure is written down.
 pub type P2 = [f64; 2];
@@ -16,6 +19,43 @@ pub type P2 = [f64; 2];
 pub fn n(x: f64) -> Design {
     Design::from_f64(x)
 }
+
+// ── Planes to sketch on ─────────────────────────────────────────────────────
+
+/// The plane of the origin normal to `normal`, to sketch on.
+pub fn on_origin(normal: FrameAxis) -> SketchPlane {
+    SketchPlane::Datum(origin_plane(normal))
+}
+
+/// The flat face named `face`, to sketch on.
+pub fn on_face(face: &str) -> SketchPlane {
+    SketchPlane::Face(ElementReference::new(model(), face))
+}
+
+// ── Sketches of one figure ──────────────────────────────────────────────────
+
+/// A sketch of nothing but the closed polygon through `corners` (see
+/// [`polygon`]).
+pub fn outline(corners: &[P2]) -> Sketch {
+    let mut sketch = Sketch::new();
+    polygon(&mut sketch, corners);
+    sketch
+}
+
+/// A sketch of nothing but the rectangle from `(x0, y0)` to `(x1, y1)`.
+pub fn rectangle_outline(x0: f64, y0: f64, x1: f64, y1: f64) -> Sketch {
+    outline(&[[x0, y0], [x1, y0], [x1, y1], [x0, y1]])
+}
+
+/// A sketch of nothing but the circle of `radius` around `center`.
+pub fn disc(center: P2, radius: f64) -> Sketch {
+    let mut sketch = Sketch::new();
+    let c = sketch.add_point(n(center[0]), n(center[1]));
+    sketch.add_circle(c, n(radius));
+    sketch
+}
+
+// ── Constrained figures ─────────────────────────────────────────────────────
 
 /// A closed polygon through `corners`, one line per side: its points and
 /// lines.

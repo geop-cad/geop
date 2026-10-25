@@ -23,16 +23,16 @@ use geop_core_math::{
     primitives::FrameAxis,
     scalars::{ScalInF64 as S, Scalar},
 };
-use geop_ops_extrude_revolve::{
-    Extent, Extents,
-    testing::{Built, extrusion, n, on_face, on_origin, outline, sketch},
-};
-use geop_ops_model::Combine;
+use geop_ops_extrude_revolve::{Extent, Extents, testing::extrusion};
 use geop_ops_model::{
-    CosmeticThread, NamedModel, Threads, model, read_model, read_threads,
-    testing::{assert_valid, assert_volume, check_valid, solid_volume},
+    Combine, CosmeticThread, NamedModel, Threads, model, read_model, read_threads,
+    testing::{Built, assert_valid, assert_volume, check_valid, solid_volume},
 };
-use geop_ops_sketch::{Sketch, sketch_element, whole_sketch};
+use geop_ops_sketch::{
+    AddSketchArgs, Sketch,
+    figures::{n, on_face, on_origin, outline},
+    sketch_element, whole_sketch,
+};
 
 use geop_ops_datums::datums;
 use geop_ops_pattern::{CircularPattern, LinearPattern, Mirror};
@@ -312,7 +312,7 @@ fn up_to_next_stops_in_the_gap() {
         let mut program = Program::new();
         program.push(
             "c",
-            sketch(
+            AddSketchArgs::on(
                 on_origin(FrameAxis::Z),
                 outline(&[
                     [0.0, 0.0],
@@ -334,7 +334,7 @@ fn up_to_next_stops_in_the_gap() {
         // `y` world `-z`.
         program.push(
             "centres",
-            sketch(
+            AddSketchArgs::on(
                 on_face("extrude(block,c,c14)"),
                 points_sketch(&[[25.0, -5.0]]),
             ),
@@ -366,7 +366,7 @@ fn hole_coming_out_through_a_curved_face() {
     let b = d.add_point(n(-10.0), n(10.0));
     d.add_line(a, b);
     d.add_arc(b, a, n(PI));
-    program.push("d", sketch(on_origin(FrameAxis::X), d));
+    program.push("d", AddSketchArgs::on(on_origin(FrameAxis::X), d));
     program.push(
         "bar",
         extrusion("d", Extents::blind(30.0), Combine::NewBody),
@@ -377,7 +377,7 @@ fn hole_coming_out_through_a_curved_face() {
     // On the top, normal `+z`: sketch `x`, `y` are world `x`, `y`.
     program.push(
         "centres",
-        sketch(on_face(top), points_sketch(&[[15.0, 3.0]])),
+        AddSketchArgs::on(on_face(top), points_sketch(&[[15.0, 3.0]])),
     );
     let part = drilled(
         program,
@@ -418,7 +418,7 @@ fn unsupported_holes_are_refused() {
     let mut off = plate(&[[20.0, 20.0]]);
     off.push(
         "below",
-        sketch(on_origin(FrameAxis::Z), points_sketch(&[[5.0, 5.0]])),
+        AddSketchArgs::on(on_origin(FrameAxis::Z), points_sketch(&[[5.0, 5.0]])),
     );
     refused(
         off,
@@ -471,14 +471,17 @@ fn shaft() -> Program {
         s.add_circle(c, n(r));
         s
     };
-    program.push("head_circle", sketch(on_origin(FrameAxis::Z), circle(5.0)));
+    program.push(
+        "head_circle",
+        AddSketchArgs::on(on_origin(FrameAxis::Z), circle(5.0)),
+    );
     program.push(
         "head",
         extrusion("head_circle", Extents::blind(5.0), Combine::NewBody),
     );
     program.push(
         "shank_circle",
-        sketch(on_face("extrude(head,end)"), circle(3.0)),
+        AddSketchArgs::on(on_face("extrude(head,end)"), circle(3.0)),
     );
     program.push(
         "shank",
@@ -665,7 +668,7 @@ fn every_iso_size_and_kind() {
                 let (w, t) = (100.0, 40.0);
                 program.push(
                     "outline",
-                    sketch(
+                    AddSketchArgs::on(
                         on_origin(FrameAxis::Z),
                         outline(&[[0.0, 0.0], [w, 0.0], [w, w], [0.0, w]]),
                     ),
@@ -676,7 +679,7 @@ fn every_iso_size_and_kind() {
                 );
                 program.push(
                     "centres",
-                    sketch(
+                    AddSketchArgs::on(
                         on_face("extrude(plate,end)"),
                         points_sketch(&[[50.0, 50.0]]),
                     ),
@@ -705,7 +708,7 @@ fn hole_plate_round_trips() {
     let registry = std::rc::Rc::new(registry().unwrap());
     let program = crate::examples::hole_plate();
     let built = geop_core_program::testing::assert_round_trips(registry, None, &program);
-    let part = geop_ops_extrude_revolve::testing::model_of(&built);
+    let part = geop_ops_model::testing::model_of(&built);
     geop_ops_model::testing::assert_valid(&part);
     assert_eq!(part.solid_names(), ["hole(tapped)"]);
 }

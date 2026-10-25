@@ -3,7 +3,7 @@
 
 use geop_core_program::{
     element::ElementReference, operation_registry::OperationRegistry, program::Program,
-    values::Design,
+    testing::args, values::Design,
 };
 use std::f64::consts::PI;
 
@@ -17,12 +17,17 @@ use geop_core_topology::Body;
 use geop_ops_datums::{datums, read_datums};
 use geop_ops_extrude_revolve::{
     Extents,
-    testing::{Built, args, drilled_box, extrude_sketch, extrusion, n, on_origin, outline, sketch},
+    testing::{drilled_box, extrude_sketch, extrusion},
 };
-use geop_ops_model::{Combine, solid};
-use geop_ops_model::{NamedModel, model, testing::assert_valid};
+use geop_ops_model::{
+    Combine, NamedModel, model, solid,
+    testing::{Built, assert_valid},
+};
 use geop_ops_reference_geometry::{AddDatum, AddDatumArgs, Construction, Selected};
-use geop_ops_sketch::{Sketch, SketchPlane};
+use geop_ops_sketch::{
+    AddSketchArgs, Sketch, SketchPlane,
+    figures::{n, on_origin, outline},
+};
 
 /// The operations these tests' programs are written in.
 fn registry() -> GeopResult<OperationRegistry> {
@@ -253,7 +258,7 @@ fn hole_through_the_walls_of_a_shelled_box() {
     s.add_circle(c, n(0.2));
     program.push(
         "hole_sketch",
-        sketch(
+        AddSketchArgs::on(
             SketchPlane::Datum(ElementReference::new(datums(), "middle")),
             s,
         ),
