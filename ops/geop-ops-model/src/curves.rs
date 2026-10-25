@@ -175,6 +175,33 @@ where
     }
 }
 
+impl Chain<NurbCurve2D> {
+    /// The joints of the closed chain where its tangent turns — the corners
+    /// a designer sees — as indices into `joint_names`, in order. A joint is
+    /// smooth where the curve arriving and the curve leaving could have one
+    /// tangent direction: their tangents' cross product could be zero and
+    /// their dot product is definitely positive. Everything else is a
+    /// corner: a turn, a cusp, or a tangent that could vanish. The split of
+    /// an arc at a quarter turn, or a sketch point where two curves meet
+    /// tangentially, is no corner.
+    pub fn corners(&self) -> GeopResult<Vec<usize>> {
+        let n = self.curves.len();
+        let mut corners = Vec::new();
+        for i in 0..n {
+            let before = &self.curves[(i + n - 1) % n];
+            let after = &self.curves[i];
+            let arriving = before.tangent(before.domain().1)?;
+            let leaving = after.tangent(after.domain().0)?;
+            let smooth = arriving.prod_cross(&leaving).could_be_equal(Scalar::ZERO)
+                && arriving.prod_dot(&leaving).definitely_greater(Scalar::ZERO);
+            if !smooth {
+                corners.push(i);
+            }
+        }
+        Ok(corners)
+    }
+}
+
 impl Chain<NurbCurve3D> {
     /// The open chain run from its end on `plane`: as it is if it starts
     /// there, the other way round if only its end could lie on it. `None`

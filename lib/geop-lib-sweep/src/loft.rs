@@ -16,10 +16,25 @@
 //!   each other, and so on — are lofted into each other: that is how one
 //!   says which part of one profile goes where on the next. Every section
 //!   matched has as many, running round it in the same order; it starts at
-//!   its first;
-//! - **pieces**: every section gets as many curves — between two matched
-//!   points of a matched section as many as between the same two of every
-//!   other — by halving its longest ones;
+//!   its first. Between two matched points, the sections' corners are
+//!   matched too, wherever every matched section has as many there;
+//! - **corners**: with no points matched, the sections' corners — the
+//!   joints where the profile's tangent turns, which the designer sees;
+//!   not the kernel's own split of an arc at a quarter turn, nor a sketch
+//!   point where two curves meet tangentially (see `Profile::corners`) —
+//!   are the matched points, in cyclic order, each section turned to line
+//!   its corners up best with the previous section's that has any. Every
+//!   section with corners has as many, or the loft is refused by name: a
+//!   D of two corners into a triangle needs matched points or guides to
+//!   say what goes where. A section without corners — a circle — is lined
+//!   up as a whole, below;
+//! - **runs**: between two matched points, the smooth run of each matched
+//!   section is cut where any of the others has a joint, at the same
+//!   fraction of the run's length (see `RunCuts::merged`): the flat bottom of a
+//!   D meets the flat bottom of the next, whatever pieces their arcs come
+//!   in. A section not matched gets as many curves as the others have, by
+//!   halving its longest ones; where it has more, the others' longest
+//!   stretches are cut in the middle;
 //! - **start**: a closed section that is not matched starts at whichever
 //!   joint lines its joints up best with its neighbour towards the first
 //!   matched section (or the section before, with none) — its shape about
@@ -53,7 +68,6 @@ use geop_core_math::{
     plain::{self, P3, add, distance, dot, inverse2, scale, sub},
     primitives::CoordinateSystem,
     scalars::Scalar,
-    solvers::repeat::{Step, repeat},
     vector::{Vector2, Vector3},
     with_context,
 };
@@ -146,19 +160,39 @@ fn polygon_length(curve: &NurbCurve2D) -> f64 {
     points.windows(2).map(|w| distance(w[1], w[0])).sum()
 }
 
-/// `profile` with its curve `i` halved, at the middle of its parameters:
-/// the halves `X` and `X#half`, the joint between them `X@half`.
-fn halved(profile: &Profile, i: usize) -> GeopResult<Profile> {
-    let (a, b) = profile.curves[i].split_mid()?;
-    let (a, b) = (
-        a.with_unit_domain()?.with_unit_end_weights()?,
-        b.with_unit_domain()?.with_unit_end_weights()?,
-    );
+/// `profile` with its curve `X = curves[i]` cut at the fractions `at` of
+/// its length, increasing and strictly inside `(0, 1)`: the pieces `X`,
+/// `X#cut1`, `X#cut2`, ... and the joints between them `X@cut1`, `X@cut2`,
+/// ... (a sketch names an arc's own quarter-turn pieces `X#1` and `X@1`).
+/// Where along the curve is a free choice (see [`correspond`]), so the
+/// cuts are sharp (see `NurbCurve::parameter_at_length_fraction`); the
+/// pieces are exact pieces of it, each on `[0, 1]` with its end weights
+/// one.
+fn cut(profile: &Profile, i: usize, at: &[f64]) -> GeopResult<Profile> {
+    let curve = &profile.curves[i];
+    let (t0, t1) = curve.domain();
+    let mut bounds = vec![t0];
+    for &f in at {
+        bounds.push(curve.parameter_at_length_fraction(f)?);
+    }
+    bounds.push(t1);
+    let pieces = bounds
+        .windows(2)
+        .map(|w| {
+            curve
+                .sub_curve(w[0], w[1])?
+                .with_unit_domain()?
+                .with_unit_end_weights()
+        })
+        .collect::<GeopResult<Vec<_>>>()?;
     let mut out = profile.clone();
     let name = profile.curve_names[i].clone();
-    out.curves.splice(i..=i, [a, b]);
-    out.curve_names.insert(i + 1, format!("{name}#half"));
-    out.joint_names.insert(i + 1, format!("{name}@half"));
+    let count = pieces.len();
+    out.curves.splice(i..=i, pieces);
+    out.curve_names
+        .splice(i + 1..i + 1, (1..count).map(|k| format!("{name}#cut{k}")));
+    out.joint_names
+        .splice(i + 1..i + 1, (1..count).map(|k| format!("{name}@cut{k}")));
     Ok(out)
 }
 
@@ -218,22 +252,242 @@ fn matched_indices(profile: &Profile, matched: &[String], name: &str) -> GeopRes
     Ok(indices)
 }
 
-/// How many curves `profile` has between each two consecutive joints of
-/// `indices` (see [`matched_indices`]), the last run back to the start.
-fn runs(profile: &Profile, indices: &[usize]) -> Vec<usize> {
+/// The curves of `profile` in each run between two consecutive joints of
+/// `indices` (see [`matched_indices`]), the last run back to the start:
+/// each run's range of curve indices.
+fn runs(profile: &Profile, indices: &[usize]) -> Vec<std::ops::Range<usize>> {
     let n = profile.curves.len();
     (0..indices.len())
-        .map(|j| indices.get(j + 1).copied().unwrap_or(n) - indices[j])
+        .map(|j| indices[j]..indices.get(j + 1).copied().unwrap_or(n))
         .collect()
 }
 
-/// The longest curve of `profile` among `range`, by its control polygon.
-fn longest_among(profile: &Profile, range: std::ops::Range<usize>) -> usize {
-    range
-        .max_by(|&a, &b| {
-            polygon_length(&profile.curves[a]).total_cmp(&polygon_length(&profile.curves[b]))
-        })
-        .expect("a run has curves")
+/// Where the joints inside the run `run` of `profile` are along it, as
+/// fractions of the run's length — the curves' lengths, enclosed — and
+/// that length: `k - 1` fractions for a run of `k` curves, increasing from
+/// the run's start at 0 to its end at 1.
+fn run_fractions(
+    profile: &Profile,
+    run: std::ops::Range<usize>,
+) -> GeopResult<(Vec<Scalar>, Scalar)> {
+    let lengths = run
+        .map(|i| Ok(profile.curves[i].length()?.0))
+        .collect::<GeopResult<Vec<Scalar>>>()?;
+    let total = lengths.iter().fold(Scalar::ZERO, |sum, &l| sum.add(l));
+    let mut fractions = Vec::with_capacity(lengths.len() - 1);
+    let mut sum = Scalar::ZERO;
+    for &l in &lengths[..lengths.len() - 1] {
+        sum = sum.add(l);
+        fractions.push(sum.div(total)?);
+    }
+    Ok((fractions, total))
+}
+
+/// The cuts of one run of several matched sections (see [`RunCuts::merged`]).
+struct RunCuts {
+    /// Where the cuts are, as fractions of the run's length: increasing,
+    /// strictly inside `(0, 1)`, sharp.
+    at: Vec<f64>,
+    /// For each section, which of the cuts are its own joints, in order.
+    own: Vec<Vec<usize>>,
+}
+
+impl RunCuts {
+    /// The joints of corresponding runs of several sections, `fractions[s]`
+    /// the run's of section `s` (see [`run_fractions`]), merged into one
+    /// list of cuts along every one of them: joints of different sections
+    /// that could lie at one fraction are one cut, which each of them
+    /// keeps; every other joint is a cut the other sections get. Where
+    /// exactly a cut lies is a free choice within what the joints enclose,
+    /// so the cuts are sharp. `name(s)` names section `s` for an error: two
+    /// joints of one section at one place along its run.
+    fn merged(fractions: &[Vec<Scalar>], name: impl Fn(usize) -> String) -> GeopResult<Self> {
+        let mut merged: Vec<Scalar> = Vec::new();
+        let mut own: Vec<Vec<usize>> = vec![Vec::new(); fractions.len()];
+        for (s, fractions) in fractions.iter().enumerate() {
+            for &f in fractions {
+                // After the cuts this section has claimed so far.
+                let claimed = own[s].last().map_or(0, |&k| k + 1);
+                let k = match merged[claimed..].iter().position(|m| m.could_be_equal(f)) {
+                    Some(k) => {
+                        merged[claimed + k] = merged[claimed + k].union(f);
+                        claimed + k
+                    }
+                    None => {
+                        let at = merged
+                            .iter()
+                            .position(|m| !m.definitely_less(f))
+                            .unwrap_or(merged.len());
+                        if at < claimed {
+                            return Err(GeopError::new(format!(
+                                "loft: two joints of the profile {} could lie at one place along it, {:?} of the way along the run between its matched points",
+                                name(s),
+                                f
+                            )));
+                        }
+                        merged.insert(at, f);
+                        for k in own.iter_mut().flatten().filter(|k| **k >= at) {
+                            *k += 1;
+                        }
+                        at
+                    }
+                };
+                own[s].push(k);
+            }
+        }
+        let at: Vec<f64> = merged.iter().map(|m| m.to_f64()).collect();
+        if !at.windows(2).all(|w| w[0] < w[1]) || at.iter().any(|&c| !(0.0 < c && c < 1.0)) {
+            return Err(GeopError::new(format!(
+                "loft: the joints along corresponding runs of the profiles cannot be told apart: {merged:?}"
+            )));
+        }
+        Ok(Self { at, own })
+    }
+
+    /// One more cut, in the middle of the stretch between the cut `k - 1`
+    /// and the cut `k` (the run's ends for the first and the last): no
+    /// section's joint, a free choice.
+    fn halve(&mut self, k: usize) {
+        let bound = |i: usize| -> f64 {
+            if i == 0 {
+                0.0
+            } else {
+                self.at.get(i - 1).copied().unwrap_or(1.0)
+            }
+        };
+        let middle = (bound(k) + bound(k + 1)) / 2.0;
+        self.at.insert(k, middle);
+        for i in self.own.iter_mut().flatten().filter(|i| **i >= k) {
+            *i += 1;
+        }
+    }
+
+    /// How many curves the run has once cut.
+    fn pieces(&self) -> usize {
+        self.at.len() + 1
+    }
+
+    /// The length of the stretch between the cut `k - 1` and the cut `k`,
+    /// as a fraction of the run's.
+    fn stretch(&self, k: usize) -> f64 {
+        let bounds: Vec<f64> = [0.0]
+            .into_iter()
+            .chain(self.at.iter().copied())
+            .chain([1.0])
+            .collect();
+        bounds[k + 1] - bounds[k]
+    }
+}
+
+/// `profile`, each of whose runs `runs[j]` (see [`runs`]) is to be cut as
+/// `cuts[j]` says (see [`RunCuts`]), with every cut that is not a joint of
+/// section `s` made: the curve it falls in cut there, at the same fraction
+/// of the curve's length as of its stretch between the cuts either side
+/// (see [`cut`]).
+fn cut_runs(
+    profile: &Profile,
+    runs: &[std::ops::Range<usize>],
+    cuts: &[RunCuts],
+    s: usize,
+) -> GeopResult<Profile> {
+    let mut out = profile.clone();
+    // Runs from the last, so that cutting one leaves the indices of those
+    // before it as they are.
+    for j in (0..runs.len()).rev() {
+        let run = &runs[j];
+        let mut joints = cuts[j].own[s].iter().peekable();
+        // For each curve of the run, the cuts within it, as fractions of
+        // the curve's stretch between the cuts at its ends.
+        let mut per_curve: Vec<Vec<f64>> = vec![Vec::new(); run.len()];
+        let mut curve = 0;
+        let mut start = 0.0;
+        for (k, &c) in cuts[j].at.iter().enumerate() {
+            if joints.next_if_eq(&&k).is_some() {
+                // The joint after `curve`: the next curve starts here.
+                for f in &mut per_curve[curve] {
+                    *f = (*f - start) / (c - start);
+                }
+                curve += 1;
+                start = c;
+            } else {
+                per_curve[curve].push(c);
+            }
+        }
+        for f in &mut per_curve[curve] {
+            *f = (*f - start) / (1.0 - start);
+        }
+        for (k, at) in per_curve.iter().enumerate().rev() {
+            if !at.is_empty() {
+                out = cut(&out, run.start + k, at)?;
+            }
+        }
+    }
+    Ok(out)
+}
+
+/// The corners of the closed sections `placed` as their matched points
+/// (see [`correspond`]): every section with corners has as many, and
+/// their corners are matched in cyclic order, each section's turned to line
+/// its corners up best with the previous cornered section's, both about
+/// their centres. A section without corners — a circle — gets none: it is
+/// lined up with its neighbour as a whole. An error, naming the sections
+/// and their counts, where the counts differ.
+fn corner_anchors(
+    sections: &[Section],
+    placed: &[Placed],
+    centres: &[[f64; 3]],
+) -> GeopResult<Vec<Vec<String>>> {
+    let corners = placed
+        .iter()
+        .map(|p| p.profile.corners())
+        .collect::<GeopResult<Vec<Vec<usize>>>>()?;
+    let mut points = vec![Vec::new(); placed.len()];
+    let cornered: Vec<usize> = (0..placed.len())
+        .filter(|&s| !corners[s].is_empty())
+        .collect();
+    let Some(&reference) = cornered.first() else {
+        return Ok(points);
+    };
+    let count = corners[reference].len();
+    if let Some(&s) = cornered.iter().find(|&&s| corners[s].len() != count) {
+        return Err(GeopError::new(format!(
+            "loft: the profile {} has {} corners, the profile {} has {count}: lofted as they are, the profiles' corners are matched one to one, so every profile with corners needs as many — match points, or add guides, to say which go where",
+            sections[s].name,
+            corners[s].len(),
+            sections[reference].name
+        )));
+    }
+    let about = |s: usize, k: usize| -> GeopResult<[f64; 3]> {
+        let joint = placed[s]
+            .frame
+            .point(&placed[s].profile.joint(corners[s][k])?);
+        Ok(sub(joint.to_f64_array(), centres[s]))
+    };
+    let mut shifts = vec![0; placed.len()];
+    for w in cornered.windows(2) {
+        let (previous, s) = (w[0], w[1]);
+        let before = (0..count)
+            .map(|k| about(previous, (k + shifts[previous]) % count))
+            .collect::<GeopResult<Vec<_>>>()?;
+        let mut best: Option<(f64, usize)> = None;
+        for shift in 0..count {
+            let mut cost = 0.0;
+            for (k, &b) in before.iter().enumerate() {
+                let d = sub(about(s, (k + shift) % count)?, b);
+                cost += dot(d, d);
+            }
+            if best.is_none_or(|(c, _)| cost < c) {
+                best = Some((cost, shift));
+            }
+        }
+        shifts[s] = best.expect("a corner to start at").1;
+    }
+    for &s in &cornered {
+        points[s] = (0..count)
+            .map(|k| placed[s].profile.joint_names[corners[s][(k + shifts[s]) % count]].clone())
+            .collect();
+    }
+    Ok(points)
 }
 
 /// The sections made to correspond, as the module docs say — closed ones
@@ -287,10 +541,12 @@ fn correspond(sections: &[Section]) -> GeopResult<Vec<Placed>> {
         }
     }
 
-    // The matched points, in the order they run round the first matched
-    // section as it now winds — every section's in the same order, so that
-    // the `k`-th still meets the `k`-th — whatever order they were given in.
+    // Matched points: the designer's, in the order they run round the first
+    // matched section as it now winds — every section's in the same order,
+    // so that the `k`-th still meets the `k`-th — whatever order they were
+    // given in; or, with none given, the sections' corners.
     let mut points: Vec<Vec<String>> = sections.iter().map(|s| s.matched.clone()).collect();
+    let explicit = points.iter().any(|p| !p.is_empty());
     if let Some(reference) = (0..sections.len()).find(|&s| !points[s].is_empty()) {
         let joints = &placed[reference].profile.joint_names;
         let mut order: Vec<usize> = (0..points[reference].len()).collect();
@@ -299,13 +555,20 @@ fn correspond(sections: &[Section]) -> GeopResult<Vec<Placed>> {
             *list = order.iter().map(|&k| list[k].clone()).collect();
         }
     }
+    if !explicit && closed {
+        points = corner_anchors(sections, &placed, &centres)?;
+    }
 
-    // Matched points: each matched section starting at its first, the runs
-    // between them as long in every matched section.
+    // Each matched section starting at its first matched point, and the
+    // runs between consecutive matched points cut alike in all of them.
     let matched: Vec<usize> = (0..sections.len())
         .filter(|&s| !points[s].is_empty())
         .collect();
-    let mut targets: Vec<usize> = Vec::new();
+    let mut most = placed
+        .iter()
+        .map(|p| p.profile.curves.len())
+        .max()
+        .unwrap_or(0);
     if let Some(&first) = matched.first() {
         if !closed {
             return Err(GeopError::new(
@@ -322,7 +585,6 @@ fn correspond(sections: &[Section]) -> GeopResult<Vec<Placed>> {
                 count
             )));
         }
-        targets = vec![0; count];
         for &s in &matched {
             let start = placed[s]
                 .profile
@@ -331,56 +593,112 @@ fn correspond(sections: &[Section]) -> GeopResult<Vec<Placed>> {
                 .position(|j| *j == points[s][0])
                 .ok_or_else(|| GeopError::new("loft: the first matching point is no joint"))?;
             placed[s].profile = placed[s].profile.starting_at(start);
-            let indices = matched_indices(&placed[s].profile, &points[s], &sections[s].name)?;
-            for (t, run) in targets.iter_mut().zip(runs(&placed[s].profile, &indices)) {
-                *t = (*t).max(run);
+        }
+        let indices = |points: &[Vec<String>]| -> GeopResult<Vec<Vec<usize>>> {
+            matched
+                .iter()
+                .map(|&s| matched_indices(&placed[s].profile, &points[s], &sections[s].name))
+                .collect()
+        };
+
+        // Corners between the designer's matched points are matched too,
+        // between each two points every matched section has as many
+        // corners between.
+        if explicit {
+            let inner: Vec<Vec<Vec<String>>> = matched
+                .iter()
+                .zip(indices(&points)?)
+                .map(|(&s, indices)| {
+                    let profile = &placed[s].profile;
+                    let corners = profile.corners()?;
+                    Ok(runs(profile, &indices)
+                        .into_iter()
+                        .map(|run| {
+                            corners
+                                .iter()
+                                .filter(|&&c| run.start < c && c < run.end)
+                                .map(|&c| profile.joint_names[c].clone())
+                                .collect()
+                        })
+                        .collect())
+                })
+                .collect::<GeopResult<_>>()?;
+            for (m, &s) in matched.iter().enumerate() {
+                let mut all = Vec::new();
+                for j in 0..count {
+                    all.push(points[s][j].clone());
+                    if inner.iter().all(|i| i[j].len() == inner[m][j].len()) {
+                        all.extend(inner[m][j].iter().cloned());
+                    }
+                }
+                points[s] = all;
             }
+        }
+
+        // Runs: every joint of any matched section's run is a cut of the
+        // corresponding run of every other, at the same fraction of the
+        // run's length (see `merged_cuts`).
+        let run_list: Vec<Vec<std::ops::Range<usize>>> = matched
+            .iter()
+            .zip(indices(&points)?)
+            .map(|(&s, indices)| runs(&placed[s].profile, &indices))
+            .collect();
+        let fractions: Vec<Vec<(Vec<Scalar>, Scalar)>> = matched
+            .iter()
+            .zip(&run_list)
+            .map(|(&s, runs)| {
+                runs.iter()
+                    .map(|run| run_fractions(&placed[s].profile, run.clone()))
+                    .collect()
+            })
+            .collect::<GeopResult<_>>()?;
+        let count = run_list[0].len();
+        let mut cuts: Vec<RunCuts> = (0..count)
+            .map(|j| {
+                let along: Vec<Vec<Scalar>> = fractions.iter().map(|f| f[j].0.clone()).collect();
+                RunCuts::merged(&along, |m| sections[matched[m]].name.clone())
+            })
+            .collect::<GeopResult<_>>()?;
+        // A section not matched with more curves than the runs add up to:
+        // the longest stretch between two cuts of the first matched section
+        // is cut in the middle, until the runs add up to as many — a free
+        // choice, where no joint says where to cut.
+        let total = |cuts: &[RunCuts]| cuts.iter().map(RunCuts::pieces).sum::<usize>();
+        while total(&cuts) < most {
+            let mut longest: Option<(f64, usize, usize)> = None;
+            for (j, run) in cuts.iter().enumerate() {
+                let length = fractions[0][j].1.to_f64();
+                for k in 0..run.pieces() {
+                    let stretch = run.stretch(k) * length;
+                    if longest.is_none_or(|(l, _, _)| stretch > l) {
+                        longest = Some((stretch, j, k));
+                    }
+                }
+            }
+            let (_, j, k) = longest.expect("a run has a stretch");
+            cuts[j].halve(k);
+        }
+        most = total(&cuts);
+        for (m, &s) in matched.iter().enumerate() {
+            placed[s].profile = cut_runs(&placed[s].profile, &run_list[m], &cuts, m)
+                .with_context(with_context!("cutting the profile {}", sections[s].name))?;
         }
     }
 
-    // Pieces: as many curves in every section — run by run in a matched one.
-    let most = placed
-        .iter()
-        .map(|p| p.profile.curves.len())
-        .max()
-        .unwrap_or(0)
-        .max(targets.iter().sum());
-    // A section not matched with more curves than the runs add up to: the
-    // last run takes the rest.
-    let matched_total: usize = targets.iter().sum();
-    if let Some(last) = targets.last_mut() {
-        *last += most - matched_total;
-    }
+    // A section not matched: as many curves as the others, each halving its
+    // longest one — a free choice, as no corner says where.
     for (s, p) in placed.iter_mut().enumerate() {
-        // Each halving one curve more.
         if points[s].is_empty() {
             for _ in p.profile.curves.len()..most {
-                let longest = longest_among(&p.profile, 0..p.profile.curves.len());
-                p.profile = halved(&p.profile, longest)?;
+                let longest = (0..p.profile.curves.len())
+                    .max_by(|&a, &b| {
+                        polygon_length(&p.profile.curves[a])
+                            .total_cmp(&polygon_length(&p.profile.curves[b]))
+                    })
+                    .expect("a profile has curves");
+                p.profile = cut(&p.profile, longest, &[0.5])?;
             }
-            continue;
         }
-        // The first run short of its target one curve longer, until none
-        // is: as many halvings as the targets add up to at most, and one
-        // more step that finds none short.
-        repeat(most + 1, || -> GeopResult<_> {
-            let indices = matched_indices(&p.profile, &points[s], &sections[s].name)?;
-            let short = runs(&p.profile, &indices)
-                .into_iter()
-                .zip(&targets)
-                .position(|(run, &target)| run < target);
-            let Some(j) = short else {
-                return Ok(Step::Done(()));
-            };
-            let end = indices
-                .get(j + 1)
-                .copied()
-                .unwrap_or(p.profile.curves.len());
-            let longest = longest_among(&p.profile, indices[j]..end);
-            p.profile = halved(&p.profile, longest)?;
-            Ok(Step::Again)
-        })?
-        .done("halving the section's runs to their targets")?;
     }
 
     // Start: a matched section where it is matched; the others lined up
@@ -1061,7 +1379,7 @@ mod tests {
         ]);
         assert_eq!(model.topology().faces.len(), 4 + 2);
         // All three sides are as long: whichever was halved.
-        assert!((0..3).any(|k| model.vertex_id(&format!("loft(l,a,c{k}@half,b)")).is_ok()));
+        assert!((0..3).any(|k| model.vertex_id(&format!("loft(l,a,c{k}@cut1,b)")).is_ok()));
     }
 
     /// A hexagon and a circle: the circle's quarters are halved — rational

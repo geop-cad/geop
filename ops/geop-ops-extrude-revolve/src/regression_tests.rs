@@ -746,21 +746,20 @@ fn wide_plate_with_an_m6_hole() {
 ///
 /// The second section's arcs each sweep 94°, more than a quarter turn, so
 /// the kernel draws each in two pieces: five curves against the first's
-/// three. The loft makes the counts agree by halving the first section's
-/// longest curves — its bottom line first — and then matches the pieces in
-/// order: the bottom's second half, `c3#half`, is lofted into the first
-/// piece of an arc. The face from it leaves `z = 0`: its far corner is at
-/// `(2, -1.03, 1.05)`, on the dome. The bottom of the body, flat in every
-/// section, is twisted, with no error. Expected: the corners of the
-/// sections — where the curves meet at an angle — match each other, and
-/// the bottom line lofts into the bottom line.
+/// three. The loft used to make the counts agree by halving the first
+/// section's longest curves — its bottom line first — and then match the
+/// pieces in order: the bottom's second half was lofted into the first
+/// piece of an arc, and the face from it left `z = 0`, its far corner at
+/// `(2, -1.03, 1.05)` on the dome: the bottom of the body, flat in every
+/// section, twisted, with no error. Now the corners of the sections —
+/// where the curves meet at an angle — are matched, and the bottom line
+/// lofts into the bottom line.
 ///
 /// Ruled out: with arcs under a quarter turn in both sections (an apex of
 /// 0.9 at both) the bottom stays flat; it is the kernel's own splitting of
 /// an arc at a quarter turn that makes the counts differ, which a user
 /// cannot see in either sketch.
 #[test]
-#[ignore = "bug: lofting two D sections of three curves each twists the flat bottom, loft(body,s0,c3#half) reaching (2, -1.03, 1.05): an arc over a quarter turn is two pieces, and the loft matches pieces by count rather than the sections' corners"]
 fn loft_of_two_d_sections_keeps_the_bottom_flat() {
     /// A D on the X plane at `x`: the bottom from `(-w, 0)` to `(w, 0)`,
     /// two arcs through `(0, h)` over it.
