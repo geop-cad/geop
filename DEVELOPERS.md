@@ -31,6 +31,7 @@ apart (see Scripts).
 | `lib/geop-lib-booleans` | booleans and the remesh under them, split, imprint, trim up to the next face, a step's `Combine` |
 | `lib/geop-lib-sweep` | extrude, revolve, screw, sweeps along paths, lofts, the skinned grid blends share; feature `testing`: basic shapes |
 | `lib/geop-lib-shell` | shelling, thickening and offsetting faces, rebuilding a solid face by face |
+| `lib/geop-lib-fixtures` | test-only steps a program can hold: `Primitive` (a block, prism, cylinder or sphere at given coordinates, kept or combined) and `GivenDatum`; the stress sweeps' bodies; a dev-dependency only |
 | `lib/geop-lib-stdlib` | the standard parts, one program per family, and `WithStandardParts`, the `FileStore` that puts them beside a workspace's files |
 | `lib/geop-lib-constraints` | the constraints and unknowns of a part's state, and the solver over them |
 | `ops/geop-ops-model` | the vocabulary every operation shares, the one `ops/` crate an operation depends on: the model target (topology with stable names, features, element kinds, threads, solid notes, `Combine`, `Extent`), the sketch and 3-D sketch targets and the references into them, the datums, a part's parameters and properties (their steps and panel), what is picked (`Selected`, `MateEntity`), placed parts with their solids and bill of materials, `Spacing`; their drawers |

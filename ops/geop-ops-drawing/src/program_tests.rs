@@ -1,14 +1,11 @@
-//! Drawings of the example parts and assemblies, as programs build them:
-//! hidden lines, sections, dimensions, threads, balloons.
+//! Drawings of drilled plates, and of the example parts and assemblies, as
+//! programs build them: hidden lines, sections, dimensions, threads,
+//! balloons.
 
 use std::{collections::BTreeMap, rc::Rc};
 
 use geop_core_editor::registry::Registry;
-use geop_core_math::{
-    geop_error::GeopResult,
-    primitives::{DatumComponent, FrameAxis},
-    scalars::Scalar,
-};
+use geop_core_math::{geop_error::GeopResult, scalars::Scalar};
 use geop_core_program::{
     part::Part,
     program::Program,
@@ -16,17 +13,16 @@ use geop_core_program::{
     values::{Setting, Settings, StateValue, pose_state},
     workspace::{self, Files, Location},
 };
+use geop_lib_fixtures::{GivenDatumArgs, PrimitiveArgs, drilled_box};
 use geop_lib_sheet::to_dxf;
 use geop_lib_stdlib::WithStandardParts;
 use geop_ops_assembly::examples::{metric_plate, pose, workspaces};
-use geop_ops_extrude_revolve::examples::{box_with_drill_hole, bracket};
 use geop_ops_hole::examples::hole_plate;
-use geop_ops_model::datums::{ORIGIN, component_name, datum};
-use geop_ops_model::selection::Selected;
+use geop_ops_model::datums::datum;
 use geop_ops_model::sketch::SketchPlane;
 use geop_ops_model::{NamedModel, RefId, testing::model_of};
 use geop_ops_pattern::examples::cool_flange;
-use geop_ops_reference_geometry::{AddDatumArgs, Construction, examples::conebox};
+use geop_ops_reference_geometry::examples::conebox;
 use geop_ops_subd::examples::subd_mouse;
 
 use crate::{
@@ -37,7 +33,8 @@ use crate::{
 /// The operations the example parts and assemblies drawn here are written
 /// in — sketched, extruded, drilled, rounded, subdivided, placed, the
 /// standard parts' patterns and parameters — each crate's `register`, as
-/// the editor's registry has them.
+/// the editor's registry has them, and the given solids and datums the
+/// drilled plates are built from and cut on.
 pub(crate) fn registry() -> Registry {
     let registry = (|| -> GeopResult<Registry> {
         let r = Registry::default();
@@ -50,6 +47,7 @@ pub(crate) fn registry() -> Registry {
         let r = geop_ops_subd::register(r)?;
         let r = geop_ops_pattern::register(r)?;
         let r = geop_ops_assembly::register(r)?;
+        let r = geop_lib_fixtures::register(r)?;
         Ok(r)
     })();
     registry.expect("the operations each have a name of their own")
@@ -81,16 +79,24 @@ fn model(built: &Part) -> NamedModel {
 }
 
 /// The datum plane offset `distance` from the origin's plane normal to `y`.
-fn offset_from_xz(distance: f64) -> AddDatumArgs {
-    AddDatumArgs {
-        selection: vec![Selected::Datum(datum(component_name(
-            ORIGIN,
-            DatumComponent::Plane(FrameAxis::Y),
-        )))],
-        construction: Construction::Offset {
-            distance: distance.into(),
-        },
-    }
+fn offset_from_xz(distance: f64) -> GivenDatumArgs {
+    GivenDatumArgs::plane([0.0, distance, 0.0], [0.0, 1.0, 0.0])
+}
+
+/// A 40 x 40 plate, 10 thick, on the origin's plane, with a hole of
+/// radius 3 through its middle: the block `block` and the cylinder `hole`
+/// cut through it, flush with both faces (the solid `cylinder(hole)`).
+pub(crate) fn bracket() -> Program {
+    let mut program = Program::new();
+    program.push(
+        "block",
+        PrimitiveArgs::block([0.0, 0.0, 0.0], [40.0, 40.0, 10.0]),
+    );
+    program.push(
+        "hole",
+        PrimitiveArgs::cylinder_z([20.0, 20.0, 0.0], 3.0, 10.0).cut("block(block)"),
+    );
+    program
 }
 
 /// The view `kind` of `part`; failing, it panics with every edge and face
@@ -124,9 +130,9 @@ fn name_where(part: &NamedModel, pick: impl Fn(RefId) -> bool) -> String {
     names.first().expect("an entity matches").1.to_string()
 }
 
-/// The bracket's 6 mm hole runs through its 10 mm plate: from the front its
-/// walls are two hidden lines, 6 apart, the plate's full height; from above
-/// it is a visible circle.
+/// The plate's 6 mm hole runs through its 10 mm thickness: from the front
+/// its walls are two hidden lines, 6 apart, the plate's full height; from
+/// above it is a visible circle.
 #[test]
 fn drilled_plate_shows_its_hole_hidden() {
     let built = build(&bracket());
@@ -226,7 +232,7 @@ fn dimensions_by_name_are_drawn() {
 /// shows the cut hatched, and no hidden lines.
 #[test]
 fn section_through_a_blind_hole_is_hatched() {
-    let mut program = box_with_drill_hole();
+    let mut program = drilled_box();
     program.push("middle", offset_from_xz(1.0));
     let built = build(&program);
     let args = DrawingArgs {

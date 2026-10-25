@@ -13,13 +13,18 @@ serde.workspace = true
 serde_json.workspace = true
 
 [dev-dependencies]
+# Parts placed and weighed: given models on a shelf, and the example
+# assemblies.
 geop-ops-assembly = { workspace = true, features = ["testing", "examples"] }
 geop-ops-model = { workspace = true, features = ["testing"] }
 geop-lib-sweep = { workspace = true, features = ["testing"] }
-# The example assemblies weighed, the operations they are written in, and
-# the standard parts they place.
+# The given solids the plates of generated assemblies are built from.
+geop-lib-fixtures.workspace = true
+# The standard parts placed, designated by their norms, and the operations
+# they and the example assemblies' parts are written in: sketched on
+# datums, extruded, revolved and patterned.
+geop-lib-stdlib.workspace = true
 geop-ops-sketch.workspace = true
 geop-ops-reference-geometry.workspace = true
 geop-ops-extrude-revolve.workspace = true
 geop-ops-pattern.workspace = true
-geop-lib-stdlib.workspace = true

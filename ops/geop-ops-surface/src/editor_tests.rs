@@ -11,17 +11,17 @@ use geop_core_editor::{
 };
 use geop_core_math::{primitives::FrameAxis, scalars::Scalar, vector::Vector3};
 use geop_core_program::{program::Program, testing::args};
-use geop_ops_extrude_revolve::examples::box_with_drill_hole;
+use geop_lib_fixtures::drilled_box;
 use geop_ops_model::{element, testing::model_of};
 use geop_ops_sketch3d::testing::route;
 
-/// What these tests edit: sketches, planar and in space, the drilled box's
-/// extrusions, and surfaces.
+/// What these tests edit: sketches, planar and in space, the given drilled
+/// box, and surfaces.
 fn registry() -> Registry {
     (geop_ops_model::register(Registry::default()))
         .and_then(geop_ops_sketch::register)
         .and_then(geop_ops_sketch3d::register)
-        .and_then(geop_ops_extrude_revolve::register)
+        .and_then(geop_lib_fixtures::register)
         .and_then(crate::register)
         .expect("the operations each have a name of their own")
 }
@@ -31,7 +31,7 @@ fn registry() -> Registry {
 /// and makes it a slab.
 #[test]
 fn new_boundary_surface_picks_edges_then_thickens() {
-    let mut editor = editor_with(registry(), box_with_drill_hole());
+    let mut editor = editor_with(registry(), drilled_box());
     let update = editor.handle(Command::New {
         kind: "boundary_surface".into(),
     });

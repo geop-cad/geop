@@ -33,6 +33,8 @@ lib/geop-lib-booleans        booleans, split, imprint, a step's `Combine`
 lib/geop-lib-sweep           extrude, revolve, sweeps, lofts, skinning
 lib/geop-lib-shell           shelling, thickening, offsetting
 lib/geop-lib-stdlib          the standard parts beside every workspace
+lib/geop-lib-fixtures        test-only steps: a solid or a datum at given
+                              coordinates
 ops/geop-ops-model           the vocabulary every operation shares: the
                               model, sketch, datum, parameter and placed-part
                               targets and the references into them

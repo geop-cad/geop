@@ -32,20 +32,25 @@ use geop_core_math::{
     vector::Vector3,
 };
 use geop_core_sketch::PointId;
+use geop_lib_fixtures::{GivenDatumArgs, PrimitiveArgs, drilled_box};
 use geop_ops_extrude_revolve::{
-    ExtrudeArgs,
+    ExtrudeArgs, RevolveArgs, RevolveAxis,
     examples::{box_with_drill_hole, parametric_plate},
 };
 use geop_ops_model::datums::{ORIGIN, component_name, datum};
 use geop_ops_model::parameters::{COLOR, instances, read_properties};
 use geop_ops_model::selection::Selected;
-use geop_ops_model::sketch::{figures::n, sketch_element};
+use geop_ops_model::sketch::{
+    figures::{n, on_origin, rectangle_outline},
+    sketch_element, whole_sketch,
+};
 use geop_ops_model::spacing::Spacing;
 use geop_ops_model::{
-    Point, element, read_model,
-    testing::{assert_close, model_of},
+    Combine, Point, element, read_model,
+    testing::{Built as _, assert_close, face_towards, model_of},
 };
 use geop_ops_reference_geometry::{AddDatumArgs, Construction};
+use geop_ops_sketch::AddSketchArgs;
 
 use geop_ops_model::placed::{Placed, locate, placed_parts};
 
@@ -58,13 +63,14 @@ use crate::{
 use geop_ops_model::mate_entity::MateEntity;
 
 /// The operations the tests of assemblies write their programs in — the
-/// parts sketched, extruded, rounded and mirrored, the standard parts'
-/// patterns and parameters — with everything assemblies offer an editor,
-/// their examples among it.
+/// examples' parts sketched, extruded, rounded and mirrored, the tests'
+/// own given as solids and datums, a datum made on a placed part — with
+/// everything assemblies offer an editor, their examples among it.
 pub(crate) fn registry() -> Registry {
     let registry = (|| -> GeopResult<Registry> {
         let r = Registry::default();
         let r = geop_ops_model::register(r)?;
+        let r = geop_lib_fixtures::register(r)?;
         let r = geop_ops_sketch::register(r)?;
         let r = geop_ops_reference_geometry::register(r)?;
         let r = geop_ops_extrude_revolve::register(r)?;
@@ -576,6 +582,102 @@ fn a_program_is_solved_where_its_mates_do_not_hold() {
         position(&pose_of(editor.program(), "plate")),
         [0.0; 3],
         1e-12,
+    );
+}
+
+/// A flat face that is a surface of revolution too — the cap of a revolved
+/// cylinder, a disc round its axis — is mated as the plane it is: a peg
+/// standing on a block, its cap on the block's top, is pulled down onto
+/// the top from where its state left it. (Taken as its axis, the mate asked
+/// for a line lying in the top, which no peg standing on it can give.)
+#[test]
+fn a_revolved_cap_is_mated_as_its_plane() {
+    let mut block = Program::new();
+    block.push("block", PrimitiveArgs::block([0.0; 3], [4.0, 4.0, 1.0]));
+    // A rectangle beside the `z` axis, revolved round it: a tube whose
+    // caps are flat and revolved alike.
+    let mut peg = Program::new();
+    peg.push("axis", GivenDatumArgs::axis([0.0; 3], [0.0, 0.0, 1.0]));
+    peg.push(
+        "section",
+        AddSketchArgs::on(
+            on_origin(FrameAxis::Y),
+            rectangle_outline(0.2, 0.0, 0.7, 2.0),
+        ),
+    );
+    peg.push(
+        "peg",
+        RevolveArgs {
+            sketch: whole_sketch("section"),
+            axis: Some(RevolveAxis::Datum(datum("axis"))),
+            extent: geop_ops_extrude_revolve::Extents::blind(360.0),
+            output: geop_ops_extrude_revolve::Output::Solid(Combine::NewBody),
+        },
+    );
+    let built = peg.build_model(|| Ok(registry().operations())).unwrap();
+    let bottom_id = face_towards(
+        &built,
+        built.solid_id("revolve(peg)").unwrap(),
+        [0.0, 0.0, -1.0],
+    );
+    let bottom = built.name_of(bottom_id).unwrap().to_string();
+    let surface = &built.topology().get_face(bottom_id).unwrap().surface;
+    assert!(
+        surface.axis_of_revolution().unwrap().is_some(),
+        "{bottom} is revolved round the axis"
+    );
+    // Where the bottom lies along the peg's own `z`: the peg stands on the
+    // block's top, at `z = 1`, that far above it.
+    let standing = 1.0 - built.frame_of_face(bottom_id).unwrap().origin()[2].to_f64();
+
+    let files = BTreeMap::from([
+        ("block.geop".to_string(), Some(block.to_json().unwrap())),
+        ("peg.geop".to_string(), Some(peg.to_json().unwrap())),
+    ]);
+    let face = |instance: &str, name: &str| MateEntity::of(instance, Selected::Face(element(name)));
+    let mut program = Program::new();
+    program.push(
+        "block",
+        AddPartArgs {
+            file: "block.geop".into(),
+            ..Default::default()
+        }
+        .fixed(),
+    );
+    program.push(
+        "peg",
+        AddPartArgs {
+            file: "peg.geop".into(),
+            mates: BTreeMap::from([(
+                "m1".into(),
+                crate::Mate::constraint(
+                    crate::Kind::Coincident,
+                    vec![face("peg", &bottom), face("block", "block(block,end)")],
+                ),
+            )]),
+            ..Default::default()
+        },
+    );
+    program
+        .state
+        .insert(pose_state("peg"), at([1.0, 1.0, standing + 2.0]));
+    let mut editor = editor();
+    handled(&mut editor, Command::Files { files });
+    let update = handled(
+        &mut editor,
+        Command::Load {
+            program,
+            path: Some("assembly.geop".into()),
+        },
+    );
+    let steps = update.program.unwrap().steps;
+    assert!(steps.iter().all(|s| s.error.is_none()), "{steps:?}");
+    let report = solving::check(&editor.part()).unwrap();
+    assert!(report.converged, "{report:?}");
+    assert_close(
+        position(&pose_of(editor.program(), "peg")),
+        [1.0, 1.0, standing],
+        1e-7,
     );
 }
 
@@ -1642,7 +1744,7 @@ fn a_gear_coupling_turns_the_driven_link_by_its_ratio() {
 /// nothing changes; written otherwise, the file is read again.
 #[test]
 fn a_part_is_built_from_its_file_as_written() {
-    let text = box_with_drill_hole().to_json().unwrap();
+    let text = drilled_box().to_json().unwrap();
     let files = BTreeMap::from([("part.geop".to_string(), text.clone())]);
     let workspace = workspace(files);
     let placed =
@@ -2127,9 +2229,9 @@ fn an_assembly_is_meshed_from_its_files() {
 /// those there are.
 #[test]
 fn an_unknown_solid_names_the_known_ones() {
-    let program = box_with_drill_hole();
+    let program = drilled_box();
     let BuiltPart { runner, mut part } =
         build_file(&program, "box.geop", workspace(BTreeMap::new())).unwrap();
     let err = stl_triangles(&runner, &mut part, &program, &["nothing"]).unwrap_err();
-    assert!(err.to_string().contains("extrude(hole)"), "{err}");
+    assert!(err.to_string().contains("cylinder(hole)"), "{err}");
 }

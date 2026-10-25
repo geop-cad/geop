@@ -28,17 +28,12 @@ use geop_ops_model::{
 use geop_ops_sketch::AddSketchArgs;
 use std::f64::consts::PI;
 
-use geop_core_math::{
-    geop_error::GeopResult,
-    primitives::{DatumComponent, FrameAxis},
-    scalars::Scalar,
-};
+use geop_core_math::{geop_error::GeopResult, primitives::FrameAxis, scalars::Scalar};
 use geop_core_sketch::PointId;
 use geop_core_topology::validation::{ValidationParameters, validate};
-use geop_ops_model::datums::{AnyDatum, Datums, ORIGIN, component_name, datums, origin_axis};
-use geop_ops_model::selection::Selected;
+use geop_lib_fixtures::{GivenDatum, GivenDatumArgs};
+use geop_ops_model::datums::{datums, origin_axis};
 use geop_ops_model::sketch3d::sketch3d_path;
-use geop_ops_reference_geometry::{AddDatum, AddDatumArgs, Construction};
 use geop_ops_sketch3d::AddSketch3d;
 
 /// The sketch `name` as a path.
@@ -51,16 +46,10 @@ fn on_datum(name: &str) -> SketchPlane {
     SketchPlane::Datum(ElementReference::new(datums(), name))
 }
 
-/// The plane of the origin normal to `normal`, to build a datum on.
-fn origin_plane(normal: FrameAxis) -> Selected {
-    let name = component_name(ORIGIN, DatumComponent::Plane(normal));
-    Selected::Datum(ElementReference::<Datums, AnyDatum>::new(datums(), name))
-}
-
 /// The operations these tests' programs are written in.
 fn registry() -> GeopResult<OperationRegistry> {
     crate::testing::registry()?
-        .with(AddDatum)?
+        .with(GivenDatum)?
         .with(AddSketch3d)
 }
 
@@ -123,12 +112,7 @@ fn lofted(profiles: &[&str]) -> LoftArgs {
 fn lifted(program: &mut Program, name: &str, distance: f64) {
     program.push(
         name,
-        AddDatumArgs {
-            selection: vec![origin_plane(FrameAxis::Z)],
-            construction: Construction::Offset {
-                distance: distance.into(),
-            },
-        },
+        GivenDatumArgs::plane([0.0, 0.0, distance], [0.0, 0.0, 1.0]),
     );
 }
 
@@ -191,12 +175,7 @@ fn sweep_starts_at_the_end_of_the_path_the_profile_is_at() {
     );
     program.push(
         "far_plane",
-        AddDatumArgs {
-            selection: vec![origin_plane(FrameAxis::Y)],
-            construction: Construction::Offset {
-                distance: 3.0.into(),
-            },
-        },
+        GivenDatumArgs::plane([0.0, 3.0, 0.0], [0.0, 1.0, 0.0]),
     );
     program.push("profile", AddSketchArgs::on(on_datum("far_plane"), far));
     program.push("path", AddSketchArgs::on(on_origin(FrameAxis::Z), bend()));
@@ -516,12 +495,7 @@ fn sweep_along_a_spline_cuts_a_slab() {
     // Square to the spline where it starts, along x.
     program.push(
         "start_plane",
-        AddDatumArgs {
-            selection: vec![origin_plane(FrameAxis::X)],
-            construction: Construction::Offset {
-                distance: (-2.0).into(),
-            },
-        },
+        GivenDatumArgs::plane([-2.0, 0.0, 0.0], [1.0, 0.0, 0.0]),
     );
     program.push(
         "profile",

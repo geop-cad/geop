@@ -15,30 +15,31 @@ use std::f64::consts::PI;
 use crate::{
     Hole, HoleArgs, HoleCentre, HoleKind, Standard, Thread, ThreadArgs,
     iso::{Fit, SIZES, metric},
-    testing::{PLATE, plate, points_sketch},
+    testing::{PLATE, PLATE_TOP, plate, points_sketch},
 };
 use geop_core_math::{geop_error::GeopResult, primitives::FrameAxis, scalars::Scalar};
-use geop_ops_extrude_revolve::{Extent, Extents, testing::extrusion};
+use geop_lib_fixtures::{GivenDatum, GivenDatumArgs, Primitive, PrimitiveArgs};
 use geop_ops_model::sketch::{
-    Sketch,
-    figures::{n, on_face, on_origin, outline},
+    figures::{on_face, on_origin},
     sketch_element, whole_sketch,
 };
 use geop_ops_model::{
-    Combine, CosmeticThread, NamedModel, Threads, model, read_model, read_threads,
-    testing::{Built, assert_valid, assert_volume, check_valid, solid_volume},
+    CosmeticThread, Extent, NamedModel, Threads, model, read_model, read_threads,
+    testing::{Built, assert_valid, assert_volume, check_valid, face_towards, solid_volume},
 };
 use geop_ops_sketch::AddSketchArgs;
 
 use geop_ops_model::datums::datums;
-use geop_ops_model::selection::Selected;
 use geop_ops_pattern::{CircularPattern, LinearPattern, Mirror};
-use geop_ops_reference_geometry::{AddDatum, AddDatumArgs, Construction};
 
 /// The operations these tests' programs are written in, and those of
-/// [`super::pattern_tests`].
+/// [`super::pattern_tests`]: given solids and datums, the sketches the
+/// holes' centres are on, the sketches and extrusions of the examples, and
+/// the patterns of holes.
 pub(super) fn registry() -> GeopResult<OperationRegistry> {
-    (geop_ops_extrude_revolve::testing::registry()?.with(AddDatum)?)
+    (geop_ops_extrude_revolve::testing::registry()?)
+        .with(Primitive)?
+        .with(GivenDatum)?
         .with(Hole)?
         .with(Thread)?
         .with(LinearPattern)?
@@ -50,7 +51,7 @@ pub(super) fn registry() -> GeopResult<OperationRegistry> {
 /// point of the sketch `centres`, as far as `end`.
 pub(super) fn hole(kind: HoleKind, standard: Standard, end: Extent) -> HoleArgs {
     HoleArgs {
-        face: Some(named("extrude(plate,end)")),
+        face: Some(named(PLATE_TOP)),
         points: vec![HoleCentre::Sketch(whole_sketch("centres"))],
         kind,
         standard,
@@ -277,17 +278,8 @@ fn a_pattern_of_points_in_one_sketch() {
 #[test]
 fn points_picked_one_by_one() {
     let mut program = plate(&[[20.0, 20.0], [40.0, 20.0]]);
-    program.push(
-        "corner",
-        AddDatumArgs {
-            selection: vec![Selected::Vertex(named("extrude(plate,outline,p2,end)"))],
-            construction: Construction::Point {
-                x: (-10.0).into(),
-                y: (-10.0).into(),
-                z: 0.0.into(),
-            },
-        },
-    );
+    let [w, d, t] = PLATE;
+    program.push("corner", GivenDatumArgs::point([w - 10.0, d - 10.0, t]));
     let mut args = hole(HoleKind::Simple, iso("M3", Fit::Close), Extent::blind(3.0));
     args.points = vec![
         HoleCentre::SketchPoint(sketch_element("centres", geop_core_sketch::PointId(1))),
@@ -305,13 +297,14 @@ fn points_picked_one_by_one() {
 /// goes through both.
 #[test]
 fn up_to_next_stops_in_the_gap() {
+    // The top arm's top, `y = 30`: the seventh side of the "C".
+    let top = "prism(block,c6)";
     let program = || {
         let mut program = Program::new();
         program.push(
-            "c",
-            AddSketchArgs::on(
-                on_origin(FrameAxis::Z),
-                outline(&[
+            "block",
+            PrimitiveArgs::prism(
+                &[
                     [0.0, 0.0],
                     [40.0, 0.0],
                     [40.0, 10.0],
@@ -320,26 +313,21 @@ fn up_to_next_stops_in_the_gap() {
                     [40.0, 20.0],
                     [40.0, 30.0],
                     [0.0, 30.0],
-                ]),
+                ],
+                0.0,
+                10.0,
             ),
         );
-        program.push(
-            "block",
-            extrusion("c", Extents::blind(10.0), Combine::NewBody),
-        );
-        // On the top arm's top, `y = 30`: sketch `x` is world `x`, sketch
-        // `y` world `-z`.
+        // On the top arm's top: sketch `x` is world `x`, sketch `y` world
+        // `-z`.
         program.push(
             "centres",
-            AddSketchArgs::on(
-                on_face("extrude(block,c,c14)"),
-                points_sketch(&[[25.0, -5.0]]),
-            ),
+            AddSketchArgs::on(on_face(top), points_sketch(&[[25.0, -5.0]])),
         );
         program
     };
     let args = |end| HoleArgs {
-        face: Some(named("extrude(block,c,c14)")),
+        face: Some(named(top)),
         ..hole(HoleKind::Simple, iso("M6", Fit::Normal), end)
     };
     let block = 40.0 * 30.0 * 10.0 - 30.0 * 10.0 * 10.0;
@@ -355,35 +343,38 @@ fn up_to_next_stops_in_the_gap() {
 #[test]
 fn hole_coming_out_through_a_curved_face() {
     let mut program = Program::new();
-    // On the X plane: sketch `x` is world `y`, sketch `y` world `z`. A flat
-    // top at `z = 10`, the bottom a half circle of radius 10 around `z =
-    // 10`.
-    let mut d = Sketch::new();
-    let a = d.add_point(n(10.0), n(10.0));
-    let b = d.add_point(n(-10.0), n(10.0));
-    d.add_line(a, b);
-    d.add_arc(b, a, n(PI));
-    program.push("d", AddSketchArgs::on(on_origin(FrameAxis::X), d));
+    // A cylinder of radius 10 along `x` around `z = 10`, cut flat 2 above
+    // its axis: a flat top at `z = 12`, the bottom round. (Cut through the
+    // axis, the flat would run along two of the side quarters' seam edges.)
+    program.push(
+        "round",
+        PrimitiveArgs::cylinder([0.0, 0.0, 10.0], FrameAxis::X, 10.0, 30.0),
+    );
     program.push(
         "bar",
-        extrusion("d", Extents::blind(30.0), Combine::NewBody),
+        PrimitiveArgs::block([-1.0, -11.0, 12.0], [31.0, 11.0, 21.0]).cut("cylinder(round)"),
     );
-    let top = "extrude(bar,d,c2)";
+    let blank = program.build_model(registry).unwrap();
+    let solid = blank.solid_id("block(bar)").unwrap();
+    let top = blank
+        .name_of(face_towards(&blank, solid, [0.0, 0.0, 1.0]))
+        .unwrap()
+        .to_string();
     // Measured on the same mesh, so its error on the round bottom cancels.
-    let bar = solid_volume(&program.build_model(registry).unwrap(), "extrude(bar)");
+    let bar = solid_volume(&blank, "block(bar)");
     // On the top, normal `+z`: sketch `x`, `y` are world `x`, `y`.
     program.push(
         "centres",
-        AddSketchArgs::on(on_face(top), points_sketch(&[[15.0, 3.0]])),
+        AddSketchArgs::on(on_face(&top), points_sketch(&[[15.0, 3.0]])),
     );
     let part = drilled(
         program,
         HoleArgs {
-            face: Some(named(top)),
+            face: Some(named(&top)),
             ..hole(HoleKind::Simple, iso("M5", Fit::Normal), Extent::ThroughAll)
         },
     );
-    // Through the half disc, `sqrt(100 - y^2)` deep at `y` off its middle,
+    // Through the bar, `2 + sqrt(100 - y^2)` deep at `y` off its middle,
     // for every `y` across the hole — its own disc of radius 2.75.
     let r: f64 = 2.75;
     let steps = 2000;
@@ -394,7 +385,7 @@ fn hole_coming_out_through_a_curved_face() {
             let x = -r + 2.0 * r * (j as f64 + 0.5) / steps as f64;
             if x * x + y0 * y0 <= r * r {
                 let y = 3.0 + y0;
-                removed += (100.0 - y * y).sqrt() * (2.0 * r / steps as f64).powi(2);
+                removed += (2.0 + (100.0 - y * y).sqrt()) * (2.0 * r / steps as f64).powi(2);
             }
         }
     }
@@ -459,34 +450,13 @@ fn unsupported_holes_are_refused() {
 }
 
 /// A bolt's blank, its axis `z`: a head Ø10 and 5 high, and on it a shank
-/// Ø6 and 20 long, `extrude(shank)`.
+/// Ø6 and 20 long, `cylinder(shank)`.
 fn shaft() -> Program {
     let mut program = Program::new();
-    let circle = |r: f64| {
-        let mut s = Sketch::new();
-        let c = s.add_point(n(0.0), n(0.0));
-        s.add_circle(c, n(r));
-        s
-    };
-    program.push(
-        "head_circle",
-        AddSketchArgs::on(on_origin(FrameAxis::Z), circle(5.0)),
-    );
-    program.push(
-        "head",
-        extrusion("head_circle", Extents::blind(5.0), Combine::NewBody),
-    );
-    program.push(
-        "shank_circle",
-        AddSketchArgs::on(on_face("extrude(head,end)"), circle(3.0)),
-    );
+    program.push("head", PrimitiveArgs::cylinder_z([0.0; 3], 5.0, 5.0));
     program.push(
         "shank",
-        extrusion(
-            "shank_circle",
-            Extents::blind(20.0),
-            Combine::join("extrude(head)"),
-        ),
+        PrimitiveArgs::cylinder_z([0.0, 0.0, 5.0], 3.0, 20.0).join("cylinder(head)"),
     );
     program
 }
@@ -496,12 +466,7 @@ fn shaft_side(part: &NamedModel) -> String {
     part.names()
         .iter()
         .map(|(_, name)| name.to_string())
-        .find(|name| {
-            name.starts_with("extrude(shank,shank_circle,c")
-                && !name.contains(",start")
-                && !name.contains(",end")
-                && part.face_id(name).is_ok()
-        })
+        .find(|name| name.starts_with("cylinder(shank,c") && part.face_id(name).is_ok())
         .expect("a side face")
 }
 
@@ -603,7 +568,7 @@ fn modelled_thread_on_a_shaft() {
         "no face of the thread is left"
     );
     let size = metric("M6").unwrap();
-    let removed = solid_volume(&blank, "extrude(shank)") - solid_volume(&part, "thread(t)");
+    let removed = solid_volume(&blank, "cylinder(shank)") - solid_volume(&part, "thread(t)");
     let groove = 5.0 * groove_per_turn(3.0, size.minor_diameter(), size.pitch);
     assert!(
         removed > 0.85 * groove && removed < 1.02 * groove,
@@ -663,23 +628,10 @@ fn every_iso_size_and_kind() {
             for end in [Extent::blind(30.0), Extent::ThroughAll] {
                 let mut program = Program::new();
                 let (w, t) = (100.0, 40.0);
-                program.push(
-                    "outline",
-                    AddSketchArgs::on(
-                        on_origin(FrameAxis::Z),
-                        outline(&[[0.0, 0.0], [w, 0.0], [w, w], [0.0, w]]),
-                    ),
-                );
-                program.push(
-                    "plate",
-                    extrusion("outline", Extents::blind(t), Combine::NewBody),
-                );
+                program.push("plate", PrimitiveArgs::block([0.0; 3], [w, w, t]));
                 program.push(
                     "centres",
-                    AddSketchArgs::on(
-                        on_face("extrude(plate,end)"),
-                        points_sketch(&[[50.0, 50.0]]),
-                    ),
+                    AddSketchArgs::on(on_face(PLATE_TOP), points_sketch(&[[50.0, 50.0]])),
                 );
                 program.push("h", hole(kind, iso(size.name, Fit::Normal), end.clone()));
                 let label = format!("{} {kind:?} {end:?}", size.name);

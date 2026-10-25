@@ -17,12 +17,14 @@ serde.workspace = true
 [dev-dependencies]
 geop-ops-model = { workspace = true, features = ["testing"] }
 geop-core-topology.workspace = true
-geop-ops-extrude-revolve = { workspace = true, features = ["testing", "examples"] }
+# The solids the tests route over.
+geop-lib-fixtures.workspace = true
 geop-lib-sweep = { workspace = true, features = ["testing"] }
+# A route runs through the points of planar and 3-D sketches.
 geop-ops-sketch.workspace = true
 geop-ops-sketch3d.workspace = true
 geop-ops-inspect.workspace = true
 geop-ops-bom.workspace = true
 geop-core-editor = { workspace = true, features = ["testing"] }
-geop-ops-reference-geometry.workspace = true
+# Routes between placed parts follow their mates.
 geop-ops-assembly = { workspace = true, features = ["examples"] }

@@ -5,22 +5,27 @@ use geop_core_math::{geop_error::GeopResult, primitives::FrameAxis, scalars::Sca
 use geop_core_program::{
     element::ElementReference, operation_registry::OperationRegistry, program::Program,
 };
-use geop_ops_extrude_revolve::{Extents, testing::extrude_sketch};
+use geop_lib_fixtures::PrimitiveArgs;
 use geop_ops_model::selection::Selected;
 use geop_ops_model::sketch::{
-    figures::{n, on_origin, rectangle_outline},
+    figures::{n, on_origin},
     sketch_element,
 };
 use geop_ops_model::sketch3d::Sketch3d;
-use geop_ops_model::{Combine, model, notes_of, testing::Built};
-use geop_ops_sketch::AddSketchArgs;
+use geop_ops_model::{
+    model, notes_of,
+    testing::{Built, model_of, vertex_at},
+};
+use geop_ops_sketch::{AddSketch, AddSketchArgs};
 use geop_ops_sketch3d::{AddSketch3d, AddSketch3dArgs};
 
 use crate::{Route, RouteArgs, Wire, WireSize, cable};
 
-/// The operations these tests' programs are written in.
+/// The operations these tests' programs are written in: given solids, the
+/// sketches a route may run through points of, and the route.
 fn registry() -> GeopResult<OperationRegistry> {
-    (geop_ops_extrude_revolve::testing::registry()?)
+    (geop_lib_fixtures::registry()?)
+        .with(AddSketch)?
         .with(AddSketch3d)?
         .with(Route)
 }
@@ -36,20 +41,17 @@ fn vertex(name: &str) -> Selected {
 #[test]
 fn a_route_between_corners_of_a_block() {
     let mut program = Program::new();
-    extrude_sketch(
-        &mut program,
+    program.push(
         "block",
-        on_origin(FrameAxis::Z),
-        rectangle_outline(0.0, 0.0, 4.0, 1.0),
-        Extents::blind(1.0),
-        Combine::NewBody,
+        PrimitiveArgs::block([0.0, 0.0, 0.0], [4.0, 1.0, 1.0]),
     );
+    let block = model_of(&program.built(registry).unwrap());
     program.push(
         "cable",
         RouteArgs {
             through: vec![
-                vertex("extrude(block,block_sketch,p0,start)"),
-                vertex("extrude(block,block_sketch,p1,start)"),
+                vertex(&vertex_at(&block, [0.0, 0.0, 0.0])),
+                vertex(&vertex_at(&block, [4.0, 0.0, 0.0])),
             ],
             wires: vec![Wire {
                 size: WireSize::Diameter(0.1),

@@ -12,7 +12,7 @@ use geop_core_editor::{
 use geop_core_math::{
     geop_error::{GeopError, GeopResult},
     plain,
-    primitives::{FrameAxis, Pose, Quaternion},
+    primitives::{Pose, Quaternion},
     scalars::Scalar,
     vector::Vector3,
 };
@@ -30,19 +30,19 @@ use geop_core_topology::{
 };
 use std::{cell::Cell, collections::BTreeMap, rc::Rc};
 
+use geop_lib_fixtures::{PrimitiveArgs, drilled_box};
 use geop_lib_stdlib::WithStandardParts;
 use geop_lib_sweep::shapes::{cube_solid, revolved_cylinder, sphere_solid, v3};
 use geop_ops_assembly::{AddPart, AddPartArgs, examples::pin};
 use geop_ops_extrude_revolve::{
-    Extents,
+    Extrude, Revolve,
     examples::{box_with_drill_hole, bracket, cross_drilled_shaft, revolved_cone_on_box},
-    testing::{self as extrude_revolve, extrude_sketch},
 };
-use geop_ops_model::sketch::figures::{disc, on_origin, rectangle_outline};
 use geop_ops_model::{
-    Combine, NamedModel, Namer, read_model,
+    NamedModel, Namer, read_model,
     testing::{assert_model_valid_sheets, model_of},
 };
+use geop_ops_sketch::AddSketch;
 
 use crate::{ImportStep, ImportStepArgs, add_bodies, read_step, write_part, write_step};
 
@@ -977,9 +977,13 @@ fn with_placed(mut program: Program, placed: &[(&str, &str, Pose)]) -> Program {
 }
 
 /// The part `program`, the file `file` among `files`, builds — written in
-/// sketches and extrusions, placing parts and importing STEP files.
+/// given solids, or in the sketches, extrusions and revolves of the
+/// example parts, placing parts and importing STEP files.
 fn build(program: &Program, file: &str, files: BTreeMap<String, String>) -> Part {
-    let registry = (extrude_revolve::registry().unwrap().with(AddPart))
+    let registry = (geop_lib_fixtures::registry().and_then(|r| r.with(AddSketch)))
+        .and_then(|r| r.with(Extrude))
+        .and_then(|r| r.with(Revolve))
+        .and_then(|r| r.with(AddPart))
         .and_then(|r| r.with(ImportStep))
         .unwrap();
     let mut runner = Runner::new(registry.clone());
@@ -1001,24 +1005,18 @@ fn build(program: &Program, file: &str, files: BTreeMap<String, String>) -> Part
 fn an_assembly_is_written_as_products_and_occurrences() {
     // A peg of radius 0.5 standing 2 high on the origin.
     let mut peg = Program::new();
-    let (up, new) = (Extents::blind(2.0), Combine::NewBody);
-    extrude_sketch(
-        &mut peg,
-        "c",
-        on_origin(FrameAxis::Z),
-        disc([0.0, 0.0], 0.5),
-        up,
-        new,
-    );
+    peg.push("c", PrimitiveArgs::cylinder_z([0.0, 0.0, 0.0], 0.5, 2.0));
     let sub = with_placed(
         Program::new(),
         &[("p", "parts/peg.geop", at(0.0, 0.0, 1.0))],
     );
 
+    // A 10 x 10 plate, 1 thick, under the origin's plane.
     let mut base = Program::new();
-    let plate = rectangle_outline(0.0, 0.0, 10.0, 10.0);
-    let (down, new) = (Extents::blind(-1.0), Combine::NewBody);
-    extrude_sketch(&mut base, "base", on_origin(FrameAxis::Z), plate, down, new);
+    base.push(
+        "base",
+        PrimitiveArgs::block([0.0, 0.0, -1.0], [10.0, 10.0, 0.0]),
+    );
     // About `y` by a quarter turn: the peg's `z` onto `x`.
     let half = std::f64::consts::FRAC_PI_4;
     let turn = Quaternion::new(
@@ -1138,8 +1136,9 @@ fn examples_round_trip_through_step() {
 }
 
 /// What an editor of STEP files offers: the parts and assemblies written
-/// and read — sketched, extruded, placed, the standard parts' patterns
-/// and parameters — and STEP itself.
+/// and read — given solids, and the example assemblies' parts and the
+/// standard parts as they are written: sketched on datums, extruded,
+/// patterned, placed, with their parameters — and STEP itself.
 fn registry() -> Registry {
     let registry = (|| -> GeopResult<Registry> {
         let r = Registry::default();
@@ -1149,6 +1148,7 @@ fn registry() -> Registry {
         let r = geop_ops_extrude_revolve::register(r)?;
         let r = geop_ops_pattern::register(r)?;
         let r = geop_ops_assembly::register(r)?;
+        let r = geop_lib_fixtures::register(r)?;
         let r = crate::register(r)?;
         Ok(r)
     })();
@@ -1183,7 +1183,7 @@ fn step_file(editor: &mut Editor) -> String {
 /// the program, and brings its solid back, named after the step.
 #[test]
 fn a_part_exported_as_step_is_imported_back() {
-    let mut editor = loaded(editor(), box_with_drill_hole());
+    let mut editor = loaded(editor(), drilled_box());
     let files = std::collections::BTreeMap::from([(
         "parts/box.step".to_string(),
         Some(step_file(&mut editor)),
@@ -1229,7 +1229,7 @@ fn a_part_exported_as_step_is_imported_back() {
 /// far it moved.
 #[test]
 fn an_import_that_heals_the_file_says_what_it_rebuilt() {
-    let mut editor = loaded(editor(), box_with_drill_hole());
+    let mut editor = loaded(editor(), drilled_box());
     let text = step_file(&mut editor);
     // The first vertex's point, raised.
     let at = text.find("=VERTEX_POINT(").expect("a vertex");
@@ -1335,7 +1335,7 @@ fn an_assembly_step_file_names_its_parts() {
 /// many solids as the box has, and which is meshed again as STL.
 #[test]
 fn a_part_written_as_step_imports_back_to_as_many_solids() {
-    let program = box_with_drill_hole();
+    let program = drilled_box();
     let mut editor = loaded(editor(), program.clone());
     let text = step_file(&mut editor);
     assert!(text.starts_with("ISO-10303-21;"), "{}", &text[..40]);

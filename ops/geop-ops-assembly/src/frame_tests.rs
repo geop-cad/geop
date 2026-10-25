@@ -12,7 +12,7 @@ use geop_core_math::{
     vector::Vector3,
 };
 use geop_core_program::{element::ElementReference, part::Part};
-use geop_ops_extrude_revolve::testing::{drilled_box, registry};
+use geop_lib_fixtures::{drilled_box, registry};
 use geop_ops_model::selection::Selected;
 use geop_ops_model::{
     NamedModel, model,
@@ -79,7 +79,7 @@ fn vertex(name: &str) -> Selected {
 }
 
 fn top() -> Selected {
-    face("extrude(box,end)")
+    face("block(box,end)")
 }
 
 /// A planar face has its frame at its middle, `z` along its normal; where it
@@ -122,7 +122,7 @@ fn round_things_give_their_axis() {
         .faces
         .keys()
         .filter_map(|&f| part.name_of(f))
-        .find(|name| name.starts_with("extrude(hole,hole_sketch"))
+        .find(|name| name.starts_with("cylinder(hole,c1"))
         .unwrap()
         .to_string();
     let wall = face(&wall);

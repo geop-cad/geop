@@ -1,19 +1,18 @@
 //! 3-D sketches drawn as an editor draws them — every gesture a command
 //! to the [`geop_core_editor::editor::Editor`], as rays and keys — and
-//! built on a part: an extruded box, so an integration test, as the
-//! extrusion depends on this crate. Its points are dragged by the gizmo,
-//! and its tools taken and put down by the keys every tool shares.
+//! built on a part: a given block (`geop_lib_fixtures`). Its points are
+//! dragged by the gizmo, and its tools taken and put down by the keys
+//! every tool shares.
 
 use geop_core_editor::editing::{
     Axis, Button, GizmoPart, Pointer, Reach, Shape, StepEditEvent, Style, Value,
 };
-use geop_core_math::{primitives::FrameAxis, scalars::Scalar, vector::Vector3};
+use geop_core_math::{scalars::Scalar, vector::Vector3};
 use geop_core_program::{element::ElementReference, program::Program, testing::args};
 use geop_core_sketch::space::{Constraint3d, CurveKind3d};
-use geop_ops_extrude_revolve::{Extents, examples::box_with_drill_hole, testing::extrude_sketch};
-use geop_ops_model::sketch::figures::{on_origin, rectangle_outline};
+use geop_lib_fixtures::{PrimitiveArgs, drilled_box};
 use geop_ops_model::sketch3d::{PlacedSketch3d, PointSource, Sketch3d, sketch3d};
-use geop_ops_model::{Combine, NamedModel, read_model};
+use geop_ops_model::{NamedModel, read_model};
 use geop_ops_sketch3d::{
     AddSketch3dArgs, Reference3d, Sketch3dEditing, Sketch3dSession, Target, Tool,
 };
@@ -29,13 +28,12 @@ use geop_core_editor::{
 use geop_core_math::primitives::Ray;
 use std::collections::BTreeMap;
 
-/// What a 3-D sketch is drawn among: the model's, the sketches', the
-/// datums' and the extrusions' operations and drawers.
+/// What a 3-D sketch is drawn among: the model's and the 3-D sketches'
+/// operations and drawers, and the given solids it is drawn on.
 fn registry() -> Registry {
     (geop_ops_model::register(Registry::default()))
-        .and_then(geop_ops_sketch::register)
         .and_then(geop_ops_sketch3d::register)
-        .and_then(geop_ops_extrude_revolve::register)
+        .and_then(geop_lib_fixtures::register)
         .unwrap()
 }
 
@@ -81,15 +79,9 @@ impl Editor {
     fn on(on_box: bool) -> Self {
         let mut program = Program::new();
         if on_box {
-            let square = rectangle_outline(1.0, 1.0, 2.0, 2.0);
-            let (extent, combine) = (Extents::blind(1.0), Combine::NewBody);
-            extrude_sketch(
-                &mut program,
+            program.push(
                 "box",
-                on_origin(FrameAxis::Z),
-                square,
-                extent,
-                combine,
+                PrimitiveArgs::block([1.0, 1.0, 0.0], [2.0, 2.0, 1.0]),
             );
         }
         let step = Stepping::new(loaded(program), "add_sketch3d");
@@ -557,7 +549,7 @@ fn a_3d_sketch_snaps_along_axes_and_onto_points() {
 /// shows the sketch it changed — once.
 #[test]
 fn a_3d_sketch_picks_without_drawing_the_part_again() {
-    let mut editor = loaded(box_with_drill_hole());
+    let mut editor = loaded(drilled_box());
     editor.handle(Command::New {
         kind: "add_sketch3d".into(),
     });

@@ -15,17 +15,11 @@ geop-ops-model.workspace = true
 geop-lib-booleans.workspace = true
 geop-lib-sweep.workspace = true
 serde.workspace = true
-# Only for `testing` and `examples`: the plates' steps.
+# Only for `examples`: the plate's steps.
 geop-ops-extrude-revolve = { workspace = true, optional = true }
 geop-ops-sketch = { workspace = true, optional = true }
 
 [features]
-# The plates of `testing`, for other crates' tests.
-testing = [
-    "dep:geop-ops-extrude-revolve",
-    "dep:geop-ops-sketch",
-    "geop-ops-extrude-revolve/testing",
-]
 # The examples: a plate extruded from a sketch, drilled. Written in those
 # operations too, so only an editor turns it on.
 examples = ["dep:geop-ops-extrude-revolve", "dep:geop-ops-sketch"]
@@ -33,9 +27,13 @@ examples = ["dep:geop-ops-extrude-revolve", "dep:geop-ops-sketch"]
 [dev-dependencies]
 geop-core-program = { workspace = true, features = ["testing"] }
 geop-ops-model = { workspace = true, features = ["testing"] }
+geop-core-editor = { workspace = true, features = ["testing"] }
+# The given plates, shafts and datum points the tests drill.
+geop-lib-fixtures.workspace = true
+# The sketches the holes' centres are points of.
+geop-ops-sketch.workspace = true
+# The examples are written in sketches and extrusions.
 geop-ops-extrude-revolve = { workspace = true, features = ["testing"] }
-geop-ops-reference-geometry.workspace = true
+# Patterns of holes (`pattern_tests`).
 geop-ops-pattern.workspace = true
 serde_json.workspace = true
-geop-core-editor = { workspace = true, features = ["testing"] }
-geop-ops-sketch.workspace = true

@@ -12,7 +12,7 @@ use geop_core_program::{
     reader::Reader, runner::Runner,
 };
 use geop_lib_sweep::shapes::v3;
-use geop_ops_extrude_revolve::testing::drilled_box as drilled;
+use geop_ops_extrude_revolve::examples::box_with_drill_hole as drilled;
 use geop_ops_model::datums::{AnyDatum, Datums, ORIGIN, component_name, datums, read_datums};
 use geop_ops_model::selection::{Role, Selected, Shape};
 use geop_ops_model::sketch::{PlacedSketch, sketch_element, whole_sketch};

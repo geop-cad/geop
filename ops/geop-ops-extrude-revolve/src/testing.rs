@@ -1,8 +1,8 @@
 //! What the tests of programs share that start from sketches: the
 //! operations they are written in, the steps extruding sketches, and the
 //! bodies a sketch and an extrusion or two build (a block with a post
-//! sketched on it, a drilled box, and the [`bodies`] the stress sweeps run
-//! over). Only built for tests: with `testing`, or in this crate's own.
+//! sketched on it, and a drilled box). Only built for tests: with
+//! `testing`, or in this crate's own.
 //!
 //! The sketches themselves are drawn with `geop_ops_model::sketch::figures`, a
 //! program's steps are read and run with `geop_core_program::testing`, and
@@ -24,8 +24,6 @@ use geop_ops_model::sketch::{
     whole_sketch,
 };
 use geop_ops_sketch::{AddSketch, AddSketchArgs};
-
-pub mod bodies;
 
 use crate::{Extent, Extents, Extrude, ExtrudeArgs, Loft, Output, Revolve, Sweep};
 

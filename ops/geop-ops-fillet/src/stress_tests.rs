@@ -1,9 +1,8 @@
 //! Fillets and chamfers across boxes, cylinders and spheres, whole and with
 //! parts cut off, added or drilled — and bodies with free-form edges, a
-//! boss on a sphere and a pipe tee (see
-//! `geop_ops_extrude_revolve::testing::bodies`): every edge blended on its
-//! own, and every corner's edges together. The shells of the same bodies
-//! are swept in `geop-ops-shell`.
+//! boss on a sphere and a pipe tee (see `geop_lib_fixtures::bodies`):
+//! every edge blended on its own, and every corner's edges together. The
+//! shells of the same bodies are swept in `geop-ops-shell`.
 //!
 //! An operation may refuse what it does not support — saying so — but what
 //! it builds has to be a valid solid, and it must not fail otherwise. Each
@@ -16,19 +15,18 @@
 //! runs with `cargo test -- --ignored`, before changing a blend or the
 //! booleans under it.
 
+use geop_core_math::scalars::Scalar;
 use geop_core_program::{operation::Operation, program::Program};
 use geop_core_topology::EdgeId;
-use geop_ops_extrude_revolve::testing::{
-    bodies::block, bodies::block_corner_cut_off, bodies::block_drilled, bodies::block_pocketed,
-    bodies::block_stepped, bodies::block_with_boss, bodies::cylinder, bodies::cylinder_drilled,
-    bodies::cylinder_drilled_off_axis, bodies::cylinder_pocketed, bodies::cylinder_with_boss,
-    bodies::cylinder_with_flat, bodies::hemisphere, bodies::one_solid, bodies::pipe_tee,
-    bodies::sphere, bodies::sphere_drilled, bodies::sphere_with_boss,
-    bodies::sphere_with_side_cut_off,
+use geop_lib_fixtures::bodies::{
+    block, block_corner_cut_off, block_drilled, block_pocketed, block_stepped, block_with_boss,
+    cylinder, cylinder_drilled, cylinder_drilled_off_axis, cylinder_pocketed, cylinder_with_boss,
+    cylinder_with_flat, hemisphere, one_solid, pipe_tee, sphere, sphere_drilled, sphere_with_boss,
+    sphere_with_side_cut_off,
 };
 use geop_ops_model::{
     NamedModel,
-    testing::{Cases, Outcome, outcome},
+    testing::{Cases, Outcome, edge_at, edges_where, middle, outcome},
 };
 
 use crate::{Chamfer, ChamferArgs, Fillet, FilletArgs};
@@ -245,11 +243,11 @@ fn stress_pipe_tee() {
     stress(pipe_tee(), 0.1);
 }
 
-/// Applies `operation` with `args` to the one solid `program` builds, and
-/// checks it builds valid, saying why not.
-fn assert_builds<O: Operation>(program: Program, args: O::Args) {
+/// Applies `operation` with `args(part)` to the one solid `program`
+/// builds, and checks it builds valid, saying why not.
+fn assert_builds<O: Operation>(program: Program, args: impl Fn(&NamedModel) -> O::Args) {
     let (part, _) = one_solid(&program);
-    if let Outcome::Wrong(why) = outcome::<O>(&part, &args, is_refusal) {
+    if let Outcome::Wrong(why) = outcome::<O>(&part, &args(&part), is_refusal) {
         panic!("{why}");
     }
 }
@@ -259,16 +257,18 @@ fn assert_builds<O: Operation>(program: Program, args: O::Args) {
 /// on the sphere moving across the seams of the sphere's quarters.
 #[test]
 fn chamfer_hemisphere_rim() {
-    let program = hemisphere();
-    let args = ChamferArgs::even(vec!["revolve(body,body_sketch,c2,a0)".into()], 0.1);
-    assert_builds::<Chamfer>(program, args);
+    assert_builds::<Chamfer>(hemisphere(), |part| {
+        let rim = edges_where(part, |e| middle(e)[2].could_be_equal(Scalar::ZERO));
+        assert_eq!(rim.len(), 4, "{rim:?}");
+        ChamferArgs::even(vec![rim[0].clone()], 0.1)
+    });
 }
 
 /// The cylinder's flat's upright side bevelled: a straight edge between the
 /// flat and the cylinder, rolled.
 #[test]
 fn chamfer_cylinder_flat_side() {
-    let program = cylinder_with_flat();
-    let args = ChamferArgs::even(vec!["combine(flat,extrude(body,body_sketch,c1),extrude(flat,flat_sketch,c7),combine(flat,extrude(body,body_sketch,c1,end),extrude(flat,flat_sketch,c7,end),0,1),combine(flat,extrude(body,body_sketch,c1,start),extrude(flat,flat_sketch,c7,start),0,1))".into()], 0.1);
-    assert_builds::<Chamfer>(program, args);
+    assert_builds::<Chamfer>(cylinder_with_flat(), |part| {
+        ChamferArgs::even(vec![edge_at(part, [0.6, -0.8, 0.75])], 0.1)
+    });
 }

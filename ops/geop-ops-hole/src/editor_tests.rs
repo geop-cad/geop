@@ -10,11 +10,12 @@ use geop_core_editor::{
 use geop_core_program::testing::args;
 use geop_ops_model::element;
 
-/// What these tests edit: plates sketched and extruded, and holes.
+/// What these tests edit: given plates, the sketches of the holes' centres,
+/// and holes.
 fn registry() -> Registry {
     (geop_ops_model::register(Registry::default()))
+        .and_then(geop_lib_fixtures::register)
         .and_then(geop_ops_sketch::register)
-        .and_then(geop_ops_extrude_revolve::register)
         .and_then(crate::register)
         .expect("the operations each have a name of their own")
 }
@@ -56,7 +57,7 @@ fn new_hole_from_the_dialog() {
     assert_eq!(circles, 2);
     let update = handled(&mut editor, Command::Commit);
     let args = args::<crate::HoleArgs>(editor.program().steps.last().unwrap());
-    assert_eq!(args.face, Some(element("extrude(plate,end)")));
+    assert_eq!(args.face, Some(element(crate::testing::PLATE_TOP)));
     assert_eq!(
         args.points,
         [crate::HoleCentre::SketchPoint(
@@ -64,7 +65,7 @@ fn new_hole_from_the_dialog() {
         )]
     );
     assert_eq!(args.kind, crate::HoleKind::Counterbore);
-    assert_eq!(args.end, geop_ops_extrude_revolve::Extent::ThroughAll);
+    assert_eq!(args.end, geop_ops_model::Extent::ThroughAll);
     let scene = update.scene.expect("the scene changed");
     assert_eq!(scene.part.solids, ["hole(hole1)"]);
 

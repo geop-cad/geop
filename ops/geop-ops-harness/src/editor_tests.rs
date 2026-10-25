@@ -24,6 +24,7 @@ use geop_core_program::{
     program::Program,
     values::{StateValue, StateValues, pose_state},
 };
+use geop_lib_fixtures::drilled_box;
 use geop_ops_assembly::{AddPartArgs, Kind, Mate, examples::pose};
 use geop_ops_model::datums::{ORIGIN, component_name, datum};
 use geop_ops_model::mate_entity::MateEntity;
@@ -33,14 +34,12 @@ use geop_ops_model::selection::Selected;
 
 use crate::{RouteArgs, Wire, WireSize, cable};
 
-/// What these tests edit: plates drawn and extruded, placed and mated in
-/// an assembly, routed between, weighed and listed.
+/// What these tests edit: given plates, placed and mated in an assembly,
+/// routed between, weighed and listed.
 fn registry() -> GeopResult<Registry> {
     let r = Registry::default();
     let r = geop_ops_model::register(r)?;
-    let r = geop_ops_sketch::register(r)?;
-    let r = geop_ops_reference_geometry::register(r)?;
-    let r = geop_ops_extrude_revolve::register(r)?;
+    let r = geop_lib_fixtures::register(r)?;
     let r = geop_ops_assembly::register(r)?;
     let r = crate::register(r)?;
     let r = geop_ops_inspect::register(r)?;
@@ -49,10 +48,10 @@ fn registry() -> GeopResult<Registry> {
 }
 
 /// An editor of [`registry`] on [`assembly`], saved as `assembly.geop`,
-/// with the plate it places beside it as `plate.geop` — the example box with a hole
-/// drilled into it — which loads with every step built.
+/// with the plate it places beside it as `plate.geop` — the box with a hole
+/// drilled into it (see [`drilled_box`]) — which loads with every step built.
 fn editor() -> Editor {
-    let plate = geop_ops_extrude_revolve::examples::box_with_drill_hole();
+    let plate = drilled_box();
     let files = BTreeMap::from([("plate.geop".to_string(), plate.to_json().unwrap())]);
     let mut editor = Editor::new(registry().unwrap(), files);
     let update = editor.handle(Command::Load {
@@ -207,10 +206,7 @@ fn a_cable_bundle_is_no_body_to_weigh_or_check() {
 /// route's length and every wire's cut length.
 #[test]
 fn new_route_is_picked_and_its_wires_chosen() {
-    let mut editor = editor_with(
-        registry().unwrap(),
-        geop_ops_extrude_revolve::examples::box_with_drill_hole(),
-    );
+    let mut editor = editor_with(registry().unwrap(), drilled_box());
     let update = editor.handle(Command::New {
         kind: "route".into(),
     });

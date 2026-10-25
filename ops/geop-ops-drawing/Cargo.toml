@@ -20,14 +20,21 @@ geop-lib-sweep.workspace = true
 serde.workspace = true
 
 [dev-dependencies]
+# Parts placed and drawn: given models on a shelf, and the example
+# assemblies (the bolted plate, the press).
 geop-ops-assembly = { workspace = true, features = ["testing", "examples"] }
 geop-ops-model = { workspace = true, features = ["testing"] }
 geop-core-program = { workspace = true, features = ["testing"] }
 geop-lib-sweep = { workspace = true, features = ["testing"] }
 serde_json.workspace = true
-# The example parts and assemblies drawn, the operations they are written
-# in, and the standard parts they place.
-geop-ops-extrude-revolve = { workspace = true, features = ["testing", "examples"] }
+# The given solids and datums the drawn plates are built from and cut on.
+geop-lib-fixtures.workspace = true
+# The example parts whose geometry is drawn — a tapped hole's thread, a
+# subdivision surface's silhouette, a revolved flange's waist, a cone's
+# generators — and the operations those, the example assemblies' parts and
+# the standard parts are written in: sketched on datums, extruded,
+# revolved, drilled, rounded, subdivided, patterned and mirrored.
+geop-ops-extrude-revolve.workspace = true
 geop-ops-hole = { workspace = true, features = ["examples"] }
 geop-ops-subd.workspace = true
 geop-ops-fillet.workspace = true

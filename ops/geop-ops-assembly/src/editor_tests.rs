@@ -25,15 +25,12 @@ use geop_core_math::{
     scalars::Scalar,
     vector::Vector3,
 };
-use geop_ops_extrude_revolve::{
-    Extents, ExtrudeArgs, examples::box_with_drill_hole, testing::extrude_sketch,
-};
+use geop_lib_fixtures::{PrimitiveArgs, Shape, drilled_box};
 use geop_ops_model::datums::{ORIGIN, component_name, datums};
 use geop_ops_model::mate_entity::MateEntity;
 use geop_ops_model::placed::placed_parts;
 use geop_ops_model::selection::Selected;
-use geop_ops_model::sketch::figures::{on_origin, rectangle_outline};
-use geop_ops_model::{Combine, element, testing::assert_close};
+use geop_ops_model::{element, testing::assert_close};
 
 use geop_core_editor::{
     editor::Command,
@@ -43,16 +40,7 @@ use geop_core_editor::{
 /// The unit cube from the origin to `(1, 1, 1)`, as a program.
 fn cube() -> Program {
     let mut program = Program::new();
-    let square = rectangle_outline(0.0, 0.0, 1.0, 1.0);
-    let (extent, combine) = (Extents::blind(1.0), Combine::NewBody);
-    extrude_sketch(
-        &mut program,
-        "c",
-        on_origin(FrameAxis::Z),
-        square,
-        extent,
-        combine,
-    );
+    program.push("c", PrimitiveArgs::block([0.0; 3], [1.0; 3]));
     program
 }
 
@@ -594,7 +582,7 @@ fn a_part_is_exported_as_stl_with_its_placed_parts() {
     let update = handled(
         &mut editor,
         Command::Load {
-            program: box_with_drill_hole(),
+            program: drilled_box(),
             path: None,
         },
     );
@@ -688,7 +676,7 @@ fn an_assembly_lists_its_mates() {
 /// it is dragged.
 #[test]
 fn placed_parts_are_moved_and_turned_by_the_gizmo() {
-    let block = box_with_drill_hole().to_json().unwrap();
+    let block = drilled_box().to_json().unwrap();
     let mut editor = editor();
     let files = [("block.geop".to_string(), Some(block))].into();
     assert!(editor.handle(Command::Files { files }).error.is_none());
@@ -821,7 +809,7 @@ fn hovering_over_an_assembly_draws_no_part() {
 /// was counted by `Part::built`, which geop-core-program no longer has.
 #[test]
 fn a_file_opened_again_is_not_built_again() {
-    let part = box_with_drill_hole();
+    let part = drilled_box();
     let mut assembly = Program::new();
     assembly.push(
         "box",
@@ -859,8 +847,13 @@ fn a_file_opened_again_is_not_built_again() {
     // Its hole drilled deeper: from that step on.
     let mut deeper = part.clone();
     let last = deeper.steps.len() - 1;
-    edit_args(&mut deeper.steps[last], |hole: &mut ExtrudeArgs| {
-        hole.extent = geop_ops_extrude_revolve::Extents::blind(-0.8);
+    edit_args(&mut deeper.steps[last], |hole: &mut PrimitiveArgs| {
+        hole.shape = Shape::Cylinder {
+            base: [1.0, 1.0, 0.2],
+            axis: FrameAxis::Z,
+            radius: 0.4,
+            height: 1.3,
+        };
     });
     assert_ne!(deeper.steps[last], part.steps[last], "the hole changed");
     load(&mut editor, &deeper, "part.geop");

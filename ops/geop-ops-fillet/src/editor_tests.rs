@@ -10,22 +10,20 @@ use geop_core_editor::{
     view::drawn,
 };
 use geop_core_program::testing::args;
-use geop_ops_extrude_revolve::examples::box_with_drill_hole;
+use geop_lib_fixtures::drilled_box;
 use geop_ops_model::testing::{check_valid, model_of};
 
-/// What these tests edit: the drilled box's sketches and extrusions, and
-/// fillets.
+/// What these tests edit: the drilled box's given solids, and fillets.
 fn registry() -> Registry {
     (geop_ops_model::register(Registry::default()))
-        .and_then(geop_ops_sketch::register)
-        .and_then(geop_ops_extrude_revolve::register)
+        .and_then(geop_lib_fixtures::register)
         .and_then(crate::register)
         .expect("the operations each have a name of their own")
 }
 
 /// An editor of [`registry`] on the drilled box.
 fn editor() -> Editor {
-    editor_with(registry(), box_with_drill_hole())
+    editor_with(registry(), drilled_box())
 }
 
 /// Seeking back before a fillet and forward again runs the steps up to the
