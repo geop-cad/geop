@@ -69,6 +69,20 @@ mod set {
         }
     }
 
+    /// Every operation is shown by an icon: SVG markup, named with the
+    /// operation that lacks one.
+    #[test]
+    fn every_operation_has_an_icon() {
+        let registry = registry().unwrap();
+        let missing: Vec<String> = registry
+            .infos()
+            .iter()
+            .filter(|listed| !listed.info.icon.is_some_and(|svg| svg.starts_with('<')))
+            .map(|listed| format!("{} ({:?})", listed.kind, listed.info.icon))
+            .collect();
+        assert!(missing.is_empty(), "operations without an icon: {missing:?}");
+    }
+
     /// A new step starts from what the steps before it built.
     #[test]
     fn new_steps_start_from_what_was_built() {

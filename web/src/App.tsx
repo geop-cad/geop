@@ -615,6 +615,7 @@ function App() {
     instances.reduce((n, i) => n + triangles(components[i.component]), 0);
   const timelineSteps: TimelineStep[] = steps.map((s) => ({
     id: s.id,
+    icon: infos.find((info) => info.kind === s.kind)?.icon ?? null,
     title: `${s.label}: ${s.summary}`,
     error: s.error,
     dim: !s.editing && !s.runs,

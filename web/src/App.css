@@ -430,6 +430,16 @@ button.inline {
 .timeline li.step-box.disabled {
   cursor: default;
 }
+/* Its operation's icon before the name, a little smaller than a button's. */
+.timeline li.step-box .step-icon {
+  flex-shrink: 0;
+  display: flex;
+  opacity: 0.8;
+}
+.timeline li.step-box .step-icon .icon {
+  width: 16px;
+  height: 16px;
+}
 /* The name takes the room, its buttons at the box's end. */
 .timeline li.step-box .step-name {
   flex: 1;

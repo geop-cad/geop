@@ -9,10 +9,13 @@
 // then the slot is only drawn.
 
 import { useRef, useState } from "react";
+import { Icon } from "./icons";
 
 /** One step as the timeline shows it. */
 export interface TimelineStep {
   id: string;
+  /** Its operation's icon, the kernel's markup (see [[Icon]]), or none. */
+  icon: string | null;
   /** Shown on hover: what the step is and does. */
   title: string;
   error: string | null;
@@ -145,6 +148,11 @@ export function Timeline({ steps, seeker, enabled, onEdit, onRemove, onCopy, onM
         title={step.error ? `${step.title}\n\n${step.error}` : step.title}
         onPointerDown={(e) => onPointerDown(e, { what: "step", index: i })}
       >
+        {step.icon && (
+          <span className="step-icon">
+            <Icon name={step.icon} />
+          </span>
+        )}
         <span className="step-name">{step.id}</span>
         <button
           className="step-copy"
