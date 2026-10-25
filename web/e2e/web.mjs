@@ -179,7 +179,8 @@ await check("at 1625 px the big operations are big, the small ones small, and ev
     });
   });
   const clipped = captions.filter((c) => !c.whole).map((c) => c.text);
-  expect(captions.length === 8, `${captions.length} captions: ${captions.map((c) => c.text).join(", ")}`);
+  // Without the drag tool in the bar, every group fits with its caption.
+  expect(captions.length === 9, `${captions.length} captions: ${captions.map((c) => c.text).join(", ")}`);
   expect(clipped.length === 0, `clipped captions: ${clipped.join(", ")}`);
   const height = await page.locator(".toolbar").evaluate((el) => el.getBoundingClientRect().height);
   expect(height >= 76 && height <= 84, `the bar is ${height} px high`);
@@ -439,7 +440,8 @@ await check("a rectangle is sketched and extruded by clicks, and weighed", async
   await settle(page);
   // The plane: the square of the origin's zx plane, below and right of its centre, seen from the default view.
   await clickView(8, 23);
-  expect((await popup.innerText()).includes("plane: origin zx plane"), "the zx plane was not picked");
+  const plane = await popup.locator(".reference[data-field='plane'] .reference-text").innerText();
+  expect(plane === "origin:zx", `the zx plane was not picked: ${plane}`);
   // The corner rectangle tool (R), and its two corners.
   await page.keyboard.press("r");
   await settle(page);
@@ -450,7 +452,8 @@ await check("a rectangle is sketched and extruded by clicks, and weighed", async
   await settle(page);
   await clickOperation(page, "Extrude");
   await settle(page);
-  expect((await popup.innerText()).includes("sketch: sketch1"), "the extrusion did not take the sketch");
+  const sketch = await popup.locator(".reference[data-field='sketch'] .reference-text").innerText();
+  expect(sketch === "sketch:sketch1", `the extrusion did not take the sketch: ${sketch}`);
   // Distance 2, typed into the field.
   const distance = popup.locator(".field", { hasText: "distance" }).locator("input[type=number], input[type=text]").first();
   await distance.fill("2");
@@ -492,7 +495,7 @@ await check("a 3-D sketch's point is clicked and measured, as a vertex", async (
   await clickView(-220, -90);
   const picked = await page.locator(".inspect-list li").allInnerTexts();
   expect(
-    picked.length === 1 && /^vertex "sketch3d\([^,]+,p\d+\)"$/.test(picked[0].trim()),
+    picked.length === 1 && /^vertex sketch3d\([^,]+,p\d+\)$/.test(picked[0].trim()),
     `picked: ${picked.join(", ") || "nothing"}`,
   );
   const rows = await page.locator(".inspect-table th").allInnerTexts();
@@ -517,9 +520,9 @@ await check("a pattern picks a hole as a feature by a click on its wall", async 
   // nothing else is picked.
   await clickOperation(page, "Linear pattern");
   await settle(page);
-  await popup.locator(".reference button", { hasText: "features:" }).click();
+  await popup.locator(".reference[data-field='features'] .reference-pick").click();
   await settle(page);
-  const features = popup.locator(".reference", { has: page.locator("button", { hasText: "features:" }) });
+  const features = popup.locator(".reference[data-field='features']");
   let picked = "";
   let dx = 0;
   for (let k = 0; k < 120 && !picked; k++) {
@@ -532,8 +535,8 @@ await check("a pattern picks a hole as a feature by a click on its wall", async 
   const box = await page.locator("main.viewport canvas").first().boundingBox();
   const [r, g, b] = await pixelAt(page, box.x + box.width / 2 + dx, box.y + box.height / 2);
   expect(r > b + 60 && g > b, `the wall clicked is rgb(${r}, ${g}, ${b}), not lit`);
-  const text = await popup.innerText();
-  expect(text.includes("bodies: pick"), `the bodies were not emptied:\n${text}`);
+  const bodies = await popup.locator(".reference[data-field='bodies'] .reference-text").innerText();
+  expect(bodies.startsWith("pick"), `the bodies were not emptied: ${bodies}`);
   await popup.locator(".button-row button.primary").click();
   const stats = await builtCleanly();
   const solids = await page.locator(".structure-panel").innerText();
@@ -548,7 +551,7 @@ await check("a UV surface's rib is taken out, and picked again by a click on it"
   expect((await page.locator(".structure-panel").innerText()).includes("network(panel)"), "no sheet network(panel)");
   await page.locator(".timeline .step-box", { has: page.locator(".step-name", { hasText: /^panel$/ }) }).click();
   await settle(page);
-  const field = (label) => popup.locator(".reference", { has: page.locator("button", { hasText: `${label}:` }) });
+  const field = (label) => popup.locator(`.reference[data-field='${label}']`);
   const items = (label) => field(label).locator(".item-label").allInnerTexts();
   const [u, v] = [await items("u curves"), await items("v curves")];
   expect(u.length === 3 && v.length === 3, `u curves: ${u.join(", ")}; v curves: ${v.join(", ")}`);
@@ -559,7 +562,7 @@ await check("a UV surface's rib is taken out, and picked again by a click on it"
   expect((await shownErrors(page)).length === 0, `errors shown: ${(await shownErrors(page)).join(" | ")}`);
   // And picked again: clicked up and down a column left of the view's
   // centre, between the spines, until it is in the list.
-  await field("u curves").locator("button", { hasText: "u curves:" }).click();
+  await field("u curves").locator(".reference-pick").click();
   await settle(page);
   let picked = await items("u curves");
   for (let k = 1; k < 120 && picked.length < 3; k++) {
@@ -619,7 +622,7 @@ await check("a table is edited in a popup of its step, and opened again from the
   });
   await settle(page);
   expect(JSON.stringify(await cells()) === JSON.stringify(["M4", "1", "M5", "5", "M6", "6"]), `after paste: ${(await cells()).join(", ")}`);
-  await popup.locator("input[aria-label='Choose row 3']").check();
+  await popup.locator("input[aria-label='Choose row 3']").click();
   await settle(page);
   await popup.locator(".button-row button.primary").click();
   await settle(page);
@@ -627,7 +630,7 @@ await check("a table is edited in a popup of its step, and opened again from the
   const summary = await page.evaluate(async () => (await window.geopCommand({ command: "show" })).program.steps.map((s) => s.summary).join("; "));
   expect(summary.includes("3 rows"), `the step is summarised: ${summary}`);
   // The parameters panel lists the table, chosen row and all, and its Edit opens the step again.
-  const chosen = await page.locator(".parameter-row select.parameter-formula").inputValue();
+  const chosen = await page.locator(".parameter-row select[title='The row built']").inputValue();
   expect(chosen === "M6", `the row chosen is ${chosen}`);
   await page.locator("button[aria-label='Edit size']").click();
   await settle(page);

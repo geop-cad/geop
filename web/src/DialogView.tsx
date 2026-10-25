@@ -231,7 +231,7 @@ function FieldView({
     case "reference": {
       const failed = c.value.find((p) => p.tone === "error");
       return (
-        <div className="reference">
+        <div className="reference" data-field={c.label}>
           <div className="row field-row">
             <span className="field-label">{c.label}</span>
             <span className="reference-box">
