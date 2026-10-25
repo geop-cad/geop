@@ -162,9 +162,10 @@ await check("at 1625 px the big operations are big, the small ones small, and ev
   const small = await labels(".operation-ribbon button.op-button.small");
   const wantBig = ["Sketch", "Extrude", "Revolve", "Hole", "Fillet", "Boolean", "Linear pattern", "SubD", "Base flange", "Part", "Drawing"];
   expect(JSON.stringify(tier("Big")) === JSON.stringify(wantBig), `the editor's big operations: ${tier("Big").join(", ")}`);
-  // Drag is the editor's own tool, not an operation, and big beside Part.
-  const wantRibbon = [...wantBig.slice(0, -1), "Drag", "Drawing"];
-  expect(JSON.stringify(big) === JSON.stringify(wantRibbon), `big: ${big.join(", ")}`);
+  // Drag is the editor's own tool, not an operation: the inspect panel offers it, not the ribbon.
+  expect(JSON.stringify(big) === JSON.stringify(wantBig), `big: ${big.join(", ")}`);
+  const inspectTools = await labels(".inspect-tools button.op-button");
+  expect(inspectTools[0] === "Drag", `the inspect panel offers: ${inspectTools.join(", ")}`);
   const wantSmall = tier("Small");
   const notSmall = wantSmall.filter((l) => !small.includes(l));
   expect(notSmall.length === 0, `not shown small: ${notSmall.join(", ")}`);
@@ -215,7 +216,7 @@ await check("reduced mode, as a visitor has it, offers the robust operations, an
   const offered = await operationLabels(page);
   const shown = experimental.filter((l) => offered.includes(l));
   expect(shown.length === 0, `offered in reduced mode, though experimental: ${shown.join(", ")}`);
-  for (const label of ["Sketch", "Extrude", "Hole", "Fillet", "Thread", "Chamfer", "Shell", "SubD", "Flat pattern", "Part", "Drag", "Drawing", "Import STEP"]) {
+  for (const label of ["Sketch", "Extrude", "Hole", "Fillet", "Thread", "Chamfer", "Shell", "SubD", "Flat pattern", "Part", "Drawing", "Import STEP"]) {
     expect(offered.includes(label), `${label} is not offered in reduced mode`);
   }
   await page.locator(".help-menu .dropdown-trigger").click();
@@ -353,7 +354,6 @@ async function everyOperation() {
   const times = [];
   for (const label of labels) {
     const start = Date.now();
-    if (label === "Drag") continue;
     await clickOperation(page, label);
     await settle(page);
     if ((await page.locator(".desktop-only .popup").count()) === 0) {
@@ -594,6 +594,46 @@ await check("a parameter renamed is renamed where it is read, and removing one r
   expect(warning.includes("plate"), `no warning that the plate reads thickness: ${warning}`);
   await dialog.locator("button", { hasText: "Done" }).click();
   expect((await page.locator(".parameter-name").allInnerTexts()).includes("thickness"), "thickness was removed");
+  return builtCleanly();
+});
+
+await check("a table is edited in a popup of its step, and opened again from the parameters panel", async () => {
+  await fresh();
+  await clickOperation(page, "Table");
+  await settle(page);
+  const popup = page.locator(".desktop-only .popup.wide");
+  expect((await popup.count()) === 1, "the table step opens as a wide popup over the viewport");
+  const cells = async () => popup.locator(".table-field tbody .cell-input").evaluateAll((els) => els.map((e) => e.value));
+  expect(JSON.stringify(await cells()) === JSON.stringify(["A", "1"]), `cells: ${(await cells()).join(", ")}`);
+  // Enter applies a cell and moves down; on the last row it adds one.
+  const cell = (row, column) => popup.locator(`.table-field input[data-row='${row}'][data-column='${column}']`);
+  await cell(0, 0).fill("M4");
+  await cell(0, 0).press("Enter");
+  await settle(page);
+  expect(JSON.stringify(await cells()) === JSON.stringify(["M4", "1", "row", "0"]), `after Enter: ${(await cells()).join(", ")}`);
+  // A block pasted from a spreadsheet fills from the cell on, adding rows.
+  await cell(1, 0).evaluate((el) => {
+    const data = new DataTransfer();
+    data.setData("text/plain", "M5\t5\nM6\t6\n");
+    el.dispatchEvent(new ClipboardEvent("paste", { clipboardData: data, bubbles: true, cancelable: true }));
+  });
+  await settle(page);
+  expect(JSON.stringify(await cells()) === JSON.stringify(["M4", "1", "M5", "5", "M6", "6"]), `after paste: ${(await cells()).join(", ")}`);
+  await popup.locator("input[aria-label='Choose row 3']").check();
+  await settle(page);
+  await popup.locator(".button-row button.primary").click();
+  await settle(page);
+  expect((await popup.count()) === 0, "OK closes the popup");
+  const summary = await page.evaluate(async () => (await window.geopCommand({ command: "show" })).program.steps.map((s) => s.summary).join("; "));
+  expect(summary.includes("3 rows"), `the step is summarised: ${summary}`);
+  // The parameters panel lists the table, chosen row and all, and its Edit opens the step again.
+  const chosen = await page.locator(".parameter-row select.parameter-formula").inputValue();
+  expect(chosen === "M6", `the row chosen is ${chosen}`);
+  await page.locator("button[aria-label='Edit size']").click();
+  await settle(page);
+  expect((await popup.count()) === 1, "Edit opens the table's step");
+  await popup.locator(".button-row button", { hasText: /^Cancel$/ }).click();
+  await settle(page);
   return builtCleanly();
 });
 

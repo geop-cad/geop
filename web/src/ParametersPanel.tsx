@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { ColorInput } from "./controls";
-import type { Material, Parameter, ParameterRow, Parameters, ParamValue } from "./geop";
+import type { Material, Parameter, Parameters, ParamValue } from "./geop";
 import { Icon } from "./icons";
 
 interface Props {
@@ -16,6 +16,14 @@ interface Props {
   onRename: (from: string, to: string) => void;
   /** The materials the part's can be picked from; any other is given by its density. */
   materials: Material[];
+  /** Whether no step is edited: a table's step can only be opened then. */
+  idle: boolean;
+  /** The step each table is looked up in, by the table's name. */
+  tableSteps: Record<string, string>;
+  /** Open the step `id`: a table is edited in its own step's dialog, a popup. */
+  onOpenStep: (id: string) => void;
+  /** The parameters are now these, with the table `name` added: set, then opened to be filled in. */
+  onAddTable: (parameters: Parameters, name: string) => void;
 }
 
 /**
@@ -162,129 +170,13 @@ function shown(value: ParamValue | undefined): string {
   return "";
 }
 
-type Table = Extract<Parameter, { type: "table" }>;
-
-/** A table's columns and rows, edited as a grid: which row is built, each row's name and values, columns added and taken out. */
-function TableEditor({ table, onChange }: { table: Table; onChange: (t: Table) => void }) {
-  const { columns, rows, selected } = table;
-  const setRows = (next: ParameterRow[]) => onChange({ ...table, rows: next });
-  return (
-    <div className="table-editor">
-      <table>
-        <thead>
-          <tr>
-            <th title="The row built">Built</th>
-            <th>Row</th>
-            {columns.map((c, k) => (
-              <th key={k}>
-                <span className="table-column">
-                  <Field
-                    value={c}
-                    onChange={(name) => onChange({ ...table, columns: columns.map((x, j) => (j === k ? name : x)) })}
-                  />
-                  <button
-                    className="icon-only"
-                    title={`Remove the column ${c}`}
-                    aria-label={`Remove the column ${c}`}
-                    onClick={() =>
-                      onChange({
-                        ...table,
-                        columns: columns.filter((_, j) => j !== k),
-                        rows: rows.map((r) => ({ ...r, values: r.values.filter((_, j) => j !== k) })),
-                      })
-                    }
-                  >
-                    ✕
-                  </button>
-                </span>
-              </th>
-            ))}
-            <th>
-              <button
-                className="small"
-                title="Add a column"
-                onClick={() =>
-                  onChange({
-                    ...table,
-                    columns: [...columns, freshName(columns, "value")],
-                    rows: rows.map((r) => ({ ...r, values: [...r.values, 0] })),
-                  })
-                }
-              >
-                + column
-              </button>
-            </th>
-          </tr>
-        </thead>
-        <tbody>
-          {rows.map((row, r) => (
-            <tr key={r} className={row.name === selected ? "selected" : ""}>
-              <td className="table-built">
-                <input
-                  type="radio"
-                  title="Build this row"
-                  checked={row.name === selected}
-                  onChange={() => onChange({ ...table, selected: row.name })}
-                />
-              </td>
-              <td>
-                <Field
-                  value={row.name}
-                  onChange={(name) =>
-                    onChange({
-                      ...table,
-                      selected: selected === row.name ? name : selected,
-                      rows: rows.map((x, j) => (j === r ? { ...x, name } : x)),
-                    })
-                  }
-                />
-              </td>
-              {row.values.map((v, k) => (
-                <td key={k}>
-                  <Field
-                    value={String(v)}
-                    onChange={(text) => {
-                      const n = Number(text);
-                      if (!Number.isNaN(n))
-                        setRows(
-                          rows.map((x, j) => (j === r ? { ...x, values: x.values.map((y, m) => (m === k ? n : y)) } : x)),
-                        );
-                    }}
-                  />
-                </td>
-              ))}
-              <td>
-                <button
-                  className="icon-only"
-                  title="Remove the row"
-                  aria-label={`Remove the row ${row.name}`}
-                  disabled={rows.length <= 1}
-                  onClick={() => {
-                    const left = rows.filter((_, j) => j !== r);
-                    onChange({ ...table, rows: left, selected: row.name === selected ? left[0].name : selected });
-                  }}
-                >
-                  ✕
-                </button>
-              </td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
-      <button
-        className="small"
-        onClick={() => setRows([...rows, { name: freshName(rows.map((r) => r.name), "row"), values: columns.map(() => 0) }])}
-      >
-        + row
-      </button>
-    </div>
-  );
-}
+type NumberParameter = Extract<Parameter, { type: "number" }>;
 
 /**
- * One parameter's details, in a popup: its name, and its formula and slider
- * range or its table, and what reads it. A new name is given everywhere it
- * is read; removing one that is read says what will fail first.
+ * One number parameter's details, in a popup: its name, its formula and
+ * slider range, and what reads it. A new name is given everywhere it is
+ * read; removing one that is read says what will fail first. A table is
+ * edited in its own step's dialog instead.
  */
 function ParameterDialog({
   parameter,
@@ -296,7 +188,7 @@ function ParameterDialog({
   onRemove,
   onClose,
 }: {
-  parameter: Parameter;
+  parameter: NumberParameter;
   value: ParamValue | undefined;
   error: string | undefined;
   /** The steps and other parameters that read it. */
@@ -311,8 +203,8 @@ function ParameterDialog({
     <div className="modal-backdrop" onPointerDown={(e) => e.target === e.currentTarget && onClose()}>
       <div className="modal" role="dialog" aria-label={`Parameter ${parameter.name}`}>
         <div className="modal-head">
-          <Icon name={parameter.type === "table" ? "table" : "number"} />
-          <h2>{parameter.type === "table" ? "Table" : "Number"}</h2>
+          <Icon name="number" />
+          <h2>Number</h2>
           <button className="icon-only" onClick={onClose} title="Close" aria-label="Close">
             ✕
           </button>
@@ -328,38 +220,23 @@ function ParameterDialog({
         <p className="hint parameter-readers">
           {readers.length > 0 ? `Read by ${readers.join(", ")}.` : "Nothing reads it yet."}
         </p>
-        {parameter.type === "number" ? (
-          <>
-            <label className="modal-field">
-              <span>Value</span>
-              <Field
-                className="formula"
-                value={parameter.expression}
-                placeholder="a number or formula"
-                title="A number, or a formula of the other parameters: width / 2, sqrt(a^2 + b^2), screw.diameter"
-                onChange={(expression) => onChange({ ...parameter, expression })}
-              />
-              <span className="parameter-value">{shown(value)}</span>
-            </label>
-            <div className="modal-field" title="What a slider offers when the part is placed">
-              <span>Slider</span>
-              <OptionalNumber value={parameter.min} placeholder="min" onChange={(min) => onChange({ ...parameter, min })} />
-              <span className="hint">to</span>
-              <OptionalNumber value={parameter.max} placeholder="max" onChange={(max) => onChange({ ...parameter, max })} />
-            </div>
-          </>
-        ) : (
-          <>
-            <p className="hint">
-              A family of variants, one per row: the row built is the parameter's value, and{" "}
-              <code>
-                {parameter.name}.{parameter.columns[0] ?? "column"}
-              </code>{" "}
-              its value in a column.
-            </p>
-            <TableEditor table={parameter} onChange={onChange} />
-          </>
-        )}
+        <label className="modal-field">
+          <span>Value</span>
+          <Field
+            className="formula"
+            value={parameter.expression}
+            placeholder="a number or formula"
+            title="A number, or a formula of the other parameters: width / 2, sqrt(a^2 + b^2), screw.diameter"
+            onChange={(expression) => onChange({ ...parameter, expression })}
+          />
+          <span className="parameter-value">{shown(value)}</span>
+        </label>
+        <div className="modal-field" title="What a slider offers when the part is placed">
+          <span>Slider</span>
+          <OptionalNumber value={parameter.min} placeholder="min" onChange={(min) => onChange({ ...parameter, min })} />
+          <span className="hint">to</span>
+          <OptionalNumber value={parameter.max} placeholder="max" onChange={(max) => onChange({ ...parameter, max })} />
+        </div>
         {error && <p className="op-error-text">{error}</p>}
         {removing && (
           <p className="warning-text">
@@ -387,9 +264,22 @@ function ParameterDialog({
  * of the other parameters, and tables of variants — a family of parts, one
  * row each — whose built row's columns read as `name.column`. Sketch
  * dimensions read them by name; a program placing the part gives them other
- * values. One compact row each; the details open in a popup.
+ * values. One compact row each; a number's details open in a popup, a table
+ * in its own step's dialog, a popup of the same make.
  */
-export function ParametersPanel({ parameters, resolved, enabled, onChange, materials, uses, onRename }: Props) {
+export function ParametersPanel({
+  parameters,
+  resolved,
+  enabled,
+  idle,
+  onChange,
+  materials,
+  uses,
+  tableSteps,
+  onRename,
+  onOpenStep,
+  onAddTable,
+}: Props) {
   const values = parameters.values ?? [];
   const [editing, setEditing] = useState<number | null>(null);
   const set = (index: number, parameter: Parameter) =>
@@ -461,15 +351,27 @@ export function ParametersPanel({ parameters, resolved, enabled, onChange, mater
               </select>
             )}
             {p.type === "number" && <span className="parameter-value">{error ? "!" : shown(resolved.values[p.name])}</span>}
-            <button
-              className="icon-only"
-              title="Edit"
-              aria-label={`Edit ${p.name}`}
-              disabled={!enabled}
-              onClick={() => setEditing(index)}
-            >
-              <Icon name="edit" />
-            </button>
+            {p.type === "number" ? (
+              <button
+                className="icon-only"
+                title="Edit"
+                aria-label={`Edit ${p.name}`}
+                disabled={!enabled}
+                onClick={() => setEditing(index)}
+              >
+                <Icon name="edit" />
+              </button>
+            ) : (
+              <button
+                className="icon-only"
+                title={idle ? "Edit the table in its step" : "Finish the step being edited first"}
+                aria-label={`Edit ${p.name}`}
+                disabled={!enabled || !idle || tableSteps[p.name] == null}
+                onClick={() => onOpenStep(tableSteps[p.name])}
+              >
+                <Icon name="edit" />
+              </button>
+            )}
           </div>
         );
       })}
@@ -483,11 +385,12 @@ export function ParametersPanel({ parameters, resolved, enabled, onChange, mater
         </button>
         <button
           className="small"
-          disabled={!enabled}
           title="A family of variants — screw sizes, say — of which one row is built"
-          onClick={() =>
-            add({
-              name: freshName(values.map((v) => v.name), "size"),
+          disabled={!enabled || !idle}
+          onClick={() => {
+            const name = freshName(values.map((v) => v.name), "size");
+            const table: Parameter = {
+              name,
               type: "table",
               columns: ["diameter"],
               rows: [
@@ -495,13 +398,14 @@ export function ParametersPanel({ parameters, resolved, enabled, onChange, mater
                 { name: "large", values: [5] },
               ],
               selected: "small",
-            })
-          }
+            };
+            onAddTable({ ...parameters, values: [...values, table] }, name);
+          }}
         >
           + Table
         </button>
       </div>
-      {open && editing != null && (
+      {open && open.type === "number" && editing != null && (
         <ParameterDialog
           parameter={open}
           value={resolved.values[open.name]}

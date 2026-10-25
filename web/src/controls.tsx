@@ -7,11 +7,11 @@ interface DropdownProps<T extends string> {
   onChange: (v: T) => void;
 }
 
-/** A labeled `<select>` for a small fixed set of string options (e.g. an axis). */
+/** A labeled `<select>` for a small fixed set of string options (e.g. an axis), laid out as every labelled field is. */
 export function Dropdown<T extends string>({ label, value, options, onChange }: DropdownProps<T>) {
   return (
-    <label className="row">
-      {label}
+    <label className="row field-row">
+      <span className="field-label">{label}</span>
       <select value={value} onChange={(e) => onChange(e.target.value as T)}>
         {options.map((o) => (
           <option key={o.value} value={o.value}>
@@ -40,8 +40,8 @@ export function SearchSelect({ label, value, options, onChange }: DropdownProps<
     onChange(v);
   };
   return (
-    <label className="row search-select">
-      {label}
+    <label className="row field-row search-select">
+      <span className="field-label">{label}</span>
       <span className="search-select-box">
         <input
           type="search"

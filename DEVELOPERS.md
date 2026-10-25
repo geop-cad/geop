@@ -80,7 +80,8 @@ line each, in ribbon order. What a crate can add:
   parameters (`parameters`) and the joints (`joints`);
 - a `Tool`: a mode in hand while no step is edited, taken by its key with
   `Command::Tool { key }` — the drag tool (`drag`); the pick tool of an
-  inspector that picks is `pick:<inspector>`;
+  inspector that picks is `pick:<inspector>`. A tool is no operation: the
+  front ends offer it beside the inspectors, never among the operations;
 - the one `Settle`: the solve the editor runs after every edit, moving the
   program's state so its constraints hold — with none, state is kept as
   given;
@@ -100,7 +101,11 @@ round trip (`assert_round_trips`) and an incremental build
 clicks); `src/regression_tests.rs` rebuilds the user reproducers of its
 bugs; `src/stress_tests.rs` holds ignored sweeps; feature `testing` what
 other crates' tests need of it. An operation is a leaf: its dependencies
-are `core/`, `lib/` and `geop-ops-model`. Its examples (`src/examples.rs`)
+are `core/`, `lib/` and `geop-ops-model`. Its form says where its dialog
+is shown (`Form::layout`): beside the viewport by default, or as a wide
+popup over it (`Layout::Popup`) for a form of tables (`EditForm::table`,
+whose every edit reaches the operation as one `TableEdit`); the front
+ends draw both layouts from the same field components. Its examples (`src/examples.rs`)
 are written in other operations' `Args` too, so they sit behind the
 feature `examples`, those dependencies optional; `geop-cad-base` turns the
 feature on, and so does the crate's own test build (`cfg(test)`) and any
@@ -114,8 +119,8 @@ What a step draws on the part is its `geop_core_editor::view::annotations`
 target, what it lists in the structure tree its
 `geop_core_editor::view::listing` target. `geop compile` picks the exporter
 by the output's extension and passes it the options given as
-`-O key=value`. The web app builds its export menu, inspect buttons and
-tool buttons from the lists the program state sends, shows every
+`-O key=value`. The web app builds its export menu, and the inspect panel's
+buttons — the tools and the inspectors — from the lists the program state sends, shows every
 inspector's answer as the inspector lays it out, groups the structure by
 the kernel's labels, lights what the kernel names by the target, kind and
 name of each element, and shows each panel by the component its key maps

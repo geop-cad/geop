@@ -1,5 +1,5 @@
 import { Fragment, type ReactNode } from "react";
-import type { JointInfo, Material, MateFreedom, Parameters, ParamValue } from "./geop";
+import type { JointInfo, Material, MateFreedom, Parameters, ParamValue, Update } from "./geop";
 import { JointsPanel } from "./JointsPanel";
 import { ParametersPanel } from "./ParametersPanel";
 
@@ -16,6 +16,8 @@ interface ParametersState {
   parameter_uses: Record<string, string[]>;
   /** The materials a part's can be picked from. */
   materials: Material[];
+  /** The step each table is looked up in, by the table's name: what edits the table, opened as any step is. */
+  table_steps: Record<string, string>;
 }
 
 /** What the parameters panel is sent — see `geop_ops_parameters::ParametersCommand`. */
@@ -43,7 +45,10 @@ interface PanelProps<State, Payload> {
   enabled: boolean;
   /** Whether no step is edited. */
   idle: boolean;
-  send: (payload: Payload) => Promise<unknown> | void;
+  /** Send the panel's command; what the kernel shows after it. */
+  send: (payload: Payload) => Promise<Update | null>;
+  /** Open the step `id` for editing: what a panel does for what a step's dialog edits. */
+  openStep: (id: string) => void;
 }
 
 /** A panel, shown with what the kernel sent under its key. */
@@ -59,17 +64,27 @@ function panel<State, Payload>(view: (props: PanelProps<State, Payload>) => Reac
  * place the app names a panel. A panel of a key not here is not shown.
  */
 const PANELS: Record<string, PanelView> = {
-  parameters: panel(({ state, enabled, send }: PanelProps<ParametersState, ParametersCommand>) => (
+  parameters: panel(({ state, enabled, idle, send, openStep }: PanelProps<ParametersState, ParametersCommand>) => (
     <>
       <h2>Parameters</h2>
       <ParametersPanel
         parameters={state?.parameters.defined ?? {}}
         resolved={state?.parameters ?? { values: {}, errors: {} }}
         enabled={enabled}
+        idle={idle}
         materials={state?.materials ?? []}
         uses={state?.parameter_uses ?? {}}
+        tableSteps={state?.table_steps ?? {}}
         onChange={(parameters) => send({ command: "set_parameters", parameters })}
         onRename={(from, to) => send({ command: "rename_parameter", from, to })}
+        onOpenStep={openStep}
+        onAddTable={async (parameters, name) => {
+          // The table is a step of its own: the kernel says which, and it opens to be filled in.
+          const update = await send({ command: "set_parameters", parameters });
+          const added = update?.program?.panels.parameters as ParametersState | undefined;
+          const step = added?.table_steps[name];
+          if (step) openStep(step);
+        }}
       />
     </>
   )),
@@ -96,17 +111,19 @@ interface Props {
   panels: Record<string, unknown>;
   enabled: boolean;
   idle: boolean;
-  /** Send the panel `key` its command `payload`. */
-  onCommand: (key: string, payload: unknown) => Promise<unknown> | void;
+  /** Send the panel `key` its command `payload`; what the kernel shows after it. */
+  onCommand: (key: string, payload: unknown) => Promise<Update | null>;
+  /** Open the step `id` for editing. */
+  onOpenStep: (id: string) => void;
 }
 
 /** The program's panels, each by the component its key maps to. */
-export function ProgramPanels({ panels, enabled, idle, onCommand }: Props) {
+export function ProgramPanels({ panels, enabled, idle, onCommand, onOpenStep }: Props) {
   return (
     <>
       {Object.entries(PANELS).map(([key, Panel]) => (
         <Fragment key={key}>
-          {Panel({ state: panels[key], enabled, idle, send: (payload) => onCommand(key, payload) })}
+          {Panel({ state: panels[key], enabled, idle, send: (payload) => onCommand(key, payload), openStep: onOpenStep })}
         </Fragment>
       ))}
     </>

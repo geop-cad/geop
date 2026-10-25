@@ -623,25 +623,16 @@ function App() {
   }));
 
   const inHand = program?.tool ?? null;
-  const tools: Tool[] = [
-    ...infos.filter((info) => !reducedMode || !info.experimental).map((info) => ({
+  // The ribbon offers the operations alone: the editor's tools — the drag
+  // tool — are no operations, and the inspect panel offers them.
+  const tools: Tool[] = infos
+    .filter((info) => !reducedMode || !info.experimental)
+    .map((info) => ({
       ...info,
       active: step?.kind === info.kind && step.id == null,
       disabled: !wasmReady || (step != null && step.kind !== info.kind),
       onSelect: () => newStep(info),
-    })),
-    ...(program?.tools ?? []).map((tool) => ({
-      kind: tool.key,
-      icon: tool.icon,
-      label: tool.label,
-      doc: tool.doc,
-      group: tool.group,
-      tier: tool.tier,
-      active: inHand === tool.key,
-      disabled: !wasmReady || step != null,
-      onSelect: () => void dispatch({ command: "tool", key: inHand === tool.key ? null : tool.key }),
-    })),
-  ];
+    }));
   /** The key of an inspector's pick tool: `pick:measure`. */
   const PICK = "pick:";
 
@@ -652,6 +643,7 @@ function App() {
         enabled={wasmReady}
         idle={step == null}
         onCommand={(key, payload) => dispatch({ command: "panel", key, payload })}
+        onOpenStep={(id) => void open({ command: "open", id })}
       />
       <h2>Program</h2>
       <Timeline
@@ -689,6 +681,9 @@ function App() {
         <h2>Inspect</h2>
         <InspectPanel
           enabled={wasmReady && step == null}
+          tools={program?.tools ?? []}
+          inHand={inHand}
+          onTool={(key) => void dispatch({ command: "tool", key })}
           inspectors={program?.inspectors ?? []}
           picking={inHand?.startsWith(PICK) ? inHand.slice(PICK.length) : null}
           onPicking={(inspector) => dispatch({ command: "tool", key: inspector == null ? null : PICK + inspector })}
