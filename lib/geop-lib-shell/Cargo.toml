@@ -14,3 +14,5 @@ geop-ops-model.workspace = true
 geop-ops-model = { workspace = true, features = ["testing"] }
 # The basic solids the tests shell.
 geop-lib-sweep = { workspace = true, features = ["testing"] }
+# The regression tests drill them before shelling.
+geop-lib-booleans.workspace = true

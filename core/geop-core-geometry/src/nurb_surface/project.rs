@@ -165,14 +165,25 @@ impl NurbSurface<4> {
         Ok((u.intersect(u_lo.union(u_hi)), v.intersect(v_lo.union(v_hi))))
     }
 
-    /// The step off a pole at `p` towards `target`. The collapsed parameter
-    /// does not move the point there, so which meridian to leave along is a
-    /// free choice — `collapsed` is its value now and its domain; `fixed`,
-    /// the other parameter's value and domain, is where the pole is. Of the
-    /// meridians at the collapsed domain's ends, its middle and where it is
-    /// now, the one the Newton step along goes furthest towards the target
-    /// on — into the domain, off the pole: `(meridian, step)`, or `None`
-    /// if none does. `u_collapsed` says the collapsed parameter is `v`.
+    /// The step along a meridian at `p`, where the Jacobian is singular,
+    /// towards `target`: at a pole, or a hair off one, where the derivative
+    /// along the collapsed row is below what the arithmetic resolves. The
+    /// collapsed parameter does not move the point there, so which meridian
+    /// to go along is a free choice — `collapsed` is its value now and its
+    /// domain; `fixed`, the other parameter's value and domain, is where
+    /// the pole is. Of the meridians at the collapsed domain's ends, its
+    /// middle and where it is now, the one the Newton step along goes
+    /// furthest towards the target on: `(meridian, step)`, or `None` if
+    /// none moves. `u_collapsed` says the collapsed parameter is `v`.
+    ///
+    /// The step is kept within the domain, as every step is: a target whose
+    /// foot point is the pole itself — behind the patch, on the far side of
+    /// the pole from it — is reached by a step onto the pole, exactly.
+    /// Refusing that step left the foot point creeping towards the pole and
+    /// stopping a hair off it, where the surface's normal, `S_u × S_v` with
+    /// `S_u` of the order of that hair, is lost in rounding; the pole itself
+    /// has a normal (`pole_normal`). From the pole, a step onto it again is
+    /// no step, and a meridian leading away from the target is not taken.
     fn off_pole(
         &self,
         target: Vector3,
@@ -195,9 +206,9 @@ impl NurbSurface<4> {
             let Ok(step) = toward.div(meridian.prod_dot(&meridian)) else {
                 continue;
             };
-            // Off the pole: the step leads into the domain.
-            let to = fixed.add(step);
-            if !(to.definitely_greater(fixed_lo) && to.definitely_less(fixed_hi)) {
+            let to = fixed.add(step).clamped(fixed_lo, fixed_hi);
+            let step = to.sub(fixed);
+            if step.could_be_equal(Scalar::ZERO) {
                 continue;
             }
             // How far towards the target, to first order: `toward * step`.
@@ -213,8 +224,9 @@ impl NurbSurface<4> {
 #[cfg(test)]
 mod tests {
     use crate::nurb_surface::NurbSurface;
-    use crate::test_fixtures::hom;
-    use geop_core_math::scalars::Scalar;
+    use crate::search::PROJECT_ITERATIONS;
+    use crate::test_fixtures::{hom, revolved};
+    use geop_core_math::{scalars::Scalar, vector::Vector3};
 
     /// Flat unit patch in the xy-plane.
     fn flat_xy() -> NurbSurface<4> {
@@ -266,6 +278,24 @@ mod tests {
             vec![f(0.), f(0.), f(1.), f(1.)],
         )
         .unwrap()
+    }
+
+    /// A target behind a quarter disc's pole, on the far side of it from
+    /// the quarter: its foot point is the pole. From a seed a hair off the
+    /// pole, where the derivative along the collapsed row is lost in
+    /// rounding, the projection lands on the pole exactly — where the
+    /// surface has a normal.
+    #[test]
+    fn project_onto_the_pole_from_a_hair_off_it() {
+        let disc = revolved(0., 0.);
+        let f = Scalar::from_f64;
+        let target = Vector3::from_array([f(-1e-17), f(-8e-14), f(1.)]);
+        let (u, v) = disc
+            .project_in_domain(target, f(1.), f(2.7755575615628914e-17), PROJECT_ITERATIONS)
+            .unwrap();
+        assert!(v.could_be_equal(Scalar::ZERO), "{v:?}");
+        let normal = disc.normal(u, v).unwrap();
+        assert!(normal[2].abs().could_be_equal(Scalar::ONE), "{normal:?}");
     }
 
     #[test]

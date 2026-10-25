@@ -118,9 +118,17 @@ pub(crate) fn find_span(degree: usize, knots: &[Scalar], n: usize, t: Scalar) ->
     Err(GeopError::new("could not find knot span"))
 }
 
-/// The homogeneous control points `local` moved so that the first one's
-/// Cartesian position sits at the origin, and that position (in the first
-/// `D − 1` components; the weight slot is zero).
+/// Whether `t` lies in the upper half of knot span `span`: nearer its end
+/// than its start. Which control point of the span to evaluate relative to
+/// ([`centered`]): the one at the nearer end.
+pub(crate) fn nearer_end(knots: &[Scalar], span: usize, t: Scalar) -> bool {
+    let middle = Scalar::interpolate(knots[span], knots[span + 1], Scalar::from_f64(0.5));
+    t.midpoint().to_f64() > middle.midpoint().to_f64()
+}
+
+/// The homogeneous control points `local` moved so that the Cartesian
+/// position of `local[at]` sits at the origin, and that position (in the
+/// first `D − 1` components; the weight slot is zero).
 ///
 /// Evaluating a rational spline at an interval parameter computes `A / W`
 /// from two enclosures that interval arithmetic cannot correlate, so the
@@ -132,16 +140,31 @@ pub(crate) fn find_span(degree: usize, knots: &[Scalar], n: usize, t: Scalar) ->
 /// adding the origin back costs a single rounding. Which point is a free
 /// choice; a sharp one costs nothing, and one of the points acting on the
 /// span keeps the shifted ones as small as the patch.
-pub(crate) fn centered<const D: usize>(local: &[Vector<D>]) -> (Vec<Vector<D>>, Vector<D>) {
-    let first = local[0];
-    let inv_w = Scalar::ONE
-        .div(first[D - 1])
-        .expect("weights are definitely positive by construction");
+///
+/// Of those, the one nearest the parameter is the good choice
+/// ([`nearer_end`]). At a pole — a row of control points collapsed to one
+/// point, with the rim's weights — the homogeneous rows differ by their
+/// weights times the pole's distance from the origin, and so do `A_u` and
+/// `W_u S`, which cancel to the derivative along the row: `S_u` of the
+/// order of the distance to the pole came out as wide as the patch for a
+/// `u` of some width. Relative to the pole, both are of the order of that
+/// distance, and so is their difference.
+pub(crate) fn centered<const D: usize>(
+    local: &[Vector<D>],
+    at: usize,
+) -> (Vec<Vector<D>>, Vector<D>) {
+    let first = local[at];
     let mut origin = Vector::<D>::zero();
     for c in 0..D - 1 {
+        // One division, not a reciprocal and a product: a quotient the
+        // format holds, `2 / 1`, is then the middle of its enclosure, and
+        // the point sits exactly on the origin, with nothing of its own
+        // left over for the derivatives to see.
+        let at = first[c]
+            .div(first[D - 1])
+            .expect("weights are definitely positive by construction");
         // A placeholder's coordinates are unbounded and have no middle:
         // there the origin stays where it is.
-        let at = first[c].mul(inv_w);
         origin[c] = if at.is_finite() {
             at.sharpen()
         } else {

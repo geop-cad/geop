@@ -9,5 +9,7 @@
 //! ([`surface_missed`]).
 
 mod shell;
+#[cfg(test)]
+mod regression_tests;
 
 pub use shell::{extended, offset_faces, pcurve, shell, surface_missed, thicken};
