@@ -115,6 +115,15 @@ export function freePath(files: Record<string, string>, path: string): string {
   }
 }
 
+/** `folder`, or the first of `folder 2`, `folder 3`, … that holds no file of `files`. */
+export function freeFolder(files: Record<string, string>, folder: string): string {
+  const taken = (f: string) => Object.keys(files).some((p) => p.startsWith(`${f}/`));
+  if (!taken(folder)) return folder;
+  for (let n = 2; ; n++) {
+    if (!taken(`${folder} ${n}`)) return `${folder} ${n}`;
+  }
+}
+
 /** A folder or a file of the tree the explorer shows. */
 export type Entry =
   | { kind: "folder"; name: string; path: string; children: Entry[] }

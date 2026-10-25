@@ -1,18 +1,21 @@
 //! Extrusions, revolutions and sweeps edited as the front end edits them:
 //! every gesture a command to the [`geop_core_editor::editor::Editor`] —
 //! handles dragged, axes and rails picked, formulas typed into dialog
-//! fields — and the parametric plate's parameters set, renamed and undone
-//! through the parameters panel, the part built anew with them (only where
-//! they are read); and what the editor offers around them: the steps it
-//! runs while one is edited, and inspectors.
+//! fields — and the parametric plate's parameters and properties set and
+//! undone in their steps' dialogs, the part built anew with them (only
+//! where they are read); and what the editor offers around them: the steps
+//! it runs while one is edited, and inspectors.
 
 use std::{borrow::Cow, collections::BTreeMap};
 
 use geop_core_editor::{
-    editing::{Button, Control, Pointer, Reach, Shape, StepEditEvent, Style, Tone, Value, Visual},
-    editor::{Command, Editor, ProgramState, Update},
+    editing::{
+        Button, Control, Pointer, Reach, Shape, StepEditEvent, Style, TableEdit, Tone, Value,
+        Visual,
+    },
+    editor::{Command, Editor, Update},
     output::{Inspector, InspectorInfo, Output as Made, Picks},
-    registry::{Panel, Registry},
+    registry::Registry,
     testing::{built, click_at, dialog, editor_with, from_above, handled, pointer},
     view::drawn,
 };
@@ -22,19 +25,14 @@ use geop_core_math::{
     scalars::Scalar,
     vector::Vector3,
 };
-use geop_core_program::{
-    element::PickedElement, operation::Operation, reader::Reader, testing::args, values::Setting,
-};
+use geop_core_program::{element::PickedElement, reader::Reader, testing::args};
 use geop_core_sketch::PointId;
 use geop_ops_model::datums::origin_axis;
-use geop_ops_model::parameters::{
-    DefineParameters, Parameter, ParameterKind, Parameters, ParametersCommand, ParametersPanel,
-    ParametersPanelState, Row, parameters_of,
-};
-use geop_ops_model::sketch::{Constraint, sketch_element, whole_sketch};
+use geop_ops_model::parameters::parameters_of;
+use geop_ops_model::sketch::{Constraint, sketch_element};
 use geop_ops_model::{
     BooleanOp, Combine, Face, Point, element, read_model,
-    testing::{Built, model_of, model_shown, solid_volume},
+    testing::{Built, model_of, model_shown},
 };
 use geop_ops_sketch::AddSketchArgs;
 
@@ -43,7 +41,7 @@ use crate::{ExtrudeArgs, Output, examples::parametric_plate, testing::registry a
 /// What these tests edit: sketches — planar and in space — on the origin's
 /// datums, swept into solids, and the parameters their dialogs read: the
 /// model's, the sketches', the datums', the extrusions' and the
-/// parameters' operations, drawers and panels.
+/// parameters' operations and drawers.
 fn registry() -> Registry {
     (geop_ops_model::register(Registry::default()))
         .and_then(geop_ops_sketch::register)
@@ -52,25 +50,35 @@ fn registry() -> Registry {
         .expect("the operations each have a name of their own")
 }
 
-/// The command setting the program's parameters to `parameters`, as the
-/// parameters panel sends it.
-fn set_parameters(parameters: Parameters) -> Command {
-    Command::panel::<ParametersPanel>(&ParametersCommand::SetParameters { parameters })
-        .expect("parameters are plain data")
+/// The command opening the step `id`, as the step list does.
+fn open(id: &str) -> Command {
+    Command::Open {
+        id: id.into(),
+        placed: None,
+    }
 }
 
-/// What the parameters panel shows of `program`.
-fn parameters_panel(program: &ProgramState) -> ParametersPanelState {
-    serde_json::from_value(program.panels[ParametersPanel::KEY].clone())
-        .expect("the parameters panel shows its state")
+/// The command setting the cell at `row`, `column` of the table of the
+/// parameters step edited to `text`: of the parametric plate's, `width`,
+/// `depth` and `thickness` are rows 0, 1 and 2, and their names and values
+/// columns 0 and 1.
+fn parameter_cell(row: usize, column: usize, text: &str) -> Command {
+    let text = text.into();
+    dialog(
+        "parameters",
+        Value::Table(TableEdit::Cell { row, column, text }),
+    )
 }
 
-/// The command renaming the parameter `from` `to`, as the parameters panel
-/// sends it.
-fn rename_parameter(from: &str, to: &str) -> Command {
-    let (from, to) = (from.into(), to.into());
-    Command::panel::<ParametersPanel>(&ParametersCommand::RenameParameter { from, to })
-        .expect("names are plain data")
+/// What the parameters step edited says of the value of its row `row`:
+/// what it comes to, or why it does not.
+fn parameter_value(update: &Update, row: usize) -> (String, Tone) {
+    let step = update.step.as_ref().expect("a step is edited");
+    let Some(Control::Table(table)) = step.presentation.dialog.get("parameters") else {
+        panic!("no parameters table: {:?}", step.presentation.dialog)
+    };
+    let cell = &table.rows[row].cells[1];
+    (cell.detail.clone().unwrap_or_default(), cell.tone)
 }
 
 /// The point `p2` of the sketch `outline` of the part `view`, in space.
@@ -80,51 +88,41 @@ fn outline_corner(view: &Reader) -> [f64; 3] {
     [0, 1, 2].map(|k| p[k].to_f64())
 }
 
-/// The program's parameters are edited as a whole: the part is built
-/// anew with them, what they resolve to — and why one does not — is
-/// shown, invalid ones are refused, and the edit is undone like any other.
+/// The program's parameters are edited in their step's table: what each
+/// comes to — and why one does not — is shown beside it, the part is built
+/// anew with them once committed, a name taken is refused, and the edit is
+/// undone like any other.
 #[test]
 fn parameters_are_edited_and_undone() {
     let program = parametric_plate();
     let mut editor = editor_with(registry(), program.clone());
-    let mut parameters = parameters_of(&program);
-    let ParameterKind::Number { expression, .. } = &mut parameters.values[1].kind else {
-        panic!("depth is a number")
-    };
-    *expression = "width / 4 + nothing".into();
-    let update = editor.handle(set_parameters(parameters.clone()));
-    let state = update.program.unwrap();
-    assert!(
-        parameters_panel(&state).parameters.errors["depth"].contains("nothing"),
-        "{state:?}"
-    );
-    let ParameterKind::Number { expression, .. } = &mut parameters.values[1].kind else {
-        unreachable!()
-    };
-    *expression = "width / 4".into();
-    let state = (editor.handle(set_parameters(parameters.clone())).program).unwrap();
-    assert_eq!(
-        (parameters_panel(&state).parameters.values)
-            .get("depth")
-            .cloned(),
-        Some(Setting::Number(1.0))
-    );
+    handled(&mut editor, open("parameters"));
+    let update = handled(&mut editor, parameter_cell(1, 1, "width / 4 + nothing"));
+    let (why, tone) = parameter_value(&update, 1);
+    assert!(why.contains("nothing") && tone == Tone::Error, "{why}");
+    let update = handled(&mut editor, parameter_cell(1, 1, "width / 4"));
+    assert_eq!(parameter_value(&update, 1), ("= 1".into(), Tone::Hint));
+    handled(&mut editor, Command::Commit);
+    let state = editor.handle(Command::Show).program.unwrap();
     assert!(
         state.steps.iter().all(|s| s.error.is_none()),
         "{:?}",
         state.steps
     );
-    parameters.values[1].name = "width".into();
-    assert!(editor.handle(set_parameters(parameters)).error.is_some());
-    editor.handle(Command::Undo);
+    assert!(parameters_of(editor.program()).get("depth").is_some());
+
+    handled(&mut editor, open("parameters"));
+    handled(&mut editor, parameter_cell(1, 0, "width"));
+    let refused = editor.handle(Command::Commit).error.expect("a name taken");
+    assert!(refused.contains("more than one parameter"), "{refused}");
+    editor.handle(Command::Cancel);
     editor.handle(Command::Undo);
     assert_eq!(parameters_of(editor.program()), parameters_of(&program));
 }
 
-/// A parameter changed rebuilds the part — with no step edited, and with
-/// one edited: the sketch open follows its formulas at once, solved, and
-/// what it builds follows once it is committed. A table added on the fly
-/// is read by its columns in a formula typed into a dimension.
+/// A parameter changed rebuilds the part, once its step is committed. A
+/// table added before the steps is read by its columns in a formula typed
+/// into a dimension.
 #[test]
 fn parameters_changed_rebuild_what_reads_them() {
     let program = parametric_plate();
@@ -137,15 +135,9 @@ fn parameters_changed_rebuild_what_reads_them() {
         "{:?}",
         editor.program().state
     );
-    let mut parameters = parameters_of(&program);
-    let set_width = |parameters: &mut Parameters, w: &str| {
-        let ParameterKind::Number { expression, .. } = &mut parameters.values[0].kind else {
-            panic!("width is a number")
-        };
-        *expression = w.into();
-    };
-    set_width(&mut parameters, "5");
-    let update = handled(&mut editor, set_parameters(parameters.clone()));
+    handled(&mut editor, open("parameters"));
+    handled(&mut editor, parameter_cell(0, 1, "5"));
+    let update = handled(&mut editor, Command::Commit);
     let widest_vertex = update
         .scene
         .as_ref()
@@ -168,64 +160,41 @@ fn parameters_changed_rebuild_what_reads_them() {
         (corner_built - 5.0).abs() < 1e-9,
         "the program itself: {corner_built}"
     );
-    let sketch_of = |view: Reader| {
-        let placed = view.retrieve_element(&whole_sketch("outline"));
-        placed.unwrap().sketch.clone()
-    };
     assert!(
         (corner_x(editor.part()) - 5.0).abs() < 1e-9,
-        "{}: {:?} vs built {:?}",
-        corner_x(editor.part()),
-        sketch_of(editor.part()).points.get(&PointId(2)),
-        sketch_of(built.current()).points.get(&PointId(2)),
-    );
-
-    // Editing the outline, the width changes: the drawing follows, solved.
-    editor.handle(Command::Open {
-        id: "outline".into(),
-        placed: None,
-    });
-    set_width(&mut parameters, "7");
-    let update = editor.handle(set_parameters(parameters.clone()));
-    let visuals = update.step.unwrap().presentation.visuals;
-    let widest = visuals
-        .iter()
-        .filter_map(|v| match &v.shape {
-            Shape::Point { at } if v.key.starts_with('p') => Some(at[0].to_f64()),
-            _ => None,
-        })
-        .fold(f64::MIN, f64::max);
-    assert!((widest - 7.0).abs() < 1e-6, "{widest}");
-    editor.handle(Command::Commit);
-    assert!(
-        (corner_x(editor.part()) - 7.0).abs() < 1e-9,
         "{}",
         corner_x(editor.part())
     );
 
-    // A table, added while the hole's sketch is edited, read in a formula.
-    editor.handle(Command::Open {
-        id: "hole_sketch".into(),
-        placed: None,
-    });
-    parameters.values.push(Parameter {
-        name: "size".into(),
-        kind: ParameterKind::Table {
-            columns: vec!["diameter".into()],
-            rows: vec![
-                Row {
-                    name: "small".into(),
-                    values: vec![0.3],
-                },
-                Row {
-                    name: "large".into(),
-                    values: vec![0.5],
-                },
-            ],
-            selected: "large".into(),
+    // A table, added first, read in a formula of the hole's sketch.
+    editor.handle(Command::Seek { marker: Some(0) });
+    handled(
+        &mut editor,
+        Command::New {
+            kind: "lookup_table".into(),
         },
-    });
-    handled(&mut editor, set_parameters(parameters.clone()));
+    );
+    let table = |what| dialog("table", Value::Table(what));
+    handled(&mut editor, dialog("input", Value::Text("size".into())));
+    let column = |column, text: &str| TableEdit::Column {
+        column,
+        text: text.into(),
+    };
+    let cell = |row, column, text: &str| TableEdit::Cell {
+        row,
+        column,
+        text: text.into(),
+    };
+    handled(&mut editor, table(column(1, "diameter")));
+    handled(&mut editor, table(cell(0, 0, "small")));
+    handled(&mut editor, table(cell(0, 1, "0.3")));
+    handled(&mut editor, table(TableEdit::AddRow));
+    handled(&mut editor, table(cell(1, 0, "large")));
+    handled(&mut editor, table(cell(1, 1, "0.5")));
+    handled(&mut editor, table(TableEdit::SelectRow { row: 1 }));
+    handled(&mut editor, Command::Commit);
+    editor.handle(Command::Seek { marker: None });
+    handled(&mut editor, open("hole_sketch"));
     let sketch: AddSketchArgs = args(editor.editing().unwrap());
     let (&diameter, _) = sketch
         .sketch
@@ -256,8 +225,8 @@ fn parameters_changed_rebuild_what_reads_them() {
     handled(&mut editor, Command::Commit);
 }
 
-/// Picking a colour answers at once — the part is drawn again in it, but
-/// nothing is built again.
+/// Picking a colour in the properties step answers at once — the part is
+/// drawn again in it, but nothing is built again.
 #[test]
 fn colours_are_picked_without_rebuilding() {
     let program = parametric_plate();
@@ -268,9 +237,9 @@ fn colours_are_picked_without_rebuilding() {
         other => panic!("no model built: {:?}", other.err()),
     };
     let before = model(&editor);
-    let mut parameters = parameters_of(&program);
-    parameters.color = Some("#123456".into());
-    let update = editor.handle(set_parameters(parameters));
+    handled(&mut editor, open("properties"));
+    handled(&mut editor, dialog("color", Value::Text("#123456".into())));
+    let update = handled(&mut editor, Command::Commit);
     assert_eq!(
         update
             .scene
@@ -580,7 +549,7 @@ fn editing_an_early_sketch_builds_only_up_to_it() {
 }
 
 /// The plate's thickness, typed into its extrude's dialog as a formula of
-/// the parameters, as one types it in the parameters panel: the field
+/// the parameters, as one types it in the parameters step: the field
 /// shows the formula and what it comes to, and drops its slider and its
 /// handle — a value that follows a formula is not dragged. A formula that
 /// does not evaluate is kept as typed, the field and the step saying why;
@@ -1031,125 +1000,26 @@ fn inspectors_are_offered_picked_with_and_asked() {
     assert_eq!(*editor.program(), before);
 }
 
-/// Parameters given to a program without any, while a step is edited, put
-/// their step first: the step edited, and the marker, stay at the steps they
-/// were at, and the commit keeps both the parameters and the step's edit.
+/// A name typed in the parameters step renames the definition alone: the
+/// step reading the old name fails, naming it, until it reads the new one.
 #[test]
-fn the_first_parameter_given_while_a_step_is_edited() {
-    let (mut editor, _) = editor();
-    assert!(parameters_of(editor.program()).is_empty());
-    editor.handle(Command::Seek { marker: Some(2) });
-    handled(
-        &mut editor,
-        Command::New {
-            kind: "extrude".into(),
-        },
-    );
-    editor.handle(dialog("distance", Value::Number(2.0)));
-    let parameters = Parameters {
-        values: vec![Parameter::number("depth", "3", 0.0, 100.0)],
-        ..Parameters::default()
-    };
-    handled(&mut editor, set_parameters(parameters));
+fn renaming_a_parameter_renames_its_definition_alone() {
+    let mut editor = editor_with(registry(), parametric_plate());
+    handled(&mut editor, open("parameters"));
+    handled(&mut editor, parameter_cell(2, 0, "t"));
     handled(&mut editor, Command::Commit);
-    let steps = &editor.program().steps;
-    assert_eq!(steps[0].operation, DefineParameters::KIND);
-    assert_eq!(steps[3].id, "extrude1");
-    assert_eq!(distance(&editor, "extrude1"), 2.0);
-    let update = editor.handle(Command::Show);
-    assert_eq!(update.program.unwrap().marker, 4);
-}
-
-/// What reads each parameter is sent with the program, for the parameters
-/// panel to warn before one is removed; and renaming one, as its dialog's
-/// name field does, renames it in every formula — the other parameters',
-/// a sketch's dimensions, an extrude's length, a table's columns — so
-/// nothing fails and the part is the same. A name taken, and a rename
-/// while a step is edited, are refused; undo takes a rename back.
-#[test]
-fn renaming_a_parameter_renames_what_reads_it() {
-    let mut editor = Editor::new(registry(), BTreeMap::new());
-    let update = handled(
-        &mut editor,
-        Command::Load {
-            program: parametric_plate(),
-            path: None,
-        },
-    );
-    let uses = parameters_panel(&update.program.expect("the program is sent")).parameter_uses;
-    let readers = |name: &str| uses.get(name).cloned().unwrap_or_default();
-    assert_eq!(readers("width"), ["depth", "outline"]);
-    assert_eq!(readers("depth"), ["outline"]);
-    assert_eq!(readers("thickness"), ["plate"]);
-    assert_eq!(readers("screw"), ["hole_sketch"]);
-    let volume = |editor: &Editor| {
-        let part = model_shown(editor);
-        let [name] = part.solid_names().try_into().expect("one solid");
-        solid_volume(&part, &name)
-    };
-    let before = volume(&editor);
-
-    for (from, to) in [
-        ("width", "plate_width"),
-        ("screw", "bolt"),
-        ("thickness", "t"),
-    ] {
-        let update = editor.handle(rename_parameter(from, to));
-        assert!(update.error.is_none(), "{from} -> {to}: {:?}", update.error);
-        let program = update.program.expect("the program is sent");
-        assert!(
-            program.steps.iter().all(|s| s.error.is_none()),
-            "{:?}",
-            program.steps
-        );
-        let panel = parameters_panel(&program);
-        assert!(
-            panel.parameters.errors.is_empty(),
-            "{:?}",
-            panel.parameters.errors
-        );
-        assert!(
-            !panel.parameter_uses.contains_key(from),
-            "{from} is still read"
-        );
-    }
-    let program = editor.program();
-    let json = program.to_json().unwrap();
-    for (old, new) in [
-        ("\"width / 2\"", "\"plate_width / 2\""),
-        ("\"screw.clearance\"", "\"bolt.clearance\""),
-        (
-            "{\"blind\":{\"formula\":\"thickness\"}}",
-            "{\"blind\":{\"formula\":\"t\"}}",
-        ),
-    ] {
-        let compact: String = json.split_whitespace().collect();
-        assert!(
-            !compact.contains(&old.replace(' ', "")),
-            "{old} is left in {json}"
-        );
-        assert!(
-            compact.contains(&new.replace(' ', "")),
-            "{new} is not in {json}"
-        );
-    }
-    assert_eq!(volume(&editor), before);
-
-    let taken = editor.handle(rename_parameter("depth", "t"));
-    let error = taken.error.expect("a name taken is refused");
+    assert!(parameters_of(editor.program()).get("t").is_some());
+    let state = editor.handle(Command::Show).program.unwrap();
+    // The plate fails, and what is built on it with it.
+    let failing: Vec<(&str, &str)> = (state.steps.iter())
+        .filter_map(|s| Some((s.id.as_str(), s.error.as_deref()?)))
+        .collect();
+    let ids: Vec<&str> = failing.iter().map(|(id, _)| *id).collect();
+    assert_eq!(ids, ["plate", "hole_sketch", "hole"], "{failing:?}");
     assert!(
-        error.contains(r#"there is a parameter "t" already"#),
-        "{error}"
+        failing[0]
+            .1
+            .contains(r#"there is no parameter "thickness""#),
+        "{failing:?}"
     );
-    editor.handle(Command::Open {
-        id: "plate".into(),
-        placed: None,
-    });
-    let editing = editor.handle(rename_parameter("depth", "plate_depth"));
-    assert!(editing.error.is_some(), "renamed while a step is edited");
-    editor.handle(Command::Cancel);
-
-    editor.handle(Command::Undo);
-    assert!(parameters_of(editor.program()).get("thickness").is_some());
-    assert!(parameters_of(editor.program()).get("t").is_none());
 }

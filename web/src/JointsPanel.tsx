@@ -1,8 +1,7 @@
-import type { JointInfo, MateFreedom } from "./geop";
+import type { JointInfo } from "./geop";
 
 interface Props {
   joints: JointInfo[];
-  freedom: MateFreedom | null;
   /** A smallest set of mates that cannot all hold together. */
   conflicting: string[];
   enabled: boolean;
@@ -12,9 +11,10 @@ interface Props {
 
 /**
  * The program's joints, each coordinate set by typing it — or, limited, on a
- * slider between its limits — and how free each placed part still is.
+ * slider between its limits — and the mates that cannot all hold. How free
+ * each placed part is shows beside it in the part's structure.
  */
-export function JointsPanel({ joints, freedom, conflicting, enabled, onSet }: Props) {
+export function JointsPanel({ joints, conflicting, enabled, onSet }: Props) {
   return (
     <div className="parameters">
       {joints.flatMap((joint) =>
@@ -69,19 +69,6 @@ export function JointsPanel({ joints, freedom, conflicting, enabled, onSet }: Pr
           </span>
         </div>
       )}
-      {freedom &&
-        Object.entries(freedom.parts).map(([part, dof]) => (
-          <div
-            className="parameter-row"
-            key={part}
-            title="How many independent ways it can still move"
-          >
-            <span className="parameter-name">{part}</span>
-            <span className="parameter-value">
-              {dof === 0 ? "held fast" : `${dof} DOF`}
-            </span>
-          </div>
-        ))}
     </div>
   );
 }

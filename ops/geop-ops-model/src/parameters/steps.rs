@@ -8,16 +8,18 @@
 //! What a parameter is set to where the part is built is the run's input
 //! of its name — a [`Setting`] a program placing the part gives — and its
 //! own definition where none is given. The colour is set the same way, by
-//! the input [`COLOR`].
+//! the input [`COLOR`], and the part is drawn in it ([`PartColor`]).
 
 use std::borrow::Cow;
 
 use geop_core_editor::{
     edit_form::{EditForm, FormState},
     editable::{Context, OperationGroup, OperationInfo, OperationTier},
-    editing::{Cell, Column, ColumnKind, Layout, Table, TableEdit, TableRow, Tone, Unit},
+    editing::{Cell, Choice, Column, ColumnKind, Layout, Table, TableEdit, TableRow, Tone, Unit},
     part_operation,
     part_operation::PartOperation,
+    registry::{Drawer, StructureItem},
+    view::PartView,
 };
 use geop_core_math::geop_error::{GeopError, GeopResult};
 use geop_core_program::{
@@ -103,7 +105,8 @@ impl PartOperation for DefineParameters {
     /// value — a number or a formula, and what it comes to in the part as
     /// the step built it — and what a slider offers, from and to. A row
     /// added is a fresh `length` of 10. A name typed here renames the
-    /// definition alone; the Parameters panel renames what reads it too.
+    /// definition alone: a formula still reading the old name fails,
+    /// naming it, until it is changed too.
     fn form<'a>(
         ctx: &'a Context<'a>,
         args: &DefineParametersArgs,
@@ -527,7 +530,7 @@ pub struct PartPropertiesArgs {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub color: Option<String>,
     /// What the part is made of; none for a part whose material is not
-    /// given — weighed as water, 1000 kg/m³, and said so.
+    /// given, which has a volume and a centroid but no mass.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub material: Option<Material>,
 }
@@ -580,18 +583,112 @@ impl PartOperation for PartProperties {
         })
     }
 
-    /// What is set is edited where the program's parameters are listed.
+    /// Its title and designation typed, its colour picked, and its
+    /// material chosen from the list ([`Material::listed`]), or none, or
+    /// any other by its name and density.
     fn form<'a>(
         _: &'a Context<'a>,
-        _: &PartPropertiesArgs,
+        args: &PartPropertiesArgs,
         _: &FormState<()>,
     ) -> EditForm<'a, PartPropertiesArgs> {
         let mut f = EditForm::<PartPropertiesArgs>::default();
-        let text = "The part's title, designation, colour and material — edited under Parameters.";
-        f.form.dialog.text("properties", text, Tone::Hint);
+        let text = |text: &str| (!text.trim().is_empty()).then(|| text.trim().to_string());
+        let title = args.title.clone().unwrap_or_default();
+        f.input(
+            "title",
+            "Title",
+            title,
+            Some("the file's name"),
+            move |e, t| {
+                e.args.title = text(t);
+            },
+        );
+        let designation = args.designation.clone().unwrap_or_default();
+        f.input(
+            "designation",
+            "Designation",
+            designation,
+            Some("none"),
+            move |e, t| {
+                e.args.designation = text(t);
+            },
+        );
+        let color = args.color.clone().unwrap_or_default();
+        f.color("color", "Colour", color, move |e, c| e.args.color = text(c));
+        let listed = |m: &Material| Material::named(&m.name).as_ref() == Some(m);
+        let chosen = match &args.material {
+            None => NO_MATERIAL,
+            Some(m) if listed(m) => m.name.as_str(),
+            Some(_) => OTHER_MATERIAL,
+        };
+        let options = (std::iter::once(Choice::new(NO_MATERIAL, "None")))
+            .chain(Material::listed().map(|m| {
+                let label = format!("{} — {} kg/m³", m.name, m.density);
+                Choice::new(m.name, label)
+            }))
+            .chain(std::iter::once(Choice::new(
+                OTHER_MATERIAL,
+                "Other, by its density…",
+            )))
+            .collect();
+        f.select(
+            "material",
+            "Material",
+            chosen,
+            options,
+            true,
+            move |e, choice| {
+                e.args.material = match choice {
+                    NO_MATERIAL => None,
+                    // One not listed already stays as it is; one listed gives
+                    // its density to start from.
+                    OTHER_MATERIAL => match e.args.material.take() {
+                        Some(m) if !listed(&m) => Some(m),
+                        m => Some(Material {
+                            name: "Other".into(),
+                            density: m.map_or(OTHER_DENSITY, |m| m.density),
+                        }),
+                    },
+                    name => Material::named(name),
+                };
+            },
+        );
+        if let Some(material) = args.material.as_ref().filter(|m| !listed(m)) {
+            f.input(
+                "material_name",
+                "Name",
+                material.name.clone(),
+                None,
+                move |e, t| {
+                    if let (Some(material), Some(name)) = (&mut e.args.material, text(t)) {
+                        material.name = name;
+                    }
+                },
+            );
+            let density = material.density.to_string();
+            f.input("density", "Density (kg/m³)", density, None, |e, t| {
+                if let (Some(material), Ok(density)) = (&mut e.args.material, t.trim().parse()) {
+                    material.density = density;
+                }
+            });
+        }
+        if args.material.is_none() {
+            let hint = "No material: the part has a volume, but no mass.";
+            f.form.dialog.text("no_material", hint, Tone::Hint);
+        }
         f
     }
 }
+
+/// What the material field sends for none.
+const NO_MATERIAL: &str = "";
+
+/// What the material field sends for one not listed, given by its density.
+const OTHER_MATERIAL: &str = "other";
+
+/// The density (kg/m³) a material not listed starts from when no material
+/// was chosen before, until its own is typed.
+const OTHER_DENSITY: f64 = 1000.0;
 
 /// What the part designated `designation` built with `values` is ordered
 /// as: the designation, then each parameter in order — a table's row by its
@@ -654,36 +751,26 @@ pub fn read_properties<'a>(reader: &Reader<'a>) -> GeopResult<Cow<'a, Properties
     )?))
 }
 
-/// What a part is weighed as when its material is not given: water, 1000
-/// kg/m³.
-const UNGIVEN_DENSITY: f64 = 1000.0;
+/// Draws a part in the colour its properties give it (see
+/// [`PartProperties`]).
+pub struct PartColor;
 
-/// What a part is made of, as it is weighed.
-#[derive(Clone, Debug, PartialEq)]
-pub struct MaterialOf {
-    pub name: String,
-    /// kg/m³.
-    pub density: f64,
-    /// Whether no material was given, and it is weighed as water.
-    pub assumed: bool,
+impl Drawer for PartColor {
+    fn draw(&self, reader: &Reader, view: &mut PartView) -> GeopResult<()> {
+        view.color = read_properties(reader)?.color().map(str::to_string);
+        Ok(())
+    }
+
+    fn structure(&self, _: &Reader) -> GeopResult<Vec<StructureItem>> {
+        Ok(Vec::new())
+    }
 }
 
 impl Properties {
-    /// What its part is made of: its material — or, not given, water, and
-    /// said so.
-    pub fn material(&self) -> MaterialOf {
-        match &self.material {
-            Some(material) => MaterialOf {
-                name: material.name.clone(),
-                density: material.density,
-                assumed: false,
-            },
-            None => MaterialOf {
-                name: "Water (no material given)".into(),
-                density: UNGIVEN_DENSITY,
-                assumed: true,
-            },
-        }
+    /// What its part is made of: none for a part whose material is not
+    /// given, which then has no mass.
+    pub fn material(&self) -> Option<&Material> {
+        self.material.as_ref()
     }
 
     /// Its part's colour, `#rrggbb`: none for the viewer's own.

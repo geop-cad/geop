@@ -84,10 +84,10 @@ fn an_assembly_weighs_its_placed_parts() {
     for body in bodies {
         let name = body["name"].as_str().unwrap();
         assert!(name.starts_with('/'), "{name} is of a placed part");
-        assert_eq!(body["material"], "Aluminium 6061");
-        assert_eq!(body["assumed"], false);
+        assert_eq!(body["material"]["name"], "Aluminium 6061");
         let properties = &body["properties"];
-        let (volume, mass) = (bounded(&properties["volume"]), bounded(&properties["mass"]));
+        let volume = bounded(&properties["volume"]);
+        let mass = bounded(&properties["inertial"]["mass"]);
         // Aluminium: 2.7e-6 kg per mm³.
         assert!(
             Bounded {
@@ -100,7 +100,10 @@ fn an_assembly_weighs_its_placed_parts() {
         moment += mass.value * bounded(&properties["center"][0]).value;
     }
     let total = &report["total"];
-    let (mass, x) = (bounded(&total["mass"]), bounded(&total["center"][0]));
+    let (mass, x) = (
+        bounded(&total["inertial"]["mass"]),
+        bounded(&total["center"][0]),
+    );
     assert!((mass.value - sum).abs() <= mass.error + 1e-12);
     assert!((x.value - moment / sum).abs() <= x.error + 1e-9);
 

@@ -3,8 +3,8 @@
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
-<title>Geop — an open CAD kernel</title>
-<meta name="description" content="Geop is an open-source, NURBS-based CAD kernel for the agentic engineering era — highly extendable, written in Rust, with sound interval numerics." />
+<title>Geop — open-source parametric CAD</title>
+<meta name="description" content="Geop is open-source parametric CAD on an exact, interval-arithmetic NURBS kernel in Rust. Try it in your browser, or drive it from the CLI, VS Code or an AI agent over MCP." />
 <link rel="icon" href="favicon.svg" type="image/svg+xml" />
 <style>
 
@@ -169,7 +169,7 @@ header.site {
   text-decoration: none;
   color: var(--ink);
 }
-.brand svg { width: 22px; height: 21px; }
+.brand svg { width: 24px; height: 24px; }
 .nav-links {
   display: flex;
   align-items: center;
@@ -180,8 +180,13 @@ header.site {
 .nav-links a { text-decoration: none; }
 .nav-links a:hover { color: var(--ink); }
 .nav-links .btn { color: var(--ink); }
-@media (max-width: 640px) {
+.nav-links .nav-sponsor { color: var(--ink-faint); font-size: 0.82rem; }
+@media (max-width: 980px) {
   .nav-links a:not(.btn) { display: none; }
+  .nav-links { gap: 0.6rem; }
+}
+@media (max-width: 440px) {
+  .nav-links .nav-github { display: none; }
 }
 
 .btn {
@@ -207,19 +212,21 @@ header.site {
   color: var(--ink);
 }
 .btn-ghost:hover { border-color: var(--ink); }
+.btn-lg { padding: 0.8rem 1.4rem; font-size: 0.98rem; }
+.btn-primary.btn-lg { box-shadow: 0 6px 18px color-mix(in srgb, var(--accent) 30%, transparent); }
 
 /* ---------------------------------------------------------------
    Hero
 --------------------------------------------------------------- */
 .hero {
   position: relative;
-  padding: clamp(3rem, 8vw, 6rem) 0 clamp(2.5rem, 6vw, 4rem);
+  padding: clamp(2rem, 5vw, 3.75rem) 0 clamp(2.25rem, 5vw, 3.5rem);
 }
 .hero-inner {
   position: relative;
   display: grid;
-  grid-template-columns: 1.05fr 0.95fr;
-  gap: clamp(2rem, 5vw, 4rem);
+  grid-template-columns: 0.9fr 1.1fr;
+  gap: clamp(1.75rem, 4vw, 3.5rem);
   align-items: center;
 }
 @media (max-width: 900px) {
@@ -229,7 +236,7 @@ header.site {
 .hero h1 {
   font-family: ui-monospace, "SF Mono", "Cascadia Code", "Roboto Mono", monospace;
   font-weight: 600;
-  font-size: clamp(2rem, 4.6vw, 3.15rem);
+  font-size: clamp(2rem, 4.4vw, 3.3rem);
   line-height: 1.08;
   letter-spacing: -0.01em;
   margin: 0.9rem 0 1.15rem;
@@ -249,71 +256,102 @@ header.site {
   display: flex;
   gap: 0.75rem;
   flex-wrap: wrap;
-  margin-top: 1.9rem;
+  margin-top: 1.6rem;
 }
+.hero-note {
+  margin-top: 0.85rem;
+  font-size: 0.74rem;
+  color: var(--ink-faint);
+}
+.hero-facts {
+  list-style: none;
+  margin: 1.75rem 0 0;
+  padding: 1.1rem 0 0;
+  border-top: 1px solid var(--line);
+  display: flex;
+  flex-wrap: wrap;
+  gap: 1rem 2.25rem;
+}
+.hero-facts li { display: flex; flex-direction: column; max-width: 22ch; }
+.hero-facts strong { font-size: 1.35rem; color: var(--ink); font-weight: 600; }
+.hero-facts span { font-size: 0.82rem; color: var(--ink-dim); line-height: 1.35; }
 
-.hero-figure {
-  position: relative;
-  padding: clamp(1.5rem, 3vw, 2rem);
-  background: var(--surface);
-}
 /* ---------------------------------------------------------------
-   Examples carousel
+   Showcase: the live examples, one large stage that opens the app
 --------------------------------------------------------------- */
-.example-carousel-wrap {
-  position: relative;
-  margin: 1.1rem auto 0;
-  max-width: 240px;
-}
-.example-carousel {
-  display: flex;
-  overflow-x: auto;
-  scroll-snap-type: x mandatory;
-  scroll-behavior: smooth;
-  -webkit-overflow-scrolling: touch;
-  /* one card, edge to edge — swipe still works, but it's not the point */
-  scrollbar-width: none;
-}
-.example-carousel::-webkit-scrollbar {
-  display: none;
-}
-.example-card {
-  flex: 0 0 100%;
-  width: 100%;
-  scroll-snap-align: start;
+.showcase {
+  background: var(--surface);
   border: 1px solid var(--line);
-  background: var(--ground);
-  display: flex;
-  flex-direction: column;
+  padding: 0.75rem;
+  min-width: 0;
 }
-.carousel-nav {
+.showcase-stage {
+  position: relative;
+  aspect-ratio: 4 / 3;
+  background: var(--surface-2);
+  overflow: hidden;
+}
+.showcase-slide, .showcase-slide .example-canvas {
   position: absolute;
-  top: 50%;
-  transform: translateY(-50%);
+  inset: 0;
+}
+.showcase-slide[hidden] { display: none; }
+.showcase-slide .example-canvas { aspect-ratio: auto; border: none; }
+.showcase-open {
+  position: absolute;
+  inset: 0;
   z-index: 1;
-  width: 2.1rem;
-  height: 2.1rem;
-  border-radius: 50%;
-  border: 1px solid var(--line-strong);
-  background: color-mix(in srgb, var(--surface) 85%, transparent);
-  color: var(--ink);
-  font-size: 1.2rem;
-  line-height: 1;
   display: flex;
-  align-items: center;
-  justify-content: center;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 0.75rem;
+  padding: 1rem;
+  text-decoration: none;
+  color: var(--ink);
+}
+.showcase-label {
+  white-space: nowrap;
+  font-size: 0.75rem;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--ink-dim);
+  background: color-mix(in srgb, var(--surface) 80%, transparent);
+  padding: 0.3rem 0.55rem;
+}
+.showcase-pill {
+  background: var(--accent);
+  color: var(--accent-ink);
+  font-size: 0.85rem;
+  font-weight: 600;
+  padding: 0.55rem 1rem;
+  white-space: nowrap;
+  transition: transform 0.15s ease;
+}
+.showcase-open:hover .showcase-pill { transform: translateY(-2px); }
+.showcase-tabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+  margin-top: 0.75rem;
+}
+.showcase-tabs button {
+  font: inherit;
+  font-size: 0.8rem;
+  padding: 0.4rem 0.75rem;
+  border: 1px solid var(--line-strong);
+  background: transparent;
+  color: var(--ink-dim);
   cursor: pointer;
 }
-.carousel-nav:hover {
-  background: var(--surface);
+.showcase-tabs button:hover { color: var(--ink); border-color: var(--ink); }
+.showcase-tabs button[aria-selected="true"] {
+  color: var(--accent);
   border-color: var(--accent);
+  background: var(--accent-soft);
 }
-.carousel-nav.prev {
-  left: -0.9rem;
-}
-.carousel-nav.next {
-  right: -0.9rem;
-}
+/* ---------------------------------------------------------------
+   STL previews
+--------------------------------------------------------------- */
 .example-canvas {
   width: 100%;
   aspect-ratio: 4 / 3;
@@ -334,18 +372,6 @@ header.site {
   font-size: 0.78rem;
   font-family: ui-monospace, monospace;
 }
-.example-card-footer {
-  padding: 0.85rem 1rem;
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 0.75rem;
-}
-.example-name {
-  font-size: 0.88rem;
-  font-weight: 600;
-}
-
 /* ---------------------------------------------------------------
    Agent demo
 --------------------------------------------------------------- */
@@ -435,6 +461,12 @@ header.site {
 }
 .agent-demo-preview .example-canvas.ready {
   opacity: 1;
+}
+.inline-ctas {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+  margin-top: 1.5rem;
 }
 .agent-demo-caption {
   padding: 0.65rem 1rem;
@@ -568,113 +600,69 @@ section { padding: clamp(3.25rem, 7vw, 5.5rem) 0; }
 .spec-desc { color: var(--ink-dim); font-size: 0.94rem; }
 
 /* ---------------------------------------------------------------
-   Status stamp
+   What works
 --------------------------------------------------------------- */
-.status-box {
+.works-grid {
   display: grid;
-  grid-template-columns: auto 1fr;
-  gap: 1.75rem;
-  margin-top: 2.25rem;
-  padding: clamp(1.5rem, 3vw, 2rem);
-  border: 1px solid var(--line-strong);
+  grid-template-columns: repeat(3, 1fr);
+  border-top: 1px solid var(--line);
+  border-left: 1px solid var(--line);
+}
+@media (max-width: 900px) { .works-grid { grid-template-columns: repeat(2, 1fr); } }
+@media (max-width: 600px) { .works-grid { grid-template-columns: 1fr; } }
+.works-card {
+  padding: 1.35rem 1.4rem;
+  border-right: 1px solid var(--line);
+  border-bottom: 1px solid var(--line);
   background: var(--surface);
-  align-items: start;
 }
-@media (max-width: 620px) {
-  .status-box { grid-template-columns: 1fr; }
-}
-.stamp {
-  font-family: ui-monospace, "SF Mono", "Cascadia Code", "Roboto Mono", monospace;
-  font-size: 0.72rem;
-  letter-spacing: 0.1em;
+.works-card h3 {
+  font-size: 0.82rem;
+  letter-spacing: 0.06em;
   text-transform: uppercase;
   color: var(--accent);
-  border: 1.5px solid var(--accent);
-  padding: 0.55rem 0.8rem;
-  transform: rotate(-2deg);
-  white-space: nowrap;
-  align-self: center;
+  margin-bottom: 0.6rem;
 }
-.status-box p { color: var(--ink-dim); font-size: 0.97rem; }
-.status-box p + p { margin-top: 0.7rem; }
-.status-box strong { color: var(--ink); }
+.works-card p { color: var(--ink-dim); font-size: 0.92rem; }
+.works-more { margin-top: 1.5rem; }
+.works-more a, .prose a { color: var(--accent); }
 
 /* ---------------------------------------------------------------
-   Roadmap checklist
+   Closing call to action (the demo) and the support note
 --------------------------------------------------------------- */
-.checklist {
-  margin-top: 2.25rem;
-  display: grid;
-  grid-template-columns: repeat(2, 1fr);
-  gap: 0;
-  border: 1px solid var(--line);
-}
-@media (max-width: 700px) {
-  .checklist { grid-template-columns: 1fr; }
-}
-.checklist li {
-  list-style: none;
-  display: flex;
-  align-items: baseline;
-  gap: 0.75rem;
-  padding: 1rem 1.35rem;
-  border-bottom: 1px solid var(--line);
-  font-size: 0.97rem;
-}
-.checklist li:nth-child(odd) { border-right: 1px solid var(--line); }
-@media (max-width: 700px) {
-  .checklist li:nth-child(odd) { border-right: none; }
-}
-.checklist .box {
-  font-family: ui-monospace, monospace;
-  color: var(--ink-faint);
-  flex: none;
-}
-.checklist .label { color: var(--ink); }
-.checklist .note { display: block; color: var(--ink-dim); font-size: 0.85rem; margin-top: 0.15rem; }
-
-/* ---------------------------------------------------------------
-   Ask / closing panel
---------------------------------------------------------------- */
-.ask {
+.cta-band {
   background: var(--ink);
   color: var(--ground);
 }
-.ask .eyebrow { color: var(--cyan); }
-.ask h2 {
+.cta-band .eyebrow { color: #7ec9ff; }
+.cta-band .eyebrow::before { background: #7ec9ff; }
+.cta-band h2 {
   font-family: ui-monospace, "SF Mono", "Cascadia Code", "Roboto Mono", monospace;
   font-weight: 600;
   font-size: clamp(1.6rem, 3.4vw, 2.35rem);
   line-height: 1.18;
-  margin: 0.9rem 0 1.1rem;
-  max-width: 22ch;
+  margin: 0.9rem 0 0.5rem;
+  max-width: 26ch;
   color: var(--ground);
 }
-.ask p.prose { color: color-mix(in srgb, var(--ground) 68%, transparent); max-width: 56ch; }
-.ask-tags {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 0.6rem;
-  margin: 1.75rem 0 2rem;
-}
-.ask-tags span {
-  font-family: ui-monospace, monospace;
-  font-size: 0.78rem;
-  letter-spacing: 0.04em;
-  padding: 0.45rem 0.8rem;
-  border: 1px solid color-mix(in srgb, var(--ground) 30%, transparent);
-  color: var(--ground);
-}
-.ask .btn-primary {
-  background: var(--accent);
-  border-color: var(--accent);
-  color: var(--accent-ink);
-}
-.ask .btn-ghost {
+.cta-band .btn-ghost {
   color: var(--ground);
   border-color: color-mix(in srgb, var(--ground) 35%, transparent);
 }
-.ask .btn-ghost:hover { border-color: var(--ground); }
+.cta-band .btn-ghost:hover { border-color: var(--ground); }
+.cta-band .btn-primary.btn-lg { box-shadow: none; }
+
+.support { padding: clamp(2rem, 4vw, 2.75rem) 0; }
+.support-inner {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1.25rem 2rem;
+}
+.support h2 { font-size: 1rem; font-weight: 600; margin-bottom: 0.4rem; }
+.support .prose { font-size: 0.9rem; max-width: 70ch; }
+.support-links { display: flex; flex-wrap: wrap; gap: 0.6rem; }
 
 /* ---------------------------------------------------------------
    Footer
@@ -696,7 +684,7 @@ footer.site {
 .footer-inner a { text-decoration: none; color: var(--ink-dim); }
 .footer-inner a:hover { color: var(--ink); }
 .footer-brand { display: flex; align-items: center; gap: 0.5rem; }
-.footer-brand svg { width: 16px; height: 15px; }
+.footer-brand svg { width: 18px; height: 18px; }
 
 /* wide content never causes body scroll */
 .scroll-x { overflow-x: auto; }
@@ -707,21 +695,32 @@ footer.site {
 <header class="site">
   <div class="sheet nav">
     <a class="brand" href="#top">
-      <svg viewBox="0 0 48 46" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
-        <path fill="currentColor" style="color:var(--accent)" d="M25.946 44.938c-.664.845-2.021.375-2.021-.698V33.937a2.26 2.26 0 0 0-2.262-2.262H10.287c-.92 0-1.456-1.04-.92-1.788l7.48-10.471c1.07-1.497 0-3.578-1.842-3.578H1.237c-.92 0-1.456-1.04-.92-1.788L10.013.474c.214-.297.556-.474.92-.474h28.894c.92 0 1.456 1.04.92 1.788l-7.48 10.471c-1.07 1.498 0 3.579 1.842 3.579h11.377c.943 0 1.473 1.088.89 1.83L25.947 44.94z"/>
-      </svg>
+      <svg viewBox="0 0 48 48" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+  <defs>
+    <linearGradient id="geop-tile-1" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#4b8fdd"/>
+      <stop offset="1" stop-color="#1d4a78"/>
+    </linearGradient>
+  </defs>
+  <rect width="48" height="48" rx="11" fill="url(#geop-tile-1)"/>
+  <path d="M11 34 L17 13 L31 35 L37 14" stroke="#fff" stroke-opacity=".42" stroke-width="1.5" stroke-dasharray="2.4 2.4"/>
+  <path d="M11 34 C17 13 31 35 37 14" stroke="#fff" stroke-width="3.4" stroke-linecap="round"/>
+  <circle cx="11" cy="34" r="3" fill="#fff"/>
+  <circle cx="37" cy="14" r="3" fill="#fff"/>
+  <circle cx="17" cy="13" r="2.3" fill="#2d6ca6" stroke="#fff" stroke-width="1.5"/>
+  <circle cx="31" cy="35" r="2.3" fill="#2d6ca6" stroke="#fff" stroke-width="1.5"/>
+</svg>
       Geop
     </a>
     <nav class="nav-links">
       <a href="#kernel">Kernel</a>
-      <a href="#status">Status</a>
-      <a href="#roadmap">Roadmap</a>
-      <a href="https://app.geop-cad.dev">App</a>
+      <a href="#works">Features</a>
       <a href="https://book.geop-cad.dev">Book</a>
       <a href="https://docs.geop-cad.dev">Docs</a>
       <a href="https://discord.gg/btRDgrcwJ5" target="_blank" rel="noopener">Discord</a>
-      <a class="btn btn-ghost" href="https://app.geop-cad.dev" target="_blank" rel="noopener">Try it ↗</a>
-      <a class="btn btn-primary" href="https://ko-fi.com/tobiasjacob" target="_blank" rel="noopener">Sponsor ↗</a>
+      <a class="nav-sponsor" href="#support">Sponsor</a>
+      <a class="btn btn-ghost nav-github" href="https://github.com/geop-cad/geop" target="_blank" rel="noopener">★ GitHub</a>
+      <a class="btn btn-primary" href="https://app.geop-cad.dev" target="_blank" rel="noopener">Try in your browser ↗</a>
     </nav>
   </div>
 </header>
@@ -731,57 +730,42 @@ footer.site {
   <!-- ============================= HERO ============================= -->
   <section class="hero">
     <div class="sheet hero-inner">
-      <div>
-        <p class="eyebrow">open-source cad kernel · rust · interval numerics</p>
-        <h1>An open-source, NURBS-based<br>CAD kernel for the <em>agentic engineering</em> era.</h1>
+      <div class="hero-copy">
+        <p class="eyebrow">open source · rust · runs in your browser</p>
+        <h1>Parametric CAD on an <em>exact</em> NURBS kernel.</h1>
         <p class="lede">
-          Geop is a highly extendable CAD kernel written in Rust, with sound interval
-          numerics. Bodies are smooth NURBS solids — <strong>it's SVG, but in 3D</strong> —
-          backed by topology that supports non‑manifold modeling and booleans that
-          don't miss intersections.
+          Sketch, extrude, fillet, assemble and export STEP: in the browser, from the
+          command line, in VS Code, or through MCP from an AI agent. Every number is an
+          interval, so <strong>no epsilon decides an answer</strong>, and parts are
+          programs whose faces and edges keep their names on every rebuild.
         </p>
         <div class="hero-ctas">
-          <a class="btn btn-primary" href="https://github.com/geop-cad/geop" target="_blank" rel="noopener">View source on GitHub ↗</a>
-          <a class="btn btn-primary" href="https://app.geop-cad.dev" target="_blank" rel="noopener">Try in your browser ↗</a>
-          <a class="btn btn-ghost" data-email-link href="#">Get in touch →</a>
+          <a class="btn btn-primary btn-lg" href="https://app.geop-cad.dev" target="_blank" rel="noopener">▶ Try in your browser</a>
+          <a class="btn btn-ghost btn-lg" href="https://github.com/geop-cad/geop" target="_blank" rel="noopener">★ Star on GitHub ↗</a>
         </div>
+        <p class="hero-note mono">Nothing to install · files stay in your browser · MIT / Apache-2.0</p>
+        <ul class="hero-facts">
+          <li><strong class="mono">322 / 361</strong><span>public STEP corpus files import valid</span></li>
+          <li><strong class="mono">0.25 s</strong><span>for a drag in a 2000-part assembly</span></li>
+        </ul>
       </div>
 
-      <div class="hero-figure corner-ticks">
-        <p class="eyebrow">live examples</p>
-        <div class="example-carousel-wrap">
-          <button class="carousel-nav prev" type="button" aria-label="Previous example">‹</button>
-          <div class="example-carousel" id="example-carousel">
-            <div class="example-card" data-example="turbine_blade">
-              <div class="example-canvas"></div>
-              <div class="example-card-footer">
-                <span class="example-name">Turbine blade</span>
-                <a class="btn btn-ghost" href="https://app.geop-cad.dev/?example=turbine_blade" target="_blank" rel="noopener">Open in app ↗</a>
-              </div>
-            </div>
-            <div class="example-card" data-example="cool_flange">
-              <div class="example-canvas"></div>
-              <div class="example-card-footer">
-                <span class="example-name">Flange</span>
-                <a class="btn btn-ghost" href="https://app.geop-cad.dev/?example=cool_flange" target="_blank" rel="noopener">Open in app ↗</a>
-              </div>
-            </div>
-            <div class="example-card" data-example="press">
-              <div class="example-canvas"></div>
-              <div class="example-card-footer">
-                <span class="example-name">Press assembly</span>
-                <a class="btn btn-ghost" href="https://app.geop-cad.dev/?example=press" target="_blank" rel="noopener">Open in app ↗</a>
-              </div>
-            </div>
-            <div class="example-card" data-example="edge_part">
-              <div class="example-canvas"></div>
-              <div class="example-card-footer">
-                <span class="example-name">Edge part</span>
-                <a class="btn btn-ghost" href="https://app.geop-cad.dev/?example=edge_part" target="_blank" rel="noopener">Open in app ↗</a>
-              </div>
-            </div>
-          </div>
-          <button class="carousel-nav next" type="button" aria-label="Next example">›</button>
+      <div class="showcase corner-ticks">
+        <div class="showcase-stage" id="showcase-stage">
+          <div class="showcase-slide" data-example="turbine_blade"><div class="example-canvas"></div></div>
+          <div class="showcase-slide" data-example="cool_flange" hidden><div class="example-canvas"></div></div>
+          <div class="showcase-slide" data-example="press" hidden><div class="example-canvas"></div></div>
+          <div class="showcase-slide" data-example="edge_part" hidden><div class="example-canvas"></div></div>
+          <a class="showcase-open" id="showcase-open" href="https://app.geop-cad.dev/?example=turbine_blade" target="_blank" rel="noopener">
+            <span class="showcase-label mono" id="showcase-label">Turbine blade</span>
+            <span class="showcase-pill">Open in the app ↗</span>
+          </a>
+        </div>
+        <div class="showcase-tabs" role="tablist" aria-label="Examples">
+          <button type="button" role="tab" aria-selected="true" data-example="turbine_blade">Turbine blade</button>
+          <button type="button" role="tab" aria-selected="false" data-example="cool_flange">Flange</button>
+          <button type="button" role="tab" aria-selected="false" data-example="press">Press assembly</button>
+          <button type="button" role="tab" aria-selected="false" data-example="edge_part">Edge part</button>
         </div>
       </div>
     </div>
@@ -800,7 +784,9 @@ footer.site {
         A part is a plain JSON program: an ordered list of steps, each one operation with its
         arguments, referring to what earlier steps built only by name. An agent like Claude Code or
         Codex can write one step by step, compile it with the <code>geop</code> CLI, and see exactly
-        what it built.
+        what it built. Or register geop as an MCP server and it sketches, extrudes, fillets,
+        inspects and exports through the same editor the web app runs:
+        <code>claude mcp add geop -- geop mcp</code>
       </p>
 
       <div class="agent-demo-grid">
@@ -817,6 +803,10 @@ footer.site {
           <div class="example-canvas" id="agent-demo-canvas"></div>
           <p class="agent-demo-caption mono">part.stl</p>
         </div>
+      </div>
+      <div class="inline-ctas">
+        <a class="btn btn-ghost" href="https://github.com/geop-cad/geop/blob/main/docs/mcp.md" target="_blank" rel="noopener">Use with Claude Code (MCP) ↗</a>
+        <a class="btn btn-ghost" href="https://github.com/geop-cad/geop/blob/main/vscode-extension/README.md" target="_blank" rel="noopener">VS Code extension ↗</a>
       </div>
     </div>
   </section>
@@ -840,24 +830,17 @@ footer.site {
       <div class="specsheet scroll-x">
         <div class="spec-row">
           <span class="spec-icon" aria-hidden="true">
+            <svg viewBox="0 0 24 24" fill="none"><path d="M4 12h3M17 12h3M8 6.5v11M16 6.5v11" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/><path d="M8 12h8" stroke="currentColor" stroke-width="1.6" stroke-dasharray="1.5 2.2"/></svg>
+          </span>
+          <span class="spec-label">INTERVAL ARITHMETIC</span>
+          <span class="spec-desc">Every number is an interval and every comparison three-valued (definitely, could be). Searches subdivide to isolate and Newton to refine — Geop knows what it doesn't know, so it won't miss an intersection.</span>
+        </div>
+        <div class="spec-row">
+          <span class="spec-icon" aria-hidden="true">
             <svg viewBox="0 0 24 24" fill="none"><path d="M2 18C6 10 10 4 22 6" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/><circle cx="2" cy="18" r="1.4" fill="currentColor"/><circle cx="22" cy="6" r="1.4" fill="currentColor"/></svg>
           </span>
           <span class="spec-label">NURBS CURVES &amp; SURFACES</span>
           <span class="spec-desc">The mathematical primitive underneath every smooth edge and face Geop draws.</span>
-        </div>
-        <div class="spec-row">
-          <span class="spec-icon" aria-hidden="true">
-            <svg viewBox="0 0 24 24" fill="none"><path d="M4 8h9v9H4z" stroke="currentColor" stroke-width="1.6"/><path d="M9 4h11v11" stroke="currentColor" stroke-width="1.6"/></svg>
-          </span>
-          <span class="spec-label">NON‑MANIFOLD TOPOLOGY</span>
-          <span class="spec-desc">Data structures that go beyond simple solids, for the shapes real assemblies actually need.</span>
-        </div>
-        <div class="spec-row">
-          <span class="spec-icon" aria-hidden="true">
-            <svg viewBox="0 0 24 24" fill="none"><path d="M4 16h6v4H4z" stroke="currentColor" stroke-width="1.6"/><path d="M7 16V6m0 0-3 3m3-3 3 3" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>
-          </span>
-          <span class="spec-label">EXTRUSION &amp; REVOLUTION</span>
-          <span class="spec-desc">The basic modeling operations that take a sketch to a body.</span>
         </div>
         <div class="spec-row">
           <span class="spec-icon" aria-hidden="true">
@@ -868,10 +851,17 @@ footer.site {
         </div>
         <div class="spec-row">
           <span class="spec-icon" aria-hidden="true">
-            <svg viewBox="0 0 24 24" fill="none"><path d="M4 12h3M17 12h3M8 6.5v11M16 6.5v11" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/><path d="M8 12h8" stroke="currentColor" stroke-width="1.6" stroke-dasharray="1.5 2.2"/></svg>
+            <svg viewBox="0 0 24 24" fill="none"><path d="M4 8h9v9H4z" stroke="currentColor" stroke-width="1.6"/><path d="M9 4h11v11" stroke="currentColor" stroke-width="1.6"/></svg>
           </span>
-          <span class="spec-label">INTERVAL ARITHMETIC</span>
-          <span class="spec-desc">Numerical error is tracked from creation all the way to the final model — Geop knows what it doesn't know, so it won't miss an intersection.</span>
+          <span class="spec-label">NON‑MANIFOLD TOPOLOGY</span>
+          <span class="spec-desc">Data structures that go beyond simple solids: 3-D sketches are wires, edges and vertices without faces.</span>
+        </div>
+        <div class="spec-row">
+          <span class="spec-icon" aria-hidden="true">
+            <svg viewBox="0 0 24 24" fill="none"><path d="M5 5h14M5 10h10M5 15h12M5 20h7" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>
+          </span>
+          <span class="spec-label">PARTS AS PROGRAMS</span>
+          <span class="spec-desc">An ordered list of steps that refer to what earlier steps built by stable names (<span class="mono">extrude(box,end)</span>), never by a kernel id — so a part rebuilds name for name.</span>
         </div>
       </div>
     </div>
@@ -879,83 +869,99 @@ footer.site {
 
   <hr class="rule" />
 
-  <!-- ============================= STATUS ============================= -->
-  <section id="status">
+  <!-- ============================= WHAT WORKS ============================= -->
+  <section id="works">
     <div class="sheet">
       <div class="section-head">
-        <p class="eyebrow">honest status</p>
-        <h2>This is early. That's the point.</h2>
+        <p class="eyebrow">what works today</p>
+        <h2>The features an engineer reaches for when designing a real machine.</h2>
       </div>
-
-      <div class="status-box">
-        <span class="stamp mono">Work in Progress</span>
-        <div>
-          <p>Right now Geop is a <strong>minimal MVP</strong> — booleans working
-          reliably on 3D objects, backed by interval-bounded numerics. There are
-          many ways to make it faster and more accurate, and that work is already
-          underway.</p>
-          <p>What I want to find out right now is whether people are genuinely
-          interested in this project. If you are, the roadmap below is where it
-          goes next — and I'd like your help getting there.</p>
+      <div class="works-grid">
+        <div class="works-card">
+          <h3 class="mono">Sketching</h3>
+          <p>2-D constraint sketches with slots, polygons, fillets, offsets, mirrors and patterns; redundant constraints proven and conflicts named. 3-D sketches as wires; exact helices.</p>
+        </div>
+        <div class="works-card">
+          <h3 class="mono">Part features</h3>
+          <p>Extrude, revolve, sweep and loft; ISO holes and threads; rolling-ball fillets with variable radius, chamfers; shell, rib, draft; patterns and mirrors; parameters as formulas.</p>
+        </div>
+        <div class="works-card">
+          <h3 class="mono">Surfacing</h3>
+          <p>Ruled, boundary, N-sided and Gordon surfaces; offset, thicken, knit, trim, extend; Catmull–Clark subdivision surfaces converted to valid NURBS solids.</p>
+        </div>
+        <div class="works-card">
+          <h3 class="mono">Sheet metal</h3>
+          <p>Base and edge flanges, hems, corners, cuts across bends; exact flat patterns as DXF.</p>
+        </div>
+        <div class="works-card">
+          <h3 class="mono">Assemblies</h3>
+          <p>Multi-file assemblies placed by mates; revolute, slider, cylindrical and fastened joints with limits; gear, rack and screw couplings; standard parts; wire harnesses.</p>
+        </div>
+        <div class="works-card">
+          <h3 class="mono">Inspection &amp; output</h3>
+          <p>Measure, mass properties from the exact B-rep, interference, sections; BOMs; drawings as SVG and DXF; STEP AP214 import and export; URDF; STL.</p>
         </div>
       </div>
-    </div>
-  </section>
-
-  <hr class="rule" />
-
-  <!-- ============================= ROADMAP ============================= -->
-  <section id="roadmap">
-    <div class="sheet">
-      <div class="section-head">
-        <p class="eyebrow">on the roadmap</p>
-        <h2>The best engineering suite for mechanical engineers — while they stay in control of their data.</h2>
-      </div>
-
-      <ul class="checklist">
-        <li><span class="box mono">☐</span><span class="label">Fillets &amp; chamfers</span></li>
-        <li><span class="box mono">☐</span><span class="label">Projection</span></li>
-        <li><span class="box mono">☐</span><span class="label">Finite element simulation</span></li>
-        <li><span class="box mono">☐</span><span class="label">Wire harness / cabling</span></li>
-        <li><span class="box mono">☐</span><span class="label">Plugin system<span class="note">so the community can contribute part libraries and new modeling tools</span></span></li>
-      </ul>
-    </div>
-  </section>
-
-  <!-- ============================= ASK ============================= -->
-  <section class="ask">
-    <div class="sheet">
-      <p class="eyebrow">join the build</p>
-      <h2>Looking for sponsors, angels, early investors, and founding engineers.</h2>
-      <p class="prose">
-        Geop's mission is to build a genuinely competitive open-source CAD
-        program — and to establish it as common infrastructure the way numpy
-        is for scientific computing. That's a long build. I'm looking for
-        people who want to fund it, invest in it, or help build it from here.
+      <p class="works-more prose">
+        The full list, and what comes next, is in the
+        <a href="https://github.com/geop-cad/geop/blob/main/ROADMAP.md" target="_blank" rel="noopener">roadmap</a>.
+        The <a href="https://book.geop-cad.dev">book</a> tours the crates and
+        <a href="https://docs.geop-cad.dev">docs.geop-cad.dev</a> is the API reference.
       </p>
-      <div class="ask-tags">
-        <span class="mono">SPONSORS</span>
-        <span class="mono">BUSINESS ANGELS</span>
-        <span class="mono">EARLY INVESTORS</span>
-        <span class="mono">FOUNDING ENGINEERS</span>
-      </div>
+    </div>
+  </section>
+
+  <!-- ============================= CTA BAND ============================= -->
+  <section class="cta-band">
+    <div class="sheet">
+      <p class="eyebrow">see it for yourself</p>
+      <h2>Open an example and change a dimension. The model follows.</h2>
       <div class="hero-ctas">
-        <a class="btn btn-primary" href="https://ko-fi.com/tobiasjacob" target="_blank" rel="noopener">Become a sponsor ↗</a>
-        <a class="btn btn-ghost" data-email-link href="#">Get in touch →</a>
-        <a class="btn btn-ghost" href="https://github.com/geop-cad/geop" target="_blank" rel="noopener">Explore the code ↗</a>
+        <a class="btn btn-primary btn-lg" href="https://app.geop-cad.dev" target="_blank" rel="noopener">▶ Open the web app</a>
+        <a class="btn btn-ghost btn-lg" href="https://github.com/geop-cad/geop" target="_blank" rel="noopener">★ Star on GitHub ↗</a>
+        <a class="btn btn-ghost btn-lg" href="https://discord.gg/btRDgrcwJ5" target="_blank" rel="noopener">Join the Discord ↗</a>
       </div>
     </div>
   </section>
 
+  <!-- ============================= SUPPORT ============================= -->
+  <section class="support" id="support">
+    <div class="sheet support-inner">
+      <div>
+        <h2 class="mono">Support the build</h2>
+        <p class="prose">
+          Geop's mission is a genuinely competitive open-source CAD program, common
+          infrastructure the way numpy is for scientific computing. Sponsors, business
+          angels, early investors and founding engineers who want to help are welcome.
+        </p>
+      </div>
+      <div class="support-links">
+        <a class="btn btn-ghost" href="https://ko-fi.com/tobiasjacob" target="_blank" rel="noopener">Sponsor on Ko-fi ↗</a>
+        <a class="btn btn-ghost" data-email-link href="#">Get in touch →</a>
+      </div>
+    </div>
+  </section>
 
 </main>
 
 <footer class="site">
   <div class="sheet footer-inner">
     <span class="footer-brand">
-      <svg viewBox="0 0 48 46" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
-        <path fill="currentColor" d="M25.946 44.938c-.664.845-2.021.375-2.021-.698V33.937a2.26 2.26 0 0 0-2.262-2.262H10.287c-.92 0-1.456-1.04-.92-1.788l7.48-10.471c1.07-1.497 0-3.578-1.842-3.578H1.237c-.92 0-1.456-1.04-.92-1.788L10.013.474c.214-.297.556-.474.92-.474h28.894c.92 0 1.456 1.04.92 1.788l-7.48 10.471c-1.07 1.498 0 3.579 1.842 3.579h11.377c.943 0 1.473 1.088.89 1.83L25.947 44.94z"/>
-      </svg>
+      <svg viewBox="0 0 48 48" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+  <defs>
+    <linearGradient id="geop-tile-2" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#4b8fdd"/>
+      <stop offset="1" stop-color="#1d4a78"/>
+    </linearGradient>
+  </defs>
+  <rect width="48" height="48" rx="11" fill="url(#geop-tile-2)"/>
+  <path d="M11 34 L17 13 L31 35 L37 14" stroke="#fff" stroke-opacity=".42" stroke-width="1.5" stroke-dasharray="2.4 2.4"/>
+  <path d="M11 34 C17 13 31 35 37 14" stroke="#fff" stroke-width="3.4" stroke-linecap="round"/>
+  <circle cx="11" cy="34" r="3" fill="#fff"/>
+  <circle cx="37" cy="14" r="3" fill="#fff"/>
+  <circle cx="17" cy="13" r="2.3" fill="#2d6ca6" stroke="#fff" stroke-width="1.5"/>
+  <circle cx="31" cy="35" r="2.3" fill="#2d6ca6" stroke="#fff" stroke-width="1.5"/>
+</svg>
       Geop — an open CAD kernel
     </span>
     <span>
@@ -981,7 +987,7 @@ footer.site {
   import * as THREE from "three";
   import { STLLoader } from "./vendor/three/examples/jsm/loaders/STLLoader.js";
 
-  // Renders each example carousel card's STL — generated at build time by
+  // Renders each showcase example's STL — generated at build time by
   // `geop examples` (see cad/geop-cad-cli) into homepage/examples/ — as a
   // small, slowly-rotating preview. Off-screen cards start rendering only
   // once scrolled near, so a page with many examples stays cheap to load.
@@ -990,7 +996,7 @@ footer.site {
 
   /**
    * Loads `examples/<name>.stl` into `host`, sized to it, slowly rotating.
-   * Shared by the example carousel and the agent demo. `onReady`, if given,
+   * Shared by the showcase and the agent demo. `onReady`, if given,
    * fires once the mesh is actually in the scene — not on call, since the
    * load is async.
    */
@@ -1067,26 +1073,42 @@ footer.site {
     );
   }
 
-  const cards = document.querySelectorAll(".example-card");
-  const lazy = new IntersectionObserver(
-    (entries, obs) => {
-      for (const entry of entries) {
-        if (!entry.isIntersecting) continue;
-        renderStl(entry.target.dataset.example, entry.target.querySelector(".example-canvas"));
-        obs.unobserve(entry.target);
+  // The hero showcase: one large stage, a tab per example. A slide's STL
+  // is loaded the first time it is shown (it sizes itself to its host, so
+  // it must be visible then); the overlay link opens that example in the app.
+  const APP = "https://app.geop-cad.dev/?example=";
+  const stage = document.getElementById("showcase-stage");
+  const openLink = document.getElementById("showcase-open");
+  const label = document.getElementById("showcase-label");
+  const tabs = document.querySelectorAll(".showcase-tabs button");
+  const loaded = new Set();
+
+  function show(name) {
+    for (const slide of stage.querySelectorAll(".showcase-slide")) {
+      const active = slide.dataset.example === name;
+      slide.hidden = !active;
+      if (active && !loaded.has(name)) {
+        loaded.add(name);
+        renderStl(name, slide.querySelector(".example-canvas"));
       }
+    }
+    for (const tab of tabs) {
+      const active = tab.dataset.example === name;
+      tab.setAttribute("aria-selected", String(active));
+      if (active) label.textContent = tab.textContent;
+    }
+    openLink.href = APP + name;
+  }
+
+  tabs.forEach((tab) => tab.addEventListener("click", () => show(tab.dataset.example)));
+  new IntersectionObserver(
+    (entries, obs) => {
+      if (!entries.some((e) => e.isIntersecting)) return;
+      show(tabs[0].dataset.example);
+      obs.disconnect();
     },
     { rootMargin: "200px" },
-  );
-  cards.forEach((card) => lazy.observe(card));
-
-  const carousel = document.getElementById("example-carousel");
-  document.querySelector(".carousel-nav.prev").addEventListener("click", () => {
-    carousel.scrollBy({ left: -carousel.clientWidth, behavior: "smooth" });
-  });
-  document.querySelector(".carousel-nav.next").addEventListener("click", () => {
-    carousel.scrollBy({ left: carousel.clientWidth, behavior: "smooth" });
-  });
+  ).observe(stage);
 
   // ── agent demo ───────────────────────────────────────────────────────
   // A scripted transcript of an agent writing a part.geop step by

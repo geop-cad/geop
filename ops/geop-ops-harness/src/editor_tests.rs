@@ -188,13 +188,18 @@ fn a_cable_bundle_is_no_body_to_weigh_or_check() {
         geop_ops_model::placed::bom::Structure::Flat,
     )
     .unwrap();
+    // The bill weighs what the report does: both nothing, of plates of no
+    // material.
     let total = |b: Bounded| b.value;
-    let weighed = mass.total.as_ref().unwrap().mass.value;
-    assert!(
-        (total(bill.total_mass.unwrap()) - weighed).abs() < 1e-12,
-        "{:?} against {weighed}",
-        bill.total_mass
-    );
+    let weighed = (mass.total.as_ref().unwrap().inertial.as_ref()).map(|i| i.mass.value);
+    match (bill.total_mass, weighed) {
+        (Some(bill), Some(weighed)) => assert!(
+            (total(bill) - weighed).abs() < 1e-12,
+            "{bill:?} against {weighed}"
+        ),
+        (None, None) => {}
+        (bill, weighed) => panic!("the bill weighs {bill:?}, the report {weighed:?}"),
+    }
     let wires = (bill.lines.iter())
         .filter(|l| matches!(l.kind, geop_ops_model::placed::bom::LineKind::Wire { .. }))
         .count();

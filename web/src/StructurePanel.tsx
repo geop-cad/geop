@@ -2,6 +2,8 @@ import type { PickedElement, StructureItem } from "./geop";
 
 interface Props {
   items: StructureItem[];
+  /** What to say beside an item, by its name: how free a placed part is. */
+  details: Record<string, string>;
   enabled: boolean;
   /** Show or hide `name`. */
   onVisibility: (name: string, visible: boolean) => void;
@@ -35,7 +37,7 @@ function Eye({ open }: { open: boolean }) {
  * refers to. Whether it is shown is the kernel's: what the editor hides by
  * itself — a sketch once extruded — until the user says otherwise.
  */
-export function StructurePanel({ items, enabled, onVisibility, onLight }: Props) {
+export function StructurePanel({ items, details, enabled, onVisibility, onLight }: Props) {
   const groups = grouped(items);
   if (groups.length === 0) return <p className="hint">Nothing yet.</p>;
   return (
@@ -55,6 +57,7 @@ export function StructurePanel({ items, enabled, onVisibility, onLight }: Props)
                 onMouseLeave={() => item.elements.length > 0 && onLight([])}
               >
                 <span className="structure-name">{item.label ?? item.name}</span>
+                {details[item.name] != null && <span className="structure-detail">{details[item.name]}</span>}
                 {item.visible != null && (
                   <button
                     className="structure-eye"

@@ -16,7 +16,7 @@
 //! program placing it, without touching the screw's own file.
 
 use geop_core_math::geop_error::{GeopError, GeopResult};
-use geop_core_program::numeric::{FUNCTION_NAMES, rename_in};
+use geop_core_program::numeric::FUNCTION_NAMES;
 use serde::{Deserialize, Serialize};
 
 /// The name the part's colour is set by.
@@ -129,7 +129,7 @@ pub struct Parameters {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub color: Option<String>,
     /// What the part is made of; none for a part whose material is not
-    /// given — weighed as water, 1000 kg/m³, and said so.
+    /// given, which has a volume and a centroid but no mass.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub material: Option<Material>,
     /// What the part is, in words — `ISO 4762 socket head cap screw` —
@@ -218,19 +218,6 @@ impl Parameters {
     /// The parameter `name`.
     pub fn get(&self, name: &str) -> Option<&Parameter> {
         self.values.iter().find(|p| p.name == name)
-    }
-
-    /// The parameter `from` named `to`, and every formula of the others
-    /// reading it reading `to` (see [`rename_in`]).
-    pub fn rename(&mut self, from: &str, to: &str) {
-        for p in &mut self.values {
-            if p.name == from {
-                p.name = to.to_string();
-            }
-            if let ParameterKind::Number { expression, .. } = &mut p.kind {
-                *expression = rename_in(expression, from, to);
-            }
-        }
     }
 
     /// Checks every name — valid, and unique — every table, and the colour.

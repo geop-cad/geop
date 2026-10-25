@@ -252,7 +252,7 @@ export type Parameter = { name: string } & ParameterKind;
 /** A program's parameters: the part's colour, and its named values, in order. */
 export interface Parameters {
   color?: string | null;
-  /** What the part is made of — its density in kg/m³ — none for one not given (weighed as water). */
+  /** What the part is made of — its density in kg/m³ — none for one not given (then it has no mass). */
   material?: Material | null;
   /** What the part is, in words, where it is listed: `ISO 4762 socket head cap screw`. */
   title?: string | null;

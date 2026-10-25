@@ -20,8 +20,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::parameters::{
     COLOR, DefineParameters, LookupTable, LookupTableArgs, Parameter, ParameterKind, Parameters,
-    PartProperties, Row, parameter_numbers, parameter_uses, read_properties, rename_parameter,
-    set_parameters,
+    PartProperties, Row, parameter_numbers, read_properties, set_parameters,
 };
 
 /// What a test step makes, read whole.
@@ -238,27 +237,6 @@ fn a_pasted_step_takes_its_state_along() {
     assert_eq!(file.state.get(&pose_state("length1")), Some(&pose));
     assert!(!file.state.contains_key("length1_width"));
     file.validate(&registry()).unwrap();
-}
-
-/// What reads a parameter is found in the formulas of the steps' saved
-/// arguments and of the other parameters, and renaming it renames them.
-#[test]
-fn a_parameter_is_renamed_wherever_it_is_read() {
-    let mut file = file();
-    let uses = parameter_uses(&file);
-    assert_eq!(uses["width"], ["half"]);
-    assert_eq!(uses["screw"], ["width"]);
-
-    rename_parameter(&mut file, "width", "span").unwrap();
-    assert_eq!(parameter_uses(&file)["span"], ["half"]);
-    let mut part = Part::default();
-    run(&runner(), &mut part, &file, &Settings::new());
-    assert_eq!(length(&part, "half"), 3.0);
-    assert!(rename_parameter(&mut file, "span", "screw").is_err());
-    assert!(rename_parameter(&mut file, "nothing", "x").is_err());
-
-    let saved = file.to_json().unwrap();
-    assert_eq!(Program::from_json(&saved).unwrap(), file);
 }
 
 /// What the parameters come to as defined, by the names a formula reads

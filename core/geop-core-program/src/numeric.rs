@@ -7,10 +7,7 @@
 //! A step resolves it where it builds ([`NumericInput::resolve`]), reading each
 //! parameter the formula names — a target the program defines
 //! ([`parameter`]): the read is recorded, so a change to one of them
-//! rebuilds the step, a change to any other does not. Saved, a formula is
-//! told apart from every other value in a step's arguments
-//! ([`formulas_in`], [`rename_parameter_in`]), so what reads a parameter
-//! is found, and renamed, without asking the operation.
+//! rebuilds the step, a change to any other does not.
 
 use std::borrow::Cow;
 
@@ -181,89 +178,6 @@ impl NumericInput {
             }
         }
     }
-}
-
-/// The text of every formula in `args`, a step's saved arguments: what
-/// tells which parameters the step reads (see [`names_in`]).
-pub fn formulas_in(args: &serde_json::Value) -> Vec<&str> {
-    let mut found = Vec::new();
-    visit(args, &mut |formula| found.push(formula));
-    found
-}
-
-/// `args`, a step's saved arguments, with every formula in it reading the
-/// parameter `to` wherever it read `from` (see [`rename_in`]).
-pub fn rename_parameter_in(args: &mut serde_json::Value, from: &str, to: &str) {
-    visit_mut(args, &mut |formula| *formula = rename_in(formula, from, to));
-}
-
-/// The text of a saved formula, if `value` is one.
-fn saved_formula(value: &serde_json::Value) -> Option<&str> {
-    let object = value.as_object()?;
-    (object.len() == 1).then_some(())?;
-    object.get("formula")?.as_str()
-}
-
-fn visit<'a>(value: &'a serde_json::Value, found: &mut impl FnMut(&'a str)) {
-    if let Some(formula) = saved_formula(value) {
-        return found(formula);
-    }
-    match value {
-        serde_json::Value::Array(items) => items.iter().for_each(|item| visit(item, found)),
-        serde_json::Value::Object(fields) => fields.values().for_each(|field| visit(field, found)),
-        _ => {}
-    }
-}
-
-fn visit_mut(value: &mut serde_json::Value, edit: &mut impl FnMut(&mut String)) {
-    if saved_formula(value).is_some()
-        && let Some(serde_json::Value::String(formula)) = value.get_mut("formula")
-    {
-        return edit(formula);
-    }
-    match value {
-        serde_json::Value::Array(items) => items.iter_mut().for_each(|item| visit_mut(item, edit)),
-        serde_json::Value::Object(fields) => {
-            fields.values_mut().for_each(|field| visit_mut(field, edit))
-        }
-        _ => {}
-    }
-}
-
-/// The parameter a name in a formula reads: itself, or for a table's
-/// column, `size.diameter`, the table `size`.
-pub fn parameter_of(name: &str) -> &str {
-    name.split('.').next().unwrap_or(name)
-}
-
-/// `expression` reading the parameter `to` wherever it read `from` — and,
-/// for a table, `to.column` for `from.column`. Numbers, functions and
-/// everything else stay as they are written.
-pub fn rename_in(expression: &str, from: &str, to: &str) -> String {
-    let mut out = String::with_capacity(expression.len());
-    let mut rest = expression;
-    while let Some(c) = rest.chars().next() {
-        let len = if c.is_ascii_digit() || c == '.' {
-            number_len(rest)
-        } else if c.is_ascii_alphabetic() || c == '_' {
-            let (name, after) = rest.split_at(name_len(rest));
-            match name.strip_prefix(from) {
-                Some(column) if column.is_empty() || column.starts_with('.') => {
-                    out.push_str(to);
-                    out.push_str(column);
-                }
-                _ => out.push_str(name),
-            }
-            rest = after;
-            continue;
-        } else {
-            c.len_utf8()
-        };
-        let (taken, after) = rest.split_at(len);
-        out.push_str(taken);
-        rest = after;
-    }
-    out
 }
 
 /// How long the number `text` starts with is: digits and points, then
@@ -548,27 +462,6 @@ mod tests {
                 serde_json::from_value(serde_json::to_value(f).unwrap()).unwrap();
             assert_eq!(&back, f);
         }
-    }
-
-    /// The formulas of a step's saved arguments are found, and renamed,
-    /// wherever they are in them; text that is no formula is left alone.
-    #[test]
-    fn formulas_are_found_and_renamed_in_saved_arguments() {
-        let mut args = serde_json::json!({
-            "width": {"formula": "w / 2"},
-            "name": "w",
-            "holes": [{"depth": {"formula": "w.depth + w"}}, {"depth": 3.0}],
-        });
-        assert_eq!(formulas_in(&args), ["w.depth + w", "w / 2"]);
-        rename_parameter_in(&mut args, "w", "wall");
-        assert_eq!(
-            args,
-            serde_json::json!({
-                "width": {"formula": "wall / 2"},
-                "name": "w",
-                "holes": [{"depth": {"formula": "wall.depth + wall"}}, {"depth": 3.0}],
-            })
-        );
     }
 
     /// A formula resolved in a target's generator reads its parameters as

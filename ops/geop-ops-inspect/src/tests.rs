@@ -23,7 +23,10 @@ use geop_ops_model::selection::Selected;
 use geop_ops_model::{NamedModel, model};
 
 use crate::{
-    interference::Contact, interference_report, mass::MassSummary, mass_report, measure,
+    interference::Contact,
+    interference_report,
+    mass::{Known, MassSummary},
+    mass_report, measure,
     measure::PICKS,
 };
 
@@ -111,7 +114,7 @@ fn assert_diagonal(summary: &MassSummary, diagonal: [f64; 3], relative: f64) {
     for a in 0..3 {
         for b in 0..3 {
             let want = if a == b { diagonal[a] } else { 0.0 };
-            let got = summary.inertia[a][b];
+            let got = summary.inertial.as_ref().expect("weighed").inertia[a][b];
             assert!(got.contains(want), "I[{a}][{b}] = {got:?}, want {want}");
             assert!(
                 got.error <= relative * scale,
@@ -133,15 +136,16 @@ fn box_mass_properties() {
     let mass = volume * 7850.0e-9;
     assert_near("volume", summary.volume, volume, 1e-9);
     assert_near("area", summary.area, 2.0 * (a * b + b * c + c * a), 1e-9);
-    assert_near("mass", summary.mass, mass, 1e-9);
+    let inertial = summary.inertial.as_ref().unwrap();
+    assert_near("mass", inertial.mass, mass, 1e-9);
     for (k, want) in [2.0, 4.0, 3.5].into_iter().enumerate() {
-        assert_near("centre", summary.center[k], want, 1e-9);
+        assert_near("centre", summary.center.unwrap()[k], want, 1e-9);
     }
     let i = |p: f64, q: f64| mass * (p * p + q * q) / 12.0;
     assert_diagonal(&summary, [i(b, c), i(a, c), i(a, b)], 1e-9);
     let mut principal = [i(b, c), i(a, c), i(a, b)];
     principal.sort_by(f64::total_cmp);
-    for (got, want) in summary.principal_moments.iter().zip(principal) {
+    for (got, want) in inertial.principal_moments.iter().zip(principal) {
         assert_near("principal moment", *got, want, 1e-6);
     }
 }
@@ -166,7 +170,7 @@ fn cylinder_mass_properties() {
     assert_near("volume", summary.volume, volume, 1e-8);
     assert_near("area", summary.area, 2.0 * PI * r * (r + h), 1e-8);
     for (k, want) in [1.0, -1.0, 4.0].into_iter().enumerate() {
-        assert_near("centre", summary.center[k], want, 1e-8);
+        assert_near("centre", summary.center.unwrap()[k], want, 1e-8);
     }
     let across = mass * (3.0 * r * r + h * h) / 12.0;
     assert_diagonal(&summary, [across, across, mass * r * r / 2.0], 1e-7);
@@ -184,7 +188,7 @@ fn sphere_mass_properties() {
     assert_near("volume", summary.volume, volume, 1e-8);
     assert_near("area", summary.area, 4.0 * PI * r * r, 1e-8);
     for (k, want) in [0.5, 0.0, -1.0].into_iter().enumerate() {
-        assert_near("centre", summary.center[k], want, 1e-8);
+        assert_near("centre", summary.center.unwrap()[k], want, 1e-8);
     }
     let i = 0.4 * mass * r * r;
     assert_diagonal(&summary, [i, i, i], 1e-7);
@@ -202,8 +206,8 @@ fn two_boxes_combine() {
     assert_eq!(report.bodies.len(), 2);
     let total = report.total.unwrap();
     let m = 7850.0e-9;
-    assert_near("mass", total.mass, 2.0 * m, 1e-9);
-    assert_near("centre", total.center[0], 2.0, 1e-9);
+    assert_near("mass", total.inertial.as_ref().unwrap().mass, 2.0 * m, 1e-9);
+    assert_near("centre", total.center.unwrap()[0], 2.0, 1e-9);
     // Each cube: m/6 about its own centre, plus m * 1.5² off the common
     // one, about y and z.
     let own = m / 6.0;
@@ -213,6 +217,101 @@ fn two_boxes_combine() {
         [2.0 * own, 2.0 * (own + off), 2.0 * (own + off)],
         1e-9,
     );
+}
+
+/// A box of no material has no mass: only its volume, area and centroid,
+/// and the report says how to give it one.
+#[test]
+fn a_box_of_no_material_has_no_mass() {
+    let mut part = NamedModel::new();
+    cube_solid(&mut part, "b", v3(1.0, 2.0, 3.0), v3(3.0, 6.0, 4.0)).unwrap();
+    let part = built(&part, None);
+    let report = mass_report(&part.current()).unwrap();
+    let body = &report.bodies[0];
+    assert!(body.material.is_none(), "{body:?}");
+    let summary = body.properties.as_ref().unwrap();
+    assert!(summary.inertial.is_none(), "{summary:?}");
+    assert_near("volume", summary.volume, 8.0, 1e-9);
+    assert_near("area", summary.area, 28.0, 1e-9);
+    for (k, want) in [2.0, 4.0, 3.5].into_iter().enumerate() {
+        assert_near("centroid", summary.center.unwrap()[k], want, 1e-9);
+    }
+    let json = serde_json::to_value(&report).unwrap();
+    assert!(json["bodies"][0]["material"].is_null(), "{json}");
+    assert!(
+        json["bodies"][0]["properties"]["inertial"].is_null(),
+        "{json}"
+    );
+    let shown = format!("{:?}", report.shown());
+    assert!(
+        shown.contains("No material: set one under Properties"),
+        "{shown}"
+    );
+    assert!(!shown.contains("Mass"), "{shown}");
+}
+
+/// Two boxes of no material: their total is the centroid of both by
+/// volume, with no mass.
+#[test]
+fn two_boxes_of_no_material_combine_by_volume() {
+    let mut part = NamedModel::new();
+    cube_solid(&mut part, "a", v3(0.0, 0.0, 0.0), v3(1.0, 1.0, 1.0)).unwrap();
+    cube_solid(&mut part, "b", v3(3.0, 0.0, 0.0), v3(5.0, 1.0, 1.0)).unwrap();
+    let part = built(&part, None);
+    let total = mass_report(&part.current()).unwrap().total.unwrap();
+    assert!(total.inertial.is_none(), "{total:?}");
+    assert_near("volume", total.volume, 3.0, 1e-9);
+    // 1 at 0.5, 2 at 4.
+    assert_near("centroid", total.center.unwrap()[0], 8.5 / 3.0, 1e-9);
+}
+
+/// A box of no material with a steel one placed beside it: the total has
+/// their volume and area only — neither a mass- nor a volume-weighted
+/// centre is theirs.
+#[test]
+fn a_total_of_some_materials_has_only_volume_and_area() {
+    use geop_ops_assembly::testing::{Shelf, given_model, place, runner};
+    use geop_ops_model::parameters::{Parameters, set_parameters};
+    let cube = |at: f64| {
+        let mut cube = NamedModel::new();
+        cube_solid(&mut cube, "c", v3(at, 0.0, 0.0), v3(at + 1.0, 1.0, 1.0)).unwrap();
+        cube
+    };
+    let mut placed = Program::new();
+    let material = steel();
+    set_parameters(
+        &mut placed,
+        Parameters {
+            material,
+            ..Parameters::default()
+        },
+    );
+    placed.steps.push(given_model("model", cube(3.0), None));
+    let mut root = Program::new();
+    root.steps.push(given_model("model", cube(0.0), None));
+    root.steps.push(place("p", "cube.geop", &Settings::new()));
+    root.state
+        .insert(pose_state("p"), StateValue::Pose(Pose::identity()));
+    let shelf = Shelf::default()
+        .with("cube.geop", placed)
+        .with("top.geop", root.clone());
+    let runner = runner(shelf, "top.geop");
+    let mut part = Part::default();
+    (root.run(&runner, &mut part)).unwrap();
+    let report = mass_report(&part.current()).unwrap();
+    let weighed: Vec<bool> = (report.bodies.iter())
+        .map(|b| b.properties.as_ref().unwrap().inertial.is_some())
+        .collect();
+    assert_eq!(weighed, [false, true], "{report:?}");
+    let shown = format!("{:?}", report.shown());
+    assert!(shown.contains("Only some solids have a material"), "{shown}");
+    let total = report.total.unwrap();
+    assert!(
+        total.center.is_none() && total.inertial.is_none(),
+        "{total:?}"
+    );
+    assert_near("volume", total.volume, 2.0, 1e-9);
+    assert_near("area", total.area, 12.0, 1e-9);
 }
 
 /// A vertex above a cylinder's side is as far from it as from its axis,
@@ -324,9 +423,10 @@ fn mass_properties_are_placed() {
     // A quarter turn about z, then up by 5.
     let pose = Pose::from_euler(v3(0.0, 0.0, 5.0), [0.0, 0.0, 90.0].map(Scalar::from_f64)).unwrap();
     let area = part.topology().solid_area(solid).unwrap();
-    let placed = MassSummary::of(&mass.placed(&pose).unwrap(), area).unwrap();
+    let placed = Known::Weighed(mass.placed(&pose).unwrap());
+    let placed = MassSummary::of(&placed, area).unwrap();
     for (k, want) in [-0.5, 1.0, 5.5].into_iter().enumerate() {
-        assert_near("centre", placed.center[k], want, 1e-9);
+        assert_near("centre", placed.center.unwrap()[k], want, 1e-9);
     }
     let i = |p: f64, q: f64| 2.0 * (p * p + q * q) / 12.0;
     // The long side now runs along y.

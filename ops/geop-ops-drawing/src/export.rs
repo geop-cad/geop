@@ -182,9 +182,8 @@ impl Exporter for DrawingExporter {
         if args.name.is_empty() {
             args.name = properties.name(stem(output.file_name())).to_string();
         }
-        let material = properties.material();
-        if args.material.is_empty() && !material.assumed {
-            args.material = material.name;
+        if let Some(material) = properties.material().filter(|_| args.material.is_empty()) {
+            args.material = material.name.clone();
         }
         let reader = match &step {
             Some(step) => output.part_before(step)?,

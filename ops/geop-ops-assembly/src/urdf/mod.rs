@@ -24,7 +24,9 @@
 //! **Inertia.** Each link's mass, centre of mass and inertia tensor come
 //! from the exact B-rep of its solids, each of its own part's material
 //! (see [`geop_ops_model::placed::solids`]), the tensor about the centre of mass
-//! along the link frame's axes.
+//! along the link frame's axes. A link of no material at all has no
+//! `<inertial>`; one of which only some solids have a material is refused,
+//! naming a solid of none: its mass would leave them out.
 //!
 //! **Meshes.** Each placed component is meshed once, in its own frame, as
 //! binary STL (`meshes/<file>.stl`), and is each link's `<visual>` and
@@ -515,18 +517,39 @@ impl Meshes {
 
 /// The mass properties of the solids of the part `reader` reads itself,
 /// of the part placed at `instance`, where `pose` puts them, each of its part's
-/// material (see [`own_solids_at`]).
+/// material (see [`own_solids_at`]) — none for a solid of no material —
+/// each with its name.
 fn masses(
     reader: &Reader,
     instance: &str,
     pose: Option<Pose>,
     shapes: &mut Shapes,
-    out: &mut Vec<MassProperties>,
+    out: &mut Vec<(String, Option<MassProperties>)>,
 ) -> GeopResult<()> {
     for solid in own_solids_at(reader, instance, pose)? {
-        out.push(solid.mass_properties(shapes)?);
+        out.push((solid.name.clone(), solid.mass_properties(shapes)?));
     }
     Ok(())
+}
+
+/// What the solids `masses` of the link `link` weigh together: none if
+/// none has a material. Refuses a link of which only some do, naming one
+/// that has none.
+fn link_mass(
+    link: &str,
+    masses: &[(String, Option<MassProperties>)],
+) -> GeopResult<Option<MassProperties>> {
+    let weighed: Vec<MassProperties> = masses.iter().filter_map(|(_, m)| *m).collect();
+    if weighed.is_empty() {
+        return Ok(None);
+    }
+    if let Some((unweighed, _)) = masses.iter().find(|(_, m)| m.is_none()) {
+        return Err(GeopError::new(format!(
+            "the link {link:?} has solids of a material and {unweighed:?} of none: \
+             give its part a material under Properties, or none of the link's parts one"
+        )));
+    }
+    MassProperties::combine(&weighed)
 }
 
 /// The assembly `output` built — where its parts are now — as a URDF robot
@@ -657,7 +680,7 @@ pub fn export(output: &mut Output, name: &str, quality: usize) -> GeopResult<Urd
                 });
             }
         }
-        let inertial = match MassProperties::combine(&masses_of)? {
+        let inertial = match link_mass(&link.name, &masses_of).with_context(&ctx)? {
             Some(total) => {
                 let local = total.placed(&back)?;
                 Some(Inertial {

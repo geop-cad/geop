@@ -322,7 +322,7 @@ fn the_arm_exports_its_joints_limits_and_masses() {
     let weighed = |instance: &str, shapes: &mut Shapes| {
         (solids.iter())
             .filter(|s| s.instance == instance)
-            .map(|s| s.mass_properties(shapes).unwrap())
+            .map(|s| s.mass_properties(shapes).unwrap().unwrap())
             .collect::<Vec<_>>()
     };
     for link in &robot.links {

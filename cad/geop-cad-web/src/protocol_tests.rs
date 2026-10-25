@@ -129,7 +129,7 @@ fn session(kinds: &[&str]) -> Vec<Value> {
         json!({ "command": "tool", "key": null }),
         json!({ "command": "export", "exporter": "stl" }),
         json!({ "command": "export", "exporter": "step", "format": "step", "options": null, "date": "2026-10-16" }),
-        json!({ "command": "panel", "key": "parameters", "payload": { "set": { "color": "#336699" } } }),
+        json!({ "command": "panel", "key": "joints", "payload": { "command": "set", "parameter": "angle", "value": 30.0 } }),
         json!({ "command": "paste", "text": "not steps" }),
         json!({ "command": "load", "program": { "steps": [] }, "path": "parts/empty.geop" }),
         json!({ "command": "files", "files": { "parts/notes.step": "ISO-10303-21;", "gone.geop": null } }),

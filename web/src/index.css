@@ -4,6 +4,27 @@
   text-rendering: optimizeLegibility;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
+
+  /* The editor's palette: every colour of the chrome comes from here. */
+  --bg-deep: #0e0f12;
+  --surface: #15171c;
+  --surface-2: #1b1e24;
+  --control: #22252c;
+  --control-hover: #2b2f37;
+  --line: #2a2e36;
+  --line-strong: #3a3f49;
+  --text: #e9ebef;
+  --text-2: #c4c8cf;
+  --text-dim: #8d939e;
+  --text-faint: #646a75;
+  --accent: #4b8fdd;
+  --accent-strong: #2d6ca6;
+  --accent-soft: rgba(75, 143, 221, 0.16);
+  --radius: 8px;
+  --radius-sm: 6px;
+  --shadow: 0 8px 24px rgba(0, 0, 0, 0.35);
+  --font: "Inter", "IBM Plex Sans", "Segoe UI Variable", "Segoe UI", ui-sans-serif, system-ui, -apple-system, sans-serif;
+  --font-mono: ui-monospace, "SF Mono", "Cascadia Code", "JetBrains Mono", Consolas, monospace;
 }
 
 * {

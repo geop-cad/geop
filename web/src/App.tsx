@@ -24,7 +24,9 @@ import { KernelCrashed } from "./crash";
 import { DEFAULT_POSE, headOnPose, wantsFraming, type CameraPose, type Drawn, type Projection } from "./camera";
 import { DialogView } from "./DialogView";
 import { Explorer } from "./Explorer";
+import { Welcome } from "./Welcome";
 import {
+  freeFolder,
   freePath,
   loadWorkspace,
   parseProgram,
@@ -39,6 +41,7 @@ import {
 import { InspectPanel } from "./InspectPanel";
 import { sectionPlane, type Section } from "./section";
 import { ProgramPanels } from "./ProgramPanels";
+import { structureDetails } from "./panels";
 import { SceneViewer } from "./SceneViewer";
 import { StructurePanel } from "./StructurePanel";
 import { OperationGrid, OperationRibbon, type Tool } from "./OperationRibbon";
@@ -544,9 +547,7 @@ function App() {
   }
 
   async function loadWorkspaceExample(name: string) {
-    const folder = Object.keys(workspaceRef.current.files).some((p) => p.startsWith(`examples/${name}/`))
-      ? `examples/${name} ${Date.now()}`
-      : `examples/${name}`;
+    const folder = freeFolder(workspaceRef.current.files, `examples/${name}`);
     if ((await dispatch({ command: "load_workspace_example", name, folder }))?.error == null) trackExample(name);
     fitView();
   }
@@ -555,7 +556,14 @@ function App() {
   // once the kernel is up.
   useEffect(() => {
     if (!wasmReady) return;
-    const name = new URLSearchParams(window.location.search).get("example");
+    const params = new URLSearchParams(window.location.search);
+    const name = params.get("example");
+    // Opened once: a reload keeps the files made, rather than making them again.
+    if (name) {
+      params.delete("example");
+      const query = params.toString();
+      window.history.replaceState(null, "", `${window.location.pathname}${query ? `?${query}` : ""}${window.location.hash}`);
+    }
     if (name && program?.examples.includes(name)) void loadExample(name);
     else if (name && program?.workspace_examples.includes(name)) void loadWorkspaceExample(name);
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -693,6 +701,7 @@ function App() {
         <h2>Part</h2>
         <StructurePanel
           items={scene?.structure ?? []}
+          details={structureDetails(program?.panels ?? {})}
           enabled={wasmReady}
           onVisibility={(name, visible) => dispatch({ command: "visibility", name, visible })}
           onLight={setLights}
@@ -845,10 +854,18 @@ function App() {
                 onPose={(pose) => (poseRef.current = pose)}
               />
             )}
+            {wasmReady && program && stepCount === 0 && step == null && pending === 0 && !host && (
+              <Welcome
+                examples={program.examples}
+                workspaceExamples={program.workspace_examples}
+                onExample={(name) => void loadExample(name)}
+                onWorkspaceExample={(name) => void loadWorkspaceExample(name)}
+              />
+            )}
             {(!wasmReady || pending > 0) && !wasmError && (
               <div className="loading" role="status" aria-label={wasmReady ? "Working" : "Loading"}>
                 <span className="spinner" />
-                {!wasmReady && <span>Loading geop…</span>}
+                <span>{wasmReady ? "Building…" : "Loading geop…"}</span>
               </div>
             )}
             <div className="view-buttons">

@@ -301,3 +301,64 @@ fn the_parameters_are_edited_as_a_table() {
         }]
     );
 }
+
+/// The part's properties are edited in their step's dialog: a title and a
+/// designation typed, a colour picked, a material chosen from the list —
+/// none to start with, which the dialog says has no mass — or one not
+/// listed, given by its name and density. Committed, the part reads them;
+/// a density that is no positive number is refused.
+#[test]
+fn the_properties_are_edited_in_their_dialog() {
+    use crate::parameters::{Material, PartPropertiesArgs, read_properties, steps::PROPERTIES};
+    let mut s = Stepping::new(editor(), PROPERTIES);
+    assert!(s.presentation().dialog.get("no_material").is_some());
+    s.dialog("title", Value::Text(" Bracket ".into()));
+    s.dialog("designation", Value::Text("BR-12".into()));
+    s.dialog("color", Value::Text("#336699".into()));
+    s.dialog("material", Value::Choice("Steel".into()));
+    assert!(s.presentation().dialog.get("no_material").is_none());
+    assert!(s.presentation().dialog.get("density").is_none(), "listed");
+    let args: PartPropertiesArgs = s.args();
+    assert_eq!(
+        args,
+        PartPropertiesArgs {
+            title: Some("Bracket".into()),
+            designation: Some("BR-12".into()),
+            color: Some("#336699".into()),
+            material: Material::named("Steel"),
+        }
+    );
+
+    // One not listed: from the steel's density, then its own.
+    s.dialog("material", Value::Choice("other".into()));
+    s.dialog("material_name", Value::Text("Cast iron".into()));
+    s.dialog("density", Value::Text("7200".into()));
+    let mut editor = s.editor;
+    handled(&mut editor, Command::Commit);
+    let properties = read_properties(&editor.part()).unwrap().into_owned();
+    let material = Material {
+        name: "Cast iron".into(),
+        density: 7200.0,
+    };
+    assert_eq!(properties.material(), Some(&material));
+    assert_eq!(properties.color(), Some("#336699"));
+    assert_eq!(properties.name("file"), "Bracket");
+
+    // None again: no material.
+    let id = editor.program().steps[0].id.clone();
+    let mut s = Stepping::open(editor, &id);
+    assert!(s.presentation().dialog.get("density").is_some());
+    s.dialog("density", Value::Text("-1".into()));
+    let mut editor = s.editor;
+    let refused = editor.handle(Command::Commit).error.expect("refused");
+    assert!(refused.contains("positive"), "{refused}");
+    let mut s = Stepping {
+        shown: (editor.handle(Command::Show).step).expect("still edited"),
+        editor,
+    };
+    s.dialog("material", Value::Choice(String::new()));
+    let mut editor = s.editor;
+    handled(&mut editor, Command::Commit);
+    let properties = read_properties(&editor.part()).unwrap().into_owned();
+    assert_eq!(properties.material(), None);
+}

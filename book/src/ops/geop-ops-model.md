@@ -227,17 +227,14 @@ program.push("hole", ExtrudeArgs {
 properties, as an editor lists them together (`Parameters`), in their
 steps — the properties, the numbers, and a lookup step per table, before
 the numbers whose formulas read its columns; `parameter_numbers` gives
-what its parameters come to as defined,
-`parameter_uses` what reads each, and `rename_parameter` renames a
-parameter and every formula reading it.
+what its parameters come to as defined.
 
-An editor shows them in the parameters panel (`ParametersPanel`, key
-`parameters`, see
-[the registry](../core/geop-core-editor.md#the-registry-registry)): what
-they are defined as and come to, why those that do not resolve fail, what
-reads each and the materials a part's can be; it takes
-`set_parameters` (allowed while a step is edited, which then sees them)
-and `rename_parameter`. `PartColor` draws the part in its colour.
+An editor edits them in their steps' dialogs, as any step: the numbers
+in the `parameters` step's table, each table in its `lookup_table` step,
+and the title, designation, colour and material in the `properties`
+step. A name typed in the table renames the definition alone: a formula
+still reading the old name fails, naming it. `PartColor` draws the part
+in its colour.
 
 ### Parameters
 
@@ -282,7 +279,8 @@ besides its shape (`Properties`, `read_properties`): its **title** and
 followed by its parameters' values (`ISO 4762 M4x12`) — its **colour**,
 `#rrggbb`, which a program placing it may set by the input `color`, and
 its **material** (`Material`, a name and a density in kg/m³, picked from a
-list or given by its density; `MaterialOf` says what it is weighed as).
+list or given by its density). A part with no material has none: its
+solids have a volume and a centroid, but no mass.
 What a part is listed as without a title is the name of the file it is
 placed from (`stem`).
 

@@ -1,42 +1,7 @@
 import { Fragment, type ReactNode } from "react";
-import type { JointInfo, Material, MateFreedom, Parameters, ParamValue, Update } from "./geop";
+import type { Update } from "./geop";
 import { JointsPanel } from "./JointsPanel";
-import { ParametersPanel } from "./ParametersPanel";
-
-/** What the parameters panel shows — see `geop_ops_parameters::ParametersPanelState`. */
-interface ParametersState {
-  /** What the parameters resolve to, by name — numbers, a table's row and columns, the colour — and why those that do not resolve fail. */
-  parameters: {
-    /** What the program's parameters and properties steps define. */
-    defined: Parameters;
-    values: Record<string, ParamValue>;
-    errors: Record<string, string>;
-  };
-  /** What reads each parameter, by name: the steps and other parameters whose formulas do — what fails if it goes. */
-  parameter_uses: Record<string, string[]>;
-  /** The materials a part's can be picked from. */
-  materials: Material[];
-  /** The step each table is looked up in, by the table's name: what edits the table, opened as any step is. */
-  table_steps: Record<string, string>;
-}
-
-/** What the parameters panel is sent — see `geop_ops_parameters::ParametersCommand`. */
-type ParametersCommand =
-  | { command: "set_parameters"; parameters: Parameters }
-  | { command: "rename_parameter"; from: string; to: string };
-
-/** What the joints panel shows — see `geop_ops_assembly::JointsState`. */
-interface JointsState {
-  /** The joints of the part shown, each coordinate settable. */
-  joints: JointInfo[];
-  /** How free its placed parts are, if it has any. */
-  freedom: MateFreedom | null;
-  /** A smallest set of its constraints that cannot all hold together: none where they all hold. */
-  conflicting: string[];
-}
-
-/** What the joints panel is sent — see `geop_ops_assembly::JointsCommand`. */
-type JointsCommand = { command: "set"; parameter: string; value: number };
+import type { JointsCommand, JointsState } from "./panels";
 
 /** What a panel is shown with: its state — none before the kernel sent it — and how it sends its commands. */
 interface PanelProps<State, Payload> {
@@ -60,44 +25,21 @@ function panel<State, Payload>(view: (props: PanelProps<State, Payload>) => Reac
 }
 
 /**
- * Each panel the kernel may send, by key, in the order shown: the one
- * place the app names a panel. A panel of a key not here is not shown.
+ * Each panel the kernel may send, by key, in the order shown: with what
+ * `panels.ts` reads of their states, the one place the app names a panel.
+ * A panel of a key not here is not shown.
  */
 const PANELS: Record<string, PanelView> = {
-  parameters: panel(({ state, enabled, idle, send, openStep }: PanelProps<ParametersState, ParametersCommand>) => (
-    <>
-      <h2>Parameters</h2>
-      <ParametersPanel
-        parameters={state?.parameters.defined ?? {}}
-        resolved={state?.parameters ?? { values: {}, errors: {} }}
-        enabled={enabled}
-        idle={idle}
-        materials={state?.materials ?? []}
-        uses={state?.parameter_uses ?? {}}
-        tableSteps={state?.table_steps ?? {}}
-        onChange={(parameters) => send({ command: "set_parameters", parameters })}
-        onRename={(from, to) => send({ command: "rename_parameter", from, to })}
-        onOpenStep={openStep}
-        onAddTable={async (parameters, name) => {
-          // The table is a step of its own: the kernel says which, and it opens to be filled in.
-          const update = await send({ command: "set_parameters", parameters });
-          const added = update?.program?.panels.parameters as ParametersState | undefined;
-          const step = added?.table_steps[name];
-          if (step) openStep(step);
-        }}
-      />
-    </>
-  )),
   joints: panel(({ state, enabled, idle, send }: PanelProps<JointsState, JointsCommand>) => {
     const joints = state?.joints ?? [];
-    if (joints.length === 0 && Object.keys(state?.freedom?.parts ?? {}).length === 0) return null;
+    const conflicting = state?.conflicting ?? [];
+    if (joints.length === 0 && conflicting.length === 0) return null;
     return (
       <>
-        <h2>{joints.length > 0 ? "Joints" : "Freedom"}</h2>
+        <h2>{joints.length > 0 ? "Joints" : "Mates"}</h2>
         <JointsPanel
           joints={joints}
-          freedom={state?.freedom ?? null}
-          conflicting={state?.conflicting ?? []}
+          conflicting={conflicting}
           enabled={enabled && idle}
           onSet={(parameter, value) => send({ command: "set", parameter, value })}
         />

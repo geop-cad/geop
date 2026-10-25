@@ -10,7 +10,7 @@ const vec = (v: [number, number, number]) => new THREE.Vector3(v[0], v[1], v[2])
 
 /** How the part's entities are colored. */
 export const VERTEX_COLOR = 0x3c3c3c;
-export const EDGE_COLOR = 0x808080;
+export const EDGE_COLOR = 0x30343b;
 export const FACE_COLOR = 0xb0b4b8;
 /** Sketch curves: profile geometry and construction geometry. */
 export const SKETCH_COLOR = 0xffa040;

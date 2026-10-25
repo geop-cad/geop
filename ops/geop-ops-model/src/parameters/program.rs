@@ -1,14 +1,11 @@
 //! The parameters of a [`Program`], as its steps define them (see
-//! [`crate::parameters::steps`]): read, set, renamed, and what reads each.
+//! [`crate::parameters::steps`]): read and set.
 
 use std::collections::BTreeMap;
 
 use geop_core_math::geop_error::{GeopError, GeopResult};
 use geop_core_program::{
-    numeric::{
-        ParameterValue, formulas_in, names_in, parameter_of, read_parameter_values,
-        rename_parameter_in,
-    },
+    numeric::{ParameterValue, read_parameter_values},
     operation_registry::OperationRegistry,
     part::Part,
     program::{Program, ProgramStep},
@@ -17,7 +14,7 @@ use geop_core_program::{
 use serde::Serialize;
 
 use crate::parameters::{
-    definition::{NumberParameter, Parameter, ParameterKind, Parameters, validate_name},
+    definition::{NumberParameter, Parameter, ParameterKind, Parameters},
     steps::{
         DefineParameters, DefineParametersArgs, LOOKUP, LookupTable, LookupTableArgs, PARAMETERS,
         PROPERTIES, PartPropertiesArgs,
@@ -199,57 +196,4 @@ pub fn parameter_numbers(program: &Program) -> GeopResult<BTreeMap<String, f64>>
             ParameterValue::Text(_) => None,
         })
         .collect())
-}
-
-/// What reads each parameter of `program`, by its name: the ids of the steps, and
-/// the names of the other parameters, whose formulas name it — what
-/// fails if it goes. A name no parameter has is listed too: what reads
-/// it fails already. A step's formulas are found in its saved arguments
-/// ([`formulas_in`]).
-pub fn parameter_uses(program: &Program) -> BTreeMap<String, Vec<String>> {
-    let mut uses: BTreeMap<String, Vec<String>> = BTreeMap::new();
-    let mut note = |reader: &str, formula: &str| {
-        for name in names_in(formula) {
-            let readers = uses.entry(parameter_of(&name).to_string()).or_default();
-            if !readers.iter().any(|r| r == reader) {
-                readers.push(reader.to_string());
-            }
-        }
-    };
-    for p in &parameters_of(program).values {
-        if let ParameterKind::Number { expression, .. } = &p.kind {
-            note(&p.name, expression);
-        }
-    }
-    for step in &program.steps {
-        for formula in formulas_in(&step.args) {
-            note(&step.id, formula);
-        }
-    }
-    uses
-}
-
-/// The parameter `from` of `program` named `to`, and every formula reading it —
-/// the other parameters', every step's — reading `to`. Fails for a
-/// parameter there is none of, and for a name that is taken or no name.
-pub fn rename_parameter(program: &mut Program, from: &str, to: &str) -> GeopResult<()> {
-    let mut parameters = parameters_of(program);
-    if parameters.get(from).is_none() {
-        return Err(GeopError::new(format!("there is no parameter {from:?}")));
-    }
-    if from == to {
-        return Ok(());
-    }
-    validate_name(to)?;
-    if parameters.get(to).is_some() {
-        return Err(GeopError::new(format!(
-            "there is a parameter {to:?} already"
-        )));
-    }
-    for step in &mut program.steps {
-        rename_parameter_in(&mut step.args, from, to);
-    }
-    parameters.rename(from, to);
-    set_parameters(program, parameters);
-    Ok(())
 }

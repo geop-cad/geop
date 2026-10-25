@@ -3,17 +3,15 @@
 //! looks its size up in — and its properties — title, designation,
 //! colour, material — as steps of its program producing targets
 //! ([`steps`]), set by a program placing it through the run's inputs
-//! ([`Setting`](geop_core_program::values::Setting)s), and read, set and
-//! renamed in a program ([`program`]); where the parts of its instances are
+//! ([`Setting`](geop_core_program::values::Setting)s), and read and set in
+//! a program ([`program`]); where the parts of its instances are
 //! placed by it ([`instance`](mod@instance)); and the files a field picks
-//! from ([`files`]); the parameters panel of an editor and the colour a
-//! part is drawn in ([`panel`]), which [`crate::register`] offers.
+//! from ([`files`]).
 
 pub mod definition;
 pub mod files;
 mod icons;
 pub mod instance;
-pub mod panel;
 pub mod program;
 pub mod steps;
 
@@ -25,16 +23,10 @@ pub use instance::{
     Factor, Instance, Placement, PoseOf, compose, define_instance, instance, instances, located,
     placement,
 };
-pub use program::{
-    parameter_numbers, parameter_uses, parameters_of, rename_parameter, set_parameters,
-};
+pub use program::{parameter_numbers, parameters_of, set_parameters};
 pub use steps::{
-    DefineParameters, DefineParametersArgs, LookupTable, LookupTableArgs, MaterialOf,
+    DefineParameters, DefineParametersArgs, LookupTable, LookupTableArgs, PartColor,
     PartProperties, PartPropertiesArgs, Properties, read_properties, stem,
-};
-
-pub use panel::{
-    ParametersCommand, ParametersPanel, ParametersPanelState, ParametersState, PartColor,
 };
 
 #[cfg(test)]

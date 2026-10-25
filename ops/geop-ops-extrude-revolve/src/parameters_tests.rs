@@ -18,8 +18,8 @@ use geop_core_program::{
 };
 use geop_core_sketch::PointId;
 use geop_ops_model::parameters::{
-    COLOR, Parameter, ParameterKind, Parameters, parameter_numbers, parameter_uses, parameters_of,
-    read_properties, set_parameters,
+    COLOR, Parameter, ParameterKind, Parameters, parameter_numbers, parameters_of, read_properties,
+    set_parameters,
     steps::{LOOKUP, PARAMETERS, PROPERTIES},
 };
 use geop_ops_model::sketch::{CurveKind, PlacedSketch, sketch_element, whole_sketch};
@@ -176,9 +176,6 @@ fn extrudes_follow_the_parameters_they_read() {
     assert_eq!(running.built_anew(&program), 4);
     // The bottom, the hole's floor and the top.
     assert_heights(&running.model(), &[0.0, 0.5, 1.0]);
-    let uses = parameter_uses(&program);
-    let read: Vec<&String> = uses.keys().collect();
-    assert_eq!(read, ["depth", "height"]);
 
     set(&mut program, "depth", "0.25");
     running.run(&program);

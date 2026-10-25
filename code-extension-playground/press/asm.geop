@@ -7,8 +7,8 @@
         "file": "base.geop",
         "mates": {
           "fixed": {
-            "type": "fixed",
-            "entities": []
+            "entities": [],
+            "type": "fixed"
           }
         }
       }
@@ -20,46 +20,46 @@
         "file": "handle.geop",
         "mates": {
           "m1": {
-            "type": "concentric",
             "entities": [
               {
                 "on": {
                   "face": {
-                    "target": "/part1:model",
-                    "name": "combine(extrude3,extrude(extrude3,sketch3,c7#2),#8bd081c9b1406b0ed6790e3dc2425477)"
+                    "name": "combine(extrude3,extrude(extrude3,sketch3,c7#2),#8bd081c9b1406b0ed6790e3dc2425477)",
+                    "target": "/part1:model"
                   }
                 }
               },
               {
                 "on": {
                   "face": {
-                    "target": "/part2:model",
-                    "name": "extrude(extrude1,sketch1,c5)"
+                    "name": "extrude(extrude1,sketch1,c5)",
+                    "target": "/part2:model"
                   }
                 }
               }
-            ]
+            ],
+            "type": "concentric"
           },
           "m2": {
-            "type": "coincident",
             "entities": [
               {
                 "on": {
                   "datum": {
-                    "target": "/part1:datums",
-                    "name": "origin:xy"
+                    "name": "origin:xy",
+                    "target": "/part1:datums"
                   }
                 }
               },
               {
                 "on": {
                   "datum": {
-                    "target": "/part2:datums",
-                    "name": "origin:xy"
+                    "name": "origin:xy",
+                    "target": "/part2:datums"
                   }
                 }
               }
-            ]
+            ],
+            "type": "coincident"
           }
         }
       }
@@ -71,46 +71,46 @@
         "file": "slider.geop",
         "mates": {
           "m1": {
-            "type": "coincident",
             "entities": [
               {
                 "on": {
                   "face": {
-                    "target": "/part1:model",
-                    "name": "extrude(extrude1,sketch1,c10)"
+                    "name": "extrude(extrude1,sketch1,c10)",
+                    "target": "/part1:model"
                   }
                 }
               },
               {
                 "on": {
                   "face": {
-                    "target": "/part3:model",
-                    "name": "extrude(extrude1,sketch1,c10)"
+                    "name": "extrude(extrude1,sketch1,c10)",
+                    "target": "/part3:model"
                   }
                 }
               }
-            ]
+            ],
+            "type": "coincident"
           },
           "m2": {
-            "type": "coincident",
             "entities": [
               {
                 "on": {
                   "face": {
-                    "target": "/part1:model",
-                    "name": "extrude(extrude1,sketch1,c12)"
+                    "name": "extrude(extrude1,sketch1,c12)",
+                    "target": "/part1:model"
                   }
                 }
               },
               {
                 "on": {
                   "face": {
-                    "target": "/part3:model",
-                    "name": "extrude(extrude1,end)"
+                    "name": "extrude(extrude1,end)",
+                    "target": "/part3:model"
                   }
                 }
               }
-            ]
+            ],
+            "type": "coincident"
           }
         }
       }
@@ -122,67 +122,67 @@
         "file": "link.geop",
         "mates": {
           "m1": {
-            "type": "coincident",
             "entities": [
               {
                 "on": {
                   "face": {
-                    "target": "/part2:model",
-                    "name": "extrude(extrude2,sketch3,c9)"
+                    "name": "extrude(extrude2,sketch3,c9)",
+                    "target": "/part2:model"
                   }
                 }
               },
               {
                 "on": {
                   "face": {
-                    "target": "/part4:model",
-                    "name": "extrude(extrude1,sketch1,c26#2)"
+                    "name": "extrude(extrude1,sketch1,c26#2)",
+                    "target": "/part4:model"
                   }
                 }
               }
-            ]
+            ],
+            "type": "coincident"
           },
           "m2": {
-            "type": "coincident",
             "entities": [
               {
                 "on": {
                   "face": {
-                    "target": "/part3:model",
-                    "name": "combine(extrude4,extrude(extrude4,sketch4,c7),#01277c18a2965eb65d5abf4ea93534dc)"
+                    "name": "combine(extrude4,extrude(extrude4,sketch4,c7),#01277c18a2965eb65d5abf4ea93534dc)",
+                    "target": "/part3:model"
                   }
                 }
               },
               {
                 "on": {
                   "face": {
-                    "target": "/part4:model",
-                    "name": "combine(extrude2,extrude(extrude1,sketch1,c27#2),#a5a60d89de57ff595e49ac8ff7e5bb22)"
+                    "name": "combine(extrude2,extrude(extrude1,sketch1,c27#2),#a5a60d89de57ff595e49ac8ff7e5bb22)",
+                    "target": "/part4:model"
                   }
                 }
               }
-            ]
+            ],
+            "type": "coincident"
           },
           "m3": {
-            "type": "coincident",
             "entities": [
               {
                 "on": {
                   "datum": {
-                    "target": "/part3:datums",
-                    "name": "origin:xy"
+                    "name": "origin:xy",
+                    "target": "/part3:datums"
                   }
                 }
               },
               {
                 "on": {
                   "datum": {
-                    "target": "/part4:datums",
-                    "name": "origin:xy"
+                    "name": "origin:xy",
+                    "target": "/part4:datums"
                   }
                 }
               }
-            ]
+            ],
+            "type": "coincident"
           }
         }
       }
@@ -204,41 +204,41 @@
     },
     "part2.pose": {
       "position": [
-        7.035794169496512e-11,
-        117.05105584398018,
-        4.805363950442673e-24
+        6.716815367845868e-11,
+        117.05105584398251,
+        -5.395755802939363e-35
       ],
       "rotation": [
-        0.9997869406188549,
-        -1.219615493036608e-18,
-        -9.744800381686672e-21,
-        -0.020641544709409744
+        0.9929789451368466,
+        1.3224113015111836e-15,
+        1.8238444830680713e-16,
+        0.11829122754965149
       ]
     },
     "part3.pose": {
       "position": [
-        -4.440892098500643e-16,
-        0.4531032140053094,
-        1.4210854715202042e-14
+        4.880323420077289e-13,
+        16.956792926251776,
+        -5.377234057402593e-13
       ],
       "rotation": [
-        1,
-        -4.124011287105624e-17,
-        5.015356614808861e-17,
-        2.0235017546044727e-17
+        1.0000000000005016,
+        -1.0395090650970859e-15,
+        -1.0501776738966637e-15,
+        -2.5002752178945226e-17
       ]
     },
     "part4.pose": {
       "position": [
-        34.18709401747256,
-        57.45637566759528,
-        6.0800018696416606e-15
+        33.33530578181783,
+        74.3786977313457,
+        -4.677073533862277e-13
       ],
       "rotation": [
-        0.9731799692082093,
-        -5.0881367925436403e-17,
-        3.9594582959131906e-17,
-        -0.23004509890869057
+        0.9748654291734722,
+        -3.386993629186683e-15,
+        -2.784694461814413e-15,
+        -0.2227945129548105
       ]
     }
   }

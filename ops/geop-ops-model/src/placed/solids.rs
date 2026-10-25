@@ -1,7 +1,7 @@
 //! The solids a part shows, wherever they are placed — its own, and those
 //! of the parts placed in it, however deep — each of its own part's
-//! material: what weighing a part, checking it for interference, ordering
-//! it and simulating it read.
+//! material, if it has one: what weighing a part, checking it for
+//! interference, ordering it and simulating it read.
 //!
 //! What a step says of a solid beyond its shape (see [`crate::notes`]) is
 //! read here: a solid only drawn is no body.
@@ -14,7 +14,7 @@ use std::collections::HashMap;
 
 use crate::{
     NamedModel, notes_of,
-    parameters::{MaterialOf, Properties, read_properties},
+    parameters::{Material, read_properties},
     placed::placed_parts,
     read_model,
 };
@@ -48,24 +48,38 @@ impl PlacedSolid<'_> {
         notes_of(&self.reader)?.get(own)?.thickness
     }
 
-    /// What it is made of: its part's material.
-    pub fn material(&self) -> MaterialOf {
-        (read_properties(&self.reader).map(|properties| properties.material()))
-            .unwrap_or_else(|_| Properties::default().material())
+    /// What it is made of: its part's material, none where it is not
+    /// given.
+    pub fn material(&self) -> Option<Material> {
+        let properties = read_properties(&self.reader).ok()?;
+        properties.material().cloned()
     }
 
-    /// Its mass properties, where it is, of its part's material — its
-    /// shape's taken from `shapes`.
-    pub fn mass_properties(&self, shapes: &mut Shapes) -> GeopResult<MassProperties> {
-        let ctx = |e: GeopError| e.with_context(format!("the mass of {}", self.name));
-        let per_mm3 = Scalar::from_f64(self.material().density)
-            .div(Scalar::from_f64(1e9))
-            .with_context(&ctx)?;
-        let own = shapes.of(self).with_context(&ctx)?.with_density(per_mm3);
+    /// The mass properties of its shape alone, where it is: of density one,
+    /// so its mass is its volume and its centre the centroid — what it has
+    /// whatever it is made of. Its shape's are taken from `shapes`.
+    pub fn shape_properties(&self, shapes: &mut Shapes) -> GeopResult<MassProperties> {
+        let ctx = |e: GeopError| e.with_context(format!("the shape of {}", self.name));
+        let own = shapes.of(self).with_context(&ctx)?;
         match &self.pose {
             Some(pose) => own.placed(pose).with_context(&ctx),
             None => Ok(own),
         }
+    }
+
+    /// Its mass properties, where it is, of its part's material: none for a
+    /// solid of no material, which has no mass. Its shape's are taken from
+    /// `shapes`.
+    pub fn mass_properties(&self, shapes: &mut Shapes) -> GeopResult<Option<MassProperties>> {
+        let Some(material) = self.material() else {
+            return Ok(None);
+        };
+        let ctx = |e: GeopError| e.with_context(format!("the mass of {}", self.name));
+        let per_mm3 = Scalar::from_f64(material.density)
+            .div(Scalar::from_f64(1e9))
+            .with_context(&ctx)?;
+        let shape = self.shape_properties(shapes)?;
+        Ok(Some(shape.with_density(per_mm3)))
     }
 }
 

@@ -31,7 +31,7 @@ JSON-RPC 2.0, one message per line, newline-delimited, no framing headers.
 | `delete_step` | Remove a step. Steps that referred to what it built fail and say so. |
 | `run` | Run the whole program: every step's summary, whether it ran and its error with the kernel's context, and the part's solids. |
 | `list_elements` | The part's elements by their stable names: solids, faces (with their solid and the feature that made them), edges (with their faces), vertices (with their positions), sketches, datums, what else the part lists, placed parts. |
-| `inspect` | `mass_properties` (volume, area, mass, centre of mass, inertia per solid and in all), `interference` (which solids overlap), or `measure` of one or two `elements` (`{kind, name}`). |
+| `inspect` | `mass_properties` (volume, area and centroid per solid and in all; mass and inertia (`inertial`) only of solids whose part has a material, set by the `properties` step — `null` otherwise), `interference` (which solids overlap), or `measure` of one or two `elements` (`{kind, name}`). |
 | `export` | Write the part to `path`: `stl`, `step`, `svg`/`dxf` (drawings, flat patterns), `csv` (bill of materials), `zip` (URDF); the format from the extension unless `format` says otherwise; `options` are the exporter's own. |
 | `save` | Write the program to `path` as `.geop`, and edit it there from then on. |
 

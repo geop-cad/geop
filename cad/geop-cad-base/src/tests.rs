@@ -45,14 +45,16 @@ mod set {
         let operations = registry.operations();
         let kinds: Vec<&str> = infos.iter().map(|i| i.kind).collect();
         assert_eq!(kinds.iter().collect::<HashSet<_>>().len(), kinds.len());
-        // Offered group by group, as the editor lists them: the part's
-        // parameters first, then the sketch and what it is drawn on.
+        // Offered group by group, as the editor lists them: the sketch and
+        // what it is drawn on first, the part's parameters after its shape.
         infos.sort_by_key(|listed| (listed.info.group, listed.info.tier));
         let kinds: Vec<&str> = infos.iter().map(|i| i.kind).collect();
-        assert_eq!(kinds[0], "parameters");
-        assert_eq!(kinds[3], "add_sketch");
-        assert_eq!(infos[3].info.label, "Sketch");
-        assert_eq!(kinds[4], "add_datum");
+        assert_eq!(kinds[0], "add_sketch");
+        assert_eq!(infos[0].info.label, "Sketch");
+        assert_eq!(kinds[1], "add_datum");
+        let parameters = kinds.iter().position(|&k| k == "parameters").unwrap();
+        let flange = kinds.iter().position(|&k| k == "base_flange").unwrap();
+        assert!(flange < parameters, "{kinds:?}");
         let extrude = infos.iter().find(|i| i.kind == "extrude").unwrap();
         assert!(
             extrude.info.doc.starts_with("Sweep a sketch"),
@@ -351,15 +353,15 @@ mod editor {
                 "drawing",
             ]
         );
-        // The part's own parameters, tables and properties come first,
-        // small buttons, so the ribbon's Part section is not empty.
+        // The sketch comes first; the part's own parameters, tables and
+        // properties after its shape, small buttons.
         let json = serde_json::to_value(&operations[0]).unwrap();
-        assert_eq!(json["group"], "Part");
-        assert_eq!(json["tier"], "Small");
-        let sketch = operations.iter().find(|o| o.kind == "add_sketch").unwrap();
-        let json = serde_json::to_value(sketch).unwrap();
         assert_eq!(json["group"], "Sketch");
         assert_eq!(json["tier"], "Big");
+        let parameters = operations.iter().find(|o| o.kind == "parameters").unwrap();
+        let json = serde_json::to_value(parameters).unwrap();
+        assert_eq!(json["group"], "Part");
+        assert_eq!(json["tier"], "Small");
         let mirror = operations.iter().find(|o| o.kind == "mirror").unwrap();
         assert_eq!(
             serde_json::to_value(mirror).unwrap()["group"],
@@ -551,7 +553,7 @@ mod examples {
         interference::bounding_box,
         mass::{MassSummary, mass_report},
     };
-    use geop_ops_model::placed::solids::placed_solids;
+    use geop_ops_model::placed::solids::{Shapes, placed_solids};
     use geop_ops_model::{BooleanOp, NamedModel, Namer, RefId};
 
     use super::Built;
@@ -781,8 +783,17 @@ mod examples {
 
     /// The checks every solid's mass properties pass: converged, a positive
     /// volume, a symmetric inertia tensor whose principal moments are positive
-    /// and satisfy the triangle inequality, as every body's do.
-    fn check_mass(name: &str, summary: &MassSummary, failures: &mut Vec<String>) {
+    /// and satisfy the triangle inequality, as every body's do — the tensor
+    /// `inertia` of its shape (of density one) and its `principal` moments,
+    /// which it has whatever its material.
+    #[allow(clippy::needless_range_loop, reason = "a tensor against its transpose")]
+    fn check_mass(
+        name: &str,
+        summary: &MassSummary,
+        inertia: [[Scalar; 3]; 3],
+        principal: super::GeopResult<[Scalar; 3]>,
+        failures: &mut Vec<String>,
+    ) {
         let mut fail = |why: String| failures.push(format!("{name}: {why}"));
         if !summary.converged {
             fail("did not converge".into());
@@ -792,13 +803,18 @@ mod examples {
         }
         for a in 0..3 {
             for b in 0..3 {
-                let (x, y) = (summary.inertia[a][b], summary.inertia[b][a]);
+                let (x, y) = (inertia[a][b], inertia[b][a]);
+                let (x, y) = (Bounded::of(x), Bounded::of(y));
                 if (x.value - y.value).abs() > x.error + y.error {
                     fail(format!("I[{a}][{b}] = {x:?} but I[{b}][{a}] = {y:?}"));
                 }
             }
         }
-        let [i1, i2, i3] = summary.principal_moments;
+        let principal = match principal {
+            Ok(principal) => principal,
+            Err(e) => return fail(format!("no principal moments: {e}")),
+        };
+        let [i1, i2, i3] = principal.map(Bounded::of);
         if i1.value - i1.error <= 0.0 {
             fail(format!("a principal moment {i1:?} is not positive"));
         }
@@ -818,13 +834,16 @@ mod examples {
             let part = program.built().unwrap();
             let reader = part.current();
             let report = mass_report(&reader).unwrap();
+            let mut shapes = Shapes::default();
             for (body, placed) in report.bodies.iter().zip(placed_solids(&reader).unwrap()) {
                 let name = format!("{example}/{}", body.name);
                 let Some(summary) = &body.properties else {
                     failures.push(format!("{name}: {:?}", body.error));
                     continue;
                 };
-                check_mass(&name, summary, &mut failures);
+                let shape = placed.shape_properties(&mut shapes).unwrap();
+                let principal = shape.principal().map(|p| p.moments);
+                check_mass(&name, summary, shape.inertia, principal, &mut failures);
                 // The part of its box below a plane across x, a little beyond
                 // it elsewhere. Not through the centre of mass: of a symmetric
                 // part, that is where its circles' seams are, and a cut placed

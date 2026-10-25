@@ -231,7 +231,7 @@ export function SceneViewer({
     const placed = new PlacedLayer();
     placedRef.current = placed;
 
-    const renderer = new THREE.WebGLRenderer({ antialias: true, stencil: true });
+    const renderer = new THREE.WebGLRenderer({ antialias: true, stencil: true, alpha: true });
     renderer.localClippingEnabled = true;
     renderer.setPixelRatio(window.devicePixelRatio);
     container.appendChild(renderer.domElement);
@@ -242,7 +242,8 @@ export function SceneViewer({
     container.appendChild(labelRenderer.domElement);
 
     const threeScene = new THREE.Scene();
-    threeScene.background = new THREE.Color(0x1a1a1a);
+    // Transparent: the viewport's backdrop shows through (see `.viewport`).
+    threeScene.background = null;
     sceneRef.current = threeScene;
 
     const perspective = new THREE.PerspectiveCamera(CAMERA_FOV, 1, 0.01, 1000);
@@ -280,10 +281,15 @@ export function SceneViewer({
       up: arr(camera.up),
     });
 
-    threeScene.add(new THREE.AmbientLight(0xffffff, 0.6));
-    const dirLight = new THREE.DirectionalLight(0xffffff, 0.8);
-    dirLight.position.set(5, 8, 6);
-    threeScene.add(dirLight);
+    // A studio rig: sky over ground, a key light and a softer fill from the
+    // other side, so a face turned away from the key still reads.
+    threeScene.add(new THREE.HemisphereLight(0xf2f5ff, 0x30343c, 0.9));
+    const keyLight = new THREE.DirectionalLight(0xffffff, 1.1);
+    keyLight.position.set(5, 8, 6);
+    threeScene.add(keyLight);
+    const fillLight = new THREE.DirectionalLight(0xdfe8ff, 0.45);
+    fillLight.position.set(-6, -2, -5);
+    threeScene.add(fillLight);
     const datumLayer = new DatumLayer();
     threeScene.add(datumLayer.group);
     threeScene.add(placed.group);

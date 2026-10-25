@@ -34,6 +34,7 @@ use geop_ops_extrude_revolve::{
     examples::{box_with_drill_hole, parametric_plate},
 };
 use geop_ops_model::datums::{datum, origin_plane};
+use geop_ops_model::parameters::{Material, Parameters, set_parameters};
 use geop_ops_model::selection::Selected;
 use geop_ops_model::sketch::{
     Sketch, SketchPlane,
@@ -155,10 +156,17 @@ fn link_sketch(length: f64) -> (Sketch, [CurveId; 2]) {
     (solved(sketch), [near, far])
 }
 
-/// A bar: [`link_sketch`] `length` long, extruded 0.2 up, to be linked by
-/// its holes.
+/// A bar of aluminium: [`link_sketch`] `length` long, extruded 0.2 up, to
+/// be linked by its holes.
 pub fn bar(length: f64) -> Program {
     let mut program = Program::new();
+    set_parameters(
+        &mut program,
+        Parameters {
+            material: Material::named("Aluminium 6061"),
+            ..Parameters::default()
+        },
+    );
     program.push(
         "link_sketch",
         AddSketchArgs::on(on_origin(FrameAxis::Z), link_sketch(length).0),

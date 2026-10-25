@@ -106,13 +106,11 @@ pub struct Listed {
 }
 
 /// What an operation works on, as an editor groups its operations: the
-/// toolbar's sections, in this order — the order of a part's workflow.
+/// toolbar's sections, in this order — the order of a part's workflow,
+/// the part's own properties after its shape.
 /// Serialized as the group's name, as it is shown.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize)]
 pub enum OperationGroup {
-    /// What a part is besides its shape: its parameters, and what it is
-    /// called, made of and coloured.
-    Part,
     /// Sketches, and the reference geometry they are drawn on.
     Sketch,
     /// What makes a solid of a sketch: extrusions, revolutions, sweeps and
@@ -128,6 +126,9 @@ pub enum OperationGroup {
     /// Bodies of bent sheet, and their flat patterns.
     #[serde(rename = "Sheet metal")]
     SheetMetal,
+    /// What a part is besides its shape: its parameters, and what it is
+    /// called, made of and coloured.
+    Part,
     /// Placed parts, and what runs between them.
     Assembly,
     /// What is made of a part rather than in it: drawings, exports.

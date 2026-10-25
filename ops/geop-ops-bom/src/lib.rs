@@ -151,15 +151,11 @@ fn shown(line: &Line) -> Row {
             file,
             parameters,
             material,
-            assumed,
             thickness,
             unit_mass,
             total_mass,
             error,
         } => {
-            if *assumed {
-                name.push(format!("{indent}no material"));
-            }
             let thickness = (!thickness.is_empty()).then(|| {
                 let each: Vec<String> = thickness.iter().map(f64::to_string).collect();
                 format!("sheet {} mm", each.join(", "))
@@ -167,9 +163,9 @@ fn shown(line: &Line) -> Row {
             let detail = [
                 Some(file.clone()),
                 Some(parameters.clone()),
-                Some(match assumed {
-                    true => "No material given: weighed as water".into(),
-                    false => material.clone(),
+                Some(match material {
+                    Some(material) => material.clone(),
+                    None => "No material: set one under Properties to get its mass".into(),
                 }),
                 thickness,
                 unit_mass.map(|m| format!("{} each", m.show_mass())),
@@ -180,7 +176,12 @@ fn shown(line: &Line) -> Row {
             .filter(|s| !s.is_empty())
             .collect::<Vec<_>>()
             .join("\n");
-            let total = total_mass.map_or("?".into(), |m| m.show_mass());
+            // No mass and no error: a part of no material, or with one in it.
+            let total = match (total_mass, error) {
+                (Some(m), _) => m.show_mass(),
+                (None, Some(_)) => "?".into(),
+                (None, None) => "—".into(),
+            };
             let tone = match error {
                 Some(_) => Tone::Error,
                 None => Tone::Normal,

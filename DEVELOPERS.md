@@ -34,7 +34,7 @@ apart (see Scripts).
 | `lib/geop-lib-fixtures` | test-only steps a program can hold: `Primitive` (a block, prism, cylinder or sphere at given coordinates, kept or combined) and `GivenDatum`; the stress sweeps' bodies; a dev-dependency only |
 | `lib/geop-lib-stdlib` | the standard parts, one program per family, and `WithStandardParts`, the `FileStore` that puts them beside a workspace's files |
 | `lib/geop-lib-constraints` | the constraints and unknowns of a part's state, and the solver over them |
-| `ops/geop-ops-model` | the vocabulary every operation shares, the one `ops/` crate an operation depends on: the model target (topology with stable names, features, element kinds, threads, solid notes, `Combine`, `Extent`), the sketch and 3-D sketch targets and the references into them, the datums, a part's parameters and properties (their steps and panel), what is picked (`Selected`, `MateEntity`), placed parts with their solids and bill of materials, `Spacing`; their drawers |
+| `ops/geop-ops-model` | the vocabulary every operation shares, the one `ops/` crate an operation depends on: the model target (topology with stable names, features, element kinds, threads, solid notes, `Combine`, `Extent`), the sketch and 3-D sketch targets and the references into them, the datums, a part's parameters and properties (their steps), what is picked (`Selected`, `MateEntity`), placed parts with their solids and bill of materials, `Spacing`; their drawers |
 | `ops/geop-ops-sketch` | the sketch operation, its tools, snapping and references |
 | `ops/geop-ops-sketch3d` | the 3-D sketch operation: wires in space, paths and rails |
 | `ops/geop-ops-reference-geometry` | the datum operation: points, axes, planes and frames from what is picked |

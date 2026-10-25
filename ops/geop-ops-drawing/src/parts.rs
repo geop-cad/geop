@@ -26,7 +26,7 @@ pub fn parts_list(
             name: line.name,
             designation: line.designation.unwrap_or_default(),
             material: match line.kind {
-                LineKind::Part { material, .. } => material,
+                LineKind::Part { material, .. } => material.unwrap_or_default(),
                 LineKind::Wire { colour, .. } => format!("wire, {colour}"),
             },
             placements: line.placements,

@@ -99,7 +99,7 @@ fn tools() -> Value {
             json!({}), &[]),
         tool("list_elements", "The names of the part's elements as they are now, for typed references: solids, faces (with their solid), edges (with their faces), vertices, sketches, datums and what else the part lists (threads, placed parts). A face is referred to by its name, as a sketch's plane {\"face\": ...}; an edge by its name, as in a fillet's `edges`.",
             json!({}), &[]),
-        tool("inspect", "Ask about the part: `mass_properties` (volume, area, mass, centre of mass, inertia of every solid), `interference` (which solids overlap), or `measure` with `elements` (a point, a length, an area, a radius; the distance and angle between two).",
+        tool("inspect", "Ask about the part: `mass_properties` (volume, area and centroid of every solid; its mass and inertia if its part has a material, null if not), `interference` (which solids overlap), or `measure` with `elements` (a point, a length, an area, a radius; the distance and angle between two).",
             json!({ "inspector": { "type": "string", "enum": ["mass_properties", "interference", "measure"] }, "elements": { "type": "array", "description": "For `measure`: one or two elements, each {\"kind\": \"vertex\"|\"edge\"|\"face\"|\"datum\", \"name\": ...}.", "items": { "type": "object", "properties": { "kind": string("vertex, edge, face or datum"), "name": string("Its name, from list_elements") }, "required": ["kind", "name"] } } }),
             &["inspector"]),
         tool("export", "Write what the program builds to `path`, in the format its extension names unless `format` says otherwise: stl, step, svg or dxf (drawings and flat patterns), csv (bill of materials), zip (URDF).",

@@ -200,14 +200,13 @@ fn a_flat_bill_groups_repeated_parts() {
     let LineKind::Part {
         parameters,
         material,
-        assumed,
         ..
     } = &bom.line("2").unwrap().kind
     else {
         panic!()
     };
     assert_eq!(parameters, "size=M4");
-    assert_eq!((material.as_str(), *assumed), ("Steel", false));
+    assert_eq!(material.as_deref(), Some("Steel"));
 
     let (unit, total) = masses(&bom, "1");
     assert_close(unit, 8.0 * CUBE);
@@ -246,8 +245,9 @@ fn an_indented_bill_follows_the_sub_assemblies() {
 }
 
 /// A part that places nothing is its own bill: one line, named after its
-/// file, of no given material — weighed as water, and said so — with the
-/// thickness recorded on its sheet-metal body.
+/// file, of no given material — so of no mass, and no error — with the
+/// thickness recorded on its sheet-metal body; no total, and the CSV's
+/// material and mass cells empty.
 #[test]
 fn a_plain_part_is_one_line_with_its_sheet_thickness() {
     let mut model = NamedModel::new();
@@ -263,14 +263,23 @@ fn a_plain_part_is_one_line_with_its_sheet_thickness() {
         let line = &bom.lines[0];
         assert_eq!((line.item.as_str(), line.name.as_str()), ("1", "cover"));
         let LineKind::Part {
-            thickness, assumed, ..
+            thickness,
+            material,
+            unit_mass,
+            total_mass,
+            error,
+            ..
         } = &line.kind
         else {
             panic!()
         };
         assert_eq!(thickness, &[1.5]);
-        assert!(assumed);
-        assert_close(masses(&bom, "1").0, 1e-6);
+        assert_eq!((material, unit_mass, total_mass), (&None, &None, &None));
+        assert!(error.is_none(), "{error:?}");
+        assert!(bom.total_mass.is_none());
+        let csv = bom.to_csv();
+        let row: Vec<&str> = csv.lines().nth(1).unwrap().split(',').collect();
+        assert_eq!(&row[7..11], ["", "1.5", "", ""], "{csv}");
     }
 }
 
@@ -407,13 +416,13 @@ fn rows(bom: &Bom) -> Vec<(&str, usize, u64, &str, Option<&str>)> {
         .collect()
 }
 
-/// The material, and the unit and total mass (kg), of a part line.
+/// The material, and the unit and total mass (kg), of a part line: none
+/// of no material.
 #[track_caller]
-fn weighed(bom: &Bom, item: &str) -> (String, bool, f64, f64) {
+fn weighed(bom: &Bom, item: &str) -> (Option<String>, Option<f64>, Option<f64>) {
     let line = bom.line(item).unwrap();
     let LineKind::Part {
         material,
-        assumed,
         unit_mass,
         total_mass,
         error,
@@ -425,15 +434,14 @@ fn weighed(bom: &Bom, item: &str) -> (String, bool, f64, f64) {
     assert!(error.is_none(), "{line:?}");
     (
         material.clone(),
-        *assumed,
-        unit_mass.unwrap().value,
-        total_mass.unwrap().value,
+        unit_mass.map(|m| m.value),
+        total_mass.map(|m| m.value),
     )
 }
 
-/// The bolted plate: one plate — of no given material, weighed as water —
+/// The bolted plate: one plate — of no given material, so of no mass —
 /// one ISO 4762 M4x12 screw and one ISO 4032 M4 nut, both steel, weighing
-/// what steel of their volume does.
+/// what steel of their volume does; no total, since the plate has none.
 #[test]
 fn the_bolted_plate_lists_its_screw_and_nut() {
     let (_, files) = workspaces()
@@ -463,19 +471,16 @@ fn the_bolted_plate_lists_its_screw_and_nut() {
         ],
         "{bom:#?}"
     );
-    // The plate: 40 x 40 x 5 with a hole 4.5 across, of water.
-    let (_, assumed, plate, _) = weighed(&bom, "1");
-    assert!(assumed);
-    let volume = 40.0 * 40.0 * 5.0 - std::f64::consts::PI * 2.25 * 2.25 * 5.0;
-    assert!((plate - volume * 1e-6).abs() < 1e-6 * plate, "{plate}");
+    // The plate: of no material.
+    assert_eq!(weighed(&bom, "1"), (None, None, None));
     // An M4x12 cap screw of steel weighs a couple of grams, its nut one.
-    let (material, assumed, screw, _) = weighed(&bom, "2");
-    assert_eq!((material.as_str(), assumed), ("Steel", false));
+    let (material, screw, _) = weighed(&bom, "2");
+    assert_eq!(material.as_deref(), Some("Steel"));
+    let screw = screw.unwrap();
     assert!((1e-3..3e-3).contains(&screw), "{screw} kg");
-    let (_, _, nut, _) = weighed(&bom, "3");
+    let nut = weighed(&bom, "3").1.unwrap();
     assert!((0.5e-3..1.5e-3).contains(&nut), "{nut} kg");
-    let total = bom.total_mass.unwrap().value;
-    assert!((total - (plate + screw + nut)).abs() < 1e-9, "{total}");
+    assert!(bom.total_mass.is_none(), "{bom:#?}");
 }
 
 /// Places `file`, sized `size`, as `id`, at `x` — free: it has no mates.
@@ -537,8 +542,16 @@ fn repeated_standard_parts_are_grouped() {
     placed(&mut robot, "extra0", SCREW, Some("M3x10"), -10.0);
     placed(&mut robot, "extra1", SCREW, Some("M3x10"), -20.0);
     placed(&mut robot, "long", SCREW, Some("M3x12"), -30.0);
-    // The plate: a 40 x 40 x 5 block.
+    // The plate: a 40 x 40 x 5 block of aluminium.
     let mut plate = Program::new();
+    let material = Material::named("Aluminium 6061");
+    set_parameters(
+        &mut plate,
+        Parameters {
+            material,
+            ..Parameters::default()
+        },
+    );
     plate.push(
         "plate",
         PrimitiveArgs::block([0.0, 0.0, 0.0], [40.0, 40.0, 5.0]),
@@ -562,7 +575,8 @@ fn repeated_standard_parts_are_grouped() {
         ],
         "{flat:#?}"
     );
-    let (_, _, unit, total) = weighed(&flat, "2");
+    let (_, unit, total) = weighed(&flat, "2");
+    let (unit, total) = (unit.unwrap(), total.unwrap());
     assert!(
         (total - 14.0 * unit).abs() < 1e-12,
         "{unit} x 14 is not {total}"
@@ -583,10 +597,10 @@ fn repeated_standard_parts_are_grouped() {
     );
     // A module weighs its plate, screws and nuts; the whole weighs the
     // same either way it is listed.
-    let (_, _, module_mass, _) = weighed(&indented, "1");
+    let module_mass = weighed(&indented, "1").1.unwrap();
     let parts: f64 = ["1.1", "1.2", "1.3"]
         .iter()
-        .map(|item| weighed(&indented, item).3)
+        .map(|item| weighed(&indented, item).2.unwrap())
         .sum();
     assert!(
         (module_mass - parts).abs() < 1e-12,
@@ -671,7 +685,10 @@ fn the_bill_of_materials_is_asked_for_and_exported() {
     );
     assert_eq!(screw["material"], "Steel");
     assert!(screw["unit_mass"]["value"].as_f64().unwrap() > 0.0);
-    assert!(bom["total_mass"]["value"].as_f64().unwrap() > 0.0);
+    // The plate has no material, so neither it nor the whole has a mass.
+    assert!(bom["lines"][0]["material"].is_null(), "{bom}");
+    assert!(bom["lines"][0]["unit_mass"].is_null(), "{bom}");
+    assert!(bom["total_mass"].is_null(), "{bom}");
 
     // Up to the screw: no nut yet.
     editor.handle(Command::Seek { marker: Some(2) });

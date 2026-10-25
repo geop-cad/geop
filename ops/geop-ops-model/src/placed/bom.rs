@@ -20,8 +20,8 @@
 //! part's designation (`ISO 4762 M4x12`, see [`designation`]), its
 //! material, the thickness of its sheet-metal bodies, and its mass: per
 //! piece and for the quantity, from the exact geometry of its bodies and
-//! its own material (see [`super::solids`]). A part of no given material is
-//! weighed as water, and its line says so.
+//! its own material (see [`super::solids`]). A part of no given material
+//! has none, and no mass; nor has an assembly with such a part in it.
 //!
 //! **Wires.** The wires noted on a solid (see [`crate::SolidNote::wires`])
 //! — a routed harness' — are ordered: each is a line of its own under the
@@ -76,15 +76,15 @@ pub enum LineKind {
         file: String,
         /// The values of the parameters it defines, as built: `size=M4x12`.
         parameters: String,
-        material: String,
-        /// Whether no material was given, and it is weighed as water.
-        assumed: bool,
+        /// What it is made of: none for a part of no given material.
+        material: Option<String>,
         /// The thickness of each sheet-metal body of its own (mm), each
         /// thickness once.
         thickness: Vec<f64>,
         /// The mass of one (kg): its own bodies' — and, in an indented
-        /// bill, a sub-assembly's of all of it. `None` if it could not be
-        /// computed: `error` says why.
+        /// bill, a sub-assembly's of all of it. `None` for a part with no
+        /// material, or with a part of none in it, and if it could not be
+        /// computed: then `error` says why.
         unit_mass: Option<Bounded>,
         /// `unit_mass` times the quantity (kg).
         total_mass: Option<Bounded>,
@@ -137,8 +137,9 @@ pub struct Line {
 pub struct Bom {
     pub structure: Structure,
     pub lines: Vec<Line>,
-    /// The mass of everything listed (kg) — if every line's could be
-    /// computed: a total missing a part would mislead.
+    /// The mass of everything listed (kg) — if every part has a material
+    /// and every line's mass could be computed: a total missing a part
+    /// would mislead.
     pub total_mass: Option<Bounded>,
 }
 
@@ -169,14 +170,13 @@ struct Info {
     file: String,
     parameters: String,
     designation: Option<String>,
-    material: String,
-    assumed: bool,
+    material: Option<String>,
     thickness: Vec<f64>,
     /// Whether it has bodies of its own — what makes a part something to
     /// make or buy, rather than only an assembly of others.
     own_bodies: bool,
     /// The mass of its own bodies, or why it could not be computed.
-    own_mass: Result<Scalar, String>,
+    own_mass: Weighed,
 }
 
 /// The parts placed in a part, grouped: one per kind of part, in the order
@@ -241,7 +241,7 @@ struct Builder {
     infos: HashMap<String, Info>,
     /// The mass of all of a part — its own bodies and those of the parts
     /// placed in it — by key.
-    whole: HashMap<String, Result<Scalar, String>>,
+    whole: HashMap<String, Weighed>,
     shapes: Shapes,
 }
 
@@ -260,28 +260,24 @@ impl Builder {
 
     fn work_out(&mut self, reader: &Reader, file: &str) -> GeopResult<Info> {
         let properties = read_properties(reader)?;
-        let material = properties.material();
+        let material = properties.material().map(|m| m.name.clone());
         let bodies = own_solids(reader)?;
         let mut thickness: Vec<f64> = bodies.iter().filter_map(|s| s.thickness()).collect();
         thickness.sort_by(f64::total_cmp);
         thickness.dedup();
-        let mut own_mass = Ok(Scalar::ZERO);
+        let mut own_mass = Ok(Some(Scalar::ZERO));
         for solid in &bodies {
-            own_mass =
-                own_mass.and_then(
-                    |sum: Scalar| match solid.mass_properties(&mut self.shapes) {
-                        Ok(p) => Ok(sum.add(p.mass)),
-                        Err(e) => Err(format!("the mass of {}: {e}", solid.name)),
-                    },
-                );
+            let mass = (solid.mass_properties(&mut self.shapes))
+                .map(|p| p.map(|p| p.mass))
+                .map_err(|e| format!("the mass of {}: {e}", solid.name));
+            own_mass = add(own_mass, mass);
         }
         Ok(Info {
             name: properties.name(stem(file)).to_string(),
             file: file.to_string(),
             parameters: parameters(reader)?,
             designation: properties.designation.clone(),
-            material: material.name,
-            assumed: material.assumed,
+            material,
             thickness,
             own_bodies: !bodies.is_empty(),
             own_mass,
@@ -290,19 +286,15 @@ impl Builder {
 
     /// The mass of all of the part `key`, which `reader` reads, placed from
     /// `file`: its own bodies, and every part placed in it.
-    fn whole_mass(
-        &mut self,
-        key: &str,
-        reader: &Reader,
-        file: &str,
-    ) -> GeopResult<Result<Scalar, String>> {
+    fn whole_mass(&mut self, key: &str, reader: &Reader, file: &str) -> GeopResult<Weighed> {
         if let Some(mass) = self.whole.get(key) {
             return Ok(mass.clone());
         }
         let mut mass = self.info(key, reader, file)?.own_mass.clone();
         for group in groups(reader)? {
             let placed = self.whole_mass(&group.key, &group.reader, &group.file)?;
-            mass = mass.and_then(|m| Ok(m.add(times(group.count(), placed?))));
+            let placed = placed.map(|p| p.map(|p| times(group.count(), p)));
+            mass = add(mass, placed);
         }
         self.whole.insert(key.to_string(), mass.clone());
         Ok(mass)
@@ -315,16 +307,17 @@ impl Builder {
         key: &str,
         level: usize,
         placements: Vec<String>,
-        unit_mass: &Result<Scalar, String>,
+        unit_mass: &Weighed,
     ) -> Line {
         let quantity = placements.len() as u64;
         let info = &self.infos[key];
         let (unit, total, error) = match unit_mass {
-            Ok(m) => (
+            Ok(Some(m)) => (
                 Some(Bounded::of(*m)),
                 Some(Bounded::of(times(quantity, *m))),
                 None,
             ),
+            Ok(None) => (None, None, None),
             Err(e) => (None, None, Some(e.clone())),
         };
         Line {
@@ -337,7 +330,6 @@ impl Builder {
                 file: info.file.clone(),
                 parameters: info.parameters.clone(),
                 material: info.material.clone(),
-                assumed: info.assumed,
                 thickness: info.thickness.clone(),
                 unit_mass: unit,
                 total_mass: total,
@@ -422,6 +414,16 @@ impl Builder {
         }
         Ok(())
     }
+}
+
+/// A mass (kg): none where a part has no material, or why it could not be
+/// computed.
+type Weighed = Result<Option<Scalar>, String>;
+
+/// The mass of two things together: none if either has none, and the
+/// first reason one could not be computed.
+fn add(a: Weighed, b: Weighed) -> Weighed {
+    Ok(a?.zip(b?).map(|(a, b)| a.add(b)))
 }
 
 /// `n` times `m`.
@@ -523,6 +525,7 @@ pub fn bom(reader: &Reader, file: &str, structure: Structure) -> GeopResult<Bom>
     let total_mass = builder
         .whole_mass(&root, reader, file)?
         .ok()
+        .flatten()
         .map(Bounded::of);
     Ok(Bom {
         structure,
@@ -568,7 +571,6 @@ impl Bom {
                     file,
                     parameters,
                     material,
-                    assumed,
                     thickness,
                     unit_mass,
                     total_mass,
@@ -577,10 +579,7 @@ impl Bom {
                 } => row.extend([
                     file.clone(),
                     parameters.clone(),
-                    match assumed {
-                        true => format!("{material} (assumed)"),
-                        false => material.clone(),
-                    },
+                    material.clone().unwrap_or_default(),
                     thickness
                         .iter()
                         .map(|t| t.to_string())

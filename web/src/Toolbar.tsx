@@ -5,6 +5,8 @@ import { acceptedFiles } from "./files";
 import { Icon } from "./icons";
 import { Menu, type MenuEntry } from "./Menu";
 import { Privacy } from "./Privacy";
+import { title } from "./examples";
+import logo from "./assets/logo.svg";
 
 interface Props {
   busy: boolean;
@@ -48,12 +50,6 @@ interface Props {
   reducedMode: boolean;
   onReducedMode: (on: boolean) => void;
   onBugReportClose: () => void;
-}
-
-/** `name`, as an example is offered: `box_with_drill_hole` reads "Box with drill hole". */
-function title(name: string): string {
-  const words = name.replace(/_/g, " ");
-  return words.charAt(0).toUpperCase() + words.slice(1);
 }
 
 /**
@@ -160,7 +156,10 @@ export function Toolbar({
 
   return (
     <header className="toolbar">
-      <span className="brand">geop</span>
+      <span className="brand">
+        <img src={logo} alt="" width={20} height={20} />
+        geop
+      </span>
       <Menu label="File" entries={file} disabled={busy} className="file-menu" />
       <input
         ref={fileInput}
@@ -199,6 +198,17 @@ export function Toolbar({
           <span className="stats-separator"> · </span>
           <span>{triangleCount} tris</span>
         </span>
+      )}
+      {!hosted && (
+        <a
+          className="star-link desktop-only"
+          href="https://github.com/geop-cad/geop"
+          target="_blank"
+          rel="noopener"
+          title="geop is open source: star it on GitHub"
+        >
+          <span aria-hidden="true">★</span> Star on GitHub
+        </a>
       )}
       {help.length > 0 && (
         <Menu label={<Icon name="help" />} title="Help" entries={help} align="right" className="help-menu" arrow={false} />

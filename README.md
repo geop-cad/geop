@@ -1,19 +1,43 @@
+<div align="center">
+
+<img src="homepage/favicon.svg" alt="geop" width="72" height="72" />
+
 # geop
 
-**Parametric CAD for designing real machines: an exact, interval-arithmetic NURBS kernel in Rust, driving parts and assemblies written as programs with typed references.**
+**Open-source parametric CAD for designing real machines, on an exact interval-arithmetic NURBS kernel in Rust.**
+
+<a href="https://app.geop-cad.dev"><img alt="Try it in your browser: app.geop-cad.dev" src="https://img.shields.io/badge/%E2%96%B6%20Try%20it%20in%20your%20browser-app.geop--cad.dev-2d6ca6?style=for-the-badge" /></a>
+<a href="docs/mcp.md"><img alt="Use with Claude Code (MCP)" src="https://img.shields.io/badge/Use%20with%20Claude%20Code-MCP-18181b?style=for-the-badge" /></a>
+<a href="vscode-extension/README.md"><img alt="VS Code extension" src="https://img.shields.io/badge/VS%20Code-extension-0f7bc4?style=for-the-badge" /></a>
 
 [![CI](https://github.com/geop-cad/geop/actions/workflows/ci.yml/badge.svg)](https://github.com/geop-cad/geop/actions/workflows/ci.yml)
 [![License: MIT OR Apache-2.0](https://img.shields.io/badge/license-MIT%20OR%20Apache--2.0-blue.svg)](#license)
 [![Discord](https://img.shields.io/badge/Discord-join%20the%20chat-5865F2?logo=discord&logoColor=white)](https://discord.gg/btRDgrcwJ5)
-[![Web app](https://img.shields.io/badge/app.geop--cad.dev-open%20in%20the%20browser-0a7d5c)](https://app.geop-cad.dev)
+[![GitHub stars](https://img.shields.io/github/stars/geop-cad/geop?style=social)](https://github.com/geop-cad/geop/stargazers)
+
+[Web app](https://app.geop-cad.dev) · [Website](https://geop-cad.dev) · [Book](https://book.geop-cad.dev) · [API docs](https://docs.geop-cad.dev) · [Roadmap](ROADMAP.md) · [Discord](https://discord.gg/btRDgrcwJ5)
+
+**322 of 361** public STEP corpus files import valid · a drag in a **2000-part** assembly in about **0.25 s** · **no epsilon** decides an answer
+
+<sub>If geop looks useful, a ⭐ on GitHub helps other engineers find it.</sub>
 
 ![A part sketched, extruded and filleted in the geop web app, then rebuilt with a new distance](docs/demo.gif)
 
 *New part, a rectangle sketched by clicks, extruded, an edge filleted, and the extrusion's distance changed: the fillet follows.*
 
+</div>
+
+## Why geop
+
+- **An exact kernel.** Bodies are NURBS solids, and every number is an interval: comparisons are three-valued, searches subdivide to isolate and Newton to refine, and no epsilon decides an answer.
+- **Parts are programs.** A part is an ordered list of steps that refer to what earlier steps built by stable names (`extrude(box,end)`), never by a kernel id, so it rebuilds name for name.
+- **One editor, everywhere.** The web app, the VS Code extension, the `geop` CLI and an MCP server for AI agents all drive the same headless editor over one JSON protocol.
+- **Built for real machines.** Sketches, features, surfacing, sheet metal, assemblies with joints, drawings, STEP and URDF, scoped by what an engineer needs to design a robot.
+- **Open.** Dual-licensed MIT or Apache-2.0.
+
 ## Try it
 
-- **In the browser:** [app.geop-cad.dev](https://app.geop-cad.dev). Nothing to install; files stay in your browser.
+- **In the browser:** [app.geop-cad.dev](https://app.geop-cad.dev). Nothing to install; files stay in your browser. Or open an example straight away: [turbine blade](https://app.geop-cad.dev/?example=turbine_blade), [flange](https://app.geop-cad.dev/?example=cool_flange), [press assembly](https://app.geop-cad.dev/?example=press), [edge part](https://app.geop-cad.dev/?example=edge_part).
 - **On the command line:**
   ```sh
   cargo install --path cad/geop-cad-cli
@@ -27,17 +51,55 @@
   Then ask for a part: the agent sketches, extrudes, fillets, inspects and exports through the same editor the web app runs. See [docs/mcp.md](docs/mcp.md).
 - **In VS Code:** the extension in [`vscode-extension/`](vscode-extension/README.md) opens any `.geop` file as the editor, with the kernel running natively.
 
+## Coming from Fusion 360 or Onshape?
+
+The concepts map closely; what differs is that the history is a file you can read, diff and generate.
+
+| You know | In geop |
+|---|---|
+| Feature tree / timeline | The program: an ordered list of steps, each an operation with its arguments |
+| Rolling back the timeline | Seeking back on the program's steps |
+| Persistent face and edge references | Stable names such as `extrude(box,end)`, never kernel ids |
+| User parameters | Parameters, with operation dimensions as formulas of them |
+| Inserting a part into an assembly | `add_part` places another `.geop` file; mates and joints place it |
+| Constrained sketches | 2-D sketches with redundant constraints proven and conflicts named |
+
+<sub>Fusion 360 is a trademark of Autodesk, Inc.; Onshape is a trademark of PTC Inc. geop is not affiliated with either.</sub>
+
 ## What works
 
 Taken from [ROADMAP.md](ROADMAP.md), which also says what is next.
 
-- **Sketching:** 2-D constraint sketches with slots, polygons, fillets, offsets, mirrors and patterns, redundant constraints proven and conflicts named; 3-D sketches as wires; exact helices.
-- **Part features:** extrude, revolve, sweep (with rails and twist) and loft; holes from ISO tables, cosmetic and modelled threads; rolling-ball fillets on any edge with variable radius and rounded corners, chamfers; shell, rib, lip and groove, draft; linear and circular patterns and mirrors of bodies and features; parameters as formulas.
-- **Surfacing:** ruled, boundary, N-sided and Gordon (UV) surfaces, offset, thicken, knit, trim and extend; Catmull–Clark subdivision surfaces converted to valid NURBS solids.
-- **Sheet metal:** base and edge flanges, hems, corners, cuts across bends, exact flat patterns as DXF.
-- **Assemblies:** multi-file assemblies placed by mates; revolute, slider, cylindrical and fastened joints with limits, gear, rack-and-pinion and screw couplings; standard parts (ISO fasteners, bearings, extrusions, steppers, gears, pulleys, rails, servos); wire harnesses with bend radii and cut lengths; a drag in 2000 parts in about 0.25 s.
-- **Inspection and output:** measure, mass properties from the exact B-rep, interference, section views; bills of materials; drawings with hidden lines, sections, dimensions and balloons as SVG and DXF; STEP AP214 import and export (322 of 361 public corpus files import valid); URDF for robot simulators; STL.
-- **Front ends:** the web app, the VS Code extension, the `geop` CLI and the MCP server all drive one headless editor over one JSON protocol.
+**Sketching**
+- 2-D constraint sketches with slots, polygons, fillets, offsets, mirrors and patterns; redundant constraints proven and conflicts named.
+- 3-D sketches as wires; exact helices.
+
+**Part features**
+- Extrude, revolve, sweep (with rails and twist) and loft; parameters as formulas.
+- Holes from ISO tables, cosmetic and modelled threads.
+- Rolling-ball fillets on any edge with variable radius and rounded corners; chamfers.
+- Shell, rib, lip and groove, draft; linear and circular patterns and mirrors of bodies and features.
+
+**Surfacing**
+- Ruled, boundary, N-sided and Gordon (UV) surfaces; offset, thicken, knit, trim and extend.
+- Catmull–Clark subdivision surfaces converted to valid NURBS solids.
+
+**Sheet metal**
+- Base and edge flanges, hems, corners, cuts across bends; exact flat patterns as DXF.
+
+**Assemblies**
+- Multi-file assemblies placed by mates; revolute, slider, cylindrical and fastened joints with limits; gear, rack-and-pinion and screw couplings.
+- Standard parts: ISO fasteners, bearings, extrusions, steppers, gears, pulleys, rails, servos.
+- Wire harnesses with bend radii and cut lengths.
+- A drag in 2000 parts in about 0.25 s.
+
+**Inspection and output**
+- Measure, mass properties from the exact B-rep, interference, section views; bills of materials.
+- Drawings with hidden lines, sections, dimensions and balloons as SVG and DXF.
+- STEP AP214 import and export (322 of 361 public corpus files import valid); URDF for robot simulators; STL.
+
+**Front ends**
+- The web app, the VS Code extension, the `geop` CLI and the MCP server all drive one headless editor over one JSON protocol.
 
 ## How it is built
 
@@ -85,6 +147,8 @@ each placed part is, is the program's `state`, solved after every edit.
 Issues and pull requests are welcome; see [CONTRIBUTING.md](CONTRIBUTING.md)
 for how the code is laid out and tested, and come talk on
 [Discord](https://discord.gg/btRDgrcwJ5).
+
+## Sponsoring
 
 If geop is useful to you, consider [sponsoring on Ko-fi](https://ko-fi.com/tobiasjacob):
 it funds the time that goes into the kernel.
