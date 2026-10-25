@@ -32,9 +32,10 @@
 //! The tool is the cross-section swept along the edge:
 //!
 //! - a **straight** edge between two planes is extruded along it. The edge
-//!   has to end at corners of exactly one more face, a plane. Where the edge
-//!   leaves the solid through it, a cut is run out past it, out of the
-//!   solid, and a fill ends flush with it. Where the edge runs into it — a
+//!   has to end at corners of exactly one more face. Where the edge leaves
+//!   the solid through it, a cut is run out past it, out of the solid —
+//!   whatever the face, the tool goes on in the air — and a fill ends flush
+//!   with it, which needs it a plane. Where the edge runs into it — a
 //!   wall the material goes on behind — cut and fill both end flush with
 //!   it, as running on would blend what lies behind. A flush end needs that
 //!   face square to the edge — but for a mitre (below), which ends the tool
@@ -72,7 +73,9 @@
 //!   elsewhere it is refused, and so are rolled blends meeting there.
 //!
 //! Tools joined at corners and mitres are built whole, each such set one
-//! solid, and applied by one boolean.
+//! solid, and applied by one boolean. Two of them ending on their own at
+//! one vertex would overlap there, which one solid cannot: refused, naming
+//! the edges and the vertex.
 
 use geop_core_geometry::{
     contains::surface::surface_could_contain,
@@ -90,12 +93,13 @@ use geop_core_math::{
     with_context,
 };
 use geop_core_topology::{
-    EdgeId, FaceId, Model, SolidId, VertexId,
+    Body, EdgeId, FaceId, Model, SolidId, VertexId,
+    build::BodySpec,
     contains::face::{PointClassification, face_contains},
 };
-use geop_lib_booleans::{RemeshParams, boolean};
+use geop_lib_booleans::{RemeshParams, boolean, split};
 use geop_lib_sweep::{SweepLoop, extrude, revolve};
-use geop_ops_model::{BooleanOp, Profile};
+use geop_ops_model::{BodyNames, BooleanOp, Profile};
 use geop_ops_model::{NamedModel, Namer};
 
 use crate::corner;
@@ -153,7 +157,7 @@ pub(crate) enum Sweep {
 /// [`End::RunOut`]): as far again as it is wide, over how squarely the edge
 /// crosses the face it is run out past — a free choice, only ever rounded
 /// up.
-fn run_out_length(width: f64, squareness: &Scalar) -> Scalar {
+pub(crate) fn run_out_length(width: f64, squareness: &Scalar) -> Scalar {
     Scalar::from_f64(2.0 * width / squareness.lower().to_f64())
 }
 
@@ -166,14 +170,18 @@ pub(crate) enum End {
     /// leaves through, `d` running on along the edge. What a cut does where
     /// the edge leaves the solid.
     RunOut { squareness: Scalar },
-    /// Flush with the face square to the edge at the end: what material
-    /// added does, which must not stick out past it.
-    Flush,
-    /// Flush with a wall the edge runs into, square to it: what a cut does
-    /// there, which must not cut what lies behind the wall — unless the
-    /// wall's own edge along the same face is blended too: then the two
-    /// are mitred. Why it cannot end flush, `unless` the wall is a plane
-    /// square to the edge: then only a mitre ends it.
+    /// Flush with the face at the end: what material added does, which
+    /// must not stick out past it. Why it cannot be capped in the face,
+    /// `unless` the face is a plane square to the edge: then a straight
+    /// blend is refused, and a rolled one runs on through the face and is
+    /// cut off by it (see [`crate::rolling::RunOn`]).
+    Flush { unless: Option<String> },
+    /// Flush with a wall the edge runs into: what a cut does there, which
+    /// must not cut what lies behind the wall — unless the wall's own edge
+    /// along the same face is blended too: then the two are mitred. Why it
+    /// cannot be capped in the wall, `unless` the wall is a plane square to
+    /// the edge: then a straight blend only ends at a mitre, and a rolled
+    /// one runs on through the wall and is cut off by it.
     Wall { unless: Option<String> },
     /// Run out past the corner at `at` and cut off at the plane through it
     /// halving the corner, keeping the side `keep` points to: the end of a
@@ -318,6 +326,9 @@ fn straight_section(model: &Model, edge: EdgeId, line: &Axis) -> GeopResult<Sect
     for (vertex, leaving) in [(e.start_vertex, d.neg()), (e.end_vertex, d)] {
         let ctx = with_context!("the edge's end at vertex {vertex}");
         let (end, _) = tool_end(model, vertex, [left, right], &leaving, bend).with_context(ctx)?;
+        if let End::Flush { unless: Some(why) } = &end {
+            return Err(GeopError::new(why.clone())).with_context(ctx);
+        }
         ends.push(end);
     }
     let ends = [ends[0].clone(), ends[1].clone()];
@@ -340,10 +351,11 @@ fn straight_section(model: &Model, edge: EdgeId, line: &Axis) -> GeopResult<Sect
 
 /// How the tool of a straight edge between `faces`, bending `bend`, ends at
 /// the edge's end `vertex`, the edge running on along `leaving` (see the
-/// module docs). It is decided by the one other face meeting there, which
-/// has to be a plane: run out past it where the edge leaves the solid
-/// through it and the tool cuts, flush with it otherwise — where the tool
-/// fills, or the edge runs into it — which needs it square to the edge.
+/// module docs). It is decided by the one other face meeting there: run
+/// out past it where the edge leaves the solid through it and the tool
+/// cuts — any face, the tool running on into the air — flush with it
+/// otherwise — where the tool fills, or the edge runs into it — which needs
+/// it a plane square to the edge.
 /// Anything else, and a tool along the edge would cut or fill what it
 /// should not. Only a wall the tool runs into may be any face, if it is
 /// mitred with the blend of that wall's own edge. The end, and that third
@@ -397,7 +409,7 @@ pub(crate) fn tool_end(
     let others = walls;
     let unsupported = |why: &str| {
         Err(GeopError::new(format!(
-            "the edge ends at vertex {vertex}, where {why}: only an edge ending at a corner of exactly three faces, the third a plane, is blended — or a plane in two flush faces"
+            "the edge ends at vertex {vertex}, where {why}: a blend ends only at a corner of exactly three faces — or a plane in two flush faces — run out through the third face where the edge leaves the solid through it, flush with it where it runs into it, and filled up to it only where it is a plane square to the edge"
         )))
     };
     let [other] = others.as_slice() else {
@@ -431,21 +443,35 @@ pub(crate) fn tool_end(
     } else {
         None
     };
+    // Out of the solid through any face, a cut runs on past it into the
+    // air: what it does there cuts nothing, so the face may be curved or
+    // stand at any angle.
     if leaves && bend == Bend::Convex {
-        if plane.is_none() {
-            return unsupported("the third face is not planar");
-        }
         return Ok((End::RunOut { squareness }, *other));
     }
+    // Filled in up to a face the edge leaves the solid through — an outward
+    // corner — the fill ends flush with it, touching the corner's other
+    // edge, the one between that face and the face the fill runs along. In
+    // the plane of a face square to the edge, that is the face's own
+    // business; anywhere else, the end would be a face of its own ending on
+    // that edge, the very place no boolean can cut (a blade's root, filled
+    // round to its sharp trailing edge, ended in a notch along the edge).
+    if leaves && let Some(why) = why {
+        return unsupported(&format!(
+            "{why}, and the edge leaves the solid there, an outward corner: a fill up to it would end on the corner's edge between the third face and the face it is filled along"
+        ));
+    }
     if leaves || bend == Bend::Concave {
-        if let Some(why) = why {
-            return unsupported(why);
-        }
-        return Ok((End::Flush, *other));
+        let unless = why.map(|why| {
+            format!(
+                "the edge ends at vertex {vertex}, where {why}: a straight edge between planes is filled up to the third face only where it is a plane square to the edge — an edge rolled between curved faces up to any face it runs into"
+            )
+        });
+        return Ok((End::Flush { unless }, *other));
     }
     let unless = why.map(|why| {
         format!(
-            "the edge ends at vertex {vertex}, where {why}: only an edge ending at a corner of exactly three faces, the third a plane, is blended — or one running into a wall whose own edge along the same face is blended too"
+            "the edge ends at vertex {vertex}, where {why}: a straight edge between planes ends flush only with a plane square to it — or at a wall whose own edge along the same face is blended too; an edge rolled between curved faces with any wall"
         )
     });
     Ok((End::Wall { unless }, *other))
@@ -793,7 +819,7 @@ fn sweep_tool(
             let run_out = |end: &End| -> GeopResult<Option<Scalar>> {
                 match end {
                     End::RunOut { squareness } => Ok(Some(run_out_length(width, squareness))),
-                    End::Flush | End::Wall { .. } => Ok(None),
+                    End::Flush { .. } | End::Wall { .. } => Ok(None),
                     End::Mitre { .. } | End::Corner { .. } => Err(GeopError::new(
                         "a tool joined to another at a corner or a mitre is built whole, not swept",
                     )),
@@ -895,7 +921,7 @@ pub(crate) fn straight_tool(section: &Section, tool: &ToolProfile) -> GeopResult
         let name = format!("st{k}");
         let from = if k == 0 { start } else { end };
         let base = match &ends[k] {
-            End::Flush | End::Wall { .. } => *from,
+            End::Flush { .. } | End::Wall { .. } => *from,
             End::RunOut { squareness } => {
                 from.add(&out.prod_scalar(run_out_length(width, squareness)))
             }
@@ -1221,14 +1247,27 @@ fn mirrored(plans: &[(Plan, ToolProfile)], joint: &Joint) -> GeopResult<()> {
 /// Which faces meet at each end of `edge`, by name: what a blend that
 /// cannot be built at one of them (see [`tool_end`]) says about it.
 fn corners_of(model: &NamedModel, edge: EdgeId) -> String {
+    match model.topology().get_edge(edge) {
+        Ok(e) => corners_at(model, &[e.start_vertex, e.end_vertex]),
+        Err(_) => format!("edge {edge}"),
+    }
+}
+
+/// Which faces meet at each of `vertices`, by name, and which of them are
+/// planes: what a blend that cannot end at one of them says about it.
+fn corners_at(model: &NamedModel, vertices: &[VertexId]) -> String {
     let topology = model.topology();
-    let name = |face: FaceId| model.name_of(face).map_or(format!("{face}"), String::from);
-    let Ok(e) = topology.get_edge(edge) else {
-        return format!("edge {edge}");
+    let name = |face: FaceId| {
+        let named = model.name_of(face).map_or(format!("{face}"), String::from);
+        match topology.get_face(face).map(|f| f.surface.as_plane()) {
+            Ok(Ok(Some(_))) => format!("{named} (a plane)"),
+            Ok(Ok(None)) => format!("{named} (curved)"),
+            _ => named,
+        }
     };
-    [e.start_vertex, e.end_vertex]
-        .into_iter()
-        .map(|vertex| {
+    vertices
+        .iter()
+        .map(|&vertex| {
             let faces = topology.faces_at_vertex(vertex).unwrap_or_default();
             format!(
                 "vertex {} meets faces {}",
@@ -1390,10 +1429,15 @@ pub fn blend(
     let mut rolled: Vec<(String, Rolled)> = Vec::new();
     for ((name, chain), ends) in chains.into_iter().zip(corners.chains) {
         let ctx = with_context!("edge {name:?}");
+        let ends_of: Vec<VertexId> = match chain.closed {
+            true => Vec::new(),
+            false => chain.ends(model.topology())?.map(|(v, _, _)| v).to_vec(),
+        };
         let r = match shape {
             BlendShape::Fillet { radii } => rolling::plan_rolled(model, chain, radii, ends),
             BlendShape::Chamfer { distances } => rolling::plan_chamfer(model, chain, *distances),
         }
+        .map_err(|e| e.with_context(corners_at(model, &ends_of)))
         .with_context(ctx)?;
         rolling::check_touches(model.topology(), &r).with_context(ctx)?;
         rolled.push((name, r));
@@ -1410,18 +1454,115 @@ pub fn blend(
     let all = plans.len() + rolled.len();
     let mut components = tools.components(all);
     components.sort_by_key(|c| c.iter().all(|&i| i < plans.len()));
+    for component in &components {
+        tools.check_apart(model.topology(), component)?;
+    }
     let mut target = solid.expect("at least one edge");
     for component in components {
         let edge = tools.edge(component[0]);
         let ctx = with_context!("blending edge {edge:?}");
+        // A chain whose tool's ends meet at one vertex, overlapping: its
+        // halves one after the other (see [`Rolled::halves`]).
+        if let Some(rolled) = tools.alone_rolled(&component)
+            && rolled.is_halved()
+        {
+            for (k, half) in rolled.halves().with_context(ctx)?.iter().enumerate() {
+                let scope = namer.scoped(edge).scoped(["1", "2"][k]);
+                let ctx = with_context!("the tool of edge {edge:?}, half {}", k + 1);
+                let mut tool =
+                    tool::build_tools(model, &[(&scope, half)], &[], &[], scope.name(&["tool"]))
+                        .with_context(ctx)?;
+                // Cut off at its own end, kept where the halves meet.
+                if let Some(surface) = &rolled.trims[k] {
+                    let station = if k == 0 {
+                        half.stations.last().expect("stations")
+                    } else {
+                        &half.stations[0]
+                    };
+                    tool = trimmed(model, &scope, tool, surface, &station.vertices[2])
+                        .with_context(ctx)?;
+                }
+                target = apply_tool(model, &scope, target, tool, rolled.bend).with_context(ctx)?;
+            }
+            continue;
+        }
         let scope = namer.scoped(edge);
-        let tool = tools
+        let mut tool = tools
             .build(model, namer, &component)
             .with_context(with_context!("the tool of edge {edge:?}"))?;
+        // Each rolled tool cut off by the faces it runs on through, kept
+        // where its middle station is.
+        for &i in &component {
+            let Some((_, rolled)) = i.checked_sub(plans.len()).map(|r| &tools.rolled[r]) else {
+                continue;
+            };
+            let stations = &rolled.tool.stations;
+            let middle = &stations[stations.len() / 2];
+            for surface in rolled.trims.iter().flatten() {
+                tool = trimmed(model, &scope, tool, surface, &middle.vertices[2])
+                    .with_context(with_context!("the tool of edge {:?}", tools.edge(i)))?;
+            }
+        }
         let bend = tools.bend(component[0]);
         target = apply_tool(model, &scope, target, tool, bend).with_context(ctx)?;
     }
     model.rename(target, namer.root())
+}
+
+/// The tool `tool` cut off by `surface` (see [`crate::rolling::Rolled::trims`]):
+/// split along a sheet on it, and of the pieces the one with a vertex at
+/// `keep` kept, the sheet and every other piece deleted. Named by `namer`
+/// as a split names what it makes.
+fn trimmed(
+    model: &mut NamedModel,
+    namer: &Namer,
+    tool: SolidId,
+    surface: &NurbSurface3D,
+    keep: &Vector3,
+) -> GeopResult<SolidId> {
+    let namer = namer.scoped("trim");
+    let spec = BodySpec::sheet_on(surface.clone())?;
+    let names = BodyNames {
+        vertices: (0..4).map(|k| namer.name(&[&format!("v{k}")])).collect(),
+        edges: (0..4).map(|k| namer.name(&[&format!("e{k}")])).collect(),
+        faces: vec![namer.name(&["sheet"])],
+        solid: None,
+    };
+    let built = model.build_body(spec, names)?;
+    let sheet = *built
+        .shells
+        .first()
+        .ok_or_else(|| GeopError::new("a sheet came out as no shell"))?;
+    let pieces = split(model, &namer, tool, sheet, RemeshParams::default())?;
+    let mut kept = None;
+    let mut rest = vec![Body::Sheet(sheet)];
+    for piece in pieces {
+        let topology = model.topology();
+        let mut holds = false;
+        for face in topology.solid_faces(piece)? {
+            for coedge in topology.iterate_face_coedges(face) {
+                holds |= topology
+                    .coedge_start_vertex(coedge)?
+                    .point
+                    .could_be_equal(keep);
+            }
+        }
+        match (holds, kept) {
+            (true, None) => kept = Some(piece),
+            (true, Some(_)) => {
+                return Err(GeopError::new(format!(
+                    "the blend's tool cut off by a face it runs on through came apart in two pieces at {keep:?}"
+                )));
+            }
+            (false, _) => rest.push(Body::Solid(piece)),
+        }
+    }
+    model.delete_bodies(&rest)?;
+    kept.ok_or_else(|| {
+        GeopError::new(format!(
+            "the blend's tool cut off by a face it runs on through kept no piece at {keep:?}"
+        ))
+    })
 }
 
 /// Every tool of a blend: the swept ones' plans, the rolled ones — by index
@@ -1440,6 +1581,77 @@ impl Tools<'_> {
             Some((plan, _)) => &plan.edge,
             None => &self.rolled[i - self.plans.len()].0,
         }
+    }
+
+    /// The rolled tool `component` is, if it is one joined to no corner
+    /// and no mitre.
+    fn alone_rolled(&self, component: &[usize]) -> Option<&Rolled> {
+        let &[i] = component else {
+            return None;
+        };
+        let joined = self
+            .corners
+            .iter()
+            .any(|c| c.ends.iter().any(|e| e.tool == i))
+            || self
+                .joints
+                .iter()
+                .any(|j| j.ends.iter().any(|e| e.tool == i));
+        let (_, rolled) = self.rolled.get(i.checked_sub(self.plans.len())?)?;
+        (!joined).then_some(rolled)
+    }
+
+    /// The vertices tool `i` ends at on its own — run out, flush or at a
+    /// wall, not joined to a corner's ball or mitred.
+    fn free_ends(&self, model: &Model, i: usize) -> GeopResult<Vec<VertexId>> {
+        let vertices = match self.plans.get(i) {
+            Some((plan, _)) => match &plan.section.sweep {
+                Sweep::Straight { vertices, .. } => vertices.to_vec(),
+                Sweep::Round { .. } => Vec::new(),
+            },
+            None => {
+                let chain = &self.rolled[i - self.plans.len()].1.chain;
+                if chain.closed {
+                    Vec::new()
+                } else {
+                    chain.ends(model)?.map(|(v, _, _)| v).to_vec()
+                }
+            }
+        };
+        let joined = |at_end: bool| {
+            let at = |e: &CornerEnd| e.tool == i && e.at_end == at_end;
+            self.corners.iter().any(|c| c.ends.iter().any(at))
+                || self.joints.iter().any(|j| j.ends.iter().any(at))
+        };
+        Ok(vertices
+            .into_iter()
+            .zip([false, true])
+            .filter(|&(_, at_end)| !joined(at_end))
+            .map(|(vertex, _)| vertex)
+            .collect())
+    }
+
+    /// Checks no two tools of `component`, built into one solid, end on
+    /// their own at one vertex: there both run out — or end flush — over
+    /// the same corner, and overlap, which one solid cannot (the blend of a
+    /// cylinder's flat corner: the top rim and the flat's top edge, joined
+    /// at one end of the flat, both run out at its other end). Applied one
+    /// after the other they would not, but tools joined at a corner are one.
+    fn check_apart(&self, model: &Model, component: &[usize]) -> GeopResult<()> {
+        let mut seen: Vec<(VertexId, usize)> = Vec::new();
+        for &i in component {
+            for vertex in self.free_ends(model, i)? {
+                if let Some(&(_, j)) = seen.iter().find(|(v, j)| *v == vertex && *j != i) {
+                    return Err(GeopError::new(format!(
+                        "edges {:?} and {:?} are blended together, joined at a corner, and both end on their own at vertex {vertex}, where their blends would overlap in one tool: only blends joined at one end and apart at the other are built — round the third edge at vertex {vertex} too, or blend them one at a time",
+                        self.edge(j),
+                        self.edge(i)
+                    )));
+                }
+                seen.push((vertex, i));
+            }
+        }
+        Ok(())
     }
 
     /// Which way the edge of tool `i` bends.

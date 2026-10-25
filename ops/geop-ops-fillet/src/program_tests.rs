@@ -500,9 +500,11 @@ fn fillet_lofted_rim() {
 }
 
 /// The lofted body's bottom edges end at corners where the third face, a
-/// ruled wall, is no plane: refused, naming the vertex.
+/// ruled wall, is curved, and the edge leaves the solid through it: the
+/// blend runs on past the corner, rolled on the faces carried on past it,
+/// out into the air, and takes a little of the body away.
 #[test]
-fn fillet_lofted_bottom_edge_is_refused() {
+fn fillet_lofted_bottom_edge_runs_out_past_its_corners() {
     let mut program = square_to_circle();
     let before = program.build_model(registry).unwrap();
     let bottom = edges_where(&before, |e| {
@@ -510,11 +512,20 @@ fn fillet_lofted_bottom_edge_is_refused() {
         p[2].could_be_equal(Scalar::ZERO)
     });
     program.push("round", FilletArgs::constant(vec![bottom[0].clone()], 0.1));
-    let Err(error) = program.build_model(registry) else {
-        panic!("rounding a bottom edge of the loft is not refused");
+    let part = program.build_model(registry).unwrap();
+    assert_valid(&part);
+    let volume = |part: &NamedModel, solid: &str| {
+        let solid = part.solid_id(solid).unwrap();
+        let mass = part.topology().mass_properties(solid).unwrap();
+        mass.volume.midpoint().to_f64()
     };
-    let error = format!("{error:?}");
-    assert!(error.contains("the third face is not planar"), "{error}");
+    let (a, b) = (
+        volume(&before, &before.solid_names()[0]),
+        volume(&part, "fillet(round)"),
+    );
+    // A corner of about a right angle, 2 long, holds `0.21 r^2` per unit.
+    let removed = a - b;
+    assert!(removed > 0.002 && removed < 0.01, "{a} to {b}");
 }
 
 /// A slot 1 high: two half circles of radius 0.5 around `(±1, 0)` joined

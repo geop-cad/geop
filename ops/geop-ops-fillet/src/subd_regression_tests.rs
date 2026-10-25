@@ -102,7 +102,7 @@ fn subd_mouse_sole_rim_filleted() {
 /// two traced curves where the slice meets the hump, `combine(slice,
 /// block(slice,start), subd(mouse,f9), ...)` and its mirror image.
 ///
-/// Fails with `the blend strays inf from the rolling ball with 64 stations
+/// Fails with `the blend strays inf from the rolling ball with 256 stations
 /// per edge (inf with half as many), more than the 5e-8 it may: in span 0,
 /// at 0.523 of the span the blend could dip through face FaceId(39)` — an
 /// infinite deviation, so an enclosure in the blend's check diverged
