@@ -57,7 +57,11 @@ impl<const D: usize> NurbCurve<D> {
             let local = &self.control_points[span - p..=span];
             let knots = &self.knot_vector[span - p..];
             let absolute = de_boor(p, knots, local, piece, p);
-            let near = if nearer_end(&self.knot_vector, span, piece) { p } else { 0 };
+            let near = if nearer_end(&self.knot_vector, span, piece) {
+                p
+            } else {
+                0
+            };
             let (moved, origin) = centered(local, near);
             let relative = de_boor(p, knots, &moved, piece, p);
             // The weights are not moved: one `W` for both.

@@ -181,12 +181,15 @@ impl NurbSurface<4> {
     /// normal and is an error.
     pub fn normal(&self, u: Scalar, v: Scalar) -> GeopResult<Vector3> {
         let (du, dv) = self.derivatives(u, v)?;
-        let regular = du.prod_cross(&dv).normalize().with_context(&|e: GeopError| {
-            e.with_context(format!(
-                "NurbSurface::normal({:?}): S_u = {du:?}, S_v = {dv:?}",
-                (u, v)
-            ))
-        });
+        let regular = du
+            .prod_cross(&dv)
+            .normalize()
+            .with_context(&|e: GeopError| {
+                e.with_context(format!(
+                    "NurbSurface::normal({:?}): S_u = {du:?}, S_v = {dv:?}",
+                    (u, v)
+                ))
+            });
         if regular.is_ok() {
             return regular;
         }

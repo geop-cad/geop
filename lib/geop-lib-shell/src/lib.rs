@@ -8,8 +8,8 @@
 //! ([`pcurve`]), and whether a curve lies on the surfaces it should
 //! ([`surface_missed`]).
 
-mod shell;
 #[cfg(test)]
 mod regression_tests;
+mod shell;
 
 pub use shell::{extended, offset_faces, pcurve, shell, surface_missed, thicken};
