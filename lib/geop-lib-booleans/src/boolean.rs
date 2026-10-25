@@ -274,7 +274,14 @@ fn combine(
         namer.root()
     );
 
-    let origins = remesh(model, namer, solid_a, solid_b, params).with_context(&ctx)?;
+    // A remesh error names entities by id, and ids say nothing of what the
+    // entities are: name them, as they are where it failed.
+    let origins = remesh(model, namer, solid_a, solid_b, params)
+        .map_err(|e| {
+            let names = model.names_mentioned(&e.to_string());
+            e.with_context(format!("where it names {}", names.join(", ")))
+        })
+        .with_context(&ctx)?;
     let topology = model.topology();
 
     let faces_a = topology.solid_faces(solid_a).with_context(&ctx)?;

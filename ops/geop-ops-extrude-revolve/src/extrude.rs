@@ -232,6 +232,10 @@ impl Sweeping for Extruding<'_> {
         far
     }
 
+    fn full_turn(&self) -> Option<f64> {
+        None
+    }
+
     fn measure(&self, sign: f64, p: &Vector3) -> Option<f64> {
         let along = (p.sub(self.plane.origin()))
             .prod_dot(self.plane.w())

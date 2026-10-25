@@ -458,6 +458,10 @@ impl Sweeping for Revolving<'_> {
         360.0
     }
 
+    fn full_turn(&self) -> Option<f64> {
+        Some(360.0)
+    }
+
     fn measure(&self, sign: f64, p: &Vector3) -> Option<f64> {
         turned_angle(self.axes, p, sign)
     }

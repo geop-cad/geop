@@ -214,8 +214,24 @@ impl Extents {
 
     /// What to build for it, see [`Plan`], its lengths' formulas reading
     /// the parameters through `reader`: `far(sign)` is how far, the way
-    /// `sign` says, reaches past the solid it is combined with.
-    fn plan(&self, reader: &Reader, far: impl Fn(f64) -> GeopResult<f64>) -> GeopResult<Plan> {
+    /// `sign` says, reaches past the solid it is combined with, and
+    /// `full_turn` the measure of a full turn, for a sweep that comes round
+    /// to where it started.
+    ///
+    /// Two sides of a turn each reaching past the solid both pass all of it,
+    /// so between them they turn more than a full turn round, and each
+    /// overlaps the other where the other stops. The second side's tool
+    /// then runs on through the piece of the first one kept, along the same
+    /// surfaces, which no boolean resolves. So the sides share the turn: a
+    /// side going as far as the solid gives way to a blind one, and two
+    /// meet in the middle of where they overlap — in the solid, where both
+    /// have stopped before.
+    fn plan(
+        &self,
+        reader: &Reader,
+        far: impl Fn(f64) -> GeopResult<f64>,
+        full_turn: Option<f64>,
+    ) -> GeopResult<Plan> {
         use End::*;
         let ahead = if self.reversed { -1.0 } else { 1.0 };
         let side1 = self.side1.end(reader)?;
@@ -223,24 +239,47 @@ impl Extents {
             Some(e) if !self.symmetric => Some(e.end(reader)?),
             _ => None,
         };
-        let side = |sign: f64, end: End| -> GeopResult<Side> {
+        // Each side, and whether it goes as far as the solid.
+        let side = |sign: f64, end: End| -> GeopResult<(Side, bool)> {
             Ok(match end {
-                Blind(d) => Side {
-                    to: sign * d,
-                    up_to_next: false,
-                },
-                ThroughAll | UpToNext => Side {
-                    to: sign * far(sign)?,
-                    up_to_next: end == UpToNext,
-                },
+                Blind(d) => (
+                    Side {
+                        to: sign * d,
+                        up_to_next: false,
+                    },
+                    false,
+                ),
+                ThroughAll | UpToNext => (
+                    Side {
+                        to: sign * far(sign)?,
+                        up_to_next: end == UpToNext,
+                    },
+                    true,
+                ),
             })
         };
-        let sides = match (side1, self.symmetric, side2) {
+        let mut sides = match (side1, self.symmetric, side2) {
             (Blind(d), true, _) => return Ok(Plan::Whole(-d / 2.0, d / 2.0)),
             (e, true, _) => vec![side(ahead, e)?, side(-ahead, e)?],
             (e, false, None) => vec![side(ahead, e)?],
             (e, false, Some(e2)) => vec![side(ahead, e)?, side(-ahead, e2)?],
         };
+        if let (Some(turn), [(a, far_a), (b, far_b)]) = (full_turn, sides.as_mut_slice())
+            && (a.up_to_next || b.up_to_next)
+        {
+            let overlap = a.to.abs() + b.to.abs() - turn;
+            let (give_a, give_b) = match (*far_a, *far_b) {
+                (true, true) => (overlap / 2.0, overlap / 2.0),
+                (true, false) => (overlap, 0.0),
+                (false, true) => (0.0, overlap),
+                (false, false) => (0.0, 0.0),
+            };
+            if overlap > 0.0 {
+                a.to -= a.to.signum() * give_a;
+                b.to -= b.to.signum() * give_b;
+            }
+        }
+        let sides: Vec<Side> = sides.into_iter().map(|(side, _)| side).collect();
         Ok(if sides.iter().any(|s| s.up_to_next) {
             Plan::Sides(sides)
         } else {
@@ -370,6 +409,10 @@ pub(crate) trait Sweeping {
     /// the way: through all, or a full turn.
     fn all_the_way(&self, far: f64) -> f64;
 
+    /// The measure of a full turn, for a sweep that comes round to where it
+    /// started; none for one that does not.
+    fn full_turn(&self) -> Option<f64>;
+
     /// How far along a side `p` is — forwards for `sign = 1`, backwards for
     /// `-1` — or none for a point that could lie on the sketch's plane
     /// itself, where every side starts.
@@ -396,12 +439,13 @@ pub(crate) fn build_extents(
     } else {
         None
     };
-    let plan = extents.plan(reader, |sign| match &hull {
+    let far = |sign| match &hull {
         Some(hull) => sweeping.past(hull, sign),
         None => Err(GeopError::new(
             "up to next and through all go as far as a solid, and the model has none yet",
         )),
-    })?;
+    };
+    let plan = extents.plan(reader, far, sweeping.full_turn())?;
     match (output, plan) {
         (_, Plan::Whole(from, to)) => output.build_whole(model, namer, step, |model, name| {
             sweeping.sweep(model, namer, name, from, to)

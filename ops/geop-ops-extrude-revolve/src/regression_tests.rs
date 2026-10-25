@@ -1032,19 +1032,18 @@ fn mug_handle_turned_up_to_next_the_other_way_around_the_cup_seam() {
 /// [`mug`] turned up to next both ways: the whole handle, from the wall
 /// round to the wall, twice the volume of one side.
 ///
-/// Each side alone builds (the two tests above), so `turn_past` is not the
-/// cause. The second side's union with the cup and the first side fails in
-/// `remesh_edges_x_faces` → `imprint_coincident_pairs`: an edge
-/// (`EdgeId(1290)`), its 3-D control points 1.5e-2 wide, imprinted into a
-/// face of the other solid, is found to run along that face's boundary
-/// ("degenerate split", a ring of signed area `[-0.0095, 0.0266]`). The two
-/// tools share their start cap, the annulus in the sketch plane, so the
-/// second meets the first along that whole face. Not yet ruled out:
-/// whether that wide edge is a traced curve of the first union, where the
-/// handle meets the cup's wall, or one of the annulus' rims where the two
-/// caps coincide. Name it before fixing.
+/// Each side reached a turn past the cup on its own, 315 degrees, so the
+/// second side's tool, turned 315 back, ended at 45 forward, inside the
+/// handle the first side had just joined to the cup. Between 45 and the
+/// wall the two tools are the same tori, and the second side's union failed
+/// on them: an edge it traced (`combine(revolve1,side2,~56)`, its control
+/// points 1.5e-2 wide, as a curve traced between two coincident surfaces
+/// comes out) was imprinted into the second tool's outer torus over that
+/// stretch (`revolve(revolve1,side2,handle_sk,c1#3,q3)`) along its edge
+/// `c1@3,q3`: "degenerate split". The sides now share the turn (see
+/// `Extents::plan`): each stops halfway through where they would overlap,
+/// at 180, in the cup, where both have met the wall before.
 #[test]
-#[ignore = "bug: the second up-to-next side's union fails with a degenerate split on a 1.5e-2-wide edge (see the doc comment)"]
 fn mug_handle_turned_up_to_next_both_ways_around_the_cup_seam() {
     let program = mug(Extents {
         side2: Some(Extent::UpToNext),
@@ -1052,10 +1051,26 @@ fn mug_handle_turned_up_to_next_both_ways_around_the_cup_seam() {
     });
     let part = program.build_model(registry).unwrap();
     assert_valid(&part);
+    assert_draws_its_trims(&part);
     let cup = std::f64::consts::PI * (40.0f64.powi(2) * 95.0 - 36.0f64.powi(2) * 91.0);
     let mug = geop_ops_model::testing::solid_volume(&part, "revolve(revolve1)");
     assert!(
         (mug - (cup + 2.0 * 31877.0)).abs() < 600.0,
         "the mug encloses {mug}, the cup {cup}"
     );
+    // The ring of [`mug_handle_turned_up_to_next_around_the_cup_seam`],
+    // either way: in the handle where it was drawn, at 60 degrees, and at
+    // 115, outside the cup just before it meets the wall at 121.4; at 130,
+    // past the wall, in the cup's hollow, left empty.
+    use geop_core_topology::contains::shell::PointClassification::{Inside, Outside};
+    let ring = |degrees: f64, side: f64| {
+        let (r, a) = (69.18884740659647 - 40.0 + 12.5, degrees.to_radians());
+        let p = [40.0 + r * a.cos(), side * r * a.sin(), 52.35578658107838];
+        geop_ops_model::testing::classify(&part, "revolve(revolve1)", p)
+    };
+    assert_eq!(ring(0.0, 1.0), Inside);
+    for degrees in [60.0, 115.0] {
+        assert_eq!([ring(degrees, 1.0), ring(degrees, -1.0)], [Inside, Inside]);
+    }
+    assert_eq!([ring(130.0, 1.0), ring(130.0, -1.0)], [Outside, Outside]);
 }
