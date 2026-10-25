@@ -79,13 +79,26 @@ pub fn stl_triangles(raster: &RasterizedModel, faces: &[FaceId]) -> Vec<StlTrian
 }
 
 /// The volume `triangles`, wound outward, enclose: the sum of the signed
-/// tetrahedra they span with the origin, negative if they are wound in.
-/// Exact for a closed mesh, up to its `f32` corners.
+/// tetrahedra they span with a corner of the mesh, negative if they are
+/// wound in. Exact for a closed mesh, up to its `f32` corners.
+///
+/// A rasterized model is closed only nearly: each face is sampled along
+/// its own pcurves, so two faces meet along a curved edge in two polygons
+/// of it, a sliver apart. A sliver's tetrahedron weighs by its distance
+/// from the apex, so the apex is a corner of the mesh, not the origin: a
+/// plate at `(10000, -5000, 2000)` summed from the origin came out 5.5
+/// over for a bore of 142, and its mirror image 5.4 under.
 pub fn enclosed_volume(triangles: &[StlTriangle]) -> f64 {
+    let Some(first) = triangles.first() else {
+        return 0.0;
+    };
+    let apex = first.corners[0].map(f64::from);
     triangles
         .iter()
         .map(|t| {
-            let [a, b, c] = t.corners.map(|p| p.map(f64::from));
+            let [a, b, c] = t
+                .corners
+                .map(|p| [0, 1, 2].map(|k| f64::from(p[k]) - apex[k]));
             (a[0] * (b[1] * c[2] - b[2] * c[1]) - a[1] * (b[0] * c[2] - b[2] * c[0])
                 + a[2] * (b[0] * c[1] - b[1] * c[0]))
                 / 6.0

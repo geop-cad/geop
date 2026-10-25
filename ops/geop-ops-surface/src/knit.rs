@@ -202,11 +202,14 @@ pub fn knit(
     // all, if they point into the solid.
     let params = ValidationParameters::default();
     let model = part.topology();
-    let inward = built
-        .faces
-        .iter()
-        .find_map(|&f| normal_points_outward(&params, model, solid_id, built.shells[0], f))
-        .map(|verdict| matches!(verdict, Outward::No { .. }));
+    let mut inward = None;
+    for &f in &built.faces {
+        if let Some(verdict) = normal_points_outward(&params, model, solid_id, built.shells[0], f)?
+        {
+            inward = Some(matches!(verdict, Outward::No(_)));
+            break;
+        }
+    }
     match inward {
         Some(true) => {
             for &f in &built.faces {

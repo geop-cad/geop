@@ -27,7 +27,7 @@ use geop_core_math::{
     geop_error::{GeopError, GeopResult},
     scalars::Scalar,
     solvers::probe::{Probe, attempts},
-    vector::Vector3,
+    vector::{Vector2, Vector3},
 };
 
 use super::{
@@ -136,26 +136,33 @@ fn ray_length_for(model: &Model, vertex_ids: &[VertexId], point: &Vector3) -> Ge
 /// Casts a single ray from `point` in `direction` against `boundary`'s
 /// vertices/edges/faces (`ray_length` as [`ShellBoundary::ray_length`]
 /// gives it) and
-/// returns its even/odd crossing-parity classification — or `Ok(Err(why))` if
+/// returns what it crossed ([`Ray`]) — or `Ok(Err(why))` if
 /// this particular direction is degenerate (grazes a vertex or edge, or
 /// hits a face right on its own trim boundary) and the caller should retry
 /// with a different one. Factored out of [`shell_contains`] so other
 /// callers (see `validation`'s manifold check) can cast several different
 /// directions from the same point without redoing its per-point setup.
 ///
+/// `leaving` is a face of the shell that `point` lies inside of, for a ray
+/// cast from a point on a face (see [`solid_contains_beside`]): the ray's
+/// start on that face is where it leaves it, not a crossing, and every
+/// crossing past it counts.
+///
 /// `seed` seeds the `face_contains` sub-calls used to classify face-interior
 /// hits; callers casting multiple rays from one call site should vary it
 /// per ray (e.g. by direction or attempt index) so those sub-calls don't all
 /// retry along the identical degenerate path.
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn cast_ray(
     boundary: &ShellBoundary,
     point: Vector3,
     direction: Vector3,
     ray_length: Scalar,
+    leaving: Option<FaceId>,
     max_nodes: usize,
     epsilon: Scalar,
     seed: u64,
-) -> GeopResult<Result<PointClassification, String>> {
+) -> GeopResult<Result<Ray, String>> {
     let ShellBoundary {
         model,
         shell_id,
@@ -213,7 +220,7 @@ pub(crate) fn cast_ray(
         }
     }
 
-    let mut count = 0usize;
+    let mut crossings = Vec::new();
     for &face_id in &shell.faces {
         let surface = &model.faces[&face_id].surface;
         // A ray lying in a face is ambiguous, and an `Err` (node budget
@@ -265,13 +272,15 @@ pub(crate) fn cast_ray(
             }
             match face_contains(model, face_id, u, v, max_nodes, epsilon, face_seed) {
                 Ok(FaceClassification::Inside) if t_hit.definitely_greater(Scalar::ZERO) => {
-                    count += 1
+                    crossings.push((face_id, t_hit, uv))
                 }
+                // The ray's own start, on the face it leaves.
+                Ok(FaceClassification::Inside) if leaving == Some(face_id) => {}
                 // A hit inside the trim that still cannot be told from the
                 // query point: the query is on this face to within what the
                 // numbers can tell, though the sharp query passed the caller's
                 // own check (see `face::loops_contain`).
-                Ok(FaceClassification::Inside) => return Ok(Ok(PointClassification::OnFace)),
+                Ok(FaceClassification::Inside) => return Ok(Ok(Ray::OnFace)),
                 // Outside the trim, wherever along the ray: not a crossing.
                 Ok(FaceClassification::Outside) => {}
                 // A hit right on this face's own trim boundary, or an
@@ -285,18 +294,37 @@ pub(crate) fn cast_ray(
             }
         }
     }
-    // Unlike `face_contains` (whose ray is guaranteed to cross the outer
-    // trim loop for any query point within the surface's own bounded
-    // parameter domain), a shell occupies a bounded region of otherwise
-    // unbounded 3-D space: a ray this long that finds zero crossings has,
-    // by construction, missed the shell's spatial footprint entirely, which
-    // can only happen when the query point is outside — zero is a
-    // legitimate (even) count, not degenerate.
-    Ok(Ok(if count % 2 == 1 {
-        PointClassification::Inside
-    } else {
-        PointClassification::Outside
-    }))
+    Ok(Ok(Ray::Crossings(crossings)))
+}
+
+/// What a clean ray found (see [`cast_ray`]).
+#[derive(Clone, Debug)]
+pub(crate) enum Ray {
+    /// Its start is on a face of the shell.
+    OnFace,
+    /// The faces it crosses, each at its parameter along the ray, in the
+    /// shell's order of faces.
+    Crossings(Vec<(FaceId, Scalar, Vector2)>),
+}
+
+impl Ray {
+    /// The classification of the ray's start: inside the shell if it
+    /// crossed the boundary an odd number of times.
+    ///
+    /// Unlike `face_contains` (whose ray is guaranteed to cross the outer
+    /// trim loop for any query point within the surface's own bounded
+    /// parameter domain), a shell occupies a bounded region of otherwise
+    /// unbounded 3-D space: a ray past the shell that finds zero crossings
+    /// has, by construction, missed the shell's spatial footprint entirely,
+    /// which can only happen when the query point is outside — zero is a
+    /// legitimate (even) count, not degenerate.
+    pub(crate) fn classification(&self) -> PointClassification {
+        match self {
+            Ray::OnFace => PointClassification::OnFace,
+            Ray::Crossings(crossings) if crossings.len() % 2 == 1 => PointClassification::Inside,
+            Ray::Crossings(_) => PointClassification::Outside,
+        }
+    }
 }
 
 /// Classify `point` against `shell_id`'s boundary: [`PointClassification::OnVertex`] /
@@ -425,6 +453,7 @@ fn classify(
                 start,
                 via.sub(&start),
                 Scalar::ONE,
+                None,
                 max_nodes,
                 epsilon,
                 seed,
@@ -433,7 +462,10 @@ fn classify(
         // The leg from `point` may find it on the boundary; the one from
         // `from`, already classified clear of it, finding it there is
         // ambiguous.
-        match (leg(point)?, leg(from)?) {
+        match (
+            leg(point)?.map(|ray| ray.classification()),
+            leg(from)?.map(|ray| ray.classification()),
+        ) {
             (
                 Ok(
                     on @ (PointClassification::OnFace
@@ -473,11 +505,12 @@ fn classify(
             point,
             direction,
             ray_length,
+            None,
             max_nodes,
             epsilon,
             attempt_seed,
         )? {
-            Ok(classification) => Ok(Probe::Found(classification)),
+            Ok(ray) => Ok(Probe::Found(ray.classification())),
             Err(reason) => {
                 last_rejection = format!("the ray along {direction:?} was rejected: {reason}");
                 Ok(Probe::Next)
@@ -491,6 +524,159 @@ fn classify(
         "shell_contains: could not find a ray direction clear of every vertex and edge after many \
          attempts; the last one was rejected because {last_rejection}"
     )))
+}
+
+/// What [`solid_contains_beside`] found: whether the solid is on the
+/// normal's side of the face, and the ray that decided it, for the record.
+#[derive(Clone, Debug)]
+pub struct Beside {
+    pub inside: bool,
+    pub direction: Vector3,
+    /// The faces the ray crossed past its start, each at its parameter
+    /// along the ray.
+    pub crossings: Vec<(FaceId, Scalar, Vector2)>,
+}
+
+/// Classifies the points of the solid `solid_id` just off its face
+/// `face_id` (of its shell `shell_id`) on the side `normal` points to, at
+/// `point`, a point inside the face: `inside` if the solid is on that side
+/// of the face there. Other arguments as for [`shell_contains`].
+///
+/// Decided by a ray from `point` in a random direction into the normal's
+/// half space: every point of the ray just past the face is on that side,
+/// and the parity of the ray's crossings past the face, over every shell of
+/// the solid, classifies them all at once (see [`cast_ray`], which does not
+/// count the ray's start on the face it leaves). No point a chosen distance
+/// off the face is asked about: that asks about a point that far away, and
+/// on a non-convex solid a distance that looked small reaches through the
+/// local material into another part of it. A bore 18 from the side of a
+/// block, probed at 29 both ways, has the block on the normal's side and
+/// the air past the block behind, and its wall reads as inverted.
+#[allow(clippy::too_many_arguments)]
+pub fn solid_contains_beside(
+    model: &Model,
+    solid_id: SolidId,
+    shell_id: ShellId,
+    face_id: FaceId,
+    point: Vector3,
+    normal: Vector3,
+    max_nodes: usize,
+    epsilon: Scalar,
+    seed: u64,
+) -> GeopResult<Beside> {
+    let boundaries: Vec<ShellBoundary> = model
+        .get_solid(solid_id)?
+        .shells
+        .iter()
+        .map(|&s| ShellBoundary::of(model, s))
+        .collect();
+    let mut rng = Rng::new(seed);
+    let mut last_rejection = String::new();
+    let found = attempts(MAX_RAY_ATTEMPTS, |&attempt| -> GeopResult<_> {
+        let drawn = rng.next_direction3();
+        let along = drawn.prod_dot(&normal);
+        // Turned into the normal's half space. One that could run along
+        // the face leaves it to neither side.
+        let direction = if along.definitely_greater(Scalar::ZERO) {
+            drawn
+        } else if along.definitely_less(Scalar::ZERO) {
+            drawn.neg()
+        } else {
+            last_rejection = format!("the direction {drawn:?} could run along the face");
+            return Ok(Probe::Next);
+        };
+        let attempt_seed = seed ^ (attempt as u64).wrapping_mul(0x9E3779B97F4A7C15);
+        let mut crossings = Vec::new();
+        for boundary in &boundaries {
+            let leaving = (boundary.shell_id == shell_id).then_some(face_id);
+            match cast_ray(
+                boundary,
+                point,
+                direction,
+                boundary.ray_length(&point)?,
+                leaving,
+                max_nodes,
+                epsilon,
+                attempt_seed,
+            )? {
+                Ok(Ray::Crossings(crossed)) => crossings.extend(crossed),
+                Ok(Ray::OnFace) => {
+                    last_rejection = format!(
+                        "the ray along {direction:?} found the point on a face of shell {}",
+                        boundary.shell_id
+                    );
+                    return Ok(Probe::Next);
+                }
+                Err(reason) => {
+                    last_rejection = format!("the ray along {direction:?} was rejected: {reason}");
+                    return Ok(Probe::Next);
+                }
+            }
+        }
+        // Inside an odd number of shells: the shells of one solid never
+        // cross, so that is inside the outer shell and no void.
+        Ok(Probe::Found(Beside {
+            inside: crossings.len() % 2 == 1,
+            direction,
+            crossings,
+        }))
+    })?;
+    found.ok_or_else(|| {
+        GeopError::new(format!(
+            "solid_contains_beside: no ray from {point:?} off face {face_id} of solid {solid_id} \
+             was clear of every vertex and edge after {MAX_RAY_ATTEMPTS} attempts; the last one \
+             was rejected because {last_rejection}"
+        ))
+    })
+}
+
+/// Whether `point`, a point inside face `face_id` of the solid `solid_id`,
+/// is on the solid's boundary anywhere else as well: on a vertex, on an
+/// edge, or on another face, of any of its shells. A body touching the face
+/// at a point leaves a vertex of its own in the face's interior with no
+/// topology between them: an inscribed sphere's pole on the cube's face.
+/// Other arguments as for [`shell_contains`].
+pub fn on_solid_boundary_besides(
+    model: &Model,
+    solid_id: SolidId,
+    face_id: FaceId,
+    point: &Vector3,
+    max_nodes: usize,
+    epsilon: Scalar,
+    seed: u64,
+) -> GeopResult<bool> {
+    for &shell_id in &model.get_solid(solid_id)?.shells {
+        let boundary = ShellBoundary::of(model, shell_id);
+        for &vertex_id in &boundary.vertices {
+            if model.get_vertex(vertex_id)?.point.could_be_equal(point) {
+                return Ok(true);
+            }
+        }
+        for &edge_id in &boundary.edges {
+            if curve_could_contain(&model.get_edge(edge_id)?.curve, point, max_nodes, epsilon)?
+                .is_some()
+            {
+                return Ok(true);
+            }
+        }
+        for &other in &model.get_shell(shell_id)?.faces {
+            if other == face_id {
+                continue;
+            }
+            let Some((u, v)) =
+                surface_could_contain(&model.get_face(other)?.surface, point, max_nodes, epsilon)?
+            else {
+                continue;
+            };
+            if !matches!(
+                face_contains(model, other, u, v, max_nodes, epsilon, seed ^ other.0)?,
+                FaceClassification::Outside
+            ) {
+                return Ok(true);
+            }
+        }
+    }
+    Ok(false)
 }
 
 /// The face of `shell_id` that `point` lies on, if any, and where on its

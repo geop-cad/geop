@@ -420,6 +420,33 @@ polygon, so sampling is what it is for (`uv_loop::sample_loop_to_polygon`).
 A sample in an error message, to describe what went wrong, decides
 nothing and is fine.
 
+A probe is a sample too. Which side of a face the solid is on was decided
+by classifying a point a distance off the face, the distance halved from
+the shell's extent until the two sides disagreed. The distance was a
+tunable deciding an answer: on a non-convex solid a probe reaches through
+the local material into another part of it, and a plate placed at
+`(10000, -5000, 2000)` had its extent taken as the greatest coordinate
+less the least over *all three axes*, 15080 for a plate 80 long, so the
+halvings stopped at 7 and the one probe that resolved, at 29, went from
+a bore's wall out through 18 of plate on one side and across the bore
+into plate on the other. The limit as the distance goes to zero is what
+the question means, and a ray leaving the face answers it exactly: the
+parity of its crossings past the face (`solid_contains_beside`). The
+point the ray leaves from is a free choice, and the first one offered was
+the centre of a cube's face, where an inscribed sphere's pole lies with no
+topology between them: a point on the boundary elsewhere too is rejected
+(`on_solid_boundary_besides`), and the next one taken. The ray's crossings
+are kept with the verdict (`Beside`) and named in the error: that is what
+showed the subd mug's handle patch to be a ribbon folded onto itself, a ray
+leaving it crossing its other half `6e-7` on, which no probe had seen.
+
+The rasterized mesh has the same shape of trap: each face is sampled on
+its own, so two faces meet along a curved edge in two polygons a sliver
+apart, and the mesh's volume as a sum of tetrahedra from the origin
+weighed those slivers by their distance from it, 5.5 for a bore of 142.
+A sum that is exact only for a closed figure is taken from a point of the
+figure (`stl::enclosed_volume`), so what is not closed weighs by its size.
+
 ## Subdivide to isolate, then Newton to refine
 
 Subdivision and Newton are different tools and neither does the other's job.
