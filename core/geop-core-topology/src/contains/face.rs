@@ -277,6 +277,13 @@ const POINTS_PER_BASE: usize = 2;
 /// trim, and exhausting them is reported as an error rather than accepted.
 const MAX_HALVINGS: usize = 40;
 
+/// How many times [`face_interior_point_where`] makes its margin from the
+/// boundary finer, by [`MARGIN_RATIO`] each time, before it gives up: from
+/// the usual `1e-4` to `1.5e-9` of the surface's parameters.
+const FINER_MARGINS: usize = 4;
+/// How much finer each margin is than the last.
+const MARGIN_RATIO: f64 = 16.0;
+
 /// A `(u, v)` strictly inside `face_id`'s trimmed region.
 ///
 /// Found the way the operation itself suggests: start on the boundary and
@@ -291,7 +298,10 @@ const MAX_HALVINGS: usize = 40;
 /// contain it, and for a face carved out by a boolean's remesh it very often
 /// does not.
 ///
-/// `max_nodes`/`epsilon`/`seed` are passed straight to [`face_contains`].
+/// `max_nodes`/`seed` are passed straight to [`face_contains`], and `epsilon` as
+/// its first tolerance: how far clear of the boundary, in `(u, v)`, a point
+/// has to be — made finer where none is that far (see
+/// [`face_interior_point_where`]).
 pub fn face_interior_point(
     model: &Model,
     face_id: FaceId,
@@ -342,98 +352,111 @@ pub fn face_interior_point_where(
         .take(model.coedges.len() + 1)
         .collect();
 
+    // How far clear of the boundary a point has to be, in `(u, v)`: the
+    // search's resolution `epsilon` first, then finer. A face thinner in its
+    // surface's parameters than that resolution — a fillet's corner piece
+    // on a face a hundred times its size — has interior points all the
+    // same; the margin only says how hard the search tries to find one, and
+    // a finer one takes `face_contains` more subdivision.
     let mut found_any = false;
-    for &coedge_id in &coedges {
-        let pcurve = &model.get_coedge(coedge_id)?.pcurve;
-        let t = pcurve.mid_parameter()?;
-        let Ok(base) = pcurve.evaluate(t) else {
-            continue;
-        };
-        let Ok(tangent) = pcurve.tangent(t).and_then(|d| d.normalize()) else {
-            continue;
-        };
+    let mut margin = epsilon;
+    for _ in 0..=FINER_MARGINS {
+        for &coedge_id in &coedges {
+            let pcurve = &model.get_coedge(coedge_id)?.pcurve;
+            let t = pcurve.mid_parameter()?;
+            let Ok(base) = pcurve.evaluate(t) else {
+                continue;
+            };
+            let Ok(tangent) = pcurve.tangent(t).and_then(|d| d.normalize()) else {
+                continue;
+            };
 
-        // Rotate the tangent a quarter turn in `(u, v)`. Which of the two
-        // perpendiculars points *into* the face depends on the loop's
-        // winding, so both are tried and whichever lands inside wins —
-        // cheaper and more robust than deriving the winding.
-        let normals = [
-            tangent.perp(),
-            Vector2::from_array([tangent[1], tangent[0].neg()]),
-        ];
+            // Rotate the tangent a quarter turn in `(u, v)`. Which of the two
+            // perpendiculars points *into* the face depends on the loop's
+            // winding, so both are tried and whichever lands inside wins —
+            // cheaper and more robust than deriving the winding.
+            let normals = [
+                tangent.perp(),
+                Vector2::from_array([tangent[1], tangent[0].neg()]),
+            ];
 
-        let mut offered = 0;
-        let found = halve(
-            diagonal.div(Scalar::TWO)?,
-            MAX_HALVINGS,
-            |&step| -> GeopResult<_> {
-                for inward in normals {
-                    // Any point inside the face will do — a free choice — so the
-                    // candidate is sharp: it doesn't inherit the width of the
-                    // pcurve it was stepped from, and every later computation
-                    // from it (a classification ray, say) starts from a point.
-                    let u = base[0].add(inward[0].mul(step)).sharpen();
-                    let v = base[1].add(inward[1].mul(step)).sharpen();
-                    if u.definitely_less(u_lo)
-                        || u.definitely_greater(u_hi)
-                        || v.definitely_less(v_lo)
-                        || v.definitely_greater(v_hi)
-                    {
-                        continue;
-                    }
-                    // Accepted only if the whole box of radius `epsilon` around it
-                    // is inside, not just the point: the point is a free choice,
-                    // and every later use of it (a classification ray, a surface
-                    // evaluation compared against other solids) works at that
-                    // resolution. A point merely strictly inside can sit 5e-16
-                    // off the boundary — one inward step exactly the face's width
-                    // lands there — and at `epsilon` it *is* on the boundary.
-                    let neighbourhood = |t: Scalar| t.sub(epsilon).union(t.add(epsilon));
-                    if matches!(
-                        face_contains(
-                            model,
-                            face_id,
-                            neighbourhood(u),
-                            neighbourhood(v),
-                            max_nodes,
-                            epsilon,
-                            seed
-                        )?,
-                        PointClassification::Inside
-                    ) {
-                        found_any = true;
-                        if accept(u, v)? {
-                            return Ok(Probe::Found((u, v)));
+            let mut offered = 0;
+            let found = halve(
+                diagonal.div(Scalar::TWO)?,
+                MAX_HALVINGS,
+                |&step| -> GeopResult<_> {
+                    for inward in normals {
+                        // Any point inside the face will do — a free choice — so the
+                        // candidate is sharp: it doesn't inherit the width of the
+                        // pcurve it was stepped from, and every later computation
+                        // from it (a classification ray, say) starts from a point.
+                        let u = base[0].add(inward[0].mul(step)).sharpen();
+                        let v = base[1].add(inward[1].mul(step)).sharpen();
+                        if u.definitely_less(u_lo)
+                            || u.definitely_greater(u_hi)
+                            || v.definitely_less(v_lo)
+                            || v.definitely_greater(v_hi)
+                        {
+                            continue;
                         }
-                        // Rejected: the next point comes from half this step, so
-                        // it differs from this one — stepping in from each side
-                        // of a symmetric face lands every base on the same
-                        // centre, so bases alone don't give distinct points. Two
-                        // points per base keep a caller that rejects everything
-                        // (every point it tries turns out alike) cheap.
-                        offered += 1;
-                        if offered == POINTS_PER_BASE {
-                            return Ok(Probe::Stop);
+                        // Accepted only if the whole box of radius `margin` around it
+                        // is inside, not just the point: the point is a free choice,
+                        // and every later use of it (a classification ray, a surface
+                        // evaluation compared against other solids) works at that
+                        // resolution. A point merely strictly inside can sit 5e-16
+                        // off the boundary — one inward step exactly the face's width
+                        // lands there — and at `margin` it *is* on the boundary.
+                        let neighbourhood = |t: Scalar| t.sub(margin).union(t.add(margin));
+                        if matches!(
+                            face_contains(
+                                model,
+                                face_id,
+                                neighbourhood(u),
+                                neighbourhood(v),
+                                max_nodes,
+                                margin,
+                                seed
+                            )?,
+                            PointClassification::Inside
+                        ) {
+                            found_any = true;
+                            if accept(u, v)? {
+                                return Ok(Probe::Found((u, v)));
+                            }
+                            // Rejected: the next point comes from half this step, so
+                            // it differs from this one — stepping in from each side
+                            // of a symmetric face lands every base on the same
+                            // centre, so bases alone don't give distinct points. Two
+                            // points per base keep a caller that rejects everything
+                            // (every point it tries turns out alike) cheap.
+                            offered += 1;
+                            if offered == POINTS_PER_BASE {
+                                return Ok(Probe::Stop);
+                            }
+                            // Leave the direction loop, reaching the halving below.
+                            break;
                         }
-                        // Leave the direction loop, reaching the halving below.
-                        break;
                     }
-                }
-                // Halving walks toward the boundary, and `face_contains` reports
-                // `OnCoedge` for anything within its own tolerance of it — so
-                // below that tolerance every step is `OnCoedge` and no amount of
-                // further halving can succeed. Stop and let the next base point
-                // try instead of burning the remaining budget here.
-                Ok(if step.definitely_greater(epsilon) {
-                    Probe::Next
-                } else {
-                    Probe::Stop
-                })
-            },
-        )?;
-        if found.is_some() {
-            return Ok(found);
+                    // Halving walks toward the boundary, and `face_contains` reports
+                    // `OnCoedge` for anything within its own tolerance of it — so
+                    // below that tolerance every step is `OnCoedge` and no amount of
+                    // further halving can succeed. Stop and let the next base point
+                    // try instead of burning the remaining budget here.
+                    Ok(if step.definitely_greater(margin) {
+                        Probe::Next
+                    } else {
+                        Probe::Stop
+                    })
+                },
+            )?;
+            if found.is_some() {
+                return Ok(found);
+            }
         }
+        if found_any {
+            break;
+        }
+        margin = margin.div(Scalar::from_f64(MARGIN_RATIO))?;
     }
 
     if found_any {
