@@ -37,6 +37,8 @@ mod stress_tests;
 mod subd_regression_tests;
 #[cfg(test)]
 mod tests;
+#[cfg(test)]
+mod tutorial_regression_tests;
 
 use geop_core_editor::registry::Registry;
 use geop_core_math::geop_error::GeopResult;

@@ -18,6 +18,8 @@ pub use import::{Healing, ImportedBody, read_step};
 pub use operation::{ImportStep, ImportStepArgs, Imported, add_bodies, imported, is_step_file};
 
 #[cfg(test)]
+mod regression_tests;
+#[cfg(test)]
 mod tests;
 
 #[cfg(test)]

@@ -31,6 +31,8 @@ geop-core-program = { workspace = true, features = ["testing"] }
 geop-ops-model = { workspace = true, features = ["testing"] }
 # The given solids and datums the tests blend, and the stress sweeps' bodies.
 geop-lib-fixtures.workspace = true
+# The regression test of rounding a shelled box.
+geop-ops-shell.workspace = true
 # The examples, and the bodies no primitive makes: a slot, and lofts.
 geop-ops-extrude-revolve = { workspace = true, features = ["testing"] }
 geop-ops-sketch.workspace = true

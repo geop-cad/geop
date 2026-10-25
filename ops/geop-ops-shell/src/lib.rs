@@ -11,6 +11,8 @@ mod program_tests;
 mod regression_tests;
 #[cfg(test)]
 mod stress_tests;
+#[cfg(test)]
+mod tutorial_regression_tests;
 
 pub use operation::{Shell, ShellArgs};
 

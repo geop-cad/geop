@@ -18,7 +18,7 @@ serde.workspace = true
 # extruded, revolved, drilled, booleaned — whose surfaces no given solid
 # has (a cone, a cross-drilled shaft).
 geop-lib-fixtures.workspace = true
-geop-ops-extrude-revolve = { workspace = true, features = ["examples"] }
+geop-ops-extrude-revolve = { workspace = true, features = ["examples", "testing"] }
 geop-ops-model = { workspace = true, features = ["testing"] }
 geop-lib-sweep = { workspace = true, features = ["testing"] }
 # STEP exported and imported in an editor, of parts and of the example
