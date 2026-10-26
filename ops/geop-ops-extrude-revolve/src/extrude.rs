@@ -19,7 +19,7 @@ use geop_core_math::{
 use geop_core_program::{numeric::NumericInput, part::StepContext, reader::Reader};
 use geop_core_sketch::{Shape, Sketch, profile::curve_polyline};
 use geop_core_topology::{Body, build::BuiltBody};
-use geop_lib_shell::rebuilt;
+use geop_lib_shell::{rebuilt, room};
 use geop_ops_model::sketch::{PlacedSketch, SketchRef, shape_profiles};
 use geop_ops_model::{
     BodyNames, Extent, ModelOperation, NamedModel, Namer, build_model, reach_past, read_model,
@@ -358,24 +358,41 @@ fn drafted(
     model.build_body(spec, names).with_context(ctx)
 }
 
-/// `wall`, a surface standing square to `plane` with its rows of control
-/// points each at one height, leant in by `slope` per unit of height: each
-/// control point where the wall's offset against its normal by its
-/// distance from the plane times `slope` has it ([`NurbSurface3D::offset`],
-/// which keeps the parametrization). The rows' offsets are what the wall
-/// is at their heights, and between them it is ruled, so the result is the
-/// drafted wall exactly wherever the offset is exact.
+/// `wall`, a surface standing square to `plane` on one side of it, with
+/// its rows of control points each at one height, leant in by `slope` per
+/// unit of height away from the plane: given room first ([`room`], which
+/// the rebuild asks of a new surface — a corner leant out moves past where
+/// the wall ended), each control point where the wall's offset against its
+/// normal by its height times `slope` has it ([`NurbSurface3D::offset`],
+/// which keeps the parametrization), the height counted the way the wall
+/// lies from the plane, so the room on the other side carries the drafted
+/// wall on. The rows' offsets are what the wall is at their heights, and
+/// between them it is ruled, so the result is the drafted wall exactly
+/// wherever the offset is exact.
 fn drafted_wall(
     wall: &NurbSurface3D,
     plane: &CoordinateSystem,
     slope: Scalar,
 ) -> GeopResult<NurbSurface3D> {
-    let mut drafted = wall.clone();
-    for (k, point) in drafted.control_points.iter_mut().enumerate() {
-        let height = point
+    let height = |point: &Vector4| -> GeopResult<Scalar> {
+        Ok(point
             .dehomogenized()?
             .sub(plane.origin())
-            .prod_dot(plane.w());
+            .prod_dot(plane.w()))
+    };
+    let mut side = None;
+    for point in &wall.control_points {
+        side = side.or(height(point)?.definite_sign());
+    }
+    let slope = match side {
+        Some(true) => slope,
+        Some(false) => slope.neg(),
+        None => return Err(GeopError::new("a wall of no height")),
+    };
+    let wall = room(wall.clone())?;
+    let mut drafted = wall.clone();
+    for (k, point) in drafted.control_points.iter_mut().enumerate() {
+        let height = height(point)?;
         if height.is_zero() {
             continue;
         }
@@ -384,7 +401,7 @@ fn drafted_wall(
         // the same numbers keep the wall a polynomial along its height.
         let weight = point[3];
         let moved = wall
-            .offset(height.abs().mul(slope).neg())?
+            .offset(height.mul(slope).neg())?
             .ok_or_else(|| GeopError::new("the draft makes a wall collapse at this height"))?
             .control_points[k];
         let at = moved.dehomogenized()?.prod_scalar(weight);

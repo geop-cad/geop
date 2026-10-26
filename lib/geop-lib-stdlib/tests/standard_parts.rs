@@ -340,7 +340,7 @@ fn every_size(part: &StandardPart) -> Vec<(String, Program)> {
 
 /// The tooth counts a gear of module 1 is built with by
 /// [`every_size_of_every_family_builds_to_its_table`].
-const GEAR_TEETH: [usize; 7] = [12, 17, 25, 33, 42, 60, 80];
+const GEAR_TEETH: [usize; 8] = [12, 17, 25, 33, 42, 60, 80, 120];
 
 /// The sizes of the family `part` builds to its table — every one but
 /// those of a gear, of which a range (see [`every_size`]) — fully validated
@@ -403,7 +403,7 @@ fn every_size_of_every_family_builds_to_its_table() {
 /// The spur gears of [`every_size_of_every_family_builds_to_its_table`]
 /// alone: every module, and a range of tooth counts.
 #[test]
-#[ignore = "slow: fifteen gears, up to 80 teeth, half an hour — run with `cargo test -- --ignored`"]
+#[ignore = "slow: sixteen gears, up to 120 teeth, half an hour — run with `cargo test -- --ignored`"]
 fn every_spur_gear_builds_to_its_table() {
     let failures = build_every_size(geop_lib_stdlib::part("std:spur_gear.geop").unwrap());
     assert!(failures.is_empty(), "{}", failures.join("\n\n"));
@@ -549,13 +549,22 @@ fn a_gear_gap_turned_234_degrees_is_cut_valid() {
     gaps_cut("z20", 2, 234.0).unwrap();
 }
 
-/// Every gap cut splits the rim where it crosses it, and an edge split
-/// again and again grows wider with each split: with the rim in four
-/// quarters, the ninth gap of a 42-tooth gear found it too wide to cut.
+/// Every gap cut splits the rim where it crosses it, twice on each side:
+/// the ninth gap of a 42-tooth gear once found a quarter of the rim, split
+/// sixteen times, too wide to cut, when each cut carried the width of its
+/// parameter into the pieces.
 #[test]
 #[ignore = "slow: twelve booleans — run with `cargo test -- --ignored`"]
 fn twelve_gaps_of_a_42_tooth_gear_are_cut_valid() {
     gaps_cut("z42", 12, 360.0 / 42.0).unwrap();
+}
+
+/// The thirty gaps of a 120-tooth gear that cross one quarter of its rim,
+/// each side's quarter split sixty times.
+#[test]
+#[ignore = "slow: thirty booleans — run with `cargo test -- --ignored`"]
+fn a_quarter_of_a_120_tooth_gear_is_cut_valid() {
+    gaps_cut("z120", 30, 3.0).unwrap();
 }
 
 /// A NEMA 17 stepper driving a gear pair: a 12-tooth pinion on its shaft,

@@ -246,7 +246,7 @@ kernel the concrete consequence is missed intersections.
 `sharpen` is the sharpest tool for violating this, so it gets a rule.
 Sharpening is legitimate **only where the value being sharpened is a free
 choice** — where any value inside the interval would serve equally well,
-so collapsing to one of them loses no mathematical accuracy. Two places
+so collapsing to one of them loses no mathematical accuracy. Three places
 qualify:
 
 - **Subdivision parameters in the `contains` / `intersection` loops.** A
@@ -258,6 +258,12 @@ qualify:
 - **The predictor, before the corrector.** A predicted point is a seed and a
   bias for the damped Newton that follows; it can be chosen arbitrarily
   without affecting which fixed point the corrector converges to.
+- **Where to cut an edge at a vertex, once refined.** The vertex is an
+  enclosure, and every parameter of the refined enclosure of where the
+  curve reaches it ends a piece on the curve and within the vertex. Cut at
+  a sharp one and check it (`split_parameter_at_point`); the vertex keeps
+  its width. Cutting at all of them made each piece wider than its parent
+  (see "Width along a split edge" below).
 
 Everywhere else, sharpening a value that is an *answer* is a bug:
 
@@ -1130,11 +1136,22 @@ cut, and each only showed up past some count of teeth:
 - **Rescans.** The piercing search started over from every edge × face
   pair after each split. A pair once found clean stays clean (a piece of a
   curve crosses nothing the whole did not), so it is not asked again.
-- **Width along a split edge.** An edge split again and again grows wider
-  with each split, and its next crossing comes out wider still. A rim of
-  four quarter arcs failed once a quarter was crossed by about fifteen
-  gaps; drawn in twelve arcs it is not. Where an operation will cut one
-  edge many times, draw it in pieces, ending where no cut will land.
+- **Width along a split edge.** An edge was cut at the whole refined
+  enclosure of where it reaches the vertex. That kept every piece it
+  could be cut into there in one: the parameter's width went through
+  Boehm's `α = (t - a) / (b - a)` into the pieces' control points and end
+  knot, the next cut's parameter, found on the wider piece, came out
+  wider, and the width grew threefold per cut. A quarter arc cut forty
+  times went from `3e-15` to `0.08`; a disc's rim cut by thirty-two slots
+  ended `4e-10` below its cap, and gears stopped at 80 teeth, their rims
+  drawn in twelve arcs to spread the cuts. Where in that enclosure to cut
+  is a free choice: every parameter in it ends a piece on the curve and
+  within the vertex. `split_parameter_at_point` cuts at its sharp middle
+  and checks the curve reaches the vertex there; each cut then adds one
+  subdivision's rounding, and the rim is a circle again. The pcurves are
+  cut at that same point, not each at a point of the vertex of its own:
+  where a cubic crosses a plane at its inflection the vertex is wide, and
+  two choices in it ended the edge and its pcurve `1.4e-13` apart.
 - **Traced fits.** An involute's curvature changes tenfold along the
   flank, so the cubic through the march's points drifted a hundred times
   the usual; the legs are now split finer while the drift is what makes

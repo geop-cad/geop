@@ -1,4 +1,8 @@
-use geop_core_math::{geop_error::GeopResult, scalars::Scalar, vector::Vector};
+use geop_core_math::{
+    geop_error::{GeopError, GeopResult},
+    scalars::Scalar,
+    vector::Vector,
+};
 
 use super::NurbCurve;
 use geop_core_math::solvers::newton;
@@ -9,12 +13,10 @@ impl<const D: usize> NurbCurve<D> {
     /// passes through `point`: Gauss-Newton on `|C(t) - P|²`, by
     /// [`newton::refine`], which says why and how honestly.
     ///
-    /// This is what lets [`NurbCurve::split`] be called without sharpening:
-    /// sharpening a search's parameter moved the split to the interval's
-    /// midpoint rather than the point actually located — a silent geometric
-    /// error of `|t_mid - t*| x |C'(t)|`, and the reason an edge endpoint
-    /// could land ~1e-8 from the vertex it is anchored to. A refined
-    /// parameter is narrow *and* still an honest enclosure.
+    /// A search's parameter is as wide as the search's tolerance; the
+    /// refined one is as narrow as the curve and the point pin it down, and
+    /// still an honest enclosure. [`Self::split_parameter_at_point`] cuts
+    /// within it.
     ///
     /// A point nowhere near the curve, or a vanishing tangent, leaves `t`
     /// as it is.
@@ -34,6 +36,52 @@ impl<const D: usize> NurbCurve<D> {
             Some([current.sub(step)])
         });
         t
+    }
+
+    /// The parameter to [`split`](Self::split) this curve at so a piece
+    /// ends at `point`, from a parameter `t` that isolates it: `t` refined
+    /// ([`Self::refine_parameter_at_point`]), then the sharp middle of it.
+    ///
+    /// Where in the refined enclosure the curve is cut is a free choice.
+    /// `point` is an enclosure, and every parameter in the refined one
+    /// gives a piece that lies on the curve and ends within `point`, so
+    /// any of them serves; the check below asks it of the one chosen.
+    /// Cutting at the whole enclosure instead keeps *every* such piece in
+    /// one: the junction's uncertainty along the curve becomes width in the
+    /// pieces' control points (through `α = (t - a) / (b - a)` in Boehm
+    /// insertion) and in their end knots. The next cut's parameter is then
+    /// found on the wider piece, comes out wider, and widens the next
+    /// pieces more: a quarter arc of radius 4 cut forty times went from
+    /// `3e-15` wide to `0.08` (three times wider per cut), and a disc's rim
+    /// cut by thirty-two slots ended `4e-10` off its cap. A sharp cut adds
+    /// the rounding of one subdivision per cut, nothing more.
+    ///
+    /// Refused if `t` could be an end of the domain — then `point` is an
+    /// end of the curve, nothing to cut — or if the curve at the chosen
+    /// parameter does not reach `point`.
+    pub fn split_parameter_at_point<const C: usize>(
+        &self,
+        t: Scalar,
+        point: &Vector<C>,
+    ) -> GeopResult<Scalar>
+    where
+        NurbCurve<D>: ParameterRefinable<C>,
+    {
+        let (lo, hi) = self.domain();
+        let refined = self.refine_parameter_at_point(t, point);
+        if !refined.definitely_greater(lo) || !refined.definitely_less(hi) {
+            return Err(GeopError::new(format!(
+                "the parameter {refined:?} of {point:?} could be an end of the domain ({lo:?}, {hi:?}): the point is an end of the curve, not inside it"
+            )));
+        }
+        let cut = refined.sharpen();
+        let reached = self.evaluate_cartesian(cut)?;
+        if !reached.could_be_equal(point) {
+            return Err(GeopError::new(format!(
+                "the curve at {cut:?}, the middle of the refined parameter {refined:?}, is at {reached:?}, not at {point:?}"
+            )));
+        }
+        Ok(cut)
     }
 }
 

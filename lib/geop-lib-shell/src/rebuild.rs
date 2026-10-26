@@ -938,7 +938,7 @@ fn turns_around(guide: &Curve3, points: &[Vector3]) -> GeopResult<()> {
 /// that is a single point, a pole: the pole would end up inside the patch,
 /// where it has no normal. How much room is a free choice; the patch's own
 /// size is room enough unless a face moves as far as it is wide.
-pub(crate) fn room(surface: NurbSurface3D) -> GeopResult<NurbSurface3D> {
+pub fn room(surface: NurbSurface3D) -> GeopResult<NurbSurface3D> {
     let mut surface = extended(surface)?;
     for along_u in [true, false] {
         let (degree, num) = if along_u {
