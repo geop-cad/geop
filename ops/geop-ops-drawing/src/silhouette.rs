@@ -11,6 +11,13 @@
 //!    where to look: what is traced is the exact zero set. The interior grid
 //!    lines sit at irrational fractions of the domain, a free choice made so
 //!    they do not run along the symmetric iso lines silhouettes so often are.
+//!    A closed loop crossing no grid line lies within one cell, and encloses
+//!    a critical point of `g` (an extremum): each cell where `g` could
+//!    vanish is halved into boxes, those that could hold a critical point
+//!    halved again, and through each left a line across the cell is sampled
+//!    too ([`loop_seats`]), crossing such a loop. A trace seeded on a short
+//!    line steps no further than half of it, so a small loop is traced in
+//!    steps of its own size.
 //! 2. **Tracing.** From a seed, predictor-corrector steps follow the curve:
 //!    a step along the tangent `(-g_v, g_u)`, sized to a fixed length in 3-D,
 //!    then Newton back onto `g = 0`. A trace ends where the curve leaves the
@@ -60,12 +67,18 @@ const GRID_SAMPLES: usize = 32;
 /// Where the interior grid lines sit within their cells: the golden
 /// section, far from the halves and quarters symmetric curves cross at.
 const GRID_OFFSET: f64 = 0.381_966_011_250_105;
+/// How many times a box within a grid cell is halved, at most, while it
+/// could hold a critical point of `g`: how hard the search for small
+/// closed loops tries.
+const BOX_DEPTH: usize = 1;
 /// Newton steps bringing a point onto the silhouette.
 const CORRECTOR_ITERATIONS: usize = 24;
 /// Bisection steps locating a seed between two samples.
 const BISECTIONS: usize = 60;
 /// Trace steps per face, at most: how hard a trace tries.
 const MAX_TRACE_STEPS: usize = 4000;
+/// Times a trace step is halved, at most, before the trace gives up.
+const STEP_HALVINGS: usize = 6;
 /// Steps a trace takes along the face's size.
 const STEPS_PER_FACE: f64 = 24.0;
 /// Seed for the containment tests.
@@ -181,7 +194,8 @@ fn correct_on_boundary(
     arrived.then(|| at(t))
 }
 
-/// An iso line of the domain the seeds are sampled along.
+/// A piece of an iso line of the domain the seeds are found along: a side
+/// of a box (see the module docs).
 struct GridLine {
     /// Whether `u` is fixed along it (else `v` is).
     u_fixed: bool,
@@ -192,6 +206,10 @@ struct GridLine {
     brackets: Vec<(usize, usize)>,
     /// Which brackets a trace has crossed.
     traced: Vec<bool>,
+    /// How far apart its ends are in space: a trace seeded on it steps no
+    /// further than half that, so a loop small enough to have been found
+    /// only on small boxes is traced in steps its own size.
+    scale: f64,
 }
 
 impl GridLine {
@@ -204,17 +222,20 @@ impl GridLine {
     }
 
     /// Marks traced the bracket a trace crossed at `t` along this line: the
-    /// one whose samples, widened by one interval each way, hold `t`, and the
-    /// nearest of them if several do. None, if no bracket is that near —
-    /// the crossing is one the samples did not see.
+    /// one whose ends, widened by its own width and a 32nd of the line each
+    /// way, hold `t`, and the nearest of them if several do. None, if no
+    /// bracket is that near — the crossing is off this piece of the line.
     fn mark(&mut self, t: f64) {
         let p = |k: usize| self.params[k].to_f64();
-        let step = p(1) - p(0);
+        let line = (p(self.params.len() - 1) - p(0)) / 32.0;
         let near = self
             .brackets
             .iter()
             .enumerate()
-            .filter(|(_, (lo, hi))| p(*lo) - step <= t && t <= p(*hi) + step)
+            .filter(|(_, (lo, hi))| {
+                let reach = p(*hi) - p(*lo) + line;
+                p(*lo) - reach <= t && t <= p(*hi) + reach
+            })
             .min_by(|(_, a), (_, b)| {
                 let distance = |&(lo, hi): &(usize, usize)| (0.5 * (p(lo) + p(hi)) - t).abs();
                 distance(a).total_cmp(&distance(b))
@@ -226,55 +247,160 @@ impl GridLine {
     }
 }
 
-/// The grid lines of `surface`'s domain, sampled for `g`'s sign.
+/// The distinct knots of `knots` within `(lo, hi)`, and its ends, in
+/// order.
+fn breaks(knots: &[Scalar], (lo, hi): (Scalar, Scalar)) -> Vec<Scalar> {
+    let mut out = vec![lo];
+    for &k in knots {
+        if k.definitely_greater(*out.last().expect("a first break")) && k.definitely_less(hi) {
+            out.push(k);
+        }
+    }
+    out.push(hi);
+    out
+}
+
+/// The middle of `(a, b)`, sharp: where to split is a free choice.
+fn middle(a: Scalar, b: Scalar) -> Scalar {
+    Scalar::fraction(a, b, Scalar::from_f64(0.5)).sharpen()
+}
+
+/// The iso lines seeds are found on (see the module docs): the grid's,
+/// and through every box in a cell of it that could hold a critical point
+/// of `g` where `g` could vanish, a piece of a line across that cell.
 fn grid(surface: &NurbSurface3D, d: &Vector3) -> Vec<GridLine> {
     let mut fractions = vec![0.0];
     fractions.extend((0..GRID_LINES).map(|k| (k as f64 + GRID_OFFSET) / GRID_LINES as f64));
     fractions.push(1.0);
+    let at = |(lo, hi): (Scalar, Scalar), f: f64| match f {
+        0.0 => lo,
+        1.0 => hi,
+        _ => Scalar::fraction(lo, hi, Scalar::from_f64(f)),
+    };
+    let (du, dv) = (surface.domain_u(), surface.domain_v());
+    let us: Vec<Scalar> = fractions.iter().map(|&f| at(du, f)).collect();
+    let vs: Vec<Scalar> = fractions.iter().map(|&f| at(dv, f)).collect();
     let mut lines = Vec::new();
-    for u_fixed in [true, false] {
-        let ((a_lo, a_hi), (b_lo, b_hi)) = if u_fixed {
-            (surface.domain_u(), surface.domain_v())
-        } else {
-            (surface.domain_v(), surface.domain_u())
-        };
-        for &f in &fractions {
-            let value = match f {
-                0.0 => a_lo,
-                1.0 => a_hi,
-                _ => Scalar::fraction(a_lo, a_hi, Scalar::from_f64(f)),
-            };
-            let params: Vec<Scalar> = (0..=GRID_SAMPLES)
-                .map(|k| match k {
-                    0 => b_lo,
-                    k if k == GRID_SAMPLES => b_hi,
-                    k => Scalar::fraction(
-                        b_lo,
-                        b_hi,
-                        Scalar::from_f64(k as f64 / GRID_SAMPLES as f64),
-                    ),
-                })
-                .collect();
-            let mut line = GridLine {
-                u_fixed,
-                value,
-                params,
-                brackets: Vec::new(),
-                traced: Vec::new(),
-            };
-            let brackets: Vec<(usize, usize)> = sign_changes(0..line.params.len(), |k| {
-                let (u, v) = line.point(line.params[k]);
-                Ok::<_, Infallible>(sign(surface, d, u, v))
-            })
-            .flatten()
-            .map(|(j, k, _)| (j, k))
-            .collect();
-            line.traced = vec![false; brackets.len()];
-            line.brackets = brackets;
-            lines.push(line);
+    for &u in &us {
+        lines.push(sampled_line(surface, d, true, u, dv));
+    }
+    for &v in &vs {
+        lines.push(sampled_line(surface, d, false, v, du));
+    }
+    for u in us.windows(2) {
+        for v in vs.windows(2) {
+            for (at, size) in loop_seats(surface, d, (u[0], u[1]), (v[0], v[1])) {
+                let mut line = sampled_line(surface, d, true, at, (v[0], v[1]));
+                line.scale = line.scale.min(size);
+                lines.push(line);
+            }
         }
     }
     lines
+}
+
+/// Where in the cell `cu` x `cv` of the grid a loop of the silhouette that
+/// crosses none of its lines could lie: the `u` of the middle of every box
+/// of it, halved to [`BOX_DEPTH`], that could hold a critical point of
+/// `g`, and the box's size in space — the size of a loop found there. A loop of `g = 0` encloses one (an extremum of `g`), so a line
+/// through each crosses every loop in the cell — none, if `g` cannot
+/// vanish in the cell at all. Each box is within a knot span, where the
+/// enclosures are the span's own.
+fn loop_seats(
+    surface: &NurbSurface3D,
+    d: &Vector3,
+    cu: (Scalar, Scalar),
+    cv: (Scalar, Scalar),
+) -> Vec<(Scalar, f64)> {
+    let zero = Scalar::ZERO;
+    let us = breaks(&surface.knot_vector_u, cu);
+    let vs = breaks(&surface.knot_vector_v, cv);
+    let mut stack = Vec::new();
+    let mut vanishes = false;
+    for u in us.windows(2) {
+        for v in vs.windows(2) {
+            match contour(surface, d, u[0].union(u[1]), v[0].union(v[1])) {
+                Ok((g, _, _)) if !g.could_be_equal(zero) => {}
+                _ => vanishes = true,
+            }
+            stack.push(((u[0], u[1]), (v[0], v[1]), 0));
+        }
+    }
+    let mut seats: Vec<(Scalar, f64)> = Vec::new();
+    if !vanishes {
+        return seats;
+    }
+    while let Some(((u0, u1), (v0, v1), depth)) = stack.pop() {
+        let critical = match contour(surface, d, u0.union(u1), v0.union(v1)) {
+            Ok((_, gu, gv)) => gu.could_be_equal(zero) && gv.could_be_equal(zero),
+            Err(_) => true,
+        };
+        if !critical {
+            continue;
+        }
+        let (um, vm) = (middle(u0, u1), middle(v0, v1));
+        if depth >= BOX_DEPTH {
+            if !seats.iter().any(|s| s.0.could_be_equal(um)) {
+                let corner =
+                    |u: Scalar, v: Scalar| surface.evaluate(u, v).map(|p| p.to_f64_array());
+                let size = match (corner(u0, v0), corner(u1, v1)) {
+                    (Ok(a), Ok(b)) => plain::distance(a, b),
+                    _ => f64::INFINITY,
+                };
+                seats.push((um, size));
+            }
+            continue;
+        }
+        for u in [(u0, um), (um, u1)] {
+            for v in [(v0, vm), (vm, v1)] {
+                stack.push((u, v, depth + 1));
+            }
+        }
+    }
+    seats
+}
+
+/// The piece `range` of the iso line where `u` (if `u_fixed`, else `v`) is
+/// `value`, sampled for `g`'s sign at [`GRID_SAMPLES`] intervals.
+fn sampled_line(
+    surface: &NurbSurface3D,
+    d: &Vector3,
+    u_fixed: bool,
+    value: Scalar,
+    (lo, hi): (Scalar, Scalar),
+) -> GridLine {
+    let params: Vec<Scalar> = (0..=GRID_SAMPLES)
+        .map(|k| match k {
+            0 => lo,
+            k if k == GRID_SAMPLES => hi,
+            k => Scalar::fraction(lo, hi, Scalar::from_f64(k as f64 / GRID_SAMPLES as f64)),
+        })
+        .collect();
+    let mut line = GridLine {
+        u_fixed,
+        value,
+        params,
+        brackets: Vec::new(),
+        traced: Vec::new(),
+        scale: f64::INFINITY,
+    };
+    let at = |t: Scalar| {
+        let (u, v) = line.point(t);
+        surface.evaluate(u, v).map(|p| p.to_f64_array())
+    };
+    if let (Ok(a), Ok(b)) = (at(lo), at(hi)) {
+        line.scale = plain::distance(a, b);
+    }
+    let brackets: Vec<(usize, usize)> = sign_changes(0..line.params.len(), |k| {
+        let (u, v) = line.point(line.params[k]);
+        Ok::<_, Infallible>(sign(surface, d, u, v))
+    })
+    .flatten()
+    .map(|(j, k, _)| (j, k))
+    .collect();
+    line.traced = vec![false; brackets.len()];
+    line.brackets = brackets;
+    line
 }
 
 /// The seed in `line`'s bracket `(lo, hi)`: bisected on `g`'s sign, then
@@ -440,48 +566,66 @@ fn march(
         }
         let (su, sv) = surface.derivatives(u, v)?;
         let speed = su.prod_scalar(tu).add(&sv.prod_scalar(tv)).norm();
-        let Ok(scale) = step.div(speed) else {
-            return Ok(repeat::Step::Done(Ending::Open));
-        };
-        let (du, dv) = (tu.mul(scale), tv.mul(scale));
-        let (pu, pv) = (u.add(du).sharpen(), v.add(dv).sharpen());
-        let leaves_u = pu.definitely_less(u_lo) || pu.definitely_greater(u_hi);
-        let leaves_v = pv.definitely_less(v_lo) || pv.definitely_greater(v_hi);
-        if leaves_u || leaves_v {
-            // The boundary the step reaches first, and the fraction of the
-            // step to it: the point there, then onto the silhouette along
-            // that boundary.
-            let to = |x: Scalar, dx: Scalar, lo: Scalar, hi: Scalar| -> (f64, Scalar) {
-                let bound = if dx.to_f64() < 0.0 { lo } else { hi };
-                ((bound.sub(x).to_f64() / dx.to_f64()).clamp(0.0, 1.0), bound)
+        // A step whose corrector fails, or lands further off than twice
+        // the step, is retried at half the length: how far to step is a
+        // free choice, and a tight turn of the silhouette needs short ones.
+        let from = surface.evaluate(u, v)?;
+        let mut tried = step;
+        let mut halvings = 0;
+        let next = loop {
+            let Ok(scale) = tried.div(speed) else {
+                return Ok(repeat::Step::Done(Ending::Open));
             };
-            let (fu, bound_u) = to(u, du, u_lo, u_hi);
-            let (fv, bound_v) = to(v, dv, v_lo, v_hi);
-            let u_first = leaves_u && (!leaves_v || fu <= fv);
-            // On the boundary, exactly: the step's own arithmetic lands a
-            // rounding off it — a hair inside, on no grid line — and a
-            // trace ending there does not mark the bracket the boundary
-            // line has where it ends, which then seeds the same silhouette
-            // again.
-            let landed = if u_first {
-                let f = Scalar::from_f64(fu);
-                (bound_u, v.add(dv.mul(f)).sharpen().clamped(v_lo, v_hi))
-            } else {
-                let f = Scalar::from_f64(fv);
-                (u.add(du.mul(f)).sharpen().clamped(u_lo, u_hi), bound_v)
-            };
-            if let Some(end) = correct_on_boundary(surface, d, landed, u_first) {
-                mark_crossings(surface, d, lines, current, end);
-                points.push(end);
+            let (du, dv) = (tu.mul(scale), tv.mul(scale));
+            let (pu, pv) = (u.add(du).sharpen(), v.add(dv).sharpen());
+            let leaves_u = pu.definitely_less(u_lo) || pu.definitely_greater(u_hi);
+            let leaves_v = pv.definitely_less(v_lo) || pv.definitely_greater(v_hi);
+            if leaves_u || leaves_v {
+                // The boundary the step reaches first, and the fraction of the
+                // step to it: the point there, then onto the silhouette along
+                // that boundary.
+                let to = |x: Scalar, dx: Scalar, lo: Scalar, hi: Scalar| -> (f64, Scalar) {
+                    let bound = if dx.to_f64() < 0.0 { lo } else { hi };
+                    ((bound.sub(x).to_f64() / dx.to_f64()).clamp(0.0, 1.0), bound)
+                };
+                let (fu, bound_u) = to(u, du, u_lo, u_hi);
+                let (fv, bound_v) = to(v, dv, v_lo, v_hi);
+                let u_first = leaves_u && (!leaves_v || fu <= fv);
+                // On the boundary, exactly: the step's own arithmetic lands a
+                // rounding off it — a hair inside, on no grid line — and a
+                // trace ending there does not mark the bracket the boundary
+                // line has where it ends, which then seeds the same silhouette
+                // again.
+                let landed = if u_first {
+                    let f = Scalar::from_f64(fu);
+                    (bound_u, v.add(dv.mul(f)).sharpen().clamped(v_lo, v_hi))
+                } else {
+                    let f = Scalar::from_f64(fv);
+                    (u.add(du.mul(f)).sharpen().clamped(u_lo, u_hi), bound_v)
+                };
+                if let Some(end) = correct_on_boundary(surface, d, landed, u_first) {
+                    mark_crossings(surface, d, lines, current, end);
+                    points.push(end);
+                }
+                return Ok(repeat::Step::Done(Ending::Open));
             }
-            return Ok(repeat::Step::Done(Ending::Open));
-        }
-        let Ok(next) = correct(surface, d, (pu, pv)) else {
-            return Ok(repeat::Step::Done(Ending::Open));
+            let landed = correct(surface, d, (pu, pv)).ok().filter(|next| {
+                surface
+                    .evaluate(next.0, next.1)
+                    .is_ok_and(|p| p.sub(&from).norm().definitely_less(tried.mul(Scalar::TWO)))
+            });
+            match landed {
+                Some(next) => break next,
+                None if halvings < STEP_HALVINGS => {
+                    tried = tried.div(Scalar::TWO)?;
+                    halvings += 1;
+                }
+                None => return Ok(repeat::Step::Done(Ending::Open)),
+            }
         };
         mark_crossings(surface, d, lines, current, next);
         points.push(next);
-        travelled = travelled.add(step);
+        travelled = travelled.add(tried);
         let here = surface.evaluate(next.0, next.1)?;
         if travelled.definitely_greater(step.mul(Scalar::TWO))
             && here.sub(&start_point).norm().definitely_less(step)
@@ -709,6 +853,12 @@ pub fn face_silhouettes(
             let Some(start) = seed(surface, d, &lines[l], lines[l].brackets[b]) else {
                 continue;
             };
+            let half = Scalar::from_f64(lines[l].scale / 2.0);
+            let step = if half.definitely_less(step) {
+                half
+            } else {
+                step
+            };
             traces.push(trace(surface, d, start, step, &mut lines).with_context(&ctx)?);
         }
     }
@@ -815,4 +965,58 @@ fn trim(
         });
     }
     Ok(silhouettes)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use geop_core_math::vector::Vector4;
+    use geop_core_topology::build::BodySpec;
+
+    /// A bicubic sheet over `[0, 1]²` of 60 knot spans each way, rising
+    /// gently along `x` (`z = x / 20`), with one control point near
+    /// `(0.48, 0.48)` raised into a bump: a sheet whose only silhouette,
+    /// seen along `x`, is a small loop round the bump's flank, where its
+    /// slope cancels the rise — a loop that fits between two iso lines a
+    /// twelfth of the domain apart.
+    fn bumpy_sheet() -> (Model, FaceId) {
+        let spans = 60;
+        let n = spans + 3;
+        let s = Scalar::from_f64;
+        let mut knots = vec![Scalar::ZERO; 4];
+        knots.extend((1..spans).map(|k| s(k as f64 / spans as f64)));
+        knots.extend([Scalar::ONE; 4]);
+        let mut control_points = Vec::with_capacity(n * n);
+        for i in 0..n {
+            for j in 0..n {
+                let (x, y) = (i as f64 / (n - 1) as f64, j as f64 / (n - 1) as f64);
+                let bump = if (i, j) == (30, 30) { 0.08 } else { 0.0 };
+                control_points.push(Vector4::from_array([
+                    s(x),
+                    s(y),
+                    s(x / 20.0 + bump),
+                    s(1.0),
+                ]));
+            }
+        }
+        let surface = NurbSurface3D::try_new(3, 3, control_points, knots.clone(), knots).unwrap();
+        let mut model = Model::new();
+        let built = model
+            .build_body(BodySpec::sheet_on(surface).unwrap())
+            .unwrap();
+        (model, built.faces[0])
+    }
+
+    /// The bump's loop is found, though it crosses no iso line a sampling
+    /// grid would look along, and traced once.
+    #[test]
+    fn a_small_loop_between_grid_lines_is_found() {
+        let (model, face) = bumpy_sheet();
+        let d = Vector3::from_array([Scalar::ONE, Scalar::ZERO, Scalar::ZERO]);
+        let pieces = face_silhouettes(&model, face, &d).unwrap();
+        assert_eq!(pieces.len(), 1, "{pieces:?}");
+        let curve = &pieces[0].curve;
+        let (start, end) = (curve.start().unwrap(), curve.end().unwrap());
+        assert!(start.could_be_equal(&end), "{start:?} {end:?}");
+    }
 }
