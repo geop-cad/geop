@@ -382,3 +382,10 @@ fn a_slot_cut_into_a_slotted_disc_classifies_the_faces_it_touches() {
         "{removed}"
     );
 }
+
+/// The slotted disc with thirty-two slots, eight to a quarter of its rim.
+#[test]
+#[ignore = "bug: the 32nd cut leaves the slot's footprint on the cap quarter boundary(cut31,cylinder(disc,c0,q3),..) straddling (classify_face): bounded by its four corners, it is offered an interior point at (3.754, -0.061, 1), outside them, as if its loop ran the other way; the rim vertex at its corner boundary(cut31,cylinder(disc,p1,q3),cube(slot31,c2),0,1) lies 4e-10 below the cap. The quarter rim has been split sixteen times by then (AGENTS.md: width along a split edge), not confirmed as the cause; sixteen slots build"]
+fn a_disc_with_thirty_two_slots() {
+    slotted_disc(32);
+}
