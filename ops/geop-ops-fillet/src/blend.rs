@@ -38,7 +38,8 @@
 //! tool is that section swept along it, exactly. A chain ends at corners
 //! of exactly one more face (see [`tool_end`]): run out past it where the
 //! edge leaves the solid through it and the blend cuts, flush with it
-//! otherwise.
+//! otherwise — or vanishes, narrowing into the vertex, where its two faces
+//! meet tangentially.
 //!
 //! A blend has to meet both faces inside them — checked along the whole of
 //! where it touches them (see [`check_contacts`]) — so one too large for
@@ -98,7 +99,7 @@ use geop_ops_model::{NamedModel, Namer};
 use crate::corner;
 use crate::rolling::{self, Radii, Rolled};
 use crate::tool::{self, Corner, CornerEnd, Tool};
-use geop_ops_model::tangent::{TangentChain as Chain, tangent_chain};
+use geop_ops_model::tangent::{TangentChain as Chain, tangent_chain, vanishes_at};
 
 /// What a blend replaces an edge's corner with (see the module docs).
 #[derive(Clone, Debug, PartialEq)]
@@ -154,6 +155,11 @@ pub(crate) enum End {
     /// At the ball rounding a corner every edge of which is filleted: where
     /// the tool is joined to the corner's (see [`crate::corner`]).
     Corner,
+    /// Where the faces either side meet tangentially, the corner between
+    /// them opening out flat (see [`vanishes_at`]): the blend narrows to
+    /// nothing there, its section, and the tool's, collapsing into the
+    /// vertex — no third face to end at.
+    Vanish,
 }
 
 /// Which way an edge bends: whether its blend cuts material away or adds it.
@@ -221,13 +227,19 @@ pub(crate) fn bend(bend: Scalar) -> GeopResult<Bend> {
 /// Anything else, and a tool along the edge would cut or fill what it
 /// should not: it is said `unless`, for a rolled tool to run on through the
 /// face and be cut off by it. The end, and that third face.
+///
+/// Where `faces` meet tangentially at the vertex, the blend vanishes there
+/// ([`End::Vanish`]), whatever else meets there: it has no third face.
 pub(crate) fn tool_end(
     model: &Model,
     vertex: VertexId,
     faces: [FaceId; 2],
     leaving: &Vector3,
     bend: Bend,
-) -> GeopResult<(End, FaceId)> {
+) -> GeopResult<(End, Option<FaceId>)> {
+    if vanishes_at(model, vertex, faces)? {
+        return Ok((End::Vanish, None));
+    }
     let mut others: Vec<FaceId> = Vec::new();
     for (&id, coedge) in &model.coedges {
         if coedge.edge().is_ok()
@@ -308,7 +320,7 @@ pub(crate) fn tool_end(
     // air: what it does there cuts nothing, so the face may be curved or
     // stand at any angle.
     if leaves && bend == Bend::Convex {
-        return Ok((End::RunOut, *other));
+        return Ok((End::RunOut, Some(*other)));
     }
     // Filled in up to a face the edge leaves the solid through — an outward
     // corner — the fill ends flush with it, touching the corner's other
@@ -328,14 +340,14 @@ pub(crate) fn tool_end(
                 "the edge ends at vertex {vertex}, where {why}: a straight edge between planes is filled up to the third face only where it is a plane square to the edge — an edge rolled between curved faces up to any face it runs into"
             )
         });
-        return Ok((End::Flush { unless }, *other));
+        return Ok((End::Flush { unless }, Some(*other)));
     }
     let unless = why.map(|why| {
         format!(
             "the edge ends at vertex {vertex}, where {why}: a straight edge between planes ends flush only with a plane square to it; an edge rolled between curved faces with any wall"
         )
     });
-    Ok((End::Wall { unless }, *other))
+    Ok((End::Wall { unless }, Some(*other)))
 }
 
 /// Seed of the ray casting behind `face_contains` here, whose answer does
