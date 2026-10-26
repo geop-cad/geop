@@ -33,43 +33,31 @@ impl Model {
         let edge = self.get_edge(edge_id).with_context(&ctx)?.clone();
         let vertex_point = self.get_vertex(vertex_id).with_context(&ctx)?.point;
 
-        let curve_point = edge.curve.evaluate(edge_t).with_context(&ctx)?;
-        if !curve_point.could_be_equal(&vertex_point) {
-            return Err(ctx(GeopError::new(format!(
-                "edge {edge_id} at t={edge_t} evaluates to {curve_point}, which does not coincide with vertex {vertex_id} at {vertex_point}"
-            ))));
-        }
-
-        // A split parameter that isn't *definitely* strictly inside its own
-        // curve's domain could be that domain's bound — meaning the vertex is
-        // already an endpoint of that curve, so there is no interior split to
-        // make. That is the caller's job to rule out before asking (see
-        // `find_piercing_crossing`, which skips exactly these), so reaching
-        // here with one is a caller bug and is reported rather than quietly
-        // ignored: silently doing nothing would leave the caller believing an
-        // edge had been split when it had not.
-        //
         // Checked for the 3-D curve *and* every coedge's pcurve before any
         // mutation — splitting the edge and only then finding a pcurve that
         // cannot be split would leave the model half-updated.
         //
-        // Both parameters are Newton-refined against the point they are meant
-        // to name before anything else looks at them (see
-        // `NurbCurve::refine_parameter_at_point`). A subdivision search only
-        // pins a parameter down to its own tolerance, and `split` cannot take
-        // a parameter that wide — Boehm insertion amplifies it without bound.
-        // The refinement is what makes the parameter narrow enough to split
-        // at *and* still an honest enclosure, replacing the `sharpen` that
-        // used to stand here and silently moved the split to the interval's
-        // midpoint instead of the located point. Validation below therefore
-        // tests exactly the value the split will use.
-        let (curve_lo, curve_hi) = edge.curve.domain();
-        let edge_t = edge.curve.refine_parameter_at_point(edge_t, &vertex_point);
-        if !edge_t.definitely_greater(curve_lo) || !edge_t.definitely_less(curve_hi) {
-            return Err(ctx(GeopError::new(format!(
-                "edge_t={edge_t:?} is not strictly inside the curve domain ({curve_lo:?}, {curve_hi:?}), so vertex {vertex_id} is an endpoint of edge {edge_id} rather than interior to it — there is nothing to split"
-            ))));
-        }
+        // Each parameter is Newton-refined against the point it is meant to
+        // name, and the curve is cut at the sharp middle of that: where in
+        // the refined enclosure is a free choice, and cutting at all of it
+        // made every later piece of the edge wider than the last (see
+        // `NurbCurve::split_parameter_at_point`, which also checks that the
+        // curve reaches the vertex at the parameter chosen). A parameter
+        // that could be the curve's end is refused there: the vertex is
+        // then already an endpoint, which the caller rules out before
+        // asking (see `find_piercing_crossing`), so reaching here with one
+        // is a caller bug, reported rather than quietly ignored.
+        let edge_t = edge
+            .curve
+            .split_parameter_at_point(edge_t, &vertex_point)
+            .with_context(&ctx)?;
+        // Where the pieces will meet: a point within the vertex, and the one
+        // every pcurve is cut at too. Cut each at a point of the vertex of
+        // its own and the pieces of the edge and of its pcurves end apart,
+        // by as much as the vertex is wide — `1.4e-13` where a cubic crosses
+        // a plane at its inflection, and the pcurve's end then maps off the
+        // edge's.
+        let split_point = edge.curve.evaluate(edge_t).with_context(&ctx)?;
         let mut pcurve_splits = Vec::new();
         for coedge_id in self.coedges_of_edge(edge_id) {
             let coedge = self.get_coedge(coedge_id).with_context(&ctx)?.clone();
@@ -83,7 +71,7 @@ impl Model {
             let surface = &self.get_face(coedge.face).with_context(&ctx)?.surface;
             // The pcurve's own parameter range doesn't share the edge curve's
             // `t` values, so the split point is relocated geometrically:
-            // locate the vertex in the face's `(u, v)` space, then project
+            // locate the split point in the face's `(u, v)` space, then project
             // that `(u, v)` back onto the coedge's own pcurve.
             // Located, not merely isolated: the containment search alone
             // pins `(u, v)` only to its own subdivision tolerance, far too
@@ -91,12 +79,12 @@ impl Model {
             // (a wide target makes a wide residual, a wide step, and a
             // pcurve parameter no narrower than it started).
             let (u, v) = surface
-                .locate(&vertex_point, max_nodes, min_subdivision_size)
+                .locate(&split_point, max_nodes, min_subdivision_size)
                 .with_context(&ctx)
                 .with_context(&coedge_ctx)?
                 .ok_or_else(|| {
                     ctx(coedge_ctx(GeopError::new(format!(
-                        "could not locate vertex {vertex_id} (at {vertex_point}) on face {}'s surface",
+                        "could not locate the split point {split_point:?} of vertex {vertex_id} (at {vertex_point:?}) on face {}'s surface",
                         coedge.face
                     ))))
                 })?;
@@ -112,13 +100,12 @@ impl Model {
                             "could not locate vertex {vertex_id} on coedge {coedge_id}'s pcurve"
                         )))))
                     })?;
-            let (pcurve_lo, pcurve_hi) = coedge.pcurve.domain();
-            let pcurve_t = coedge.pcurve.refine_parameter_at_point(pcurve_t, &uv);
-            if !pcurve_t.definitely_greater(pcurve_lo) || !pcurve_t.definitely_less(pcurve_hi) {
-                return Err(ctx(coedge_ctx(GeopError::new(format!(
-                    "pcurve_t={pcurve_t:?} is not strictly inside coedge {coedge_id}'s pcurve domain ({pcurve_lo:?}, {pcurve_hi:?}), so vertex {vertex_id} is an endpoint of that pcurve rather than interior to it — there is nothing to split"
-                )))));
-            }
+            let pcurve_t = coedge
+                .pcurve
+                .split_parameter_at_point(pcurve_t, &uv)
+                .with_context(&ctx)
+                .with_context(&coedge_ctx)
+                .with_context(&uv_ctx)?;
             pcurve_splits.push((coedge_id, pcurve_t));
         }
 

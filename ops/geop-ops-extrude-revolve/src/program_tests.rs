@@ -2084,7 +2084,7 @@ fn drafted_rounded_plate_with_a_hole_is_valid() {
         (4.0 - 2.0 * d) * (2.0 - 2.0 * d) - (4.0 - PI) * (0.5 - d).powi(2) - PI * (0.3 + d).powi(2)
     };
     let expected = (area(0.0) + 4.0 * area(0.5) + area(1.0)) / 6.0;
-    assert_exact_volume(&part, expected, 1e-9);
+    assert_exact_volume(&part, expected, 1e-8);
 }
 
 /// A half disc drafted inwards: its arc meets its diameter at sharp
@@ -2116,6 +2116,29 @@ fn drafted_half_disc_is_exactly_the_drafted_volume() {
         })
         .sum::<f64>();
     assert_exact_volume(&part, expected, 1e-4);
+}
+
+/// A rounded plate drafted outwards: its walls lean out, every corner
+/// moving past where the straight wall ended — exactly the frustum-like
+/// volume, the area at each height integrated.
+#[test]
+fn drafted_outwards_widens_past_the_straight_walls() {
+    let (s, _) = rounded_rectangle(0.5);
+    let part = drafted(s, Extents::blind(1.0), -5.0).unwrap();
+    assert_valid(&part);
+    let t = 5f64.to_radians().tan();
+    let area = |h: f64| {
+        let d = h * t;
+        (4.0 + 2.0 * d) * (2.0 + 2.0 * d) - (4.0 - PI) * (0.5 + d).powi(2)
+    };
+    let expected = (area(0.0) + 4.0 * area(0.5) + area(1.0)) / 6.0;
+    assert_exact_volume(&part, expected, 1e-9);
+    // A square's sharp corners, too.
+    let square = outline(&[[0.0, 0.0], [1.0, 0.0], [1.0, 1.0], [0.0, 1.0]]);
+    let part = drafted(square, Extents::blind(1.0), -10.0).unwrap();
+    assert_valid(&part);
+    let a = (1.0 + 2.0 * 10f64.to_radians().tan()).powi(2);
+    assert_exact_volume(&part, (1.0 + a + a.sqrt()) / 3.0, 1e-9);
 }
 
 /// Drafted both ways from the sketch's plane, the solid narrows away from

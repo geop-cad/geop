@@ -4,3 +4,4 @@
 
 pub(crate) const MOVE_BODY: &str = r#"<rect x="3" y="9" width="6" height="6" stroke-dasharray="1.5 1.5"/><rect x="11" y="4" width="6" height="6"/><path d="M7 8 L11.5 4.5 M9 4.5 L11.5 4.5 L11.5 7" stroke-width="1"/>"#;
 pub(crate) const SCALE_BODY: &str = r#"<rect x="3" y="9" width="5" height="5" stroke-dasharray="1.5 1.5"/><rect x="3" y="4" width="13" height="10"/><path d="M9 11 L14 6 M11.5 6 L14 6 L14 8.5" stroke-width="1"/>"#;
+pub(crate) const DEFORM_BODY: &str = r#"<path d="M4 16 L4 4 M10 16 L10 4" stroke-dasharray="1.5 1.5"/><path d="M4 16 C4 10 8 8 12 4 M10 16 C10 12 13 10 16 8 M12 4 L16 8"/>"#;

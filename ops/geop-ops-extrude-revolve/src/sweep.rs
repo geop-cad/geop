@@ -10,9 +10,10 @@ use geop_core_editor::{
 };
 use geop_core_math::geop_error::{GeopError, GeopResult};
 use geop_core_program::{element::ElementReference, part::StepContext, reader::Reader};
+use geop_core_topology::build::BodySpec;
 use geop_ops_model::sketch::{PlacedSketch, SketchRef, shape_profiles};
 use geop_ops_model::sketch3d::PlacedSketch3d;
-use geop_ops_model::{ModelOperation, NamedModel, Namer, build_model, read_model};
+use geop_ops_model::{BodyNames, ModelOperation, NamedModel, Namer, build_model, read_model};
 use serde::{Deserialize, Serialize};
 
 use geop_lib_sweep::{Control, Orientation, SweepLoop, profile_centre, starting_near, sweep_along};
@@ -256,8 +257,26 @@ impl ModelOperation for Sweep {
                 plane,
                 &loops,
                 &control,
-                Some(geop_lib_shell::rebuilt),
+                Some(rebuilt_with_room),
             )
         })
     }
+}
+
+/// The body `spec` rebuilt ([`geop_lib_shell::rebuilt`]) with every face
+/// marked `replaced` on its new surface given room first
+/// ([`geop_lib_shell::room`]): a wall swept along its own curve ends where
+/// the curve does, and the corner where it meets the wall on the other side
+/// may lie past that end — on the outside of the turn it always does.
+fn rebuilt_with_room(
+    spec: &BodySpec,
+    names: &BodyNames,
+    replaced: &[bool],
+    reseat: &[bool],
+) -> GeopResult<BodySpec> {
+    let mut roomy = spec.clone();
+    for (face, _) in (roomy.faces.iter_mut().zip(replaced)).filter(|(_, r)| **r) {
+        face.surface = geop_lib_shell::room(face.surface.clone())?;
+    }
+    geop_lib_shell::rebuilt(&roomy, names, replaced, reseat)
 }

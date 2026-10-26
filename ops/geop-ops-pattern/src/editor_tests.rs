@@ -229,3 +229,27 @@ fn new_scale_doubles_the_box_along_x() {
     assert_eq!(args.factors, [2.0, 1.0, 1.0]);
     assert_eq!(args.bodies.len(), 1);
 }
+
+/// A new deformation takes the newest solid, tapered along `z` over its
+/// height; made a twist of a quarter turn in the dialog, the drilled box
+/// is built twisted, its hole with it.
+#[test]
+fn new_deformation_twists_the_drilled_box() {
+    let mut editor = editor_with(registry(), drilled_box());
+    editor.handle(Command::New {
+        kind: "deform_body".into(),
+    });
+    handled(&mut editor, dialog("deform", Value::Choice("twist".into())));
+    handled(&mut editor, dialog("amount", Value::Number(90.0)));
+    let update = handled(&mut editor, Command::Commit);
+    let program = update.program.expect("the program changed");
+    assert!(
+        program.steps.iter().all(|s| s.error.is_none()),
+        "{:?}",
+        program.steps
+    );
+    let args: crate::DeformBodyArgs = args(editor.program().steps.last().unwrap());
+    assert_eq!(args.deform, crate::Deform::Twist);
+    assert_eq!(args.amount, 90.0);
+    assert!(args.end > args.start, "{args:?}");
+}

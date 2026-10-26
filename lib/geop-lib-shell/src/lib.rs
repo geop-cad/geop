@@ -18,5 +18,5 @@ mod regression_tests;
 mod shell;
 
 pub use delete::{Heal, delete_faces};
-pub use rebuild::{Smooth, rebuilt, replace_faces, tangent_to_kept};
+pub use rebuild::{Smooth, rebuilt, replace_faces, room, tangent_to_kept};
 pub use shell::{extended, offset_faces, pcurve, shell, surface_missed, thicken};

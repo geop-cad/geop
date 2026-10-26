@@ -1,17 +1,32 @@
+use geop_core_geometry::{aabb::union_aabb, deform::Deformation};
 use geop_core_math::{
     geop_error::{GeopError, GeopResult, WithContext},
-    primitives::Motion,
+    vector::Vector3,
 };
 
-use crate::{Body, Model};
+use crate::{
+    Body, Model, boundary::BoundaryType, contains::face::face_interior_point,
+    validation::ValidationParameters,
+};
+
+/// Seed of the ray casting that finds a point of a face for a map made of
+/// pieces, whose answer does not depend on it.
+const SEED: u64 = 0x7A5F_0D1E_2B3C_4D5E;
 
 impl Model {
-    /// Moves the whole of `body` by `motion` — a rigid motion, a
-    /// translation, or a mirror — in place: every vertex, every edge's
-    /// curve and every face's surface. The pcurves stay as they are: the
-    /// surfaces keep their parametrization, so each pcurve still traces
-    /// the same patch, now moved. Nothing is created or deleted, and the
-    /// body stays connected exactly as it was.
+    /// Moves the whole of `body` by `map` in place — a rigid motion, a
+    /// translation, a mirror, a scaling
+    /// ([`geop_core_math::primitives::Motion`]) or a deformation about an
+    /// axis ([`geop_core_geometry::deform::AxialMap`]): every vertex, every
+    /// edge's curve and every face's surface. The pcurves stay as they are:
+    /// every map keeps the surfaces' parametrization, so each pcurve still
+    /// traces the same patch, now moved. Nothing is created or deleted, and
+    /// the body stays connected exactly as it was.
+    ///
+    /// A map made of pieces moves each edge and face by the piece it lies
+    /// in, asking for a point of it (the curve's middle, a point inside the
+    /// face) only where its control points straddle two pieces: the body
+    /// has to be divided first where it crosses from one to the next.
     ///
     /// A mirror turns every surface's normal into the body (see
     /// [`geop_core_geometry::nurb_surface::NurbSurface::transform`]), so
@@ -23,25 +38,75 @@ impl Model {
     /// A translation moves every point by one addition per coordinate;
     /// a rotation or a mirror encloses its result honestly, widening every
     /// point by what its rounded matrix leaves open.
-    pub fn transform_body(&mut self, body: impl Into<Body>, motion: &Motion) -> GeopResult<()> {
+    pub fn transform_body(
+        &mut self,
+        body: impl Into<Body>,
+        map: &dyn Deformation,
+    ) -> GeopResult<()> {
         let body = body.into();
         let ctx = |e: GeopError| e.with_context(format!("Model::transform_body(body={body})"));
         let vertices: Vec<_> = self.iter_body_vertices(body).with_context(&ctx)?.collect();
         let edges: Vec<_> = self.iter_body_edges(body).with_context(&ctx)?.collect();
         let faces = self.body_faces(body).with_context(&ctx)?;
-        for vertex in vertices {
-            let v = self.get_vertex_mut(vertex).with_context(&ctx)?;
-            v.point = motion.apply(&v.point);
+        // Everything moved from the body as it is, then written.
+        let points = (vertices.iter())
+            .map(|v| map.point(&self.vertices[v].point))
+            .collect::<GeopResult<Vec<_>>>()
+            .with_context(&ctx)?;
+        let curves = (edges.iter())
+            .map(|&edge| {
+                let curve = &self.edges[&edge].curve;
+                let at = || curve.evaluate(curve.mid_parameter()?);
+                map.curve(curve, &at)
+                    .map_err(|e| e.with_context(format!("moving edge {edge}")))
+            })
+            .collect::<GeopResult<Vec<_>>>()
+            .with_context(&ctx)?;
+        let surfaces = (faces.iter())
+            .map(|&face| {
+                let whole = &self.faces[&face].surface;
+                // Cut down to the box in `(u, v)` around the face's outer
+                // loop, which the face lies in: the parametrization stays.
+                let outer = match self.faces[&face].outer {
+                    BoundaryType::Loop(anchor) => (self.iterate_loop_coedges(anchor))
+                        .map(|c| Ok(*self.get_coedge(c)?.pcurve.aabb()))
+                        .collect::<GeopResult<Vec<_>>>()?,
+                    BoundaryType::Vertex(_) => Vec::new(),
+                };
+                let restricted = match union_aabb(&outer) {
+                    Some(uv) if !map.affine() => Some(whole.sub_surface(
+                        (uv[0].lower(), uv[0].upper()),
+                        (uv[1].lower(), uv[1].upper()),
+                    )?),
+                    _ => None,
+                };
+                let surface = restricted.as_ref().unwrap_or(whole);
+                let at = || -> GeopResult<Vector3> {
+                    let params = ValidationParameters::default();
+                    let (u, v) = face_interior_point(
+                        self,
+                        face,
+                        params.max_nodes,
+                        params.min_subdivision_size,
+                        SEED,
+                    )?;
+                    surface.evaluate(u.sharpen(), v.sharpen())
+                };
+                map.surface(surface, &at)
+                    .map_err(|e| e.with_context(format!("moving face {face}")))
+            })
+            .collect::<GeopResult<Vec<_>>>()
+            .with_context(&ctx)?;
+        for (vertex, point) in vertices.into_iter().zip(points) {
+            self.get_vertex_mut(vertex).with_context(&ctx)?.point = point;
         }
-        for edge in edges {
-            let e = self.get_edge_mut(edge).with_context(&ctx)?;
-            e.curve = e.curve.transform(motion);
+        for (edge, curve) in edges.into_iter().zip(curves) {
+            self.get_edge_mut(edge).with_context(&ctx)?.curve = curve;
         }
-        for &face in &faces {
-            let f = self.get_face_mut(face).with_context(&ctx)?;
-            f.surface = f.surface.transform(motion);
+        for (&face, surface) in faces.iter().zip(surfaces) {
+            self.get_face_mut(face).with_context(&ctx)?.surface = surface;
         }
-        if motion.mirrors() {
+        if map.mirrors() {
             for face in faces {
                 self.reverse_face(face).with_context(&ctx)?;
             }

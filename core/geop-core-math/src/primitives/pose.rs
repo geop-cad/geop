@@ -784,13 +784,32 @@ impl<T: Number> Motion<T> {
 }
 
 impl Motion {
+    /// The affine map `p -> A p + position`, `A` the matrix whose columns
+    /// are `columns`: what a body is scaled by, or carried by past the end
+    /// of a deformation's zone (`geop_core_geometry::deform`). No isometry
+    /// in general — lengths and angles change, directions it turns are no
+    /// longer unit, and only a body's geometry is moved by it, whose NURBS
+    /// map exactly (an affine map of their homogeneous control points). It
+    /// mirrors where the determinant of `A` is negative, and fails where
+    /// the determinant could be zero, which would flatten everything.
+    pub fn affine(columns: [Vector3; 3], position: Vector3) -> GeopResult<Self> {
+        let det = columns[0].prod_dot(&columns[1].prod_cross(&columns[2]));
+        if det.could_be_equal(Scalar::ZERO) {
+            return Err(GeopError::new(format!(
+                "Motion::affine: the columns {columns:?} flatten everything, their determinant being {det:?}"
+            )));
+        }
+        Ok(Motion {
+            axes: Some(columns),
+            position,
+            mirrors: det.definitely_less(Scalar::ZERO),
+        })
+    }
+
     /// Scaling about `center` by `factors` along `x`, `y` and `z`: `p` goes
-    /// to `center + diag(factors) (p - center)`. No isometry — the one
-    /// motion that is not: lengths and angles change, directions it turns
-    /// are no longer unit, and only a body's geometry is moved by it, whose
-    /// NURBS map exactly (an affine map of their homogeneous control
-    /// points). An odd number of negative factors mirrors. Fails for a
-    /// factor that could be zero, which would flatten everything.
+    /// to `center + diag(factors) (p - center)` (see [`Motion::affine`]).
+    /// An odd number of negative factors mirrors. Fails for a factor that
+    /// could be zero.
     pub fn scaling(center: &Vector3, factors: [Scalar; 3]) -> GeopResult<Self> {
         if let Some(zero) = factors.iter().find(|f| f.could_be_equal(Scalar::ZERO)) {
             return Err(GeopError::new(format!(
@@ -802,18 +821,10 @@ impl Motion {
             c[k] = factors[k];
             c
         };
-        let negative = factors
-            .iter()
-            .filter(|f| f.definitely_less(Scalar::ZERO))
-            .count();
         let position = Vector3::from_array(std::array::from_fn(|k| {
             center[k].sub(factors[k].mul(center[k]))
         }));
-        Ok(Motion {
-            axes: Some([column(0), column(1), column(2)]),
-            position,
-            mirrors: negative % 2 == 1,
-        })
+        Self::affine([column(0), column(1), column(2)], position)
     }
 
     /// The frame `frame` moved. Fails for a mirror, which would leave it

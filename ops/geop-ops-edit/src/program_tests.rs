@@ -361,6 +361,36 @@ mod delete_face {
         assert_volume(&part, "delete_face(d)", 4.0, 1e-5);
     }
 
+    /// Fillets round two top edges of a box meeting at a corner, deleted
+    /// together: a gap of more than four sides, closed by the faces
+    /// around it meeting as they did, the sharp corner back.
+    #[test]
+    fn fillet_chain_removed() {
+        let mut program = block();
+        let part = program.build_model(registry).unwrap();
+        let edges = vec![
+            edge_at(&part, [1.0, 0.0, 1.0]),
+            edge_at(&part, [2.0, 1.0, 1.0]),
+        ];
+        program.push("f", FilletArgs::constant(edges, 0.2));
+        let part = program.build_model(registry).unwrap();
+        let fillets: Vec<String> = faces_named(&part, "")
+            .into_iter()
+            .filter(|n| {
+                let face = part.face_id(n).unwrap();
+                (part.topology().get_face(face).unwrap().surface)
+                    .as_plane()
+                    .unwrap()
+                    .is_none()
+            })
+            .collect();
+        assert!(fillets.len() >= 2, "{fillets:?}");
+        let part = deleted(program, fillets, HealGap::Heal);
+        assert_valid(&part);
+        assert_volume(&part, "delete_face(d)", 4.0, 1e-5);
+        assert_eq!(part.topology().faces.len(), 6);
+    }
+
     /// A box's top deleted and left open: a sheet of the other five.
     #[test]
     fn top_left_open() {
