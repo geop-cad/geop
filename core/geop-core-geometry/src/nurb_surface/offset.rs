@@ -409,7 +409,8 @@ mod tests {
         let cone = crate::test_fixtures::revolved(1., 0.);
         for d in [0.25, -0.25] {
             let offset = cone.offset(Scalar::from_f64(d)).unwrap();
-            let rim = |s: &NurbSurface3D, u: f64| s.evaluate(Scalar::from_f64(u), Scalar::ONE).unwrap();
+            let rim =
+                |s: &NurbSurface3D, u: f64| s.evaluate(Scalar::from_f64(u), Scalar::ONE).unwrap();
             let shift = rim(&offset, 0.5).sub(&rim(&cone, 0.5));
             let pole = offset.pole_at(Scalar::ZERO, Scalar::ZERO).unwrap();
             // The pole moves the way the rim moves along the axis.
@@ -423,7 +424,10 @@ mod tests {
                     .evaluate(u, v)
                     .unwrap()
                     .add(&cone.normal(u, v).unwrap().prod_scalar(Scalar::from_f64(d)));
-                assert!(offset.evaluate(u, v).unwrap().could_be_equal(&expected), "{d}: {u:?}");
+                assert!(
+                    offset.evaluate(u, v).unwrap().could_be_equal(&expected),
+                    "{d}: {u:?}"
+                );
             }
         }
     }
