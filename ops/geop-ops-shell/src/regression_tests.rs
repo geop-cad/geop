@@ -10,7 +10,7 @@ use geop_lib_fixtures::PrimitiveArgs;
 use geop_ops_fillet::{Fillet, FilletArgs};
 use geop_ops_model::{
     NamedModel, model, solid,
-    testing::{Built, assert_valid, edges_with_middle_where, face_towards},
+    testing::{Built, apply_to_model, assert_valid, edges_with_middle_where, face_towards},
 };
 
 use crate::{Shell, ShellArgs};
@@ -49,8 +49,9 @@ fn face_name(part: &NamedModel, solid: &str, normal: [f64; 3]) -> String {
 /// instead of the top, with a top edge rounded, failed on the same kind of
 /// edge), the number of fillets (all four uprights failed alike), the size
 /// (the 100 x 60 x 30 enclosure with radius 5 and walls 2 failed alike).
-/// The boolean now splices the exact arc where a plane crosses a surface
-/// of revolution around its normal (`geop_core_geometry::shape::circle_through`).
+/// The boolean once spliced the exact arc where a plane crosses a surface
+/// of revolution around its normal; it no longer special-cases surface
+/// kinds, so the shell has to offset the general (fitted) edge.
 ///
 /// Shelling a filleted body is the first thing every enclosure tutorial
 /// does.
@@ -162,15 +163,13 @@ fn shell_thicker_than_every_rounded_edge() {
         .mass_properties(rounded.solid_id("fillet(round)").unwrap())
         .unwrap()
         .volume;
-    program.push(
-        "s",
-        ShellArgs {
-            solid: solid("fillet(round)"),
-            faces: vec![],
-            thickness: 0.5.into(),
-        },
-    );
-    let part = program.build_model(registry).unwrap();
+    // The rounded block is built once: its corners' blends take a while.
+    let args = ShellArgs {
+        solid: solid("fillet(round)"),
+        faces: vec![],
+        thickness: 0.5.into(),
+    };
+    let part = apply_to_model::<Shell>(rounded, "s", &args).unwrap();
     assert_valid(&part);
     let id = part.solid_id("shell(s)").unwrap();
     let volume = part.topology().mass_properties(id).unwrap().volume;

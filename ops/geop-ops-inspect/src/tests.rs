@@ -304,7 +304,10 @@ fn a_total_of_some_materials_has_only_volume_and_area() {
         .collect();
     assert_eq!(weighed, [false, true], "{report:?}");
     let shown = format!("{:?}", report.shown());
-    assert!(shown.contains("Only some solids have a material"), "{shown}");
+    assert!(
+        shown.contains("Only some solids have a material"),
+        "{shown}"
+    );
     let total = report.total.unwrap();
     assert!(
         total.center.is_none() && total.inertial.is_none(),

@@ -17,6 +17,8 @@ mod boolean;
 mod combine;
 mod imprint;
 mod naming;
+#[cfg(test)]
+mod regression_tests;
 mod remesh;
 #[cfg(test)]
 mod render_test;

@@ -203,6 +203,9 @@ impl Span {
             let normals = Normals::of(&m)?;
             // Past a centre of curvature the offset turns against the
             // surface's normal.
+            // The surface's tangents and the offset's, `O_t = S_t + d N_t`;
+            // along a pole's side both divided by the factor vanishing there.
+            let mut tangents = [s[1][0], s[0][1]];
             let mut o = [
                 s[1][0].add(&normals.first[0].prod_scalar(distance)),
                 s[0][1].add(&normals.first[1].prod_scalar(distance)),
@@ -211,18 +214,30 @@ impl Span {
                 let w = self.surface.weight(u, v)?;
                 let n = normals.n;
                 let cube = n.norm().mul(n.norm_sq());
-                let along = form
+                let tangent = form
                     .t
                     .evaluate(u, v)?
-                    .prod_scalar(Scalar::ONE.div(w.mul(w))?)
-                    .add(
-                        &n.prod_cross(&form.r.evaluate(u, v)?)
-                            .prod_scalar(distance.div(cube)?),
-                    );
-                o[if form.along_u { 0 } else { 1 }] = along;
+                    .prod_scalar(Scalar::ONE.div(w.mul(w))?);
+                let along = tangent.add(
+                    &n.prod_cross(&form.r.evaluate(u, v)?)
+                        .prod_scalar(distance.div(cube)?),
+                );
+                let k = if form.along_u { 0 } else { 1 };
+                tangents[k] = tangent;
+                o[k] = along;
             }
-            let facing = o[0].prod_cross(&o[1]).prod_dot(&normals.n);
-            if facing.definitely_less(Scalar::ZERO) {
+            // `O_t = (I − d W) S_t`: the offset is regular where both of
+            // `I − d W`'s eigenvalues, `1 − d κ`, are positive — its
+            // determinant and its trace, each over `|n|²`. The determinant
+            // alone misses an offset past both centres of curvature, a
+            // sphere's turned inside out.
+            let n = normals.n;
+            let facing = o[0].prod_cross(&o[1]).prod_dot(&n);
+            let trace = o[0]
+                .prod_cross(&tangents[1])
+                .add(&tangents[0].prod_cross(&o[1]))
+                .prod_dot(&n);
+            if facing.definitely_less(Scalar::ZERO) || trace.definitely_less(Scalar::ZERO) {
                 return Ok(Bounded::Folds);
             }
             let d = self.moved.partials(u, v, 2)?;
@@ -239,7 +254,8 @@ impl Span {
             let drift = Scalar::from_f64(OFFSET_DRIFT);
             let (mut along_u, mut along_v) = (Scalar::ZERO, Scalar::ZERO);
             let mut curved = [Scalar::ZERO; 3];
-            let mut within = facing.definitely_greater(Scalar::ZERO);
+            let mut within =
+                facing.definitely_greater(Scalar::ZERO) && trace.definitely_greater(Scalar::ZERO);
             for k in 0..3 {
                 let (pu, pv, puv) = (
                     e_ab[0][k].mul(uu).mul(half),
@@ -255,7 +271,7 @@ impl Span {
                 return Ok(Bounded::Within(curved));
             }
             let why = format!(
-                "facing {facing:?}, the Hessian's part {curved:?}, the shift's second partials {hessian:?}, the normal's {:?}",
+                "facing {facing:?}, trace {trace:?}, the Hessian's part {curved:?}, the shift's second partials {hessian:?}, the normal's {:?}",
                 normals.second,
             );
             Ok(Bounded::Split(
@@ -764,6 +780,16 @@ mod tests {
             let fitted = sphere.fitted_offset(Scalar::from_f64(d)).unwrap();
             assert_encloses(&sphere, &fitted, d, 5e-5);
         }
+    }
+
+    /// A sphere's octant offset inward past its centre: both of its
+    /// curvatures pass, `O_u × O_v` keeps its side, and only the trace of
+    /// `I − d W` tells it is turned inside out.
+    #[test]
+    fn a_sphere_offset_past_its_centre_folds() {
+        let sphere = crate::test_fixtures::sphere_octant();
+        let error = sphere.fitted_offset(Scalar::from_f64(-1.5)).unwrap_err();
+        assert!(error.root_message().contains("folds"), "{error:?}");
     }
 
     /// A bump bent tighter than the distance it is offset into: the offset

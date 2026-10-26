@@ -25,21 +25,27 @@
 //!    further along the very same edge.
 //! 4. For each start point, trace the intersection curve outward from it
 //!    (see [`trace_from_start_point`]) and splice in whatever new edge
-//!    that produces. The march finds which vertex the curve ends at; the
-//!    edge's curve is the exact arc where the two surfaces' shapes name
-//!    their meeting (a plane across a surface of revolution around its
-//!    normal, `circle_through`) and the arc's control points fit the
-//!    width an entity may carry, and a cubic fitted through the march
-//!    otherwise (see [`fit_branch`]).
+//!    that produces. The march finds which vertex the curve ends at, and
+//!    the edge's curve is a cubic fitted through the march, whatever the
+//!    two surfaces are (see [`fit_branch`]): no pair of surface
+//!    kinds is special-cased.
+//!    Before tracing, a vertex at each node inside both faces, where
+//!    branches cross with the faces tangent, for the traces arriving there
+//!    to stop at (see [`insert_face_points`]).
+//! 5. Last, the closed loops that no edge pierces, so that no start point
+//!    leads to: a vertex at each of their turning points along a direction,
+//!    found by the same subdivision search over each pair of faces, and the
+//!    loops traced from them as in 4.
 
 use geop_core_geometry::{
     contains::{curve::curve_could_contain, surface::surface_could_contain},
     intersection::{
-        Intersections, curve_surface_intersect, refine_crossing,
-        surface_surface::{fit_branch, predictor_corrector_step},
+        Intersections,
+        branch::{fit_branch, predictor_corrector_step},
+        curve_surface_intersect, refine_crossing,
+        surface_surface::{TurningPoints, refine_node, turning_points},
     },
     nurb_surface::NurbSurface3D,
-    shape::circle_through,
 };
 use geop_core_math::{
     geop_error::{GeopError, GeopResult, WithContext},
@@ -54,7 +60,6 @@ use geop_core_math::{
 use geop_core_topology::{
     Body, CoedgeGeometry, Edge, EdgeId, FaceId, Model, VertexId,
     contains::face::{PointClassification, face_contains, face_interior_point},
-    validation::numerical_accuracy,
 };
 use geop_ops_model::NamedModel;
 
@@ -242,11 +247,315 @@ pub fn remesh_edges_x_faces(
         .collect();
     candidates.sort_by_key(|v| v.0);
     candidates.dedup();
+
+    // What no edge leads to, searched over each pair of the two solids'
+    // surfaces (see `geop_core_geometry::intersection::surface_surface`).
+    // First the nodes inside both faces, where branches of the curve cross
+    // with the faces tangent: a vertex each, where the traces arriving
+    // stop, since no corrector can march through one.
+    let pairs = search_surface_pairs(model.topology(), naming, solid_a, solid_b, params)
+        .with_context(&ctx)?;
+    let nodes = insert_face_points(
+        model,
+        naming,
+        &pairs,
+        FacePoint::Node,
+        solid_a,
+        solid_b,
+        params,
+    )
+    .with_context(&ctx)?;
+    candidates.extend(nodes.iter().map(|s| s.vertex));
+
     for start in &starts {
         trace_from_start_point(model, naming, start, &candidates, params).with_context(&ctx)?;
     }
 
+    // Last, the closed loops no edge leads to: a vertex on each of their
+    // turning points, and the loops traced between them like any other
+    // curve. After the traces above, so that a turning point of a curve
+    // already traced lies on its edge, on the boundary of both faces, and
+    // is not taken again.
+    let loops = insert_face_points(
+        model,
+        naming,
+        &pairs,
+        FacePoint::Turning,
+        solid_a,
+        solid_b,
+        params,
+    )
+    .with_context(&ctx)?;
+    candidates.extend(loops.iter().map(|s| s.vertex));
+    for start in &loops {
+        trace_from_start_point(model, naming, start, &candidates, params).with_context(&ctx)?;
+    }
+
     Ok(())
+}
+
+/// A pair of surfaces of the two solids, each that of the faces split from
+/// one face of the solid (its origin, see `naming`), and what the search
+/// over the pair found.
+struct SurfacePair {
+    origins: [String; 2],
+    surfaces: [NurbSurface3D; 2],
+    found: TurningPoints,
+}
+
+/// The faces of `solid` by their origin: one surface each.
+fn faces_by_origin(
+    model: &Model,
+    naming: &BooleanNaming,
+    solid: Body,
+) -> GeopResult<std::collections::BTreeMap<String, Vec<FaceId>>> {
+    let mut groups: std::collections::BTreeMap<String, Vec<FaceId>> = Default::default();
+    let mut faces = model.body_faces(solid)?;
+    faces.sort_by_key(|f| f.0);
+    for face in faces {
+        groups
+            .entry(naming.face_origin(face)?.to_string())
+            .or_default()
+            .push(face);
+    }
+    Ok(groups)
+}
+
+/// The search for turning points and nodes over every pair of `solid_a`'s
+/// and `solid_b`'s surfaces whose boxes overlap: once per pair of the faces
+/// the two solids had before the remesh, whose pieces share their surface.
+fn search_surface_pairs(
+    model: &Model,
+    naming: &BooleanNaming,
+    solid_a: Body,
+    solid_b: Body,
+    params: &RemeshParams,
+) -> GeopResult<Vec<SurfacePair>> {
+    let (groups_a, groups_b) = (
+        faces_by_origin(model, naming, solid_a)?,
+        faces_by_origin(model, naming, solid_b)?,
+    );
+    let mut pairs = Vec::new();
+    for (origin_a, faces_a) in &groups_a {
+        let surf_a = &model.get_face(faces_a[0])?.surface;
+        for (origin_b, faces_b) in &groups_b {
+            let surf_b = &model.get_face(faces_b[0])?.surface;
+            if !surf_a.could_overlap(surf_b) {
+                continue;
+            }
+            let found = turning_points(surf_a, surf_b, params.max_nodes).with_context(
+                with_context!("searching the faces {origin_a:?} and {origin_b:?}"),
+            )?;
+            pairs.push(SurfacePair {
+                origins: [origin_a.clone(), origin_b.clone()],
+                surfaces: [surf_a.clone(), surf_b.clone()],
+                found,
+            });
+        }
+    }
+    Ok(pairs)
+}
+
+/// Which of the points a [`SurfacePair`]'s search found to make vertices of.
+#[derive(Clone, Copy, Debug, PartialEq)]
+enum FacePoint {
+    /// Isolated points where the faces touch, branches crossing there.
+    Node,
+    /// Points where a curve the faces meet in turns back.
+    Turning,
+}
+
+/// Where a point a [`SurfacePair`]'s search found lies on one solid: inside
+/// one of its faces, or on one of its edges, at a parameter strictly inside
+/// it.
+#[derive(Clone, Copy, Debug)]
+enum Placed {
+    Inside(FaceId),
+    OnEdge(EdgeId, Scalar),
+}
+
+/// A vertex at every point of `which` kind the search over `pairs` found
+/// that lies inside a face of each solid, with the faces it lies in as
+/// where to trace from. Each candidate is refined first: a node by
+/// [`refine_node`], which claims none where the surfaces touch along a
+/// curve or over an area; a turning point onto the curve, with the
+/// corrector the march uses, across it. A point on a curve already traced
+/// lies on that edge, which bounds both faces, so it is not inside them.
+/// Two points that could be one are one vertex.
+///
+/// A node may lie on an edge of one solid instead — on a seam the faces
+/// touch across, which touches the other face there without crossing it,
+/// so no piercing split it: that edge is split there, the vertex named as
+/// where it meets the other face, and the traces arriving stop at it.
+fn insert_face_points(
+    model: &mut NamedModel,
+    naming: &mut BooleanNaming,
+    pairs: &[SurfacePair],
+    which: FacePoint,
+    solid_a: Body,
+    solid_b: Body,
+    params: &RemeshParams,
+) -> GeopResult<Vec<TracingStartPoint>> {
+    let topology = model.topology();
+    let (groups_a, groups_b) = (
+        faces_by_origin(topology, naming, solid_a)?,
+        faces_by_origin(topology, naming, solid_b)?,
+    );
+    // Where `point`, at `(u, v)` on their surface, lies among `faces`.
+    let placed =
+        |faces: &[FaceId], u: Scalar, v: Scalar, point: &Vector3| -> GeopResult<Option<Placed>> {
+            let mut on_coedge = false;
+            for &face in faces {
+                let class = face_contains(
+                    topology,
+                    face,
+                    u,
+                    v,
+                    params.max_nodes,
+                    params.curve_curve_min_subdivision_size,
+                    FACE_CONTAINS_SEED,
+                )?;
+                match class {
+                    PointClassification::Inside => return Ok(Some(Placed::Inside(face))),
+                    PointClassification::OnCoedge => on_coedge = true,
+                    _ => {}
+                }
+            }
+            if !on_coedge || which != FacePoint::Node {
+                return Ok(None);
+            }
+            let mut edges: Vec<EdgeId> =
+                faces.iter().flat_map(|&f| topology.face_edges(f)).collect();
+            edges.sort_by_key(|e| e.0);
+            edges.dedup();
+            for edge_id in edges {
+                let curve = &topology.get_edge(edge_id)?.curve;
+                let Some(t) = curve_could_contain(
+                    curve,
+                    point,
+                    params.max_nodes,
+                    params.curve_curve_min_subdivision_size,
+                )?
+                else {
+                    continue;
+                };
+                let (lo, hi) = curve.domain();
+                if t.definitely_greater(lo) && t.definitely_less(hi) {
+                    return Ok(Some(Placed::OnEdge(edge_id, t)));
+                }
+            }
+            Ok(None)
+        };
+    let mut found: Vec<(Vector3, Placed, Placed, Scalar)> = Vec::new();
+    for pair in pairs {
+        let [surf_a, surf_b] = &pair.surfaces;
+        let ctx = with_context!(
+            "insert_face_points({which:?}, faces {:?} and {:?})",
+            pair.origins[0],
+            pair.origins[1]
+        );
+        let (Some(faces_a), Some(faces_b)) = (
+            groups_a.get(&pair.origins[0]),
+            groups_b.get(&pair.origins[1]),
+        ) else {
+            continue;
+        };
+        let seeds = match which {
+            FacePoint::Node => &pair.found.tangent,
+            FacePoint::Turning => &pair.found.candidates,
+        };
+        for candidate in seeds {
+            let refined = match which {
+                FacePoint::Node => refine_node(surf_a, surf_b, candidate.seed)
+                    .map(|([u_a, v_a, u_b, v_b], point)| (point, u_a, v_a, u_b, v_b)),
+                FacePoint::Turning => refine_turning_point(surf_a, surf_b, candidate.seed),
+            };
+            let Some((point, u_a, v_a, u_b, v_b)) = refined else {
+                continue;
+            };
+            let (Some(on_a), Some(on_b)) = (
+                placed(faces_a, u_a, v_a, &point).with_context(&ctx)?,
+                placed(faces_b, u_b, v_b, &point).with_context(&ctx)?,
+            ) else {
+                continue;
+            };
+            if matches!((on_a, on_b), (Placed::OnEdge(..), Placed::OnEdge(..))) {
+                // Where two edges cross: the edge phases put a vertex there.
+                continue;
+            }
+            if found.iter().any(|(p, ..)| p.could_be_equal(&point)) {
+                continue;
+            }
+            found.push((point, on_a, on_b, point.prod_dot(&pair.found.direction)));
+        }
+    }
+    let mut starts = Vec::with_capacity(found.len());
+    for (point, on_a, on_b, along) in found {
+        match (on_a, on_b) {
+            (Placed::Inside(face_a), Placed::Inside(face_b)) => {
+                let vertex = model.insert_vertex(point, naming.provisional())?;
+                naming.face_point(vertex, face_a, face_b, along)?;
+                starts.push(TracingStartPoint {
+                    vertex,
+                    edge_solid: solid_a,
+                    face: face_b,
+                    face_solid: solid_b,
+                });
+            }
+            (Placed::OnEdge(edge, t), Placed::Inside(face))
+            | (Placed::Inside(face), Placed::OnEdge(edge, t)) => {
+                split_at_crossing(model, naming, edge, t, None, point, face, params)?;
+                let vertex = model.topology().get_edge(edge)?.end_vertex;
+                let (edge_solid, face_solid) = match on_a {
+                    Placed::OnEdge(..) => (solid_a, solid_b),
+                    Placed::Inside(_) => (solid_b, solid_a),
+                };
+                starts.push(TracingStartPoint {
+                    vertex,
+                    edge_solid,
+                    face,
+                    face_solid,
+                });
+            }
+            (Placed::OnEdge(..), Placed::OnEdge(..)) => unreachable!("set aside above"),
+        }
+    }
+    Ok(starts)
+}
+
+/// A point of the curve `surf_a` and `surf_b` meet in near `seed`, where
+/// they cross, and its parameters on both: the corrector the march uses,
+/// landing on the plane through `surf_a` at the seed square to the curve
+/// there. `None` where it brings them onto no common point — the boxes the
+/// seed came from only said one could be — or onto one where they touch.
+fn refine_turning_point(
+    surf_a: &NurbSurface3D,
+    surf_b: &NurbSurface3D,
+    [u_a, v_a, u_b, v_b]: [Scalar; 4],
+) -> Option<(Vector3, Scalar, Scalar, Scalar, Scalar)> {
+    let start = surf_a.evaluate(u_a, v_a).ok()?;
+    let along = surf_a
+        .normal(u_a, v_a)
+        .ok()?
+        .prod_cross(&surf_b.normal(u_b, v_b).ok()?)
+        .normalize()
+        .ok()?;
+    let (point, u_a, v_a, u_b, v_b) = predictor_corrector_step(
+        surf_a,
+        surf_b,
+        start,
+        along,
+        u_a,
+        v_a,
+        u_b,
+        v_b,
+        Scalar::ZERO,
+    )
+    .ok()?;
+    let n_a = surf_a.normal(u_a, v_a).ok()?;
+    let n_b = surf_b.normal(u_b, v_b).ok()?;
+    n_a.prod_cross(&n_b).normalize().ok()?;
+    Some((point, u_a, v_a, u_b, v_b))
 }
 
 /// Whether `edge_id` already has a boundary coedge on `face_id` — if so,
@@ -526,8 +835,17 @@ fn seam_plane(model: &Model, edge_id: EdgeId, params: &RemeshParams) -> GeopResu
 /// `face`'s surface (`curve_surface_intersect` finds an overlap:
 /// [`Intersections::Coincident`]) and enters the face's interior, and `edge`
 /// isn't already a boundary coedge of `face`.
+///
+/// `settled` are the pairs already found not to be such, which are not
+/// asked again, and every pair found so is added to it. That stays true
+/// while imprinting goes on: an imprint splits a face, keeping its id for
+/// one piece, and splits no edge; a piece of a face holds no more of a
+/// curve's points inside it than the whole did, and the new piece's pairs
+/// are new. So the search is not started over from every pair after every
+/// imprint, as [`find_piercing_crossing`]'s is not after every split.
 fn find_coincident_pair(
     model: &Model,
+    settled: &mut std::collections::HashSet<(EdgeId, FaceId)>,
     edge_solid: Body,
     face_solid: Body,
     params: &RemeshParams,
@@ -539,7 +857,9 @@ fn find_coincident_pair(
     for edge_id in model.iter_body_edges(edge_solid).with_context(&ctx)? {
         let seam = seam_plane(model, edge_id, params).with_context(&ctx)?;
         for face_id in model.body_faces(face_solid).with_context(&ctx)? {
-            if edge_is_boundary_of_face(model, edge_id, face_id) {
+            if settled.contains(&(edge_id, face_id))
+                || edge_is_boundary_of_face(model, edge_id, face_id)
+            {
                 continue;
             }
             // A seam within a plane is that plane's own business only for a
@@ -611,8 +931,8 @@ fn find_coincident_pair(
                 if enters_interior {
                     return Ok(Some((edge_id, face_id)));
                 }
-                continue;
             }
+            settled.insert((edge_id, face_id));
         }
     }
     Ok(None)
@@ -657,10 +977,19 @@ fn imprint_coincident_pairs(
         "imprint_coincident_pairs(edge_solid={edge_solid}, face_solid={face_solid}, params={params:?})"
     );
 
+    let mut settled = std::collections::HashSet::new();
     rewrite(
         model,
         params.max_rewrites,
-        |model| find_coincident_pair(model.topology(), edge_solid, face_solid, params),
+        |model| {
+            find_coincident_pair(
+                model.topology(),
+                &mut settled,
+                edge_solid,
+                face_solid,
+                params,
+            )
+        },
         |model, (edge_id, face_id)| {
             imprint_coincident_edge(model, naming, edge_id, face_id, params)
         },
@@ -1358,44 +1687,7 @@ fn trace_one_side(
     let edge_id = match duplicate {
         Some(id) => id,
         None => {
-            // Where the two surfaces' shapes say what their branch is — a
-            // plane across a cylinder, a cone, a sphere, a torus turning
-            // around its normal: a circle — the edge is that exact arc, the
-            // kernel's own rational quadratic, from the start vertex to the
-            // one reached, leaving the way the march left. The march found
-            // which vertex the branch ends at; the shapes say where it runs.
-            // An arc the shell, a lip or a reference axis can read as one,
-            // where a curve fitted through the marched points, however
-            // tightly it encloses the circle, is none.
-            // Both the exact arc and the fitted cubic enclose the branch;
-            // the arc is taken where it fits the width an entity may carry.
-            // Its weight is an answer, as wide as the surfaces' data leaves
-            // it (a centre read from control points a few ulps wide), and a
-            // homogeneous control point multiplies the weight by the
-            // coordinate: far from the origin that is a width of the
-            // coordinate's size times the weight's, where the fit, its
-            // weights exactly one, carries only its drift. Honest both, so
-            // the tighter is a free choice.
-            let arc = circle_through(&surf_a, &surf_b, &point)
-                .with_context(&ctx)?
-                .map(|circle| {
-                    circle
-                        .arc_leaving(point, hit_point, &first_dir)
-                        .with_context(&ctx)?
-                        .to_curve()
-                        .with_context(&ctx)
-                })
-                .transpose()?
-                .filter(|curve| {
-                    curve.control_points.iter().all(|p| {
-                        (0..4).all(|k| p[k].width().to_f64() <= numerical_accuracy::MAX_WIDTH)
-                    })
-                });
-            let exact = arc.is_some();
-            let curve = match arc {
-                Some(curve) => curve,
-                None => fit_branch(&surf_a, &surf_b, &points, &uvs, &mut widest_between, &ctx)?,
-            };
+            let curve = fit_branch(&surf_a, &surf_b, &points, &uvs, &mut widest_between, &ctx)?;
             let widest = curve
                 .control_points
                 .iter()
@@ -1404,8 +1696,7 @@ fn trace_one_side(
                 .max_by(|a, b| a.1.total_cmp(&b.1))
                 .expect("a curve has control points");
             fitted = format!(
-                "{}{} control points, the widest {} of them, {:e} wide",
-                if exact { "an exact arc of " } else { "" },
+                "{} control points, the widest {} of them, {:e} wide",
                 curve.control_points.len(),
                 widest.0,
                 widest.1

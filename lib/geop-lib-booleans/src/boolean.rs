@@ -100,6 +100,15 @@ fn keeps(op: BooleanOp, class: FaceClassification, from_a: bool) -> Keep {
         (BooleanOp::Difference, Outside | OnOppositeNormal) if from_a => Keep::AsIs,
         (BooleanOp::Difference, Inside) if !from_a => Keep::Reversed,
         (BooleanOp::Difference, Inside | Outside | OnSameNormal | OnOppositeNormal) => Keep::Drop,
+
+        // Symmetric difference: (a - b) and (b - a), each bounded by its
+        // own faces outside the other and the other's faces inside it,
+        // turned around. Where the two lie along each other, the material
+        // is on one side of both (in both, so in neither piece) or on
+        // either side (in one each, so inside the result): no boundary.
+        (BooleanOp::SymmetricDifference, Outside) => Keep::AsIs,
+        (BooleanOp::SymmetricDifference, Inside) => Keep::Reversed,
+        (BooleanOp::SymmetricDifference, OnSameNormal | OnOppositeNormal) => Keep::Drop,
     }
 }
 
@@ -317,6 +326,11 @@ fn combine(
             BooleanOp::Union => (false, !alone),
             BooleanOp::Difference => (true, true),
             BooleanOp::Intersection => (true, false),
+            BooleanOp::SymmetricDifference => {
+                return Err(ctx(GeopError::new(
+                    "up to next: a symmetric difference keeps every piece of the tool, so it reaches no next face; use a blind extent",
+                )));
+            }
         };
         let reached = match reach_up_to_next(
             topology,
@@ -576,7 +590,8 @@ fn keep_alone(reached: &Reached, decisions: &mut HashMap<FaceId, (FaceClassifica
 
 /// Fails unless the kept faces close up: every edge they use must be used an
 /// even number of times by them — twice where two faces meet, four times
-/// where the result touches itself along the edge. An odd count is a hole in
+/// where the result touches itself along the edge, which a solid may (see
+/// `validation::manifold_check`). An odd count is a hole in
 /// the result, so a face was kept or dropped wrongly, or remesh left a face
 /// straddling the other solid; the error lists every face along that edge
 /// with its name and classification, which tells the two apart.
@@ -980,6 +995,7 @@ mod tests {
                 BooleanOp::Union => in_a || in_b,
                 BooleanOp::Intersection => in_a && in_b,
                 BooleanOp::Difference => in_a && !in_b,
+                BooleanOp::SymmetricDifference => in_a != in_b,
             };
             let actual = match result {
                 Some(solid) => match strictly_inside(s.model.topology(), solid, p) {
@@ -1045,6 +1061,20 @@ mod tests {
     fn union_matches_point_membership() {
         for (i, name) in MEMBERSHIP_SCENES.iter().enumerate() {
             check_boolean_matches_point_membership(name, BooleanOp::Union, 0xB001 + i as u64);
+        }
+    }
+
+    /// What is in one solid but not the other: the drilled box's material
+    /// outside the cylinder and the cylinder's outside the box, as one solid
+    /// whose two pieces meet along the rims.
+    #[test]
+    fn symmetric_difference_matches_point_membership() {
+        for (i, name) in MEMBERSHIP_SCENES.iter().enumerate() {
+            check_boolean_matches_point_membership(
+                name,
+                BooleanOp::SymmetricDifference,
+                0xB201 + i as u64,
+            );
         }
     }
 
@@ -1121,17 +1151,13 @@ mod tests {
     }
 
     /// A bore through a block leaves rims where its side meets the block's
-    /// top and bottom: circles, whether the bore's caps lie in those faces
-    /// (the rims are the caps' own edges, imprinted) or stand out of them
-    /// (the rims are traced where the side crosses the faces). Either way
-    /// every curved edge of the result is an arc the kernel reads as one,
-    /// a quarter of the bore's circle on the face it is cut from, and the
-    /// volume is the block's less the bore's. A rim traced as a fitted
-    /// curve, however tightly it encloses the circle, is no arc: the shell
-    /// could not offset it, and refused the fillet-then-shell of every
-    /// enclosure tutorial on the blend's run-out.
+    /// top and bottom, whether the bore's caps lie in those faces (the rims
+    /// are the caps' own edges, imprinted) or stand out of them (the rims
+    /// are traced where the side crosses the faces, and fitted like any
+    /// other traced curve). Either way four rim edges lie on each face, and
+    /// the volume is the block's less the bore's.
     #[test]
-    fn rims_of_a_bore_are_arcs_whether_flush_or_standing_out() {
+    fn rims_of_a_bore_whether_flush_or_standing_out() {
         use geop_core_topology::Body;
         let radius = 0.3;
         for (base, height) in [(0.0, 1.0), (-0.5, 2.0)] {
@@ -1140,30 +1166,21 @@ mod tests {
             let bore = cylinder(&mut model, [0.5, 0.5, base], radius, height, Axis::Z);
             let result = op(&mut model, block, bore, BooleanOp::Difference);
             let topology = model.topology();
-            let mut arcs = 0;
-            for edge_id in topology.iter_body_edges(Body::Solid(result)).unwrap() {
-                let edge = topology.get_edge(edge_id).unwrap();
-                if edge.curve.as_line().unwrap().is_some() {
-                    continue;
-                }
-                let arc = edge.curve.as_arc().unwrap().unwrap_or_else(|| {
-                    panic!(
-                        "base {base}: edge {} is neither straight nor circular: {:?}",
-                        model.name_of(edge_id).unwrap(),
-                        edge.curve
-                    )
-                });
-                let on = |z: f64| arc.circle.center.could_be_equal(&v3(0.5, 0.5, z));
-                assert!(on(0.) || on(1.), "base {base}: {arc:?}");
-                assert!(arc.circle.radius.could_be_equal(Scalar::from_f64(radius)));
-                assert!(
-                    (arc.sweep() - std::f64::consts::FRAC_PI_2).abs() < 1e-9,
-                    "base {base}: {arc:?}"
-                );
-                arcs += 1;
-            }
+            let curved = topology
+                .iter_body_edges(Body::Solid(result))
+                .unwrap()
+                .filter(|&e| {
+                    topology
+                        .get_edge(e)
+                        .unwrap()
+                        .curve
+                        .as_line()
+                        .unwrap()
+                        .is_none()
+                })
+                .count();
             // Four quarters on each rim.
-            assert_eq!(arcs, 8, "base {base}");
+            assert_eq!(curved, 8, "base {base}");
             let r = Scalar::from_f64(radius);
             let expected = Scalar::ONE.sub(Scalar::PI.mul(r).mul(r));
             let volume = topology.mass_properties(result).unwrap().volume;
@@ -1234,12 +1251,14 @@ mod tests {
                 errors[0]
             );
         }
-        // The full validation too: `validate_fast` checks each face on its
-        // own, and passes an edge running through the middle of another face,
-        // or two edges crossing away from any vertex. Not `validate_manifold`:
-        // many of these results are genuinely non-manifold — solids touching
-        // along a line leave edges shared by four faces.
-        if let Err(errors) = geop_core_topology::validation::validate(&validation(), topology) {
+        // The full validation too, as `assert_valid` holds a solid to it:
+        // `validate_fast` checks each face on its own, and passes an edge
+        // running through the middle of another face, or two edges crossing
+        // away from any vertex. A result touching itself along a line,
+        // its edge shared by four faces, is a valid solid.
+        if let Err(errors) =
+            geop_core_topology::validation::validate_manifold(&validation(), topology)
+        {
             panic!("{op:?}: {} validate error(s): {}", errors.len(), errors[0]);
         }
         // Closed, which neither check covers: every edge of the result is used

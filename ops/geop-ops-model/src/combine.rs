@@ -186,10 +186,11 @@ const NEW_BODY: &str = "new_body";
 
 impl BooleanOp {
     /// Every boolean operation, in the order a dialog offers them.
-    const ALL: [BooleanOp; 3] = [
+    const ALL: [BooleanOp; 4] = [
         BooleanOp::Union,
         BooleanOp::Difference,
         BooleanOp::Intersection,
+        BooleanOp::SymmetricDifference,
     ];
 
     /// How it is offered, as a boolean or as a way to combine.
@@ -198,6 +199,7 @@ impl BooleanOp {
             BooleanOp::Union => "union",
             BooleanOp::Difference => "difference",
             BooleanOp::Intersection => "intersection",
+            BooleanOp::SymmetricDifference => "symmetric_difference",
         }
     }
 
@@ -206,24 +208,27 @@ impl BooleanOp {
         Self::ALL.into_iter().find(|op| op.value() == value)
     }
 
-    /// The ops as a boolean offers them: union, difference, intersection.
+    /// The ops as a boolean offers them: union, difference, intersection,
+    /// symmetric difference.
     pub fn choices() -> Vec<Choice> {
         let label = |op| match op {
             BooleanOp::Union => "Union",
             BooleanOp::Difference => "Difference",
             BooleanOp::Intersection => "Intersection",
+            BooleanOp::SymmetricDifference => "Symmetric difference",
         };
         (Self::ALL.into_iter())
             .map(|op| Choice::new(op.value(), label(op)))
             .collect()
     }
 
-    /// The ops as a way to combine a tool: join, cut, intersect.
+    /// The ops as a way to combine a tool: join, cut, intersect, exclude.
     fn combine_choices() -> impl Iterator<Item = Choice> {
         let label = |op| match op {
             BooleanOp::Union => "Join",
             BooleanOp::Difference => "Cut",
             BooleanOp::Intersection => "Intersect",
+            BooleanOp::SymmetricDifference => "Exclude",
         };
         (Self::ALL.into_iter()).map(move |op| Choice::new(op.value(), label(op)))
     }

@@ -193,11 +193,11 @@ fn hole_wall_moved_onto_the_axis_of_a_revolved_cap_is_refused() {
 }
 
 /// A drill standing out of the caps leaves rims the boolean traced, where
-/// the drill's side crosses the caps. The boolean once fitted a curve
-/// through its march there, which was neither straight nor circular to the
-/// shell; the rim is a circle, a plane across a cylinder around its
-/// normal, and the boolean now splices that arc. Shelled like the flush
-/// drill.
+/// the drill's side crosses the caps. The boolean fits a cubic through its
+/// march there, as it does for every traced curve (it special-cases no pair
+/// of surface kinds), and the shell offsets only edges it reads as straight
+/// or circular. Shelled like the flush drill once the shell offsets a
+/// general edge.
 #[test]
 fn drill_standing_out_leaves_a_traced_rim_the_shell_offsets() {
     let (part, solid) = drilled_revolved_cylinder(0.4, 0.25, true);

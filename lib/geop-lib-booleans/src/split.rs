@@ -112,6 +112,7 @@ pub fn split(
             }
         }
     }
+    let sides_of = |i: usize| if i < n { solid_faces[i] } else { cuts[i - n] };
     let mut edges: Vec<_> = users.into_iter().collect();
     edges.sort_by_key(|(e, _)| e.0);
     for (edge, uses) in edges {
@@ -134,9 +135,15 @@ pub fn split(
                     pieces.union(turned(*c), *d);
                 }
             }
-            ([], [_]) => {
+            ([], [(cut, _)]) => {
+                let users: Vec<_> = (topology.coedges_of_edge(edge).iter())
+                    .filter_map(|&c| topology.get_coedge(c).ok())
+                    .map(|c| model.name_of(c.face).unwrap_or("?").to_string())
+                    .collect();
                 return Err(ctx(GeopError::new(format!(
-                    "split: the face ends inside the solid, at edge {edge}; it must cut all the way through"
+                    "split: the face ends inside the solid, at edge {edge} ({:?}) of the cut {:?}, used by the faces {users:?}; it must cut all the way through",
+                    model.name_of(edge),
+                    model.name_of(sides_of(*cut)),
                 ))));
             }
             _ => {

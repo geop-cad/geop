@@ -1,346 +1,635 @@
-//! The branch where two surfaces meet, followed from point to point: a
-//! corrector that brings a predicted point onto both surfaces at once
-//! ([`predictor_corrector_step`]), and a curve fitted through points of a
-//! branch that encloses the branch between them too ([`fit_branch`]).
+//! Where to look for the closed loops two surfaces meet in: points of
+//! `S_a(u_a, v_a) = S_b(u_b, v_b)` at which the curve they meet in turns
+//! back along a direction `d` ([`turning_points`]).
 //!
-//! Where the branch runs and where it ends is the caller's to decide: the
-//! booleans march from a piercing point to the vertex they reach
-//! (`geop-lib-booleans`' `trace_one_side`); a shell knows both ends, the
-//! moved vertices, and the edge whose inner copy the branch is.
+//! # Why turning points
+//!
+//! A boolean finds the curves two faces meet in by tracing them from the
+//! points where an edge of one pierces the other. A closed loop lying inside
+//! both faces is pierced by no edge, and is never found that way: a bump of
+//! one face poking through the other, two freeform faces meeting in an oval.
+//!
+//! Every closed loop has a point furthest along any direction `d`, and one
+//! least far: there the curve's tangent, `n_a × n_b`, is square to `d`, so
+//!
+//! ```text
+//! g = (n_a × n_b) · d = 0.
+//! ```
+//!
+//! With the three equations of `S_a = S_b` that is a square system in the
+//! four parameters, and every loop gives at least two of its solutions.
+//! Where the surfaces cross transversally the solutions are isolated, so a
+//! subdivision search finds every one ("Subdivide to isolate, then Newton
+//! to refine", `AGENTS.md`): pairs of patches whose control-point boxes are
+//! apart hold no point of both; pairs over which `g`, enclosed from the
+//! patches' normals, is definitely not zero hold no turning point. What is
+//! left at the handoff is a candidate, for the caller to refine onto the
+//! curve.
+//!
+//! # What is not searched
+//!
+//! Where the two normals could be parallel the curve has no tangent to turn,
+//! and `g` vanishes for every `d`: tangent contact, a face flush with
+//! another, a node where two branches cross. Those pairs are subdivided only
+//! down to a coarser handoff and then set aside ([`TurningPoints::tangent`]),
+//! for [`refine_node`] to find the isolated nodes among them: a loop
+//! shrinking into a tangency is the one case left to the caller to notice,
+//! as a face the boolean cannot classify.
 
 use geop_core_math::{
     geop_error::{GeopError, GeopResult, WithContext},
-    matrix::Matrix,
     scalars::Scalar,
-    solvers::{
-        iterate::{Repeat, Step, iterate},
-        linear::solve_linear_system,
-    },
-    vector::{Vector, Vector3},
-    with_context,
+    vector::Vector3,
 };
 
-use crate::{
-    nurb_curve::{NurbCurve, WidestBetween},
-    nurb_surface::NurbSurface3D,
+use geop_core_math::{
+    matrix::Matrix, solvers::linear::solve_linear_system, union_find::UnionFind, vector::Vector,
 };
 
-/// Where a point of an intersection branch is on both surfaces:
-/// `(u_a, v_a, u_b, v_b)`.
-pub type OnBoth = (Scalar, Scalar, Scalar, Scalar);
+use crate::{nearest::SurfacePatch, nurb_surface::NurbSurface3D};
 
-/// How many damped-Newton iterations the corrector may take to bring a
-/// predicted point onto *both* surfaces at once. Like [`NEWTON_ITERATIONS`]
-/// this bounds effort, not correctness: the loop exits early the moment the
-/// two surfaces' enclosures of the point overlap, and failing to converge
-/// within the budget is reported as an error rather than accepted.
-const CORRECTOR_ITERATIONS: usize = 20;
+/// How many times finer than the smaller surface a pair of patches is cut
+/// before it is handed over as a candidate: where the search hands over to
+/// Newton. Bounds effort, and how many candidates near one turning point the
+/// caller refines; never what a candidate means.
+const HANDOFF_PARTS: i64 = 64;
 
-/// Levenberg-Marquardt damping for the corrector's linear solve. Purely a
-/// conditioning term — it keeps the step finite where the 4x4 system is
-/// rank-deficient (the two surfaces locally parallel, or a parametric pole
-/// where one surface's `Su`/`Sv` collapse), at the cost of a shorter step
-/// that the next iteration simply continues. It cannot affect what a
-/// converged answer *means*: the `could_be_equal` test below is what
-/// decides whether the corrector actually landed on the curve.
-const CORRECTOR_DAMPING: f64 = 1e-12;
+/// How many times finer than the smaller surface a pair of patches whose
+/// normals could be parallel is cut before it is set aside (see the module
+/// docs). Coarser than [`HANDOFF_PARTS`]: two faces flush with each other
+/// are such a pair everywhere they overlap, and are set aside whole.
+const TANGENT_PARTS: i64 = 8;
 
-/// One predictor-corrector step from `point` (with known `(u_a, v_a)` /
-/// `(u_b, v_b)` on `surf_a`/`surf_b`) along `dir`: predicts `point + dir *
-/// step_size`, then solves for the point that lies on *both* surfaces at
-/// once by damped Newton, returning the union of the two surfaces'
-/// enclosures of it plus each surface's own resulting `(u, v)`.
-///
-/// The corrector solves one system in the four unknowns `(u_a, v_a, u_b,
-/// v_b)` rather than projecting onto each surface separately. Separate
-/// projections each enforce their own surface's constraint while ignoring
-/// the other's, so they land a full prediction-error apart and stay there
-/// no matter how good the predictor is — and that error is not small: the
-/// marching point inherits the start vertex's own interval width (a vertex
-/// found by `curve_surface_intersect` is located only to within
-/// `min_subdivision_size`), which `sharpen` turns into a concrete offset.
-///
-/// Three of the four residuals are `S_a(u_a, v_a) - S_b(u_b, v_b) = 0`.
-/// Those alone are underdetermined by exactly one degree of freedom — the
-/// intersection curve is a curve, so sliding along it satisfies them
-/// equally well — and that free direction is what the damper has to pin
-/// down. It pins it *biased to the last direction*: the fourth residual
-/// holds the solution on the plane through the prediction with normal
-/// `dir`, so the corrector may move freely onto the curve but not drift
-/// along it, and the step stays the one the predictor asked for.
-///
-/// A step that would leave a patch is *not* rejected: `project` clamps into
-/// the domain, so such a step lands exactly on the patch boundary — which
-/// is precisely where an intersection curve ends, and therefore where the
-/// vertex it must connect to lives. Refusing it instead stops the march a
-/// full `step_size` short of that vertex, which is how a trace ends up
-/// never reaching anything. Deciding whether a direction is viable at all
-/// is `face_contains`' job on the first step (see a trace's), not
-/// something for every step to re-litigate via raw domain bounds.
-#[allow(clippy::too_many_arguments)]
-pub fn predictor_corrector_step(
-    surf_a: &NurbSurface3D,
-    surf_b: &NurbSurface3D,
-    point: Vector3,
-    dir: Vector3,
-    u_a: Scalar,
-    v_a: Scalar,
-    u_b: Scalar,
-    v_b: Scalar,
-    step_size: Scalar,
-) -> GeopResult<(Vector3, Scalar, Scalar, Scalar, Scalar)> {
-    let ctx = with_context!(
-        "predictor_corrector_step(point={point:?}, dir={dir:?}, u_a={u_a:?}, v_a={v_a:?}, u_b={u_b:?}, v_b={v_b:?}, step_size={step_size:?})"
-    );
-    // Sharpened exactly once, here. The prediction is a seed and a bias for
-    // the damped Newton below, free to be any point along the step, so
-    // collapsing it costs no accuracy — and it fixes the plane the corrector
-    // solves against. Nothing downstream of this line sharpens.
-    //
-    // The plane's normal `dir` is as free as its point: any plane crossing
-    // the curve pins the corrector's free direction equally well. Left wide,
-    // it is the one wide row of an otherwise sharp Jacobian — and where the
-    // two surfaces meet at a shallow angle, `dir` (a normalized cross product
-    // of nearly parallel normals, taken at the previous step's honest
-    // `(u, v)`) is wide by percents, enough to put zero inside a pivot of the
-    // nearly singular system and fail the solve.
-    let dir = dir.sharpen();
-    let target = point.add(&dir.prod_scalar(step_size)).sharpen();
-    let (u_a_lo, u_a_hi) = surf_a.domain_u();
-    let (v_a_lo, v_a_hi) = surf_a.domain_v();
-    let (u_b_lo, u_b_hi) = surf_b.domain_u();
-    let (v_b_lo, v_b_hi) = surf_b.domain_v();
-    let lambda = Scalar::from_f64(CORRECTOR_DAMPING);
-
-    // Two copies of the iterate ([`iterate`]): the sharp *seed* the next
-    // Newton step starts from, and the *answer*, that same value with the
-    // last update's width kept, which is what gets returned.
-    //
-    // Sharpening the seed is legitimate (any point inside it is an equally
-    // good place to start) and necessary (left unsharpened, 20 steps compound
-    // width until `evaluate` fails outright — measured at 36/175 scenes).
-    // Sharpening the *answer* is not: callers ask `face_contains` where this
-    // point is, and a sharp `(u, v)` sitting 6e-17 off a trim boundary reports
-    // `Inside` a face it is actually on the edge of, because `could_be_equal`
-    // has no width to work with. That produced traced curves running along a
-    // face's own boundary, spliced in as zero-area slivers.
-    //
-    // Seeding sharp while returning honest is what the wart needed: the
-    // returned width is that of a *single* step from a sharp seed — bounded
-    // per step rather than merely not discarded — so it states how well this
-    // iterate is pinned down without compounding.
-    //
-    // That holds for the first seed too. The `(u, v)` handed in are the
-    // previous step's honest answer, as wide as that step left them; used
-    // as the seed unsharpened, each step starts from the last one's width,
-    // carries it through the residual into its own, and the march compounds
-    // it step after step. On a tool whose corners are only known to 1e-12 —
-    // computed from a solid's own vertices — that reached a whole patch's
-    // width within a dozen steps (`cube_minus_box_with_wide_corners`).
-    let clamp = |[u_a, v_a, u_b, v_b]: [Scalar; 4]| {
-        [
-            u_a.clamped(u_a_lo, u_a_hi),
-            v_a.clamped(v_a_lo, v_a_hi),
-            u_b.clamped(u_b_lo, u_b_hi),
-            v_b.clamped(v_b_lo, v_b_hi),
-        ]
-    };
-    let sharp = |x: [Scalar; 4]| x.map(|s| s.sharpen());
-    let given = [u_a, v_a, u_b, v_b];
-    // Where the two surfaces were found to meet.
-    let mut met = None;
-    let corrected = iterate(
-        clamp(sharp(given)),
-        given,
-        CORRECTOR_ITERATIONS,
-        Repeat::Never,
-        // Each update is kept twice: honestly, and sharpened as the next
-        // seed — see above for why the two differ. Sharpen *before*
-        // clamping, as `NurbSurface::project` does: `clamped` cannot pull
-        // back an interval that merely straddles a domain bound, and
-        // collapsing such an interval to its midpoint can land just past
-        // the bound, where the next `evaluate` rejects it. On a sharp value
-        // `clamped`'s comparisons are exact, so the seed is always in domain.
-        |&next| {
-            let honest = clamp(next);
-            (clamp(sharp(honest)), honest)
-        },
-        |&[u_a1, v_a1, u_b1, v_b1]| -> GeopResult<Step<[Scalar; 4]>> {
-            let p_a = surf_a
-                .evaluate(u_a1, v_a1)
-                .with_context(&|e: GeopError| e.with_context("evaluate surf_a"))
-                .with_context(&ctx)?;
-            let p_b = surf_b
-                .evaluate(u_b1, v_b1)
-                .with_context(&|e: GeopError| e.with_context("evaluate surf_b"))
-                .with_context(&ctx)?;
-            // All *four* residuals have to be satisfied, not just the three
-            // that put the point on both surfaces. The corrector is handed
-            // the previous step's converged `(u, v)`, which already lies on
-            // both surfaces — testing only those three would report success
-            // without ever moving, leaving the march pinned at its first
-            // step forever. The fourth residual is what says the point has
-            // actually advanced to the plane the predictor stepped to.
-            let on_plane = dir.prod_dot(&p_a.sub(&target));
-            if p_a.could_be_equal(&p_b) && on_plane.could_be_equal(Scalar::ZERO) {
-                // The union of the two surfaces' enclosures, not their
-                // average: both enclose the *same* point on the
-                // intersection curve, so the smallest interval containing
-                // both is the honest answer. Averaging instead invents a
-                // sharp midpoint claiming more precision than either had —
-                // and hides how far apart they were, exactly the signal
-                // that the two surfaces have started to disagree about
-                // where the curve is.
-                met = Some(p_a.union(&p_b));
-                return Ok(Step::Done);
-            }
-
-            let (sau, sav) = surf_a
-                .derivatives(u_a1, v_a1)
-                .with_context(&|e: GeopError| e.with_context("derivatives of surf_a"))
-                .with_context(&ctx)?;
-            let (sbu, sbv) = surf_b
-                .derivatives(u_b1, v_b1)
-                .with_context(&|e: GeopError| e.with_context("derivatives of surf_b"))
-                .with_context(&ctx)?;
-
-            // Residuals: the two surfaces must meet (rows 0..3), and the
-            // meeting point must sit on the plane the predictor stepped to
-            // (row 3).
-            let delta = p_a.sub(&p_b);
-            let mut f = [Scalar::ZERO; 4];
-            let mut j = [[Scalar::ZERO; 4]; 4];
-            for k in 0..3 {
-                f[k] = delta[k];
-                j[k] = [sau[k], sav[k], sbu[k].neg(), sbv[k].neg()];
-            }
-            f[3] = on_plane;
-            j[3] = [
-                dir.prod_dot(&sau),
-                dir.prod_dot(&sav),
-                Scalar::ZERO,
-                Scalar::ZERO,
-            ];
-
-            // Damped normal equations `(J^T J + lambda I) d = -J^T f`. Going
-            // through `J^T J` rather than solving `J d = -f` directly is
-            // what lets the damping act at all, and keeps the step finite
-            // where `J` loses rank instead of erroring out of an otherwise
-            // fine trace.
-            //
-            // The matrix is sharpened: it only steers the step, and any
-            // matrix near the true Jacobian leads Newton to the same fixed
-            // point — the residual `f` alone decides where that is, so the
-            // step's honest width is the residual's, carried through a sharp
-            // preconditioner (as in Krawczyk's `Y = mid(J)^-1`). Left as
-            // intervals, the elimination amplifies the surfaces' own width by
-            // the system's condition, which `J^T J` squares: where the
-            // surfaces meet at a shallow angle, that put zero inside the last
-            // pivot of a solvable system.
-            let mut ata = [[Scalar::ZERO; 4]; 4];
-            let mut atf = [Scalar::ZERO; 4];
-            for r in 0..4 {
-                for c in 0..4 {
-                    let mut sum = Scalar::ZERO;
-                    for row in &j {
-                        sum = sum.add(row[r].mul(row[c]));
-                    }
-                    ata[r][c] = if r == c { sum.add(lambda) } else { sum }.sharpen();
-                }
-                let mut sum = Scalar::ZERO;
-                for k in 0..4 {
-                    sum = sum.add(j[k][r].mul(f[k]));
-                }
-                atf[r] = sum.neg();
-            }
-
-            let step = solve_linear_system(&Matrix::from_rows(ata), &Vector::from_array(atf))
-                .with_context(&ctx)?;
-            Ok(Step::Next([
-                u_a1.add(step[0]),
-                v_a1.add(step[1]),
-                u_b1.add(step[2]),
-                v_b1.add(step[3]),
-            ]))
-        },
-    )?;
-    if let Some(point) = met {
-        let [u_a, v_a, u_b, v_b] = corrected.answer;
-        return Ok((point, u_a, v_a, u_b, v_b));
-    }
-    let [u_a1, v_a1, u_b1, v_b1] = corrected.seed;
-
-    Err(ctx(GeopError::new(format!(
-        "the corrector did not bring the two surfaces onto a common point within {CORRECTOR_ITERATIONS} iterations: face_a lands at (u={u_a1:?}, v={v_a1:?}) and face_b at (u={u_b1:?}, v={v_b1:?}), which cannot be the same point — at least one of them has left its surface"
-    ))))
+/// A patch of one of the two surfaces, single-span, with an enclosure of
+/// the direction of its normal over all of it (see [`normal_directions`]).
+#[derive(Clone)]
+struct Piece {
+    patch: SurfacePatch,
+    normal: Vector3,
 }
 
-/// The curve of a traced branch whose shape nothing names: a cubic through
-/// the marched `points` (each on both surfaces at its `uvs`), widened to
-/// enclose the branch between them.
+/// A box holding a positive multiple of the normal `S_u × S_v` at every
+/// point of the single-span `patch`, from its control net.
 ///
-/// `widest_between` is told the widest point of the branch located between
-/// the marched ones — leg, fraction, point, width — of the last attempt to
-/// fit it: the curve is widened to hold it, so one that is wide makes the
-/// whole curve wide, and this says which.
-pub fn fit_branch(
-    surf_a: &NurbSurface3D,
-    surf_b: &NurbSurface3D,
-    points: &[Vector3],
-    uvs: &[OnBoth],
-    widest_between: &mut WidestBetween,
-    ctx: &dyn Fn(GeopError) -> GeopError,
-) -> GeopResult<NurbCurve<4>> {
-    // The edge's curve interpolates the marched points, and must
-    // enclose the intersection branch *between* them too — a later
-    // trace of the same branch from its other end tests its own
-    // points against this curve (the duplicate check in
-    // a trace's), and they lie on the branch, not on an
-    // interpolant.
-    //
-    // Located with the same corrector the march uses, at a fraction
-    // `frac` of the way along the leg from `from` (whose surface
-    // parameters are `(u_a, v_a, u_b, v_b)`) to `to`.
-    let on_branch = |from: Vector3,
-                     (u_a, v_a, u_b, v_b): OnBoth,
-                     to: Vector3,
-                     frac: Scalar|
-     -> GeopResult<(Vector3, OnBoth)> {
-        let leg_ctx = with_context!("on_branch(from={from:?}, to={to:?}, frac={frac:?})");
-        let chord = to.sub(&from);
-        let step = chord.norm().mul(frac);
-        let (p, na, va, nb, vb) = predictor_corrector_step(
-            surf_a,
-            surf_b,
-            from,
-            chord.normalize().with_context(&leg_ctx)?,
-            u_a,
-            v_a,
-            u_b,
-            v_b,
-            step,
-        )
-        .with_context(&leg_ctx)?;
-        Ok((p, (na, va, nb, vb)))
+/// With `A` the homogeneous points and `w` the weights, `w² S_u = w A_u -
+/// w_u A`, so `w S_u = A_u - w_u S`: in the direction of `A_u - w_u S`.
+/// Over the patch `A_u` and `w_u` are positive multiples of convex
+/// combinations of the differences of the net along `u` (its hodograph,
+/// all with one factor), and `S` lies in the hull of the Cartesian control
+/// points; each is enclosed by its box, and likewise along `v`. For a
+/// polynomial patch `w_u` vanishes, and the box is the hodographs' own.
+/// Relative to a sharp point of the net, a free choice, so the box does
+/// not grow with the patch's distance from the origin.
+fn normal_directions(patch: &NurbSurface3D) -> Vector3 {
+    let (nu, nv) = (patch.num_u, patch.num_v);
+    let at = |i: usize, j: usize| patch.control_points[i * nv + j];
+    let origin =
+        Vector3::from_array([0, 1, 2].map(|k| at(0, 0)[k].div(at(0, 0)[3]).unwrap_or(at(0, 0)[k])))
+            .sharpen();
+    // The net relative to `origin`, homogeneous: `A - w origin`.
+    let local = |i: usize, j: usize| -> [Scalar; 4] {
+        let q = at(i, j);
+        [
+            q[0].sub(q[3].mul(origin[0])),
+            q[1].sub(q[3].mul(origin[1])),
+            q[2].sub(q[3].mul(origin[2])),
+            q[3],
+        ]
     };
-    // The march's stride leaves a cubic through its points drifting ~1e-5
-    // from the branch; a branch crossed in only a stride or two would be
-    // left with too few points for a cubic at all — a single stride,
-    // halved, is three, and a quadratic through three points of an ellipse
-    // drifts ~4e-6 from it. That drift is enclosed as width, honestly, but
-    // only in the directions it points in, and a pcurve fitted by
-    // projecting the curve onto a surface tilted against them inherits it
-    // as an offset its own width does not cover. And a branch whose
-    // curvature runs from gentle to tight along it — the involute flank of
-    // a gear tooth crossing a plane, its curvature radius growing tenfold
-    // from root to tip — leaves the cubic drifting a hundred times the
-    // usual. So the legs are split finer (see `fit_enclosing`).
-    let stations: Vec<(Vector3, OnBoth)> =
-        points.iter().copied().zip(uvs.iter().copied()).collect();
-    NurbCurve::<4>::fit_enclosing(
-        &stations,
-        |(from, on_both), (to, _), frac| on_branch(*from, *on_both, *to, frac),
-        widest_between,
-        ctx,
-    )
+    let union = |acc: Option<[Scalar; 4]>, x: [Scalar; 4]| -> Option<[Scalar; 4]> {
+        Some(match acc {
+            None => x,
+            Some(a) => std::array::from_fn(|k| a[k].union(x[k])),
+        })
+    };
+    let mut points: Option<[Scalar; 4]> = None;
+    for i in 0..nu {
+        for j in 0..nv {
+            let q = local(i, j);
+            let cartesian = [0, 1, 2].map(|k| q[k].div(q[3]).unwrap_or(Scalar::ENTIRE));
+            points = union(
+                points,
+                [cartesian[0], cartesian[1], cartesian[2], Scalar::ZERO],
+            );
+        }
+    }
+    let points = points.expect("a net has a point");
+    let hodograph = |along_u: bool| -> [Scalar; 4] {
+        let mut acc = None;
+        let (ni, nj) = if along_u { (nu - 1, nv) } else { (nu, nv - 1) };
+        for i in 0..ni {
+            for j in 0..nj {
+                let (a, b) = if along_u {
+                    (local(i, j), local(i + 1, j))
+                } else {
+                    (local(i, j), local(i, j + 1))
+                };
+                acc = union(acc, std::array::from_fn(|k| b[k].sub(a[k])));
+            }
+        }
+        acc.unwrap_or([Scalar::ZERO; 4])
+    };
+    let direction = |d: [Scalar; 4]| {
+        Vector3::from_array(std::array::from_fn(|k| d[k].sub(d[3].mul(points[k]))))
+    };
+    direction(hodograph(true)).prod_cross(&direction(hodograph(false)))
+}
+
+impl Piece {
+    fn new(surface: NurbSurface3D) -> GeopResult<Self> {
+        Ok(Self {
+            normal: normal_directions(&surface),
+            patch: SurfacePatch(surface),
+        })
+    }
+
+    fn size(&self) -> GeopResult<Scalar> {
+        self.patch.0.size()
+    }
+
+    fn halves(&self) -> GeopResult<[Piece; 2]> {
+        let (a, b) = self.patch.halves()?;
+        Ok([Piece::new(a.0)?, Piece::new(b.0)?])
+    }
+
+    /// The parameters of the middle of the patch, and their range over it.
+    fn middle(&self) -> GeopResult<[(Scalar, Scalar); 2]> {
+        let (u, v) = self.patch.middle()?;
+        let over = |(lo, hi): (Scalar, Scalar)| lo.union(hi);
+        Ok([
+            (u, over(self.patch.0.domain_u())),
+            (v, over(self.patch.0.domain_v())),
+        ])
+    }
+}
+
+/// `surface` cut at every knot, into its polynomial (or rational) pieces:
+/// a normal enclosed over a parameter box holds only within one span.
+fn spans(surface: &NurbSurface3D) -> GeopResult<Vec<Piece>> {
+    let mut rows = vec![surface.clone()];
+    for (along_u, breaks) in [
+        (true, surface.breakpoints_u()),
+        (false, surface.breakpoints_v()),
+    ] {
+        let inner = &breaks[1..breaks.len() - 1];
+        let mut cut = Vec::new();
+        for row in rows {
+            let mut rest = row;
+            for &t in inner {
+                let (lo, hi) = if along_u {
+                    rest.split_u(t)?
+                } else {
+                    rest.split_v(t)?
+                };
+                cut.push(lo);
+                rest = hi;
+            }
+            cut.push(rest);
+        }
+        rows = cut;
+    }
+    rows.into_iter().map(Piece::new).collect()
+}
+
+/// What [`turning_points`] finds.
+#[derive(Clone, Debug)]
+pub struct TurningPoints {
+    /// The direction the curves turn back along at the candidates: sharp,
+    /// and a free choice (see [`direction`]).
+    pub direction: Vector3,
+    /// One candidate per cluster of touching boxes left at the handoff,
+    /// where the two surfaces' normals are definitely not parallel: the
+    /// sharp middle of one box of it, `(u_a, v_a, u_b, v_b)`, a seed for
+    /// Newton onto the curve, and the box of the whole cluster. Several
+    /// turning points closer than the handoff come out as one candidate.
+    pub candidates: Vec<Candidate>,
+    /// Clusters of the pairs of patches set aside because the normals could
+    /// be parallel over them (see the module docs): where the surfaces may
+    /// touch, along a curve, over an area or at isolated points, the nodes
+    /// where branches cross ([`refine_node`] tells those apart).
+    pub tangent: Vec<Candidate>,
+}
+
+/// A candidate turning point (see [`TurningPoints::candidates`]).
+#[derive(Clone, Debug)]
+pub struct Candidate {
+    /// A sharp seed in the cluster, `(u_a, v_a, u_b, v_b)`.
+    pub seed: [Scalar; 4],
+    /// The parameters' range over the whole cluster.
+    pub cluster: [Scalar; 4],
+}
+
+/// The direction the loops' turning points are sought along, a free choice
+/// (any `d` gives every loop two turning points), made to keep `g` away
+/// from zero where it can: square to both surfaces' normals at their
+/// middles, where `g` is then `|n_a × n_b|²` (for two planes it never
+/// vanishes), unless those normals are nearly parallel, and square to one
+/// of them otherwise, across the axis that normal runs least along. The
+/// first is preferred unless it is less than half as long as the others.
+fn direction(a: &NurbSurface3D, b: &NurbSurface3D) -> Vector3 {
+    let normal = |s: &NurbSurface3D| -> Option<Vector3> {
+        let (u, v) = SurfacePatch(s.clone()).middle().ok()?;
+        s.normal(u, v).ok().map(|n| n.sharpen())
+    };
+    let axes = [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]]
+        .map(|a| Vector3::from_array(a.map(Scalar::from_f64)));
+    let across = |n: &Vector3| -> Vector3 {
+        let least = axes
+            .iter()
+            .min_by(|x, y| {
+                let (dx, dy) = (n.prod_dot(x).abs(), n.prod_dot(y).abs());
+                dx.to_f64().total_cmp(&dy.to_f64())
+            })
+            .expect("three axes");
+        n.prod_cross(least)
+    };
+    let (na, nb) = (normal(a), normal(b));
+    let mut options: Vec<(f64, Vector3)> = Vec::new();
+    if let (Some(na), Some(nb)) = (&na, &nb) {
+        let d = na.prod_cross(nb);
+        options.push((2.0 * d.norm().to_f64(), d));
+    }
+    for n in [&na, &nb].into_iter().flatten() {
+        let d = across(n);
+        options.push((d.norm().to_f64(), d));
+    }
+    options
+        .into_iter()
+        .max_by(|x, y| x.0.total_cmp(&y.0))
+        .and_then(|(_, d)| d.normalize().ok())
+        .map(|d| d.sharpen())
+        .unwrap_or(axes[0])
+}
+
+/// Candidates for every point at which the curves `a` and `b` meet in turn
+/// back along a direction chosen here — at least two on every closed loop
+/// of them (see the module docs). Errors once `max_nodes` pairs of patches
+/// have been searched with pairs left: a search that did not finish proves
+/// nothing.
+pub fn turning_points(
+    a: &NurbSurface3D,
+    b: &NurbSurface3D,
+    max_nodes: usize,
+) -> GeopResult<TurningPoints> {
+    let ctx = |e: GeopError| e.with_context("turning_points(a, b)");
+    let d = direction(a, b);
+    let mut found = TurningPoints {
+        direction: d,
+        candidates: Vec::new(),
+        tangent: Vec::new(),
+    };
+    if !a.could_overlap(b) {
+        return Ok(found);
+    }
+    let size = a
+        .size()
+        .with_context(&ctx)?
+        .min(b.size().with_context(&ctx)?);
+    let parts = |n: i64| -> GeopResult<Scalar> { size.div(Scalar::from_i64(n)).map(|s| s.upper()) };
+    let (handoff, tangent_handoff) = (
+        parts(HANDOFF_PARTS).with_context(&ctx)?,
+        parts(TANGENT_PARTS).with_context(&ctx)?,
+    );
+
+    let (pieces_a, pieces_b) = (spans(a).with_context(&ctx)?, spans(b).with_context(&ctx)?);
+    let mut pending: Vec<(Piece, Piece)> = Vec::new();
+    for pa in &pieces_a {
+        for pb in &pieces_b {
+            pending.push((pa.clone(), pb.clone()));
+        }
+    }
+    // Each leaf's seed and box, regular and tangent apart.
+    let mut leaves: [Vec<([Scalar; 4], [Scalar; 4])>; 2] = [Vec::new(), Vec::new()];
+    let mut visited = 0usize;
+    while let Some((pa, pb)) = pending.pop() {
+        if !pa.patch.0.could_overlap(&pb.patch.0) {
+            continue;
+        }
+        let cross = pa.normal.prod_cross(&pb.normal);
+        if !cross.prod_dot(&d).could_be_equal(Scalar::ZERO) {
+            continue;
+        }
+        if visited >= max_nodes {
+            return Err(ctx(GeopError::new(format!(
+                "searched {max_nodes} pairs of patches with {} left, {} candidates so far: the search did not finish",
+                pending.len() + 1,
+                leaves[0].len()
+            ))));
+        }
+        visited += 1;
+        let regular = (0..3).any(|k| !cross[k].could_be_equal(Scalar::ZERO));
+        let limit = if regular { handoff } else { tangent_handoff };
+        let (size_a, size_b) = (pa.size()?, pb.size()?);
+        let (split_a, split_b) = (
+            size_a.definitely_greater(limit),
+            size_b.definitely_greater(limit),
+        );
+        if !split_a && !split_b {
+            let ([(ua, ua_box), (va, va_box)], [(ub, ub_box), (vb, vb_box)]) =
+                (pa.middle()?, pb.middle()?);
+            leaves[usize::from(!regular)]
+                .push(([ua, va, ub, vb], [ua_box, va_box, ub_box, vb_box]));
+            continue;
+        }
+        let cut_a = split_a && (!split_b || size_a.to_f64() >= size_b.to_f64());
+        if cut_a {
+            for half in pa.halves().with_context(&ctx)? {
+                pending.push((half, pb.clone()));
+            }
+        } else {
+            for half in pb.halves().with_context(&ctx)? {
+                pending.push((pa.clone(), half));
+            }
+        }
+    }
+
+    let [regular, tangent] = leaves;
+    found.candidates = clusters(&regular);
+    found.tangent = clusters(&tangent);
+    Ok(found)
+}
+
+/// Clusters of `leaves` (each a seed and a box) whose boxes touch: one
+/// point found from several sides, or several closer than the handoff. Each
+/// gets the seed of the member nearest the middle of the cluster: a free
+/// choice, taken where Newton has least far to go to any of it.
+fn clusters(leaves: &[([Scalar; 4], [Scalar; 4])]) -> Vec<Candidate> {
+    let mut sets = UnionFind::new(leaves.len());
+    for i in 0..leaves.len() {
+        for j in 0..i {
+            let touch = (0..4).all(|k| {
+                !leaves[i].1[k].definitely_less(leaves[j].1[k].lower())
+                    && !leaves[i].1[k].definitely_greater(leaves[j].1[k].upper())
+            });
+            if touch {
+                sets.union(i, j);
+            }
+        }
+    }
+    let mut groups = sets.groups();
+    for group in &mut groups {
+        group.sort();
+    }
+    groups.sort_by_key(|g| g[0]);
+    groups
+        .into_iter()
+        .map(|members| {
+            let whole: [Scalar; 4] = std::array::from_fn(|k| {
+                members
+                    .iter()
+                    .map(|&i| leaves[i].1[k])
+                    .reduce(Scalar::union)
+                    .expect("a cluster has a member")
+            });
+            let middle = whole.map(|x| x.midpoint().to_f64());
+            let seed = members
+                .iter()
+                .map(|&i| leaves[i].0)
+                .min_by(|x, y| {
+                    let dist = |s: &[Scalar; 4]| {
+                        (0..4)
+                            .map(|k| (s[k].to_f64() - middle[k]).powi(2))
+                            .sum::<f64>()
+                    };
+                    dist(x).total_cmp(&dist(y))
+                })
+                .expect("a cluster has a member");
+            Candidate {
+                seed,
+                cluster: whole,
+            }
+        })
+        .collect()
+}
+
+/// Newton steps [`refine_node`] takes at most.
+const NODE_ITERATIONS: usize = 30;
+
+/// The residual of the node system at `x = (u_a, v_a, u_b, v_b)` and its
+/// Jacobian: `S_a - S_b`, and the cross product of the two (unnormalized)
+/// normals `N = S_u × S_v` along two tangents `t` of `a`, which vanish
+/// together where the surfaces touch.
+fn node_system(
+    a: &NurbSurface3D,
+    b: &NurbSurface3D,
+    [ua, va, ub, vb]: [Scalar; 4],
+    t: &[Vector3; 2],
+) -> GeopResult<([Scalar; 5], [[Scalar; 4]; 5])> {
+    let (pa, pb) = (a.evaluate(ua, va)?, b.evaluate(ub, vb)?);
+    let (sau, sav) = a.derivatives(ua, va)?;
+    let (sbu, sbv) = b.derivatives(ub, vb)?;
+    let [sauu, sauv, savv] = a.second_derivatives(ua, va)?;
+    let [sbuu, sbuv, sbvv] = b.second_derivatives(ub, vb)?;
+    let (na, nb) = (sau.prod_cross(&sav), sbu.prod_cross(&sbv));
+    let na_u = sauu.prod_cross(&sav).add(&sau.prod_cross(&sauv));
+    let na_v = sauv.prod_cross(&sav).add(&sau.prod_cross(&savv));
+    let nb_u = sbuu.prod_cross(&sbv).add(&sbu.prod_cross(&sbuv));
+    let nb_v = sbuv.prod_cross(&sbv).add(&sbu.prod_cross(&sbvv));
+    let c = na.prod_cross(&nb);
+    let dc = [
+        na_u.prod_cross(&nb),
+        na_v.prod_cross(&nb),
+        na.prod_cross(&nb_u),
+        na.prod_cross(&nb_v),
+    ];
+    let delta = pa.sub(&pb);
+    let mut f = [Scalar::ZERO; 5];
+    let mut j = [[Scalar::ZERO; 4]; 5];
+    for k in 0..3 {
+        f[k] = delta[k];
+        j[k] = [sau[k], sav[k], sbu[k].neg(), sbv[k].neg()];
+    }
+    for (row, tangent) in t.iter().enumerate() {
+        f[3 + row] = c.prod_dot(tangent);
+        j[3 + row] = dc.map(|d| d.prod_dot(tangent));
+    }
+    Ok((f, j))
+}
+
+/// The Gauss-Newton step `-(J^T J)^-1 J^T f`, with `J^T J` taken sharp when
+/// `sharp` (a preconditioner: the step's width is then the residual's) and
+/// over the box otherwise, where solving it at all proves `J` of full rank
+/// over the whole box.
+fn node_step(f: &[Scalar; 5], j: &[[Scalar; 4]; 5], sharp: bool) -> GeopResult<[Scalar; 4]> {
+    let mut jtj = [[Scalar::ZERO; 4]; 4];
+    let mut jtf = [Scalar::ZERO; 4];
+    for r in 0..4 {
+        for c in 0..4 {
+            let sum = (0..5).fold(Scalar::ZERO, |sum, k| sum.add(j[k][r].mul(j[k][c])));
+            jtj[r][c] = if sharp { sum.sharpen() } else { sum };
+        }
+        jtf[r] = (0..5)
+            .fold(Scalar::ZERO, |sum, k| sum.add(j[k][r].mul(f[k])))
+            .neg();
+    }
+    let step = solve_linear_system(&Matrix::from_rows(jtj), &Vector::from_array(jtf))?;
+    Ok(step.to_array())
+}
+
+/// The node near `seed` where `a` and `b` touch at an isolated point —
+/// branches of the curve they meet in cross there, or they touch at that
+/// point alone — as its parameters `(u_a, v_a, u_b, v_b)` and the point,
+/// or `None` where Newton finds no such point, or one not isolated: where
+/// the surfaces touch along a curve or over an area, the system is singular
+/// and no node is claimed.
+///
+/// Gauss-Newton on `S_a = S_b` with the normals parallel, five equations in
+/// four unknowns, each iterate sharpened as the seed of the next but the
+/// last, whose width says how well the data pins the node down (see
+/// `AGENTS.md`). The answer is then checked against every condition it was
+/// asked to meet, over its box: both surfaces could be there, the normals
+/// could be parallel, and the system is of full rank all over it.
+pub fn refine_node(
+    a: &NurbSurface3D,
+    b: &NurbSurface3D,
+    seed: [Scalar; 4],
+) -> Option<([Scalar; 4], Vector3)> {
+    let clamp = |x: [Scalar; 4]| -> [Scalar; 4] {
+        let domains = [a.domain_u(), a.domain_v(), b.domain_u(), b.domain_v()];
+        std::array::from_fn(|k| x[k].clamped(domains[k].0, domains[k].1))
+    };
+    let mut x = clamp(seed.map(Scalar::sharpen));
+    let tangents = |x: &[Scalar; 4]| -> Option<[Vector3; 2]> {
+        let (su, sv) = a.derivatives(x[0], x[1]).ok()?;
+        Some([su.sharpen(), sv.sharpen()])
+    };
+    let t = tangents(&x)?;
+    let mut answer = None;
+    for _ in 0..NODE_ITERATIONS {
+        let (f, j) = node_system(a, b, x, &t).ok()?;
+        let step = node_step(&f, &j, true).ok()?;
+        let honest = clamp(std::array::from_fn(|k| x[k].add(step[k])));
+        if f.iter().all(|r| r.could_be_equal(Scalar::ZERO)) {
+            answer = Some(honest);
+            break;
+        }
+        x = clamp(honest.map(Scalar::sharpen));
+    }
+    let x = answer?;
+    let (pa, pb) = (a.evaluate(x[0], x[1]).ok()?, b.evaluate(x[2], x[3]).ok()?);
+    if !pa.could_be_equal(&pb) {
+        return None;
+    }
+    let (f, j) = node_system(a, b, x, &t).ok()?;
+    if !f.iter().all(|r| r.could_be_equal(Scalar::ZERO)) {
+        return None;
+    }
+    node_step(&f, &j, false).ok()?;
+    Some((x, pa.union(&pb)))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{nurb_surface::NurbSurface, test_fixtures::knots};
+    use geop_core_math::vector::Vector4;
+
+    fn h(x: f64, y: f64, z: f64) -> Vector4 {
+        Vector4::from_array([x, y, z, 1.0].map(Scalar::from_f64))
+    }
+
+    /// A biquadratic dome over `[0, 1]²`, its middle control point raised to
+    /// `top`: the surface reaches a quarter of that.
+    fn dome(top: f64) -> NurbSurface3D {
+        let mut cps = Vec::new();
+        for i in 0..3 {
+            for j in 0..3 {
+                let z = if i == 1 && j == 1 { top } else { 0.0 };
+                cps.push(h(i as f64 / 2.0, j as f64 / 2.0, z));
+            }
+        }
+        let k = knots(&[0., 0., 0., 1., 1., 1.]);
+        NurbSurface::try_new(2, 2, cps, k.clone(), k).unwrap()
+    }
+
+    /// The plane `z = z` over `[-1, 2]²`.
+    fn level(z: f64) -> NurbSurface3D {
+        NurbSurface::try_new(
+            1,
+            1,
+            vec![h(-1., -1., z), h(-1., 2., z), h(2., -1., z), h(2., 2., z)],
+            knots(&[0., 0., 1., 1.]),
+            knots(&[0., 0., 1., 1.]),
+        )
+        .unwrap()
+    }
+
+    /// A dome poking through a plane meets it in an oval inside both, which
+    /// turns back at least twice along any direction: found, and every
+    /// candidate a seed Newton can start from. Below the dome's top the
+    /// plane meets nothing, and a plane above it neither.
+    #[test]
+    fn a_dome_through_a_plane_turns_twice() {
+        let found = turning_points(&dome(2.4), &level(0.3), 20_000).unwrap();
+        assert_eq!(found.candidates.len(), 2, "{found:?}");
+        let found = turning_points(&dome(2.4), &level(0.9), 20_000).unwrap();
+        assert!(found.candidates.is_empty(), "{found:?}");
+    }
+
+    /// Two planes crossing meet in a line, which turns nowhere.
+    #[test]
+    fn crossing_planes_turn_nowhere() {
+        let tilted = NurbSurface::try_new(
+            1,
+            1,
+            vec![h(0., 0., -1.), h(0., 1., -1.), h(1., 0., 1.), h(1., 1., 1.)],
+            knots(&[0., 0., 1., 1.]),
+            knots(&[0., 0., 1., 1.]),
+        )
+        .unwrap();
+        let found = turning_points(&tilted, &level(0.0), 20_000).unwrap();
+        assert!(found.candidates.is_empty(), "{found:?}");
+        assert!(found.tangent.is_empty(), "{found:?}");
+    }
+
+    /// A plane's normal over the whole of it is the one direction it has.
+    #[test]
+    fn a_planes_normal_is_sharp() {
+        let piece = Piece::new(level(0.0)).unwrap();
+        assert!(
+            (0..3).all(|k| piece.normal[k].width().to_f64() < 1e-12)
+                && piece.normal[2].definitely_greater(Scalar::ZERO),
+            "{:?}",
+            piece.normal
+        );
+    }
+
+    /// Two cylinders of radius one half, around `z` and around `x`, each
+    /// turned over a half turn with the point `(0, 0.5, 0)` in the middle of
+    /// it: their walls meet in two ellipses crossing there, the walls
+    /// tangent. The search sets the node aside with the tangent pairs, and
+    /// `refine_node` finds it there.
+    #[test]
+    fn crossing_cylinders_have_a_node() {
+        use crate::shape::Axis;
+        let v = |p: [f64; 3]| Vector3::from_array(p.map(Scalar::from_f64));
+        let pi = std::f64::consts::PI;
+        let around_z = NurbSurface3D::revolve(
+            &crate::test_fixtures::line([0.5, 0.0, -1.0], [0.5, 0.0, 1.0]),
+            &Axis::try_new(v([0.0, 0.0, 0.0]), v([0.0, 0.0, 1.0])).unwrap(),
+            pi / 4.0,
+            3.0 * pi / 4.0,
+        )
+        .unwrap();
+        let around_x = NurbSurface3D::revolve(
+            &crate::test_fixtures::line([-1.0, 0.5, 0.0], [1.0, 0.5, 0.0]),
+            &Axis::try_new(v([0.0, 0.0, 0.0]), v([1.0, 0.0, 0.0])).unwrap(),
+            -pi / 4.0,
+            pi / 4.0,
+        )
+        .unwrap();
+        let found = turning_points(&around_z, &around_x, 20_000).unwrap();
+        let nodes: Vec<Vector3> = found
+            .tangent
+            .iter()
+            .filter_map(|c| refine_node(&around_z, &around_x, c.seed))
+            .map(|(_, p)| p)
+            .collect();
+        assert_eq!(nodes.len(), 1, "{nodes:?} from {:?}", found.tangent);
+        assert!(nodes[0].could_be_equal(&v([0.0, 0.5, 0.0])), "{nodes:?}");
+        assert!(
+            (0..3).all(|k| nodes[0][k].width().to_f64() < 1e-9),
+            "{nodes:?}"
+        );
+    }
 }

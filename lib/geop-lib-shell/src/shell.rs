@@ -67,8 +67,8 @@ use std::collections::HashMap;
 
 use geop_core_geometry::{
     intersection::{
+        branch::{OnBoth, fit_branch, predictor_corrector_step},
         curve_surface_overlaps,
-        surface_surface::{OnBoth, fit_branch, predictor_corrector_step},
     },
     meet::{Offset, meet, tangent_groups},
     nurb_curve::{NurbCurve2D, NurbCurve3D, loop_signed_area},

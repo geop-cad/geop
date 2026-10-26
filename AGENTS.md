@@ -55,6 +55,28 @@ temporarily. (Exception: a genuinely new, durable regression test that
 exercises the bug going forward is fine and encouraged — the thing to avoid
 is throwaway tracing code.)
 
+## Everything is a NURBS curve or surface
+
+Every curve and surface stays a NURBS, and no algorithm branches on what
+kind of surface it was given: no plane × cylinder intersection formula, no
+offset of a revolution through its profile, no torus fillet because the
+faces happen to be coaxial. Intersection and tracing are already fast for
+the linear cases, so a special case for planes buys nothing, and every
+special case is a second code path whose own corner cases the general one
+had already solved. Mature kernels (SMLib, see `docs/smlib-comparison/`)
+are full of such branches; port the *configurations* they handle
+(tangency, vanishing faces, seams), never the type dispatch. When the
+general path is wrong or too wide for a case, fix the general path.
+
+The kernel is meant to stay small: a compressed B-rep kernel, simple
+rather than special-cased, because it is good enough on NURBS not to need
+it. A change that adds a feature should, where it can, make an existing
+function more general instead of adding a new one, and a change that
+deletes code for the same behaviour is the better change. Where a user
+needs the exact line or arc back, as a sketch projecting an edge does, it
+is reconstructed locally where it is used (the sketch solver), not kept as
+a kind in the B-rep.
+
 ## Never use epsilons for comparisons
 
 Every `Scalar` is (or should be treated as) an interval type that already

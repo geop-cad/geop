@@ -37,17 +37,13 @@ fn registry() -> GeopResult<OperationRegistry> {
 /// body with a hole is split along a plane through the hole into two
 /// halves, each keeping half the hole.
 ///
-/// Fails with "split: the face ends inside the solid, at edge EdgeId(..);
-/// it must cut all the way through". The face reaches past the block on
-/// every side; what "ends inside" is the inner loop where the face crosses
-/// the hole's wall. Ruled out: the face's extent (3 either way of a block 2
-/// wide); the hole's ends (the cylinder stands out of both caps); a plane
-/// coplanar with a face (the same happens at `z = 0.6` through a pocket
-/// whose floor is at `z = 0.5`, and with a square pocket instead of a
-/// round hole). The same split of the block without the hole works, as does
-/// splitting a cylinder along a plane through its axis.
+/// Once refused with "split: the face ends inside the solid", which was
+/// right: the face was extruded 3 symmetric, 1.5 either way, and ended at
+/// `y = 1.5` inside the block 2 deep, through the hole's far rim. Naming
+/// the edge in the refusal showed it to be the face's own end edge. The
+/// face now reaches 3 either way; the ring the section makes with the hole
+/// splits as it should.
 #[test]
-#[ignore = "bug: split refuses a plane through a solid's hole — the section is a ring, two loops, and split takes the inner one for the face ending inside the solid; ruled out the face's extent, the hole's ends and coplanar faces"]
 fn split_a_block_across_its_through_hole() {
     let mut program = Program::new();
     program.push(
@@ -73,7 +69,7 @@ fn split_a_block_across_its_through_hole() {
         ExtrudeArgs {
             sketch: whole_sketch("cut_sketch"),
             extent: Extents {
-                side1: Extent::blind(3.0),
+                side1: Extent::blind(6.0),
                 symmetric: true,
                 side2: None,
                 reversed: false,
