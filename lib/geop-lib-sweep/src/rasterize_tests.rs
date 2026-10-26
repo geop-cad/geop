@@ -70,18 +70,18 @@ fn cylinder_wall_is_refined_only_around() {
     .unwrap();
     let topology = model.topology();
     let rasterized = rasterize(topology, 24).unwrap();
-    // The wall quadrants are the faces whose triangles are all off-axis.
+    // The wall quadrants are the faces whose triangles are all off-axis:
+    // on the cylinder, or on a chord of its rim, where a point of the mesh
+    // lies on the rim's polyline (the faces meet along it).
     let walls: Vec<&Vec<TriangleFace>> = rasterized
         .faces
         .values()
         .filter(|tris| {
             !tris.is_empty()
                 && tris.iter().all(|t| {
-                    [t.a, t.b, t.c].iter().all(|p| {
-                        p[0].mul(p[0])
-                            .add(p[1].mul(p[1]))
-                            .could_be_equal(Scalar::ONE)
-                    })
+                    [t.a, t.b, t.c]
+                        .iter()
+                        .all(|p| p[0].to_f64().hypot(p[1].to_f64()) > 0.99)
                 })
         })
         .collect();
@@ -143,7 +143,7 @@ fn curved_face_is_refined() {
     sphere_solid(&mut model, "t3", Vector3::zero(), Scalar::ONE).unwrap();
     let topology = model.topology();
     let face = topology.faces.values().next().unwrap();
-    let tris = face_triangles_uv(topology, face, 8).unwrap();
+    let tris = face_triangles_uv(topology, face, 8).unwrap().0;
     assert!(
         tris.len() > 8,
         "a sphere quadrant should be refined well past a trivial fan, got {}",
@@ -161,7 +161,7 @@ fn curved_face_follows_the_surface() {
     sphere_solid(&mut model, "t4", Vector3::zero(), Scalar::ONE).unwrap();
     let topology = model.topology();
     let face = topology.faces.values().next().unwrap();
-    let tris = face_triangles_uv(topology, face, 24).unwrap();
+    let tris = face_triangles_uv(topology, face, 24).unwrap().0;
     let mut worst: f64 = 0.0;
     for (a, b, c) in &tris {
         let mid = [
@@ -243,7 +243,7 @@ fn hole_is_not_triangulated() {
         .collect();
     assert_eq!(capped.len(), 2);
     for face in capped {
-        let tris = face_triangles_uv(topology, face, 8).unwrap();
+        let tris = face_triangles_uv(topology, face, 8).unwrap().0;
         let area: f64 = tris.iter().map(|(a, b, c)| triangle_area(*a, *b, *c)).sum();
         // The cap's uv square spans the 4x4 footprint, so the hole is
         // π / 16 of it.
@@ -279,7 +279,7 @@ fn holed_footprint_triangulates_cleanly() {
     let topology = model.topology();
     let mut total_triangles = 0;
     for face in topology.faces.values() {
-        let tris = face_triangles_uv(topology, face, 8).unwrap();
+        let tris = face_triangles_uv(topology, face, 8).unwrap().0;
         for (a, b, c) in &tris {
             for v in [a, b, c] {
                 assert!(
@@ -389,5 +389,90 @@ mod stl {
         assert!(text.trim_end().ends_with("endsolid my_cube"));
         assert_eq!(text.matches("facet normal").count(), triangles.len());
         assert_eq!(text.matches("vertex").count(), 3 * triangles.len());
+    }
+}
+
+/// Checks the mesh of every face of `model`, wound outward as an STL file
+/// has it, is closed: every side of a triangle is the side of exactly one
+/// other, the other way round — no crack between two faces, no T where a
+/// point of one lies on a side of the other.
+#[track_caller]
+fn assert_closed(model: &geop_core_topology::Model, n: usize) {
+    use geop_core_rasterize::stl::stl_triangles;
+    use std::collections::HashMap;
+    let raster = rasterize(model, n).unwrap();
+    let key = |p: [f32; 3]| p.map(f32::to_bits);
+    // Per directed side, the faces whose triangles run it.
+    let mut sides: HashMap<([u32; 3], [u32; 3]), Vec<geop_core_topology::FaceId>> = HashMap::new();
+    for &face in raster.faces.keys() {
+        for t in stl_triangles(&raster, &[face]) {
+            for k in 0..3 {
+                let (a, b) = (key(t.corners[k]), key(t.corners[(k + 1) % 3]));
+                sides.entry((a, b)).or_default().push(face);
+            }
+        }
+    }
+    assert!(!sides.is_empty());
+    let open: Vec<_> = sides
+        .iter()
+        .filter(|&(&(a, b), faces)| faces.len() != 1 || sides.get(&(b, a)).map(Vec::len) != Some(1))
+        .map(|(&(a, b), faces)| {
+            (
+                a.map(f32::from_bits),
+                b.map(f32::from_bits),
+                faces.clone(),
+                sides.get(&(b, a)).cloned().unwrap_or_default(),
+            )
+        })
+        .collect();
+    assert!(
+        open.is_empty(),
+        "{} of {} sides are not matched once the other way round, e.g. {:?}",
+        open.len(),
+        sides.len(),
+        &open[..open.len().min(6)]
+    );
+}
+
+/// A sphere, a cylinder, and a block with a round hole through it: each
+/// face meets its neighbours along the very samples of their shared edges,
+/// so the mesh is closed — at the poles, round the caps, through the hole.
+#[test]
+fn meshes_of_solids_are_closed() {
+    let mut sphere = NamedModel::new();
+    sphere_solid(&mut sphere, "s", Vector3::zero(), Scalar::ONE).unwrap();
+    assert_closed(sphere.topology(), 12);
+
+    let mut cylinder = NamedModel::new();
+    crate::shapes::revolved_cylinder(
+        &mut cylinder,
+        "c",
+        Vector3::zero(),
+        Scalar::ONE,
+        Scalar::from_f64(2.0),
+    )
+    .unwrap();
+    assert_closed(cylinder.topology(), 12);
+
+    let mut drilled = NamedModel::new();
+    let namer = geop_ops_model::Namer::new("extrude", "d").unwrap();
+    let loops = [
+        geop_ops_model::Profile::closed(crate::shapes::square(1.0)),
+        geop_ops_model::Profile::closed(crate::shapes::circle_at(0.2, 0.1, 0.4, true))
+            .with_prefix("h,"),
+    ]
+    .map(crate::SweepLoop::plain);
+    crate::extrude(
+        &mut drilled,
+        &namer,
+        Some(&namer.root()),
+        &geop_core_math::primitives::CoordinateSystem::world_at(Vector3::zero()),
+        Scalar::ZERO,
+        Scalar::ONE,
+        &loops,
+    )
+    .unwrap();
+    for n in [4, 12, 24] {
+        assert_closed(drilled.topology(), n);
     }
 }

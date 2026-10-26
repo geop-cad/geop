@@ -16,7 +16,8 @@ use geop_ops_model::sketch::{PlacedSketch, SketchRef, chain_of_pieces};
 use geop_ops_model::{ModelOperation, NamedModel, Namer, Point, build_model, read_model};
 use serde::{Deserialize, Serialize};
 
-use geop_lib_sweep::{Section, loft, mark};
+use geop_core_math::vector::Vector3;
+use geop_lib_sweep::{Apex, Ends, Section, loft, mark};
 
 use crate::sweeping::{Output, PathRef};
 
@@ -28,7 +29,12 @@ use crate::sweeping::{Output, PathRef};
 /// — between two curves, the ruled surface joining them.
 ///
 /// Two profiles are joined by ruled walls, more by walls running smoothly
-/// through them all (see [`geop_lib_sweep::loft`]). The profiles' corners
+/// through them all (see [`geop_lib_sweep::loft`]). A sketch of a single
+/// point, first or last, is a point the loft comes to: the walls run into
+/// it, as a cone into its apex, the vertex `loft(L,K)` for the sketch `K`.
+/// Through its first profile again at the end, it closes on itself: a ring
+/// running smoothly round through three profiles or more, with no caps.
+/// The profiles' corners
 /// — the sketch points where their curves meet at an angle — are lofted
 /// into each other, in order round the loops, so every profile with
 /// corners needs as many: a D and a triangle are refused, naming both. A
@@ -165,16 +171,55 @@ impl ModelOperation for Loft {
         args: &LoftArgs,
     ) -> GeopResult<()> {
         let namer = Namer::new("loft", step)?;
-        let sections = (args.profiles.iter())
-            .map(|profile| {
-                section(
-                    reader,
-                    profile,
-                    &args.output,
-                    &matched_points(args, profile)?,
-                )
-            })
-            .collect::<GeopResult<Vec<_>>>()?;
+        // Through the first profile again at the end, the loft closes on
+        // itself. A sketch of a single point, first or last, is a point the
+        // loft
+        // comes to.
+        let profiles = match args.profiles.as_slice() {
+            [first, .., again] if args.profiles.len() > 1 && first == again => {
+                &args.profiles[..args.profiles.len() - 1]
+            }
+            all => all,
+        };
+        let closed = profiles.len() < args.profiles.len();
+        let last = profiles.len().saturating_sub(1);
+        let mut apexes = [None, None];
+        let mut sections = Vec::new();
+        for (k, profile) in profiles.iter().enumerate() {
+            let placed = reader.retrieve_element(profile)?;
+            if let Some(point) = single_point(placed)? {
+                let end = match k {
+                    0 => 0,
+                    k if k == last => 1,
+                    _ => {
+                        return Err(GeopError::new(format!(
+                            "loft: the sketch {:?} is a point, between profiles: a loft comes to a point only at its start or end",
+                            placed.name
+                        )));
+                    }
+                };
+                apexes[end] = Some(Apex {
+                    point,
+                    name: placed.name.to_string(),
+                });
+                continue;
+            }
+            sections.push(section(
+                reader,
+                profile,
+                &args.output,
+                &matched_points(args, profile)?,
+            )?);
+        }
+        let ends = match (closed, &apexes) {
+            (false, _) => Ends::Open(apexes),
+            (true, [None, None]) => Ends::Closed,
+            (true, _) => {
+                return Err(GeopError::new(
+                    "loft: a loft closing on itself has no end to come to a point at",
+                ));
+            }
+        };
         let guides = (args.guides.iter())
             .map(|guide| {
                 if args.profiles.iter().any(|profile| guide.is_sketch(profile)) {
@@ -186,7 +231,7 @@ impl ModelOperation for Loft {
             })
             .collect::<GeopResult<Vec<_>>>()?;
         (args.output).build_whole(model, &namer, step, |model, name| {
-            loft(model, &namer, name, &sections, &guides)
+            loft(model, &namer, name, &sections, &ends, &guides)
         })
     }
 }
@@ -209,6 +254,21 @@ fn matched_points(args: &LoftArgs, profile: &SketchRef) -> GeopResult<Vec<PointI
         }
     }
     Ok(found)
+}
+
+/// Where the sketch `placed` is a single point and draws nothing else, the
+/// point in space; none for a sketch that draws curves.
+fn single_point(placed: &PlacedSketch) -> GeopResult<Option<Vector3>> {
+    let sketch = &placed.sketch;
+    if sketch.curves.values().any(|c| !c.construction) || sketch.points.len() != 1 {
+        return Ok(None);
+    }
+    let geometry = sketch.enclose()?;
+    Ok(geometry
+        .points
+        .values()
+        .next()
+        .map(|at| placed.plane.uv_to_xyz(at)))
 }
 
 /// The sketch `profile`, as `reader` reads it, as a section: its one loop

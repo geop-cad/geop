@@ -8,10 +8,12 @@
 //! on the longer surface, bounded by its four sides.
 //!
 //! How far: `distance` along the surface, measured across the middle of
-//! the edge. Where the surface's parametrization runs evenly across the
-//! edge — a plane, a cylinder along its axis, any straight extrusion — the
-//! whole edge moves that far; on a free-form surface its ends move as far
-//! as the parametrization carries them, more or less.
+//! the edge — the iso-curve there runs on that far, however unevenly the
+//! parametrization runs along it (see [`parameter_for_length`]). Where the
+//! parametrization runs alike all along the edge — a plane, a cylinder
+//! along its axis, any straight extrusion — the whole edge moves that far;
+//! on a free-form surface its ends move as far as the same parameter
+//! carries them.
 //!
 //! Supported: a face that is its surface's whole patch — bounded by the
 //! patch's four sides, as a boundary surface or an extruded face is — and
@@ -29,6 +31,7 @@ use geop_core_geometry::{
 };
 use geop_core_math::{
     geop_error::{GeopError, GeopResult, WithContext},
+    quadrature::{Quadrature, integrate},
     scalars::Scalar,
     vector::Vector2,
     with_context,
@@ -145,6 +148,70 @@ fn side_of(
     })
 }
 
+/// Newton steps solving for how far in the parameter an extension goes.
+const LENGTH_STEPS: usize = 30;
+
+/// How far in its `u` (`along_u`) or `v` parameter `surface` is carried on
+/// past its end (`at_end`) or start — by `carried(by)` — for the iso-curve
+/// across `(u, v)` on its border to run on `distance` past it: Newton on
+/// that length, its derivative the speed at the far end. How much to add
+/// is a free choice the distance only describes, so the steps are sharp;
+/// the length is integrated on the carried surface, as the polynomial the
+/// surface goes on as.
+fn parameter_for_length(
+    surface: &NurbSurface3D,
+    along_u: bool,
+    at_end: bool,
+    (u, v): (Scalar, Scalar),
+    distance: Scalar,
+    carried: impl Fn(Scalar) -> GeopResult<NurbSurface3D>,
+) -> GeopResult<Scalar> {
+    let speed = |s: &NurbSurface3D, t: Scalar| -> GeopResult<Scalar> {
+        let (u, v) = if along_u { (t, v) } else { (u, t) };
+        let (du, dv) = s.derivatives(u.sharpen(), v.sharpen())?;
+        Ok(if along_u { du } else { dv }.norm())
+    };
+    let from = if along_u { u } else { v };
+    // Past the end the parameter grows, before the start it falls.
+    let to = |by: Scalar| if at_end { from.add(by) } else { from.sub(by) };
+    let mut by = distance.div(speed(surface, from)?)?.sharpen();
+    let mut last = None;
+    for _ in 0..LENGTH_STEPS {
+        let longer = carried(by)?;
+        let (a, b) = if at_end {
+            (from, to(by))
+        } else {
+            (to(by), from)
+        };
+        let length = integrate(
+            |t| Ok(vec![speed(&longer, t)?]),
+            &[a, b],
+            1,
+            &Quadrature::default(),
+        )?
+        .value[0];
+        let off = distance.sub(length);
+        last = Some((by, length));
+        if off.could_be_equal(Scalar::ZERO) {
+            return Ok(by);
+        }
+        let step = off.div(speed(&longer, to(by))?)?;
+        let next = by.add(step).sharpen();
+        if !next.definitely_greater(Scalar::ZERO) {
+            break;
+        }
+        // A step that repeats its seed is at the iteration's fixed point,
+        // cycling in the last bit: done.
+        if next.could_be_equal(by) {
+            return Ok(by);
+        }
+        by = next;
+    }
+    Err(GeopError::new(format!(
+        "the surface does not run on {distance:?} past its edge: carried on, the last (parameter, length) was {last:?}"
+    )))
+}
+
 /// Extends the face standing on its own that the edge `edge` bounds past
 /// it by `distance` (see the module docs).
 pub fn extend(part: &mut NamedModel, edge: &str, distance: Scalar) -> GeopResult<FaceId> {
@@ -237,14 +304,16 @@ pub fn extend(part: &mut NamedModel, edge: &str, distance: Scalar) -> GeopResult
         2 => (false, true, (half(u0, u1)?, v1)),
         _ => (true, false, (u0, half(v0, v1)?)),
     };
-    let (du, dv) = surface.derivatives(u.sharpen(), v.sharpen())?;
-    let speed = if along_u { du } else { dv }.norm();
-    let by = distance.div(speed)?.sharpen();
-    let longer = surface.extended(along_u, at_end, by).map_err(|e| {
-        e.with_context(format!(
-            "carrying the surface of face {face_name} on past edge {edge}"
-        ))
-    })?;
+    let carried = |by: Scalar| {
+        surface.extended(along_u, at_end, by).map_err(|e| {
+            e.with_context(format!(
+                "carrying the surface of face {face_name} on past edge {edge}"
+            ))
+        })
+    };
+    let by = parameter_for_length(surface, along_u, at_end, (u, v), distance, carried)
+        .with_context(ctx)?;
+    let longer = carried(by)?;
 
     // The face anew: the whole longer patch, its sides its border curves,
     // each keeping the name of the edge it continues.

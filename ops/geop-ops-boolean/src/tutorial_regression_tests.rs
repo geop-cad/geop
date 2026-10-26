@@ -75,6 +75,7 @@ fn split_a_block_across_its_through_hole() {
                 reversed: false,
             },
             output: Output::Faces { up_to: None },
+            draft: 0.0,
         },
     );
     program.push(

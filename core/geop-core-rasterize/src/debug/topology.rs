@@ -452,7 +452,7 @@ fn rasterize_topology_inner(model: &Model, n: usize) -> GeopResult<PrimitiveScen
             continue;
         }
 
-        for (uv_a, uv_b, uv_c) in crate::face_triangles_uv(model, face, n)? {
+        for (uv_a, uv_b, uv_c) in crate::face_triangles_uv(model, face, n)?.0 {
             let a = face.surface.evaluate(uv_a[0], uv_a[1])?;
             let b = face.surface.evaluate(uv_b[0], uv_b[1])?;
             let c = face.surface.evaluate(uv_c[0], uv_c[1])?;

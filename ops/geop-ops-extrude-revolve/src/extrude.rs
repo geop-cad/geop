@@ -8,22 +8,28 @@ use geop_core_editor::{
     part_operation,
     part_operation::PartOperation,
 };
+use std::collections::BTreeMap;
+
 use geop_core_math::{
-    geop_error::GeopResult,
+    geop_error::{GeopError, GeopResult, WithContext},
     primitives::CoordinateSystem,
     scalars::Scalar,
     vector::{Vector2, Vector3},
+    with_context,
 };
 use geop_core_program::{numeric::NumericInput, part::StepContext, reader::Reader};
-use geop_core_sketch::{Sketch, profile::curve_polyline};
+use geop_core_sketch::{
+    CurveId, PointId, ProfileEdge, ProfileJoint, ProfileLoop, ProfilePiece, Region, Shape, Sketch,
+    offset::Corners, profile::curve_polyline,
+};
 use geop_core_topology::build::BuiltBody;
-use geop_ops_model::sketch::{PlacedSketch, SketchRef, shape_profiles};
+use geop_ops_model::sketch::{PlacedSketch, SketchRef, chain_of_pieces, shape_profiles};
 use geop_ops_model::{
     Extent, ModelOperation, NamedModel, Namer, build_model, reach_past, read_model,
 };
 use serde::{Deserialize, Serialize};
 
-use geop_lib_sweep::{SweepLoop, extrude};
+use geop_lib_sweep::{Level, SweepLoop, drafted, extrude};
 
 use crate::sweeping::{Extents, Output, Sweeping, build_extents};
 
@@ -36,7 +42,10 @@ use crate::sweeping::{Extents, Output, Sweeping, build_extents};
 ///
 /// How far it goes is an [`Extents`]: a length, or up to the next face of
 /// the solid it is joined to or cut from, on one side of the plane, both
-/// alike, or each its own way.
+/// alike, or each its own way. With a draft angle its walls taper: the
+/// area at each end is the sketch's offset inwards by the distance from
+/// the plane times the angle's tangent, the walls ruled between (see
+/// [`draft_levels`]); both ways from the plane, a ridge there.
 ///
 /// The faces, edges and vertices are named after the sketch elements they
 /// are swept from (see [`geop_lib_sweep::extrude`]), with `X` a piece of a
@@ -66,6 +75,15 @@ pub struct ExtrudeArgs {
     /// A solid, kept as a new body or combined with another, or faces.
     #[serde(default)]
     pub output: Output,
+    /// The draft angle of the walls, in degrees: positive narrows the
+    /// area away from the sketch's plane, on either side of it, negative
+    /// widens it (see [`draft_levels`]).
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub draft: f64,
+}
+
+fn is_zero(angle: &f64) -> bool {
+    *angle == 0.0
 }
 
 /// Where a side's length is dragged: at the centre of the sketch, that far
@@ -117,6 +135,7 @@ impl PartOperation for Extrude {
             sketch: SketchRef::whole(newest.unwrap_or_else(|| geop_ops_model::sketch::sketch(""))),
             extent: Extents::blind(10.0),
             output: Output::new_for(&read_model(before).unwrap_or_default()),
+            draft: 0.0,
         }
     }
 
@@ -165,6 +184,8 @@ impl PartOperation for Extrude {
                 }
             },
         );
+        let draft = Number::new("draft", args.draft, Unit::Angle).range(-45.0, 45.0);
+        f.number("draft", draft, |edit, v| edit.args.draft = v);
         let reaches = args.extent.reaches_target();
         let output = |args: &mut ExtrudeArgs, output| args.output = output;
         (args.output).fields(&mut f, before, reaches, output);
@@ -184,12 +205,22 @@ impl ModelOperation for Extrude {
         let sketch = &placed.sketch;
         let geometry = sketch.enclose()?;
         let shape = args.output.shape(sketch)?;
+        let region = match (&shape, args.draft) {
+            (_, 0.0) => None,
+            (Shape::Region(region), _) => Some(region.clone()),
+            (Shape::Chain(_), _) => {
+                return Err(GeopError::new(
+                    "a draft narrows an area: an open chain of curves encloses none",
+                ));
+            }
+        };
         let loops: Vec<_> = (shape_profiles(&placed.name, sketch, &geometry, shape)?.into_iter())
             .map(SweepLoop::plain)
             .collect();
         let extruding = Extruding {
             plane: &placed.plane,
             loops: &loops,
+            draft: region.as_ref().map(|region| (&*placed, region, args.draft)),
         };
         let how = (&args.extent, &args.output);
         build_extents(model, reader, &namer, step, how, &extruding)
@@ -201,6 +232,8 @@ impl ModelOperation for Extrude {
 struct Extruding<'a> {
     plane: &'a CoordinateSystem,
     loops: &'a [SweepLoop],
+    /// The sketch, its area and the draft angle, for a drafted extrude.
+    draft: Option<(&'a PlacedSketch, &'a Region, f64)>,
 }
 
 impl Sweeping for Extruding<'_> {
@@ -217,7 +250,18 @@ impl Sweeping for Extruding<'_> {
         to: f64,
     ) -> GeopResult<BuiltBody> {
         let s = Scalar::from_f64;
-        extrude(model, namer, name, self.plane, s(from), s(to), self.loops)
+        let Some((placed, region, angle)) = self.draft else {
+            return extrude(model, namer, name, self.plane, s(from), s(to), self.loops);
+        };
+        // Through the sketch's plane, the area narrows away from it either
+        // way: a ridge there.
+        let heights = if from * to < 0.0 {
+            vec![from, 0.0, to]
+        } else {
+            vec![from, to]
+        };
+        let levels = draft_levels(placed, region, angle, &heights)?;
+        drafted(model, namer, name, self.plane, &levels)
     }
 
     fn past(&self, hull: &[Vector3], sign: f64) -> GeopResult<f64> {
@@ -244,6 +288,132 @@ impl Sweeping for Extruding<'_> {
             .definitely_greater(Scalar::ZERO)
             .then(|| along.to_f64())
     }
+}
+
+/// The loops of `region`, of the sketch `placed`, at each of `heights`
+/// along its plane's normal, drafted by `angle` degrees: each offset in
+/// the plane (see [`Sketch::offset`]) by `|h| tan(angle)`, inwards for a
+/// positive angle — the outer loop shrinking, the holes growing — its
+/// corners extended to meet, each offset curve's joints matched with its
+/// own curve's. A wall is ruled from a curve to its offsets, so it is the
+/// drafted plane or cone wherever the corners at its ends move straight
+/// with the height: between lines, and where a curve runs on tangentially.
+/// Refused, by name, where an offset is: a curve too short for its
+/// corners, an arc offset past its centre, a spline.
+pub(crate) fn draft_levels(
+    placed: &PlacedSketch,
+    region: &Region,
+    angle: f64,
+    heights: &[f64],
+) -> GeopResult<Vec<Level>> {
+    if angle.is_nan() || angle.abs() >= 90.0 {
+        return Err(GeopError::new(format!(
+            "a draft of {angle} degrees: walls drafted by less than 90 degrees only"
+        )));
+    }
+    let slope = angle.to_radians().tan();
+    let mut sketch = placed.sketch.clone();
+    let loops: Vec<&ProfileLoop> = std::iter::once(&region.outer)
+        .chain(&region.holes)
+        .collect();
+    // Per height, per loop: the loop drawn there, and each of its curves
+    // mapped to the sketch's own curve it is the offset of.
+    let mut drawn: Vec<Vec<(ProfileLoop, BTreeMap<CurveId, CurveId>)>> = Vec::new();
+    for &h in heights {
+        let mut level = Vec::new();
+        for lp in &loops {
+            if h == 0.0 {
+                level.push(((*lp).clone(), BTreeMap::new()));
+                continue;
+            }
+            let curves: Vec<CurveId> = lp.edges.iter().map(|e| e.curve).collect();
+            let chain = sketch.chain(&curves)?;
+            let first = &chain.edges[0];
+            let along = lp.edges.iter().find(|e| e.curve == first.curve);
+            // The offset goes to the chain's left: inwards of a loop run as
+            // the area runs it, which the chain may run the other way.
+            let side = if along.is_some_and(|e| e.reversed == first.reversed) {
+                1.0
+            } else {
+                -1.0
+            };
+            let d = h.abs() * slope * side;
+            let ctx = with_context!("drafting by {angle} degrees: offsetting by {d} at height {h}");
+            let offset = sketch
+                .offset(&curves, Scalar::from_f64(d), Corners::Extend)
+                .with_context(ctx)?;
+            let of: BTreeMap<CurveId, CurveId> = (chain.edges.iter().map(|e| e.curve))
+                .zip(offset.curves)
+                .collect();
+            let edges = lp
+                .edges
+                .iter()
+                .map(|e| ProfileEdge {
+                    curve: of[&e.curve],
+                    reversed: e.reversed,
+                })
+                .collect();
+            let back = of.into_iter().map(|(base, off)| (off, base)).collect();
+            level.push((ProfileLoop { edges }, back));
+        }
+        drawn.push(level);
+    }
+    let geometry = sketch.enclose()?;
+    let start = |sketch: &Sketch, e: &ProfileEdge| -> Option<PointId> {
+        let (s, t) = sketch.curves[&e.curve].endpoints()?;
+        Some(if e.reversed { t } else { s })
+    };
+    heights
+        .iter()
+        .zip(drawn)
+        .map(|(&h, level)| {
+            let mut profiles = Vec::new();
+            let mut matched = Vec::new();
+            for ((lp, back), base) in level.iter().zip(&loops) {
+                // Named after the sketch's own curves and points.
+                let points: BTreeMap<PointId, PointId> = lp
+                    .edges
+                    .iter()
+                    .zip(&base.edges)
+                    .filter_map(|(e, b)| Some((start(&sketch, e)?, start(&sketch, b)?)))
+                    .collect();
+                let curve = |c: CurveId| back.get(&c).copied().unwrap_or(c);
+                let joint = |j: ProfileJoint| match j {
+                    ProfileJoint::Point(p) => ProfileJoint::Point(*points.get(&p).unwrap_or(&p)),
+                    ProfileJoint::Split { curve: c, index } => ProfileJoint::Split {
+                        curve: curve(c),
+                        index,
+                    },
+                };
+                let pieces: Vec<ProfilePiece> = lp
+                    .to_nurbs(&sketch, &geometry)?
+                    .into_iter()
+                    .map(|p| ProfilePiece {
+                        source: curve(p.source),
+                        start: joint(p.start),
+                        end: joint(p.end),
+                        ..p
+                    })
+                    .collect();
+                // Matched: where one of the sketch's curves meets the next,
+                // or the seam of a circle.
+                let mut at: Vec<usize> = (0..pieces.len())
+                    .filter(|&i| matches!(pieces[i].start, ProfileJoint::Point(_)))
+                    .collect();
+                if at.is_empty() {
+                    at.push(0);
+                }
+                let profile = chain_of_pieces(&placed.name, pieces, true);
+                matched.push(at.iter().map(|&i| profile.joint_names[i].clone()).collect());
+                profiles.push(profile);
+            }
+            Ok(Level {
+                height: Scalar::from_f64(h),
+                loops: profiles,
+                matched,
+            })
+        })
+        .collect()
 }
 
 /// The centre of the box around what `sketch` draws — its profile curves,

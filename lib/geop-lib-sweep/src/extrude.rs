@@ -1,14 +1,16 @@
 //! Extruding: sweeping a planar profile along a straight [`Path`] (see
 //! [`crate::sweep`]) — a solid between two flat caps, or a sheet of walls.
 
-use crate::sweep::{Frame, Path, Span, SweepLoop, sweep_drawn};
+use crate::loft::{Section, correspond};
+use crate::sweep::{Frame, Path, Span, SweepLoop, skin, sweep_drawn};
 use geop_core_math::{
-    geop_error::{GeopError, GeopResult},
+    geop_error::{GeopError, GeopResult, WithContext},
     primitives::CoordinateSystem,
     scalars::Scalar,
+    with_context,
 };
 use geop_core_topology::build::BuiltBody;
-use geop_ops_model::{NamedModel, Namer};
+use geop_ops_model::{NamedModel, Namer, Profile};
 
 /// The straight path along `plane.w()` from `from` to `to` (in multiples of
 /// `w`): the profile, drawn in the plane's `(u, v)`, at stations `start`
@@ -62,6 +64,112 @@ pub fn extrude(
 ) -> GeopResult<BuiltBody> {
     let path = extrusion(plane, from, to)?;
     sweep_drawn(model, namer, &path, loops, solid)
+}
+
+/// The loops of a [`drafted`] extrusion at one height: in the plane's
+/// `(u, v)` at `height` along `w`, oriented as for [`extrude`], each with
+/// the joints matched with the other heights' (see [`Section::matched`]).
+#[derive(Clone, Debug)]
+pub struct Level {
+    pub height: Scalar,
+    pub loops: Vec<Profile>,
+    pub matched: Vec<Vec<String>>,
+}
+
+/// Extrudes along `plane.w()` through `levels`, a different section at
+/// each height, in order from the start cap to the end cap: walls ruled
+/// from one level's curves to the next's, each loop made to correspond
+/// across the levels as a loft's profiles are (its matched joints with
+/// each other, see [`crate::loft`]), so that a profile and its offsets
+/// give a drafted solid. Named as [`extrude`] names it, after the first
+/// level's curves and joints; the levels between the first and the last
+/// are stations `l1`, `l2`, ..., and the spans between levels `q0`, `q1`,
+/// ... where there are several.
+pub fn drafted(
+    model: &mut NamedModel,
+    namer: &Namer,
+    solid: Option<&str>,
+    plane: &CoordinateSystem,
+    levels: &[Level],
+) -> GeopResult<BuiltBody> {
+    let ctx = with_context!(
+        "drafted({}, at heights {:?})",
+        namer.root(),
+        levels.iter().map(|l| l.height).collect::<Vec<_>>()
+    );
+    let n = levels.len();
+    if n < 2
+        || levels
+            .iter()
+            .any(|l| l.loops.len() != levels[0].loops.len())
+    {
+        return Err(GeopError::new(
+            "drafted: two levels or more, each with the same loops",
+        ))
+        .with_context(ctx);
+    }
+    let station_names: Vec<String> = (0..n)
+        .map(|s| match s {
+            0 => "start".to_string(),
+            s if s + 1 == n => "end".to_string(),
+            s => format!("l{s}"),
+        })
+        .collect();
+    let at = |h: Scalar| {
+        CoordinateSystem::try_new(
+            plane.origin().add(&plane.w().prod_scalar(h)),
+            *plane.u(),
+            *plane.v(),
+            *plane.w(),
+        )
+    };
+    let mut frames: Option<Vec<Frame>> = None;
+    let mut sections: Vec<Vec<SweepLoop>> = vec![Vec::new(); n];
+    for l in 0..levels[0].loops.len() {
+        let loft_sections = levels
+            .iter()
+            .zip(&station_names)
+            .map(|(level, name)| {
+                Ok(Section {
+                    plane: at(level.height)?,
+                    profile: level.loops[l].clone(),
+                    name: name.clone(),
+                    matched: level.matched[l].clone(),
+                })
+            })
+            .collect::<GeopResult<Vec<_>>>()
+            .with_context(ctx)?;
+        let placed = correspond(&loft_sections, [None, None]).with_context(ctx)?;
+        // Every loop of a level lies in one plane, and which way a loft
+        // runs through it is the same for all of them: one frame.
+        let these: Vec<Frame> = placed.iter().map(|p| p.frame.clone()).collect();
+        match &frames {
+            None => frames = Some(these),
+            Some(first) if first[0].e2.could_be_equal(&these[0].e2) => {}
+            Some(_) => {
+                return Err(GeopError::new(format!(
+                    "drafted: loop {l} winds against the first loop"
+                )))
+                .with_context(ctx);
+            }
+        }
+        for (s, p) in placed.into_iter().enumerate() {
+            sections[s].push(SweepLoop::plain(p.profile));
+        }
+    }
+    let path = Path {
+        stations: frames.expect("a level has loops"),
+        spans: vec![Span::Line; n - 1],
+        closed: false,
+        along_normal: false,
+        station_names,
+        span_names: if n == 2 {
+            vec![None]
+        } else {
+            (0..n - 1).map(|j| Some(format!("q{j}"))).collect()
+        },
+    };
+    skin(model, namer, &path, &sections, solid).with_context(ctx)
 }
 
 #[cfg(test)]

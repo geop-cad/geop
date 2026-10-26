@@ -29,8 +29,8 @@ mod skin;
 mod sweep;
 
 pub use common::{circle_at, polygon, polyline};
-pub use extrude::{extrude, extrusion};
-pub use loft::{Section, loft, mark};
+pub use extrude::{Level, drafted, extrude, extrusion};
+pub use loft::{Apex, Ends, Section, loft, mark};
 pub use path_sweep::{
     Control, Orientation, along_chain, profile_centre, starting_near, sweep_along,
 };

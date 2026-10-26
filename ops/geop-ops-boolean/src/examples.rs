@@ -54,6 +54,7 @@ pub fn split_plate() -> Program {
                 reversed: false,
             },
             output: Output::Solid(Combine::NewBody),
+            draft: 0.0,
         },
     );
 
@@ -87,6 +88,7 @@ pub fn split_plate() -> Program {
                 reversed: false,
             },
             output: Output::Faces { up_to: None },
+            draft: 0.0,
         },
     );
     program.push(

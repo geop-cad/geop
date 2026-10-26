@@ -97,6 +97,7 @@ fn walls() -> Program {
             sketch: whole_sketch("outline"),
             extent: Extents::blind(1.0),
             output: Output::Faces { up_to: None },
+            draft: 0.0,
         },
     );
     program

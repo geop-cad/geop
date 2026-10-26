@@ -59,6 +59,7 @@ pub fn boss_on_reference_plane() -> Program {
             sketch: whole_sketch("outline"),
             extent: Extents::blind(1.0),
             output: Output::Solid(Combine::NewBody),
+            draft: 0.0,
         },
     );
     program.push(
@@ -86,6 +87,7 @@ pub fn boss_on_reference_plane() -> Program {
             sketch: whole_sketch("boss_sketch"),
             extent: Extents::blind(-0.75),
             output: Output::Solid(Combine::join("extrude(box)")),
+            draft: 0.0,
         },
     );
     program

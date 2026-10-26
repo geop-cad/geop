@@ -46,6 +46,7 @@ pub fn rounded_box() -> Program {
             sketch: whole_sketch("outline"),
             extent: Extents::blind(1.0),
             output: Output::Solid(Combine::NewBody),
+            draft: 0.0,
         },
     );
     let mut edges = Vec::new();
