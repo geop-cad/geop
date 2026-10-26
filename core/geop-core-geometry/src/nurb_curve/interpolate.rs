@@ -111,7 +111,7 @@ fn averaging_knots(t: &[Scalar], degree: usize) -> Vec<Scalar> {
 
 /// All `degree + 1` nonzero basis function values at `t`, for the span
 /// found by `find_span` (Piegl & Tiller algorithm A2.2).
-fn basis_funs(span: usize, t: Scalar, degree: usize, knots: &[Scalar]) -> Vec<Scalar> {
+pub(crate) fn basis_funs(span: usize, t: Scalar, degree: usize, knots: &[Scalar]) -> Vec<Scalar> {
     let p = degree;
     let mut n = vec![Scalar::ZERO; p + 1];
     n[0] = Scalar::ONE;

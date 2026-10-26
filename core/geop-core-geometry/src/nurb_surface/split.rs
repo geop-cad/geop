@@ -175,11 +175,12 @@ impl<const D: usize> NurbSurface<D> {
         self.split_in_mid(Dir::V)
     }
 
-    /// The same surface with every span split into `pieces` in both
-    /// directions, at sharp knots: more control points to fit on.
-    pub(crate) fn refined(&self, pieces: usize) -> GeopResult<Self> {
+    /// The same surface with every span split into `pieces[0]` along `u`
+    /// and `pieces[1]` along `v`, at sharp knots: more control points to
+    /// fit on.
+    pub(crate) fn refined(&self, pieces: [usize; 2]) -> GeopResult<Self> {
         let mut out = self.clone();
-        for dir in [Dir::U, Dir::V] {
+        for (dir, pieces) in [Dir::U, Dir::V].into_iter().zip(pieces) {
             let degree = out.degree_in(dir);
             let mut knots = out.knots_in(dir).clone();
             let mut rows = out.rows_along(dir);

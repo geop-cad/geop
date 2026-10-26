@@ -1,7 +1,7 @@
 //! Boundary surfaces between the edges of cubes and of sheets built for the
 //! purpose.
 
-use geop_core_geometry::nurb_curve::NurbCurve;
+use geop_core_geometry::{nurb_curve::NurbCurve, nurb_surface::TILT};
 use geop_core_math::{
     scalars::Scalar,
     vector::{Vector3, Vector4},
@@ -308,9 +308,77 @@ fn cover_tangent_to_a_flange() {
     assert!(!along_lip(
         &plain.topology().get_face(face).unwrap().surface
     ));
-    // Tangent to a guide edge, whose face is curved: refused.
-    let err = refused(span(part, &edges, &["guide(e2)".into()]));
-    assert!(err.contains("not planar"), "{err}");
+}
+
+/// A cover running on from a quarter cylinder's rim to a straight edge:
+/// filled between the rim, two lines along the cylinder's axis and the
+/// edge, and tangent to the cylinder along the rim — its tangent plane
+/// turning a quarter turn along it, which no patch follows exactly: the
+/// cover leaves the cylinder at a millionth of a radian outwards all along.
+#[test]
+fn cover_tangent_to_a_cylinder() {
+    let mut part = NamedModel::new();
+    let quarter = |x: f64| {
+        NurbCurve::try_new(
+            2,
+            vec![
+                pt(x, 1., 0., 1.),
+                pt(x, 1., 1., std::f64::consts::SQRT_2 / 2.0),
+                pt(x, 0., 1., 1.),
+            ],
+            [0., 0., 0., 1., 1., 1.].map(Scalar::from_f64).to_vec(),
+        )
+        .unwrap()
+    };
+    coons_sheet(
+        &mut part,
+        "cylinder",
+        [
+            line([0., 1., 0.], [1., 1., 0.]),
+            quarter(1.),
+            line([1., 0., 1.], [0., 0., 1.]),
+            quarter(0.).reverse(),
+        ],
+    );
+    coons_sheet(
+        &mut part,
+        "guide",
+        [
+            line([1., 1., 0.], [2., 1., 0.]),
+            line([2., 1., 0.], [2., 0., 1.]),
+            line([2., 0., 1.], [1., 0., 1.]),
+            quarter(1.).reverse(),
+        ],
+    );
+    let rim = "cylinder(e1)".to_string();
+    let edges = [
+        rim.clone(),
+        "guide(e0)".into(),
+        "guide(e1)".into(),
+        "guide(e2)".into(),
+    ];
+    let cover = span(part.clone(), &edges, std::slice::from_ref(&rim)).unwrap();
+    assert_valid_sheets(&cover);
+    let face = cover.face_id("boundary(b)").unwrap();
+    let surface = &cover.topology().get_face(face).unwrap().surface;
+    // Along the rim, where the cover is at `(u, 0)` and the cylinder's
+    // normal points out from the axis: the cover's normal is the
+    // cylinder's, but for the tilt.
+    for i in 0..=64 {
+        let u = Scalar::from_ratio(i, 64).unwrap();
+        let p = surface.evaluate(u, Scalar::ZERO).unwrap();
+        let out = v3(0., p[1].to_f64(), p[2].to_f64());
+        let n = surface.normal(u, Scalar::ZERO).unwrap();
+        let off = n.prod_cross(&out).norm().to_f64();
+        assert!(off < 3.0 * TILT, "at {u:?}: {n:?}, off by {off:e}");
+    }
+    // Without tangency, it leaves the cylinder at an angle.
+    let plain = span(part, &edges, &[]).unwrap();
+    let face = plain.face_id("boundary(b)").unwrap();
+    let plain = &plain.topology().get_face(face).unwrap().surface;
+    let n = plain.normal(Scalar::from_f64(0.5), Scalar::ZERO).unwrap();
+    let h = std::f64::consts::FRAC_1_SQRT_2;
+    assert!(n.prod_cross(&v3(0., h, h)).norm().to_f64() > 0.01, "{n:?}");
 }
 
 /// Edges that do not close a loop are refused, naming where it breaks off.

@@ -1,7 +1,7 @@
 //! Surfaces spanned by curves: the ruled surface between two curves
 //! ([`NurbSurface3D::ruled`]), the Coons patch bounded by four
 //! ([`NurbSurface3D::coons`]), and such a patch made tangent to planes along
-//! its sides ([`NurbSurface3D::tangent_to_planes`]).
+//! its sides to the faces it continues ([`NurbSurface3D::tangent_to`]).
 //!
 //! Both constructions work on the homogeneous control points, so they are
 //! exact for rational curves too: a patch's side *is* the curve it was
@@ -10,14 +10,18 @@
 use geop_core_math::{
     geop_error::{GeopError, GeopResult},
     scalars::Scalar,
-    solvers::repeat::{Step, repeat},
-    vector::{Vector3, Vector4},
+    solvers::{
+        linear::solve_pivoted,
+        repeat::{Step, repeat},
+    },
+    vector::{Vector, Vector3, Vector4},
 };
 
 use super::NurbSurface3D;
 use crate::{
-    nurb_curve::{NurbCurve, NurbCurve3D, bezier_knots},
+    nurb_curve::{NurbCurve, NurbCurve3D, basis_funs, bezier_knots},
     shape::Plane,
+    spline::find_span,
 };
 
 /// The Greville abscissae of a B-spline of `degree` with `n` control points
@@ -316,38 +320,64 @@ impl NurbSurface3D {
     }
 
     /// The same patch made tangent along each side `k` (numbered as
-    /// [`NurbSurface3D::coons`] numbers them) that has a `planes[k] =
-    /// Some((plane, away))` to that plane, the patch leaving the side
-    /// towards `away` — a face on that plane ending at the side, the patch
-    /// continuing it smoothly.
+    /// [`NurbSurface3D::coons`] numbers them) that has a `sides[k]`, to the
+    /// face it names — a face ending at the side, the patch continuing it
+    /// smoothly.
     ///
-    /// The side itself must lie in the plane already. Its next row of
-    /// control points is then moved into the plane, each point along the
-    /// plane's normal: the derivative across a side is a combination of
-    /// that row less the side, so with both in the plane, the patch's
-    /// tangent plane is that plane all along the side — exactly, rational
-    /// or not. Where two such rows cross, the point goes onto the line the
-    /// two planes meet in. The patch is first raised in degree until each
-    /// side moved has a row of its own, away from the opposite side's.
+    /// The patch is first raised in degree until each such side has a row
+    /// of its own next to it, away from the opposite side's. Each control
+    /// point of that row is then moved, along the face's normal, into the
+    /// face's tangent plane where the side is at that point's Greville
+    /// abscissa: the derivative across a side is a combination of that row
+    /// less the side, so a row in the tangent plane makes the patch tangent
+    /// there. Where two such rows cross, the point goes onto the line the
+    /// two tangent planes meet in.
+    ///
+    /// Along a flat face the tangent plane is one plane, and the patch is
+    /// tangent to it exactly — rational or not. Along a curved one it
+    /// turns, and no NURBS row follows it exactly: the row is set so that
+    /// the patch leaves the face at [`TILT`] towards the face's normal at
+    /// each of those abscissae — where an approximate tangency would dip
+    /// through the face as often as not, a crease of a millionth of a
+    /// radian keeps the patch on one side of it — and checked between them
+    /// to stay within twice that, on that side, the patch refined along the
+    /// side while it does not.
     ///
     /// The ends of that row are the second control points of the sides
     /// meeting this one: they are curves the patch must keep, so they are
-    /// not moved, and must lie in the plane — a side leaving the plane at
-    /// a corner contradicts the tangency, and is refused. So is a row that
-    /// does not head towards `away`: the patch would fold back over the
-    /// face it is to continue.
-    pub fn tangent_to_planes(
-        &self,
-        planes: &[Option<(Plane, Vector3)>; SIDES],
-    ) -> GeopResult<Self> {
-        let rows_needed = |a: usize, b: usize| match (planes[a].is_some(), planes[b].is_some()) {
+    /// not moved, and must lie in the tangent plane at the corner — a side
+    /// leaving it there contradicts the tangency, and is refused. So is a
+    /// row that does not head away from the face: the patch would fold back
+    /// over the face it is to continue.
+    pub fn tangent_to(&self, sides: &[Option<Neighbour<'_>>; SIDES]) -> GeopResult<Self> {
+        let curved = |k: usize| sides[k].as_ref().is_some_and(|s| !s.flat);
+        let mut base = self.clone();
+        let mut strays = String::new();
+        for _ in 0..=MOST_REFINEMENTS {
+            let patch = base.tangent_rows(sides)?;
+            match patch.strays(sides)? {
+                None => return Ok(patch),
+                Some(at) => strays = at,
+            }
+            let along = |even: bool| (0..SIDES).any(|k| curved(k) && (k % 2 == 0) == even);
+            base = base.refined([1 + usize::from(along(true)), 1 + usize::from(along(false))])?;
+        }
+        Err(GeopError::new(format!(
+            "NurbSurface::tangent_to: refined {MOST_REFINEMENTS} times along its curved neighbours, the patch still does not leave them at {TILT:e} radians: {strays}"
+        )))
+    }
+
+    /// The patch's rows next to the sides of `sides` set as
+    /// [`NurbSurface3D::tangent_to`] says, once, at its knots.
+    fn tangent_rows(&self, sides: &[Option<Neighbour<'_>>; SIDES]) -> GeopResult<Self> {
+        let rows_needed = |a: usize, b: usize| match (sides[a].is_some(), sides[b].is_some()) {
             (true, true) => 4,
             (true, false) | (false, true) => 3,
             (false, false) => 0,
         };
         let mut surface = self.clone();
         // Raised along `v` for the sides 0 and 2, along `u` for 1 and 3,
-        // until there are as many rows as the planes need. Each raise adds
+        // until there are as many rows as the faces need. Each raise adds
         // a row at least.
         for (along_u, needed) in [(false, rows_needed(0, 2)), (true, rows_needed(1, 3))] {
             repeat(needed + 1, || -> GeopResult<_> {
@@ -366,50 +396,69 @@ impl NurbSurface3D {
         }
         let (nu, nv) = (surface.num_u, surface.num_v);
         let at = |i: usize, j: usize| i * nv + j;
-        // Per side: whether `(i, j)` is in the row next to it, and the
-        // control point on the side that row leaves from.
-        let next_row = |k: usize, i: usize, j: usize| -> Option<(usize, usize)> {
+        // Per side: the face's normal and the way away from it at each
+        // position along the side, where it is at that position's Greville
+        // abscissa.
+        let mut planes: [Vec<(Vector3, Vector3)>; SIDES] = Default::default();
+        for (k, side) in sides.iter().enumerate() {
+            let Some(side) = side else { continue };
+            let rows = SideRows::of(&surface, k);
+            for s in rows.abscissae(&surface)? {
+                planes[k].push((side.at)(rows.fraction(&surface, s)?)?);
+            }
+            if side.flat {
+                let plane = Plane::try_new(surface.evaluate_corner(&rows)?, planes[k][0].0)?;
+                for i in 0..rows.len() {
+                    let p = surface.control_points[rows.index(i).0].dehomogenized()?;
+                    if !plane.signed_distance(&p).could_be_equal(Scalar::ZERO) {
+                        return Err(GeopError::new(format!(
+                            "NurbSurface::tangent_to: side {k} leaves the plane of its flat neighbour at control point {p:?}"
+                        )));
+                    }
+                }
+            }
+        }
+        // Per side whose next row `(i, j)` is in: the side, the position
+        // along it, and the control point on the side that row leaves from.
+        let next_row = |k: usize, i: usize, j: usize| -> Option<(usize, (usize, usize))> {
             match k {
-                0 if j == 1 => Some((i, 0)),
-                1 if i == nu - 2 => Some((nu - 1, j)),
-                2 if j == nv - 2 => Some((i, nv - 1)),
-                3 if i == 1 => Some((0, j)),
+                0 if j == 1 => Some((i, (i, 0))),
+                1 if i == nu - 2 => Some((j, (nu - 1, j))),
+                2 if j == nv - 2 => Some((i, (i, nv - 1))),
+                3 if i == 1 => Some((j, (0, j))),
                 _ => None,
             }
         };
         let original = surface.control_points.clone();
-        for (k, side) in planes.iter().enumerate() {
-            let Some((plane, _)) = side else { continue };
-            let on_side = (0..nu)
-                .flat_map(|i| (0..nv).map(move |j| (i, j)))
-                .filter(|&(i, j)| match k {
-                    0 => j == 0,
-                    1 => i == nu - 1,
-                    2 => j == nv - 1,
-                    _ => i == 0,
-                });
-            for (i, j) in on_side {
-                let p = original[at(i, j)].dehomogenized()?;
-                if !plane.signed_distance(&p).could_be_equal(Scalar::ZERO) {
-                    return Err(GeopError::new(format!(
-                        "NurbSurface::tangent_to_planes: side {k} leaves its plane at control point {p:?}"
-                    )));
-                }
-            }
+        // Per side, the positions along it whose next row point two sides
+        // decide.
+        let mut shared: [Vec<bool>; SIDES] = Default::default();
+        for k in 0..SIDES {
+            shared[k] = vec![false; planes[k].len()];
         }
         for i in 0..nu {
             for j in 0..nv {
-                // Per side whose next row this point is in: the side, its
-                // plane, the way away from it, and the point on the side.
-                type Constraint<'a> = (usize, &'a Plane, &'a Vector3, (usize, usize));
-                let constraints: Vec<Constraint> = (0..SIDES)
-                    .filter_map(|k| {
-                        let (plane, away) = planes[k].as_ref()?;
-                        next_row(k, i, j).map(|base| (k, plane, away, base))
-                    })
-                    .collect();
+                // The side, its tangent plane through the point on the
+                // side, the way away from it, and that point.
+                type Constraint = (usize, usize, Plane, Vector3, Vector3);
+                let mut constraints: Vec<Constraint> = Vec::new();
+                for k in 0..SIDES {
+                    let Some((position, (bi, bj))) = next_row(k, i, j) else {
+                        continue;
+                    };
+                    if sides[k].is_none() {
+                        continue;
+                    }
+                    let (normal, away) = planes[k][position];
+                    let base = original[at(bi, bj)].dehomogenized()?;
+                    constraints.push((k, position, Plane::try_new(base, normal)?, away, base));
+                }
                 if constraints.is_empty() {
                     continue;
+                }
+                if let [(a, pa, ..), (b, pb, ..)] = constraints.as_slice() {
+                    shared[*a][*pa] = true;
+                    shared[*b][*pb] = true;
                 }
                 let on_border = i == 0 || j == 0 || i == nu - 1 || j == nv - 1;
                 let cp = original[at(i, j)];
@@ -417,18 +466,18 @@ impl NurbSurface3D {
                 let moved = if on_border {
                     // The second control point of a side meeting this one:
                     // kept, and so it must be in the plane already.
-                    for &(k, plane, _, _) in &constraints {
+                    for (k, _, plane, ..) in &constraints {
                         if !plane.signed_distance(&p).could_be_equal(Scalar::ZERO) {
                             return Err(GeopError::new(format!(
-                                "NurbSurface::tangent_to_planes: the side meeting side {k} at its corner leaves the plane there, at {p:?}: the patch cannot be tangent to the plane and keep that side"
+                                "NurbSurface::tangent_to: the side meeting side {k} at its corner leaves the face's tangent plane there, at {p:?}: the patch cannot be tangent to the face and keep that side"
                             )));
                         }
                     }
                     p
                 } else {
                     match constraints.as_slice() {
-                        [(_, plane, _, _)] => plane.project(&p),
-                        [(_, a, _, _), (_, b, _, _)] => {
+                        [(_, _, plane, ..)] => plane.project(&p),
+                        [(_, _, a, ..), (_, _, b, ..)] => {
                             if a.normal
                                 .prod_cross(&b.normal)
                                 .norm_sq()
@@ -442,21 +491,20 @@ impl NurbSurface3D {
                         }
                         _ => {
                             return Err(GeopError::new(format!(
-                                "NurbSurface::tangent_to_planes: control point ({i}, {j}) is in the rows of {} sides",
+                                "NurbSurface::tangent_to: control point ({i}, {j}) is in the rows of {} sides",
                                 constraints.len()
                             )));
                         }
                     }
                 };
-                for &(k, _, away, (bi, bj)) in &constraints {
-                    let base = original[at(bi, bj)].dehomogenized()?;
+                for (k, _, _, away, base) in &constraints {
                     if !moved
-                        .sub(&base)
+                        .sub(base)
                         .prod_dot(away)
                         .definitely_greater(Scalar::ZERO)
                     {
                         return Err(GeopError::new(format!(
-                            "NurbSurface::tangent_to_planes: at control point ({i}, {j}) the patch does not leave side {k} away from the face it continues: it would fold back over it"
+                            "NurbSurface::tangent_to: at control point ({i}, {j}) the patch does not leave side {k} away from the face it continues: it would fold back over it"
                         )));
                     }
                 }
@@ -465,8 +513,250 @@ impl NurbSurface3D {
                 }
             }
         }
+        for (k, side) in sides.iter().enumerate() {
+            if side.as_ref().is_some_and(|s| !s.flat) {
+                surface.lean(k, &planes[k], &shared[k])?;
+            }
+        }
         surface.recompute_aabb();
         Ok(surface)
+    }
+
+    /// The point where side `rows` starts.
+    fn evaluate_corner(&self, rows: &SideRows) -> GeopResult<Vector3> {
+        self.control_points[rows.index(0).0].dehomogenized()
+    }
+
+    /// The row next to side `k` moved along the face's normals `planes`
+    /// (per position along the side, at its Greville abscissa) so that the
+    /// patch leaves the face at [`TILT`] towards its normal at each of those
+    /// abscissae — but where the row's ends are, which the sides meeting
+    /// this one keep, and the points `shared` with another side's row: a
+    /// collocation, linear in how far each point moves.
+    ///
+    /// Where the patch is at `S(s)` on the side, the derivative into it is
+    /// a positive multiple of `Σ_i N_i(s) (w1_i (p1_i - S) - w0_i (p0_i -
+    /// S))` over the side's points `p0` and the next row's `p1`, weighted —
+    /// which moving `p1_i` by `c_i n_i` changes by `N_i(s) w1_i c_i n_i`.
+    /// How far each point moves is a free choice, sharpened.
+    fn lean(&mut self, k: usize, planes: &[(Vector3, Vector3)], shared: &[bool]) -> GeopResult<()> {
+        let rows = SideRows::of(self, k);
+        let (degree, knots) = rows.knots(self);
+        let len = rows.len();
+        let abscissae = rows.abscissae(self)?;
+        let free: Vec<usize> = (1..len - 1).filter(|&i| !shared[i]).collect();
+        if free.is_empty() {
+            return Ok(());
+        }
+        let tilt = Scalar::from_f64(TILT);
+        let point = |i: usize, row: usize| -> GeopResult<(Vector3, Scalar)> {
+            let cp = self.control_points[if row == 0 {
+                rows.index(i).0
+            } else {
+                rows.index(i).1
+            }];
+            Ok((cp.dehomogenized()?, cp[3]))
+        };
+        let mut a = Vec::with_capacity(free.len());
+        let mut rhs = Vec::with_capacity(free.len());
+        for &j in &free {
+            let s = abscissae[j];
+            let (u, v) = rows.uv(self, s);
+            let on_side = self.evaluate(u, v)?;
+            let normal = planes[j].0;
+            let span = find_span(degree, knots, len - 1, s)?;
+            let funs = basis_funs(span, s, degree, knots);
+            let mut into = Vector3::zero();
+            for (f, &n) in funs.iter().enumerate() {
+                let i = span - degree + f;
+                let ((p0, w0), (p1, w1)) = (point(i, 0)?, point(i, 1)?);
+                let term = p1
+                    .sub(&on_side)
+                    .prod_scalar(w1)
+                    .sub(&p0.sub(&on_side).prod_scalar(w0));
+                into = into.add(&term.prod_scalar(n));
+            }
+            let mut row = vec![Scalar::ZERO; free.len()];
+            for (f, &n) in funs.iter().enumerate() {
+                let i = span - degree + f;
+                if let Some(c) = free.iter().position(|&x| x == i) {
+                    row[c] = n.mul(point(i, 1)?.1).mul(planes[i].0.prod_dot(&normal));
+                }
+            }
+            a.push(row);
+            let target = tilt.mul(into.norm());
+            rhs.push(Vector::from_array([target.sub(into.prod_dot(&normal))]));
+        }
+        let moves = solve_pivoted(a, rhs).map_err(|e| {
+            e.with_context(format!(
+                "NurbSurface::tangent_to: leaning the row next to side {k} off its curved neighbour"
+            ))
+        })?;
+        let moved = (free.iter().zip(&moves))
+            .map(|(&i, by)| {
+                let (p, w) = point(i, 1)?;
+                Ok((
+                    i,
+                    p.add(&planes[i].0.prod_scalar(by[0]))
+                        .sharpen()
+                        .homogeneous(w),
+                ))
+            })
+            .collect::<GeopResult<Vec<_>>>()?;
+        for (i, cp) in moved {
+            self.control_points[rows.index(i).1] = cp;
+        }
+        Ok(())
+    }
+
+    /// Where the patch strays, along a side of `sides` whose face is
+    /// curved, from leaving that face as [`NurbSurface3D::lean`] has it:
+    /// away from the face, towards its normal at no more than twice
+    /// [`TILT`]. Checked at each Greville abscissa and halfway between.
+    fn strays(&self, sides: &[Option<Neighbour<'_>>; SIDES]) -> GeopResult<Option<String>> {
+        let tilt = Scalar::from_f64(2.0 * TILT);
+        for (k, side) in sides.iter().enumerate() {
+            let Some(side) = side.as_ref().filter(|s| !s.flat) else {
+                continue;
+            };
+            let rows = SideRows::of(self, k);
+            let abscissae = rows.abscissae(self)?;
+            let mut checked = Vec::with_capacity(2 * abscissae.len());
+            for pair in abscissae.windows(2) {
+                checked.push(pair[0]);
+                checked.push(pair[0].add(pair[1]).div(Scalar::TWO)?.sharpen());
+            }
+            for s in checked.into_iter().skip(1) {
+                let (u, v) = rows.uv(self, s);
+                let point = self.evaluate(u, v)?;
+                let (normal, away) = (side.at)(rows.fraction(self, s)?)?;
+                let into = rows.across(self, s)?;
+                let lean = into.prod_dot(&normal);
+                let ok = into.prod_dot(&away).definitely_greater(Scalar::ZERO)
+                    && lean.definitely_greater(Scalar::ZERO)
+                    && lean.definitely_less(tilt.mul(into.norm()));
+                if !ok {
+                    let angle = lean.div(into.norm())?;
+                    return Ok(Some(format!(
+                        "along side {k} at {s:?}, at {point:?}, it leaves the face at {angle:?} radians towards its normal"
+                    )));
+                }
+            }
+        }
+        Ok(None)
+    }
+}
+
+/// The angle, in radians, at which a patch made tangent to a curved face
+/// leaves it towards its normal (see [`NurbSurface3D::tangent_to`]).
+pub const TILT: f64 = 1e-6;
+
+/// How often [`NurbSurface3D::tangent_to`] halves the patch's knot spans
+/// along a curved neighbour, at most: how hard it tries to follow the
+/// face's turning tangent plane, not what following it means.
+const MOST_REFINEMENTS: usize = 6;
+
+/// A face a patch is made tangent to along one of its sides (see
+/// [`NurbSurface3D::tangent_to`]).
+pub struct Neighbour<'a> {
+    /// At the fraction `t` of the way along the side, as it runs round the
+    /// patch: the face's unit normal there, and the way in its tangent
+    /// plane away from it, across the side.
+    pub at: &'a dyn Fn(Scalar) -> GeopResult<(Vector3, Vector3)>,
+    /// Whether its tangent plane is one plane all along the side: a flat
+    /// face.
+    pub flat: bool,
+}
+
+/// Side `k` of a patch's control net, as [`NurbSurface3D::coons`] numbers
+/// them: its control points, and those of the row next to it.
+struct SideRows {
+    k: usize,
+    nu: usize,
+    nv: usize,
+}
+
+impl SideRows {
+    fn of(surface: &NurbSurface3D, k: usize) -> Self {
+        Self {
+            k,
+            nu: surface.num_u,
+            nv: surface.num_v,
+        }
+    }
+
+    /// Whether the side runs along `u`.
+    fn along_u(&self) -> bool {
+        self.k.is_multiple_of(2)
+    }
+
+    /// How many control points it has.
+    fn len(&self) -> usize {
+        if self.along_u() { self.nu } else { self.nv }
+    }
+
+    /// The index of its control point at position `i`, and of the next
+    /// row's.
+    fn index(&self, i: usize) -> (usize, usize) {
+        let (nu, nv) = (self.nu, self.nv);
+        let at = |a: usize, b: usize| a * nv + b;
+        match self.k {
+            0 => (at(i, 0), at(i, 1)),
+            1 => (at(nu - 1, i), at(nu - 2, i)),
+            2 => (at(i, nv - 1), at(i, nv - 2)),
+            _ => (at(0, i), at(1, i)),
+        }
+    }
+
+    /// The degree and the knots along the side.
+    fn knots<'s>(&self, surface: &'s NurbSurface3D) -> (usize, &'s [Scalar]) {
+        if self.along_u() {
+            (surface.degree_u, &surface.knot_vector_u)
+        } else {
+            (surface.degree_v, &surface.knot_vector_v)
+        }
+    }
+
+    /// The Greville abscissae of its control points.
+    fn abscissae(&self, surface: &NurbSurface3D) -> GeopResult<Vec<Scalar>> {
+        let (degree, knots) = self.knots(surface);
+        greville(knots, degree, self.len())
+    }
+
+    /// The patch's `(u, v)` at `s` along the side.
+    fn uv(&self, surface: &NurbSurface3D, s: Scalar) -> (Scalar, Scalar) {
+        let ((u0, u1), (v0, v1)) = (surface.domain_u(), surface.domain_v());
+        match self.k {
+            0 => (s, v0),
+            1 => (u1, s),
+            2 => (s, v1),
+            _ => (u0, s),
+        }
+    }
+
+    /// How far `s` is along the side, as a fraction, the way the side runs
+    /// round the patch: with its parameter for the sides 0 and 1, against
+    /// it for 2 and 3.
+    fn fraction(&self, surface: &NurbSurface3D, s: Scalar) -> GeopResult<Scalar> {
+        let (lo, hi) = if self.along_u() {
+            surface.domain_u()
+        } else {
+            surface.domain_v()
+        };
+        let from = if self.k < 2 { s.sub(lo) } else { hi.sub(s) };
+        from.div(hi.sub(lo))
+    }
+
+    /// The patch's derivative across the side at `s`, into the patch.
+    fn across(&self, surface: &NurbSurface3D, s: Scalar) -> GeopResult<Vector3> {
+        let (u, v) = self.uv(surface, s);
+        let (du, dv) = surface.derivatives(u, v)?;
+        Ok(match self.k {
+            0 => dv,
+            1 => du.neg(),
+            2 => dv.neg(),
+            _ => du,
+        })
     }
 }
 
@@ -477,7 +767,7 @@ mod tests {
 
     use crate::{
         nurb_curve::{NurbCurve, NurbCurve3D},
-        nurb_surface::NurbSurface3D,
+        nurb_surface::{Neighbour, NurbSurface3D},
         shape::Plane,
     };
 
@@ -655,9 +945,15 @@ mod tests {
                 .could_be_equal(Scalar::ZERO)
         });
         assert!(bends, "the Coons patch alone is not tangent to the plane");
-        let surface = coons
-            .tangent_to_planes(&[Some((plane, away)), None, None, None])
-            .unwrap();
+        let normal = plane.normal;
+        let at = |_: Scalar| Ok((normal, away));
+        let flat = || {
+            Some(Neighbour {
+                at: &at,
+                flat: true,
+            })
+        };
+        let surface = coons.tangent_to(&[flat(), None, None, None]).unwrap();
         for (k, side) in sides.iter().enumerate() {
             assert_on(&surface, side, k);
         }
@@ -679,12 +975,7 @@ mod tests {
             line([0., 1., 1.], [0., 0., 0.]),
         ];
         let coons = NurbSurface3D::coons([&steep[0], &steep[1], &steep[2], &steep[3]]).unwrap();
-        let plane = Plane::try_new(v(0., 0., 0.), v(0., 0., 1.)).unwrap();
-        assert!(
-            coons
-                .tangent_to_planes(&[Some((plane, away)), None, None, None])
-                .is_err()
-        );
+        assert!(coons.tangent_to(&[flat(), None, None, None]).is_err());
     }
 
     /// A bilinear patch through four corners, not in one plane, has them
