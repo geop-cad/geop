@@ -689,8 +689,17 @@ fn seam_plane(model: &Model, edge_id: EdgeId, params: &RemeshParams) -> GeopResu
 /// `face`'s surface (`curve_surface_intersect` finds an overlap:
 /// [`Intersections::Coincident`]) and enters the face's interior, and `edge`
 /// isn't already a boundary coedge of `face`.
+///
+/// `settled` are the pairs already found not to be such, which are not
+/// asked again, and every pair found so is added to it. That stays true
+/// while imprinting goes on: an imprint splits a face, keeping its id for
+/// one piece, and splits no edge; a piece of a face holds no more of a
+/// curve's points inside it than the whole did, and the new piece's pairs
+/// are new. So the search is not started over from every pair after every
+/// imprint, as [`find_piercing_crossing`]'s is not after every split.
 fn find_coincident_pair(
     model: &Model,
+    settled: &mut std::collections::HashSet<(EdgeId, FaceId)>,
     edge_solid: Body,
     face_solid: Body,
     params: &RemeshParams,
@@ -702,7 +711,9 @@ fn find_coincident_pair(
     for edge_id in model.iter_body_edges(edge_solid).with_context(&ctx)? {
         let seam = seam_plane(model, edge_id, params).with_context(&ctx)?;
         for face_id in model.body_faces(face_solid).with_context(&ctx)? {
-            if edge_is_boundary_of_face(model, edge_id, face_id) {
+            if settled.contains(&(edge_id, face_id))
+                || edge_is_boundary_of_face(model, edge_id, face_id)
+            {
                 continue;
             }
             // A seam within a plane is that plane's own business only for a
@@ -774,8 +785,8 @@ fn find_coincident_pair(
                 if enters_interior {
                     return Ok(Some((edge_id, face_id)));
                 }
-                continue;
             }
+            settled.insert((edge_id, face_id));
         }
     }
     Ok(None)
@@ -820,10 +831,19 @@ fn imprint_coincident_pairs(
         "imprint_coincident_pairs(edge_solid={edge_solid}, face_solid={face_solid}, params={params:?})"
     );
 
+    let mut settled = std::collections::HashSet::new();
     rewrite(
         model,
         params.max_rewrites,
-        |model| find_coincident_pair(model.topology(), edge_solid, face_solid, params),
+        |model| {
+            find_coincident_pair(
+                model.topology(),
+                &mut settled,
+                edge_solid,
+                face_solid,
+                params,
+            )
+        },
         |model, (edge_id, face_id)| {
             imprint_coincident_edge(model, naming, edge_id, face_id, params)
         },
