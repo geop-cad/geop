@@ -32,6 +32,24 @@ pub(super) fn corner_nearest(
 // ── 3-D surface ──────────────────────────────────────────────────────────────
 
 impl NurbSurface<4> {
+    /// The weight of the surface's homogeneous form at `(u, v)`: its
+    /// rational basis's denominator there.
+    pub(crate) fn weight(&self, u: Scalar, v: Scalar) -> GeopResult<Scalar> {
+        let (p, q) = (self.degree_u, self.degree_v);
+        let nv = self.num_v;
+        let span_u = find_span(p, &self.knot_vector_u, self.num_u - 1, u)?;
+        let span_v = find_span(q, &self.knot_vector_v, nv - 1, v)?;
+        let cols: Vec<Vector<1>> = (span_v - q..=span_v)
+            .map(|j| {
+                let col: Vec<Vector<1>> = (span_u - p..=span_u)
+                    .map(|i| Vector::from_array([self.control_points[i * nv + j][3]]))
+                    .collect();
+                de_boor(p, &self.knot_vector_u[span_u - p..], &col, u, p)
+            })
+            .collect();
+        Ok(de_boor(q, &self.knot_vector_v[span_v - q..], &cols, v, q)[0])
+    }
+
     /// Evaluate the surface at `(u, v)`, returning a 3-D Cartesian point.
     ///
     /// Relative to one of the control points acting there ([`centered`]),

@@ -63,6 +63,9 @@ fn rounding_the_outer_edges_of_a_shelled_box_splits_them_at_the_floor() {
             solid: solid("block(box)"),
             faces: vec![ElementReference::new(model(), "block(box,end)")],
             thickness: 5.0.into(),
+            other_faces: Vec::new(),
+            other_thickness: 0.2.into(),
+            outward: false,
         },
     );
     let part = program.build_model(registry).unwrap();

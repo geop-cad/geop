@@ -35,6 +35,9 @@ fn shell(name: &str, faces: &[&str], thickness: f64) -> ShellArgs {
             .map(|f| ElementReference::new(model(), *f))
             .collect(),
         thickness: thickness.into(),
+        other_faces: Vec::new(),
+        other_thickness: 0.2.into(),
+        outward: false,
     }
 }
 

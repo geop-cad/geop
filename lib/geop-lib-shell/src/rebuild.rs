@@ -140,7 +140,8 @@ pub fn replace_faces(
     }
     for (f, face) in spec.faces.iter_mut().enumerate() {
         if replaced[f] {
-            face.surface = surface(&names.faces[f], &face.surface).with_context(ctx)?;
+            let roomy = room(face.surface.clone()).with_context(ctx)?;
+            face.surface = surface(&names.faces[f], &roomy).with_context(ctx)?;
         }
     }
     let reseat = vec![false; spec.vertices.len()];
@@ -150,7 +151,10 @@ pub fn replace_faces(
 }
 
 /// The body `spec` rebuilt: the faces marked `replaced` lie on the
-/// surfaces `spec` gives them now, every vertex they reach — and every
+/// surfaces `spec` gives them now — made from the old ones given room
+/// first ([`room`]): a fitted offset given room after, its end span of
+/// many carried on, is extrapolated and widened, and an exact one given
+/// room before and after is widened twice — every vertex they reach — and every
 /// vertex marked `reseat`, at the point `spec` gives as a seed — moves to
 /// where the surfaces around it meet, every edge they reach to where its
 /// faces' surfaces meet (see the module docs). `spec`'s edge curves are
@@ -190,7 +194,12 @@ pub fn tangent_to_kept(
 
 /// Whether the faces `f` and `g` of `spec` are pieces of one smooth surface
 /// along `edge`: their normals halfway along it could be parallel.
-fn smooth_along(spec: &BodySpec, edge: &EdgeSpec, f: usize, g: usize) -> GeopResult<bool> {
+pub(crate) fn smooth_along(
+    spec: &BodySpec,
+    edge: &EdgeSpec,
+    f: usize,
+    g: usize,
+) -> GeopResult<bool> {
     let t = edge.curve.mid_parameter()?;
     let point = edge.curve.evaluate(t)?;
     let normal = |f: usize| {
@@ -242,9 +251,12 @@ impl<'a> Rebuild<'a> {
                         .any(|(v, faces)| moved[v] && faces.iter().any(|&(g, _)| g == f))
             })
             .collect();
-        let surfaces = (spec.faces.iter().zip(&touched))
-            .map(|(face, &touched)| {
-                if touched {
+        // A face put on a new surface came with room: the new surface was
+        // made from the old with room around it (see `room`), not given
+        // room after.
+        let surfaces = (spec.faces.iter().zip(&touched).zip(replaced))
+            .map(|((face, &touched), &replaced)| {
+                if touched && !replaced {
                     room(face.surface.clone())
                 } else {
                     Ok(face.surface.clone())
@@ -313,21 +325,23 @@ impl<'a> Rebuild<'a> {
             pieces.push((surface, (u, w)));
         }
         // A vertex at a pole of its faces — on the axis of a revolved face —
-        // is the pole of their new surfaces: the topology puts it there.
+        // is the pole of their new surfaces: the topology puts it there. A
+        // face with a pole among faces without — a rounded box's corner
+        // patch at the blends' ends — is no such vertex: the faces without
+        // say where it goes, and the conditions below read the pole's
+        // normal as its limit.
         let poles: Vec<_> = (pieces.iter())
             .map(|(s, (u, w))| s.pole_at(*u, *w))
             .collect();
-        if let Some(pole) = poles.iter().flatten().next() {
+        if let Some(pole) = poles.iter().flatten().next()
+            && poles.iter().all(Option::is_some)
+        {
             if !poles
                 .iter()
                 .all(|p| p.is_some_and(|p| p.could_be_equal(pole)))
             {
-                let names: Vec<&str> = (faces.iter().zip(&poles))
-                    .filter(|(_, p)| p.is_none())
-                    .map(|(&(f, _), _)| self.names.faces[f].as_str())
-                    .collect();
                 return Err(GeopError::new(format!(
-                    "it is at a pole of some of its faces and not of {names:?}, or of poles apart ({poles:?}): moving it there is not supported"
+                    "it is at poles apart of its faces ({poles:?}): moving it there is not supported"
                 )));
             }
             return Ok(*pole);
@@ -512,28 +526,30 @@ impl<'a> Rebuild<'a> {
         let curve = match curve {
             Some(line) => line,
             None => {
+                // Each point of the edge carried to its foot point on the
+                // new surface, the way its ends were (see `Rebuild::vertex`):
+                // from the edge's own curve, not its pcurve, which is as
+                // wide as its fit to the curve — evaluated along it, a
+                // traced border's copy came out a hundred times wider than
+                // the border.
                 let along = match sense {
                     Sense::Forward => pcurve.clone(),
                     Sense::Reversed => pcurve.reverse(),
                 };
-                let (a, b) = along.ends()?;
-                let foot = |p: &Vector3, seed: Vector2| -> GeopResult<Vector2> {
+                let (t0, t1) = edge.curve.domain();
+                let (p0, p1) = along.domain();
+                let at = |frac: Scalar| -> GeopResult<Vector3> {
+                    let point = edge
+                        .curve
+                        .evaluate(Scalar::interpolate(t0, t1, frac).sharpen())?;
+                    let seed = along.evaluate(Scalar::interpolate(p0, p1, frac).sharpen())?;
                     let (u, v) = surface.project_in_domain(
-                        *p,
+                        point,
                         seed[0].sharpen(),
                         seed[1].sharpen(),
                         PROJECT_ITERATIONS,
                     )?;
-                    Ok(Vector2::from_array([u, v]))
-                };
-                let (shift0, shift1) = (foot(&start, a)?.sub(&a), foot(&end, b)?.sub(&b));
-                let (t0, t1) = along.domain();
-                let at = |frac: Scalar| -> GeopResult<Vector3> {
-                    let uv = along
-                        .evaluate(Scalar::interpolate(t0, t1, frac).sharpen())?
-                        .add(&shift0.prod_scalar(Scalar::ONE.sub(frac)))
-                        .add(&shift1.prod_scalar(frac));
-                    surface.evaluate(uv[0], uv[1])
+                    surface.evaluate(u, v)
                 };
                 fitted(at, (start, end), |_| Ok(()))
                     .map_err(|e| e.with_context("fitting it on its face's new surface"))?
@@ -834,7 +850,7 @@ fn turns_around(guide: &Curve3, points: &[Vector3]) -> GeopResult<()> {
 /// that is a single point, a pole: the pole would end up inside the patch,
 /// where it has no normal. How much room is a free choice; the patch's own
 /// size is room enough unless a face moves as far as it is wide.
-fn room(surface: NurbSurface3D) -> GeopResult<NurbSurface3D> {
+pub(crate) fn room(surface: NurbSurface3D) -> GeopResult<NurbSurface3D> {
     let mut surface = extended(surface)?;
     for along_u in [true, false] {
         let (degree, num) = if along_u {

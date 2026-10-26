@@ -337,7 +337,12 @@ impl ModelOperation for OffsetFace {
         replace_faces(model, &namer, &faces, Smooth::Follow, |name, surface| {
             surface
                 .offset(distance)
-                .map_err(|e| e.with_context(format!("offsetting face {name}")))
+                .map_err(|e| e.with_context(format!("offsetting face {name}")))?
+                .ok_or_else(|| {
+                    GeopError::new(format!(
+                        "face {name} collapses offset by {distance:?}: every point of it passes its centre of curvature"
+                    ))
+                })
         })?;
         Ok(())
     }

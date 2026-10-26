@@ -1,5 +1,5 @@
-//! [`shell`]: a solid hollowed out to walls of one thickness, open where
-//! faces are taken away.
+//! [`shell`]: a solid hollowed out to walls of one thickness — or of one
+//! per face — open where faces are taken away.
 //!
 //! The hollow is built directly, not cut out by a boolean: the walls'
 //! inner side is the solid's own boundary moved inward, face for face, so
@@ -8,13 +8,22 @@
 //! anything.
 //!
 //! **The inner side.** Every face kept is offset inward by the thickness
-//! (see [`NurbSurface3D::offset`]), every face taken away stays where it is:
+//! (see [`NurbSurface3D::offset`]: any surface, fitted and enclosed where it
+//! is no plane or revolution), every face taken away stays where it is:
 //! its inner copy is what the opening leaves of it. The inner side is the
 //! solid rebuilt on those surfaces ([`crate::rebuilt`]): a vertex moves to
 //! where the offsets of the faces around it meet, an edge to where the
 //! offsets of its two faces meet, whatever curve that is. A vertex on the
 //! axis of a revolved face, at its pole, moves to the pole of the face's
 //! inner copy: for a cone's apex, the offset cone's apex.
+//!
+//! **Faces that collapse.** A face whose offset collapses — every point
+//! of it past its centre of curvature, a blend narrower than the walls are
+//! thick, or the corner patch where such blends meet — has no inner copy.
+//! The solid is contracted before it is rebuilt ([`Contracted`]): a
+//! collapsed blend's edges along the faces it rounds, where it is tangent
+//! to them, share one copy, where those faces' offsets meet — a sharp inner
+//! corner; its edges across it vanish, and their ends share one vertex.
 //!
 //! **The opening.** Where a face `F` is taken away, its inner copy `F'`
 //! lies on `F`'s own surface, inside it, and what is left of `F` is `F`
@@ -27,6 +36,11 @@
 //! come out as several faces — a face taken away together with the faces
 //! on two opposite sides of it leaves two strips.
 //!
+//! A face taken away that every face kept around it runs smoothly into —
+//! the top of a box whose top edges are rounded — leaves no rim: the walls
+//! end where it was, each of its edges a free edge of the face kept there,
+//! with an end face along it as a sheet's border has ([`smoothly_open`]).
+//!
 //! **The result.** The faces kept, their inner copies turned around, and
 //! the rims, as one solid. Without an opening, the inner side is a void of
 //! its own: a second shell.
@@ -38,16 +52,15 @@
 //! a straight edge from each of its vertices to that vertex's inner copy.
 //! The inner side alone is the sheet offset ([`offset_faces`]).
 //!
-//! What it does not do (yet): offset faces that are neither planes nor
-//! surfaces of revolution with a straight or circular meridian (see
-//! [`NurbSurface3D::offset`]), take away part of a smooth surface —
-//! a face tangent to one that stays — take away a face that meets one kept
+//! What it does not do (yet): take away a face tangent to faces kept along
+//! some of its edges and not others, take away a face that meets one kept
 //! at an inward corner — a pocket's floor, a step, the face a boss stands
 //! on: the wall kept there is thickened away from the face, so the inner
 //! copy reaches past it and the opening is no longer the face less its
 //! inner copy — or open a solid that already has a void. Walls so thick
-//! that an inner edge turns around or shrinks to a point are refused; that
-//! the inner side runs into itself otherwise is not noticed.
+//! that an inner edge turns around or shrinks to a point, or that an edge
+//! of the result crosses one of its faces, are refused; two faces crossing
+//! along a curve no edge reaches are not noticed.
 
 use std::collections::HashMap;
 
@@ -65,22 +78,25 @@ use geop_core_math::{
     with_context,
 };
 use geop_core_topology::{
-    Body, Curve2, Curve3, FaceId, Sense, ShellId, SolidId,
+    Body, Curve2, Curve3, FaceId, Model, Sense, ShellId, SolidId,
     build::{BodySpec, BuiltBody, CoedgeOn, CoedgeSpec, EdgeSpec, FaceSpec},
     contains::face::{PointClassification, pcurves_contain},
+    validation::{ValidationParameters, body_crossing},
 };
 use geop_ops_model::{BodyNames, NamedModel, Namer};
 
-use crate::rebuild::{along, rebuilt, tangent_to_kept};
+use crate::rebuild::{along, rebuilt, room, smooth_along};
 
 /// Seed of the ray casting that finds which outer loop a hole lies in:
 /// any gives the same answer (see `pcurves_contain`), a constant keeps it
 /// reproducible.
 const SEED: u64 = 0x5E11_0000_0000_0001;
 
-/// Hollows the solid `solid` of `part` out to walls `thickness` thick,
-/// open where its faces `open` were — see the module docs — and returns
-/// the hollowed solid, which replaces it and is named `namer`'s root.
+/// Hollows the solid `solid` of `part` out to walls `thickness` thick —
+/// measured inward from its faces, or outward for a negative thickness —
+/// those of the faces in `thicker` as thick as it says instead — open where
+/// its faces `open` were — see the module docs — and returns the hollowed
+/// solid, which replaces it and is named `namer`'s root.
 ///
 /// What stays of the solid keeps its names. What is new is named after
 /// what it was made from, with `Scalar` the operation:
@@ -96,16 +112,23 @@ pub fn shell(
     solid: SolidId,
     open: &[FaceId],
     thickness: Scalar,
+    thicker: &[(FaceId, Scalar)],
 ) -> GeopResult<SolidId> {
     let ctx = with_context!(
-        "shell({}, {solid}, open={open:?}, {thickness:?})",
+        "shell({}, {solid}, open={open:?}, {thickness:?}, thicker={thicker:?})",
         namer.root()
     );
-    if !thickness.definitely_greater(Scalar::ZERO) {
-        return Err(GeopError::new(format!(
-            "a shell's walls need a thickness greater than zero, not {thickness:?}"
-        )))
-        .with_context(ctx);
+    // Outward, the walls grow from the faces out: the solid turned inside
+    // out and shelled inward, then turned back.
+    let outward = thickness.definitely_less(Scalar::ZERO);
+    let sign = |t: Scalar| if outward { t.neg() } else { t };
+    for &t in std::iter::once(&thickness).chain(thicker.iter().map(|(_, t)| t)) {
+        if !sign(t).definitely_greater(Scalar::ZERO) {
+            return Err(GeopError::new(format!(
+                "a shell's walls need a thickness other than zero, all inward or all outward, not {t:?}"
+            )))
+            .with_context(ctx);
+        }
     }
     let model = part.topology();
     if model.get_solid(solid).with_context(ctx)?.shells.len() != 1 {
@@ -121,7 +144,12 @@ pub fn shell(
         )))
         .with_context(ctx);
     }
-    let (spec, sources) = model.body_spec(&faces, true).with_context(ctx)?;
+    let (mut spec, sources) = model.body_spec(&faces, true).with_context(ctx)?;
+    if outward {
+        for face in &mut spec.faces {
+            *face = face.reversed();
+        }
+    }
     let names = part.source_names(&sources).with_context(ctx)?;
     let removed: Vec<bool> = sources.faces.iter().map(|f| open.contains(f)).collect();
     if let Some((f, g, e)) = inward_corner(&spec, &removed).with_context(ctx)? {
@@ -132,8 +160,32 @@ pub fn shell(
         .with_context(ctx);
     }
 
-    let hollow = Hollow::new(&spec, &names, removed, thickness).with_context(ctx)?;
-    let (result, result_names) = hollow.result(namer).with_context(ctx)?;
+    if let Some((f, _)) = thicker.iter().find(|(f, _)| !faces.contains(f)) {
+        return Err(GeopError::new(format!(
+            "face {f} is not a face of the solid being shelled"
+        )))
+        .with_context(ctx);
+    }
+    // Per face, how thick its wall is: a face of one thickness and its
+    // neighbour of another still meet where their offsets do.
+    let thickness: Vec<Scalar> = (sources.faces.iter())
+        .map(|f| {
+            sign(
+                (thicker.iter())
+                    .find(|(g, _)| g == f)
+                    .map_or(thickness, |&(_, t)| t),
+            )
+        })
+        .collect();
+    let hollow = Hollow::new(&spec, &names, removed, &thickness).with_context(ctx)?;
+    let (mut result, result_names) = hollow.result(namer).with_context(ctx)?;
+    if outward {
+        // The faces turned inside out face the void they bound now, and
+        // their offsets, turned around as inner copies are, face out: the
+        // offsets are the outside, listed first.
+        result.shells.reverse();
+    }
+    refuse_crossing(&result, &result_names).with_context(ctx)?;
     part.replace_with_solid(&[solid.into()], result, result_names)
         .with_context(ctx)
 }
@@ -175,8 +227,10 @@ pub fn thicken(
     }
     let names = part.source_names(&sources).with_context(ctx)?;
     let removed = vec![false; spec.faces.len()];
-    let hollow = Hollow::new(&spec, &names, removed, thickness).with_context(ctx)?;
+    let thickness = vec![thickness; spec.faces.len()];
+    let hollow = Hollow::new(&spec, &names, removed, &thickness).with_context(ctx)?;
     let (result, result_names) = hollow.result(namer).with_context(ctx)?;
+    refuse_crossing(&result, &result_names).with_context(ctx)?;
     part.replace_with_solid(&[Body::Sheet(sheet)], result, result_names)
         .with_context(ctx)
 }
@@ -204,9 +258,40 @@ pub fn offset_faces(
     let (spec, sources) = part.topology().body_spec(faces, false).with_context(ctx)?;
     let names = part.source_names(&sources).with_context(ctx)?;
     let removed = vec![false; spec.faces.len()];
-    let hollow = Hollow::new(&spec, &names, removed, distance.neg()).with_context(ctx)?;
+    let thickness = vec![distance.neg(); spec.faces.len()];
+    let hollow = Hollow::new(&spec, &names, removed, &thickness).with_context(ctx)?;
     let (result, result_names) = hollow.inner_side(namer).with_context(ctx)?;
+    refuse_crossing(&result, &result_names).with_context(ctx)?;
     part.build_body(result, result_names).with_context(ctx)
+}
+
+/// Refuses the body `spec`, named `names`, if it would run into itself:
+/// an edge of it that crosses one of its faces away from every vertex.
+/// The walls are built face by face from the faces' offsets, which say
+/// nothing about where faces apart from each other end up: a hole closer
+/// to a side than the walls are thick moves its wall through the side's.
+/// Asked of the body built on its own, so the part is left as it was.
+fn refuse_crossing(spec: &BodySpec, names: &BodyNames) -> GeopResult<()> {
+    let mut model = Model::new();
+    let built = model.build_body(spec.clone())?;
+    let params = ValidationParameters::default();
+    let Some((edge, face, point)) = body_crossing(&params, &model, built.body()?)? else {
+        return Ok(());
+    };
+    let edge = built
+        .edges
+        .iter()
+        .position(|&e| e == edge)
+        .expect("an edge built");
+    let face = built
+        .faces
+        .iter()
+        .position(|&f| f == face)
+        .expect("a face built");
+    Err(GeopError::new(format!(
+        "the walls run into each other: edge {} crosses face {} at {point:?}: the walls are too thick for this part, which is not supported",
+        names.edges[edge], names.faces[face]
+    )))
 }
 
 /// A face taken away, `f`, that meets a face kept, `g`, at an inward
@@ -260,6 +345,278 @@ fn inward_corner(spec: &BodySpec, removed: &[bool]) -> GeopResult<Option<(usize,
     Ok(None)
 }
 
+/// What the inner copy of an edge is.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Copy {
+    /// A copy of its own.
+    Own,
+    /// None: the edge is of a collapsed face, across it — where a blend
+    /// meets a face square to it, or another collapsed one — and its ends'
+    /// copies are one point.
+    Vanishes,
+    /// The copy of the edge given: of a collapsed face's two edges along
+    /// it, where it is tangent to the faces it rounds, the second shares
+    /// the first's copy, where those faces' offsets meet.
+    As(usize),
+}
+
+/// The inner side's topology where faces collapse (see the module docs):
+/// `spec` without its collapsed faces, the edges across them contracted to
+/// points and the two along each merged into one. Each entity of `spec`
+/// is mapped to its copy here.
+struct Contracted {
+    spec: BodySpec,
+    names: BodyNames,
+    /// Per face of `spec`'s, whether the face it copies is kept.
+    kept: Vec<bool>,
+    /// Per vertex: its copy.
+    vertex: Vec<usize>,
+    /// Per edge: its copy, run the way given — `None` where it vanishes.
+    edge: Vec<Option<(usize, Sense)>>,
+    /// Per face: its copy, `None` where it collapses.
+    face: Vec<Option<usize>>,
+    /// Per coedge: where its copy is in its face's copy, loop and place.
+    coedge: HashMap<At, (usize, usize)>,
+}
+
+/// What the copy of each edge of `spec` is, given which faces collapse (see
+/// [`Copy`]). An edge of a collapsed face vanishes, unless the face is
+/// tangent along it to a face that does not collapse: a blend narrower than
+/// the walls are thick leaves the two faces it rounds meeting in a sharp
+/// inner corner along it, and across it — where it meets a face square to
+/// it, or another collapsed blend — nothing. Of the two edges along it, the
+/// second takes the first's copy. A collapsed face with other than two such
+/// edges, a free edge or a seam is refused: what would take its place is
+/// not that corner.
+fn collapse_edges(spec: &BodySpec, names: &BodyNames, collapsed: &[bool]) -> GeopResult<Vec<Copy>> {
+    let uses = spec.edge_uses();
+    let mut copy = vec![Copy::Own; spec.edges.len()];
+    let mut along: Vec<Vec<usize>> = vec![Vec::new(); spec.faces.len()];
+    for (e, at) in uses.iter().enumerate() {
+        let [(f, ..), (g, ..)] = match *at.as_slice() {
+            [a, b] if a.0 != b.0 => [a, b],
+            _ => {
+                if at.iter().any(|&(f, ..)| collapsed[f]) {
+                    return Err(GeopError::new(format!(
+                        "the walls are too thick: face {} collapses, and its edge {} is free or a seam, which is not supported",
+                        names.faces[at[0].0], names.edges[e]
+                    )));
+                }
+                continue;
+            }
+        };
+        match (collapsed[f], collapsed[g]) {
+            (false, false) => {}
+            (true, true) => copy[e] = Copy::Vanishes,
+            _ => {
+                let gone = if collapsed[f] { f } else { g };
+                if smooth_along(spec, &spec.edges[e], f, g)? {
+                    along[gone].push(e);
+                } else {
+                    copy[e] = Copy::Vanishes;
+                }
+            }
+        }
+    }
+    for (f, edges) in along.iter().enumerate() {
+        match *edges.as_slice() {
+            [] => {}
+            [first, second] => copy[second] = Copy::As(first),
+            _ => {
+                return Err(GeopError::new(format!(
+                    "the walls are too thick: face {} collapses, and is tangent along {} of its edges to faces that stay, where a blend is along two: not supported",
+                    names.faces[f],
+                    edges.len()
+                )));
+            }
+        }
+    }
+    Ok(copy)
+}
+
+/// `spec` — the faces on their inner surfaces — contracted where faces
+/// collapse (see [`Contracted`]), the edges' copies `copy`, `kept` and
+/// `names` per entity of `spec`.
+fn contract(
+    spec: &BodySpec,
+    names: &BodyNames,
+    kept: &[bool],
+    gone: &[bool],
+    copy: &[Copy],
+) -> GeopResult<Contracted> {
+    // Vertices joined by an edge that vanishes share their copy.
+    let mut group: Vec<usize> = (0..spec.vertices.len()).collect();
+    fn root(group: &mut [usize], v: usize) -> usize {
+        let mut r = v;
+        while group[r] != r {
+            r = group[r];
+        }
+        group[v] = r;
+        r
+    }
+    for (e, edge) in spec.edges.iter().enumerate() {
+        if copy[e] == Copy::Vanishes {
+            let (a, b) = (root(&mut group, edge.start), root(&mut group, edge.end));
+            group[a.max(b)] = a.min(b);
+        }
+    }
+    let mut out = BodySpec::new(spec.solid);
+    let mut out_names = BodyNames {
+        solid: names.solid.clone(),
+        ..Default::default()
+    };
+    let mut index = vec![None; spec.vertices.len()];
+    let mut vertex = Vec::with_capacity(spec.vertices.len());
+    for v in 0..spec.vertices.len() {
+        let r = root(&mut group, v);
+        vertex.push(*index[r].get_or_insert_with(|| {
+            out.vertices.push(spec.vertices[r]);
+            out_names.vertices.push(names.vertices[r].clone());
+            out.vertices.len() - 1
+        }));
+    }
+    let mut edge = vec![None; spec.edges.len()];
+    for (e, original) in spec.edges.iter().enumerate() {
+        if copy[e] == Copy::Own {
+            edge[e] = Some((out.edges.len(), Sense::Forward));
+            out.edges.push(EdgeSpec {
+                curve: original.curve.clone(),
+                start: vertex[original.start],
+                end: vertex[original.end],
+            });
+            out_names.edges.push(names.edges[e].clone());
+        }
+    }
+    for (e, original) in spec.edges.iter().enumerate() {
+        if let Copy::As(first) = copy[e] {
+            let (i, _) = edge[first].expect("the first edge along a blend has its own copy");
+            let ends = (vertex[original.start], vertex[original.end]);
+            let sense = if ends == (out.edges[i].start, out.edges[i].end) {
+                Sense::Forward
+            } else if ends == (out.edges[i].end, out.edges[i].start) {
+                Sense::Reversed
+            } else {
+                return Err(GeopError::new(format!(
+                    "the walls are too thick: edges {} and {} along a collapsing blend do not end where each other's copies do: not supported",
+                    names.edges[first], names.edges[e]
+                )));
+            };
+            edge[e] = Some((i, sense));
+        }
+    }
+    let mut face = vec![None; spec.faces.len()];
+    let mut coedge = HashMap::new();
+    let mut out_kept = Vec::new();
+    for (f, original) in spec.faces.iter().enumerate() {
+        if gone[f] {
+            continue;
+        }
+        let mut loops = Vec::new();
+        for (l, lp) in original.loops().into_iter().enumerate() {
+            let mut copied = Vec::new();
+            for (k, c) in lp.iter().enumerate() {
+                let on = match c.on {
+                    CoedgeOn::Edge(e, sense) => match edge[e] {
+                        None => continue,
+                        Some((i, along)) => CoedgeOn::Edge(
+                            i,
+                            if along == Sense::Forward {
+                                sense
+                            } else {
+                                sense.opposite()
+                            },
+                        ),
+                    },
+                    CoedgeOn::Vertex(v) => CoedgeOn::Vertex(vertex[v]),
+                };
+                coedge.insert(At { f, l, k }, (l, copied.len()));
+                copied.push(CoedgeSpec {
+                    on,
+                    pcurve: c.pcurve.clone(),
+                });
+            }
+            if copied.is_empty() {
+                return Err(GeopError::new(format!(
+                    "the walls are too thick: every edge of a loop of face {} vanishes, and its inner copy with it",
+                    names.faces[f]
+                )));
+            }
+            loops.push(copied);
+        }
+        face[f] = Some(out.faces.len());
+        let mut loops = loops.into_iter();
+        out.faces.push(FaceSpec {
+            surface: original.surface.clone(),
+            outer: loops.next().expect("a face has an outer loop"),
+            holes: loops.collect(),
+        });
+        out_names.faces.push(names.faces[f].clone());
+        out_kept.push(kept[f]);
+    }
+    out.shells = spec
+        .shells
+        .iter()
+        .map(|shell| shell.iter().filter_map(|&f| face[f]).collect())
+        .collect();
+    Ok(Contracted {
+        spec: out,
+        names: out_names,
+        kept: out_kept,
+        vertex,
+        edge,
+        face,
+        coedge,
+    })
+}
+
+/// Per face taken away, whether it is smoothly open: tangent along every
+/// edge to the face kept there. Its walls do not stand on it, they end
+/// where it was — each edge a free edge of the face kept, whose wall gets
+/// an end face along it as a sheet's border does — and nothing is left of
+/// it: the open top of a box whose top edges are rounded. A face taken
+/// away tangent to faces kept along some edges and not others, or one
+/// that meets another face taken away, is refused: its rim would end on a
+/// smooth surface.
+fn smoothly_open(spec: &BodySpec, names: &BodyNames, removed: &[bool]) -> GeopResult<Vec<bool>> {
+    let mut tangent = vec![0usize; spec.faces.len()];
+    let mut other = vec![0usize; spec.faces.len()];
+    for (e, at) in spec.edge_uses().iter().enumerate() {
+        let [a, b] = match *at.as_slice() {
+            [a, b] if a.0 != b.0 => [a.0, b.0],
+            _ => continue,
+        };
+        match (removed[a], removed[b]) {
+            (false, false) => {}
+            (true, true) => {
+                other[a] += 1;
+                other[b] += 1;
+            }
+            _ => {
+                let gone = if removed[a] { a } else { b };
+                if smooth_along(spec, &spec.edges[e], a, b)? {
+                    tangent[gone] += 1;
+                } else {
+                    other[gone] += 1;
+                }
+            }
+        }
+    }
+    (0..spec.faces.len())
+        .map(|f| {
+            if tangent[f] == 0 {
+                return Ok(false);
+            }
+            if other[f] > 0 {
+                return Err(GeopError::new(format!(
+                    "face {} is taken away tangent to a face kept along {} of its edges, and not along {}: the walls cannot end on a smooth surface, which is not supported",
+                    names.faces[f], tangent[f], other[f]
+                )));
+            }
+            Ok(true)
+        })
+        .collect()
+}
+
 /// A coedge of the solid: face `f`, its loop `l` (0 the outer one), and
 /// the `k`-th coedge of that.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -305,16 +662,18 @@ struct Hollow<'a> {
     /// Per edge: whether both its faces are taken away.
     open_edge: Vec<bool>,
     /// Per edge: whether it is free, used by one face only — an edge of a
-    /// sheet's border, which gets a wall.
+    /// sheet's border — or one of a face smoothly open: it gets a wall.
     free_edge: Vec<bool>,
+    /// Per face: whether it is taken away smoothly open (see
+    /// [`smoothly_open`]): nothing is left of it, and it has no copy.
+    smooth: Vec<bool>,
     /// The inner side: the solid rebuilt with every face kept on its offset
     /// and every face taken away on its own surface, each with room around
-    /// it — its vertices, edges and pcurves where the walled ones go.
+    /// it — its vertices, edges and pcurves where the walled ones go — and
+    /// contracted where faces collapse (see [`Contracted`]).
     inner: BodySpec,
-    /// Per vertex: its inner copy, where it is walled.
-    inner_points: Vec<Option<Vector3>>,
-    /// Per edge: its inner copy's curve, unless it is open.
-    inner_curves: Vec<Option<Curve3>>,
+    /// Where each entity of the solid's copy is in `inner`.
+    copies: Contracted,
     /// Per open edge: what is left of it at its start and at its end, where
     /// those are walled.
     pieces: Vec<Pieces<Curve3>>,
@@ -325,7 +684,7 @@ impl<'a> Hollow<'a> {
         spec: &'a BodySpec,
         names: &'a BodyNames,
         removed: Vec<bool>,
-        thickness: Scalar,
+        thickness: &[Scalar],
     ) -> GeopResult<Self> {
         let mut walled = vec![false; spec.vertices.len()];
         let mut open_edge = vec![true; spec.edges.len()];
@@ -347,41 +706,45 @@ impl<'a> Hollow<'a> {
         // [`rebuilt`]). One taken away cannot run smoothly into one kept:
         // the walls would have to end on a smooth surface.
         let kept: Vec<bool> = removed.iter().map(|&r| !r).collect();
-        if let Some((f, g, e)) = tangent_to_kept(spec, &kept)? {
-            return Err(GeopError::new(format!(
-                "face {} is taken away where it is tangent to face {}, kept, along edge {}: the walls cannot end on a smooth surface",
-                names.faces[g], names.faces[f], names.edges[e]
-            )));
-        }
+        let smooth = smoothly_open(spec, names, &removed)?;
         let mut offsets = spec.clone();
+        let mut collapsed = vec![false; spec.faces.len()];
         for (f, face) in offsets.faces.iter_mut().enumerate() {
             if kept[f] {
-                face.surface = face
-                    .surface
-                    .offset(thickness.neg())
-                    .map_err(|e| e.with_context(format!("offsetting face {}", names.faces[f])))?;
+                // The offset of the face given room, not the offset given
+                // room afterwards: a fitted offset's end span carried on is
+                // a polynomial extrapolated, and its width with it.
+                match room(face.surface.clone())?
+                    .offset(thickness[f].neg())
+                    .map_err(|e| e.with_context(format!("offsetting face {}", names.faces[f])))?
+                {
+                    Some(surface) => face.surface = surface,
+                    None => collapsed[f] = true,
+                }
             }
         }
-        let reseat = vec![false; spec.vertices.len()];
-        let inner = rebuilt(&offsets, names, &kept, &reseat)
+        let copy = collapse_edges(spec, names, &collapsed)?;
+        let gone: Vec<bool> = (0..spec.faces.len())
+            .map(|f| collapsed[f] || smooth[f])
+            .collect();
+        let copies = contract(&offsets, names, &kept, &gone, &copy)?;
+        let reseat = vec![false; copies.spec.vertices.len()];
+        let inner = rebuilt(&copies.spec, &copies.names, &copies.kept, &reseat)
             .map_err(|e| e.with_context("building the walls' inner side"))?;
-
-        let inner_points = (0..spec.vertices.len())
-            .map(|v| walled[v].then(|| inner.vertices[v]))
-            .collect();
-        let inner_curves = (0..spec.edges.len())
-            .map(|e| (!open_edge[e]).then(|| inner.edges[e].curve.clone()))
-            .collect();
         let mut hollow = Self {
             spec,
             names,
             removed,
             walled,
             open_edge,
-            free_edge: uses.iter().map(|&n| n == 1).collect(),
+            // An edge of a face smoothly open is a free edge of the face kept
+            // there: its wall ends in an end face along it.
+            free_edge: (0..spec.edges.len())
+                .map(|e| uses[e] == 1 || spec.edge_uses()[e].iter().any(|&(f, ..)| smooth[f]))
+                .collect(),
+            smooth,
             inner,
-            inner_points,
-            inner_curves,
+            copies,
             pieces: Vec::new(),
         };
         hollow.pieces = (0..spec.edges.len())
@@ -413,7 +776,13 @@ impl<'a> Hollow<'a> {
     }
 
     fn inner_point(&self, v: usize) -> Vector3 {
-        self.inner_points[v].expect("a walled vertex has an inner copy")
+        self.inner.vertices[self.copies.vertex[v]]
+    }
+
+    /// The curve of the inner copy of edge `e`, run the way `e` runs, if it
+    /// has one.
+    fn inner_curve(&self, e: usize) -> Option<Curve3> {
+        self.copies.edge[e].map(|(i, sense)| sense.orient(&self.inner.edges[i].curve))
     }
 
     /// What is left of the open edge `e` at its start and at its end: from
@@ -435,20 +804,27 @@ impl<'a> Hollow<'a> {
         ))
     }
 
-    /// The inner copy of the coedge `at`, on its face's inner surface.
-    fn inner_coedge(&self, at: At) -> CoedgeSpec {
-        self.inner.faces[at.f].loops()[at.l][at.k].clone()
+    /// The inner copy of the coedge `at`, on its face's inner surface —
+    /// its edge and vertex numbered as in `inner` — if it has one.
+    fn inner_coedge(&self, at: At) -> Option<CoedgeSpec> {
+        let face = self.copies.face[at.f]?;
+        let &(l, k) = self.copies.coedge.get(&at)?;
+        Some(self.inner.faces[face].loops()[l][k].clone())
     }
 
     /// Where the inner copy of the coedge `at` ends on its face's inner
-    /// surface.
+    /// surface: of the last coedge up to it that has a copy.
     fn inner_end(&self, at: At) -> GeopResult<Vector2> {
-        Ok(self.inner_coedge(at).pcurve.ends()?.1)
-    }
-
-    /// The surface the inner copy of face `f` lies on.
-    fn inner_surface(&self, f: usize) -> &NurbSurface3D {
-        &self.inner.faces[f].surface
+        let mut here = at;
+        loop {
+            if let Some(c) = self.inner_coedge(here) {
+                return Ok(c.pcurve.ends()?.1);
+            }
+            here = self.previous(here);
+            if here == at {
+                return Err(GeopError::new("no coedge of the loop has a copy"));
+            }
+        }
     }
 
     /// The hollowed solid, described whole, and the names of what it is
@@ -464,9 +840,9 @@ impl<'a> Hollow<'a> {
 
         let mut at = Numbering {
             vertex: vec![None; spec.vertices.len()],
-            inner_vertex: vec![None; spec.vertices.len()],
+            inner_vertex: vec![None; self.inner.vertices.len()],
             edge: vec![None; spec.edges.len()],
-            inner_edge: vec![None; spec.edges.len()],
+            inner_edge: vec![None; self.inner.edges.len()],
             pieces: vec![(None, None); spec.edges.len()],
         };
         for v in 0..spec.vertices.len() {
@@ -474,12 +850,22 @@ impl<'a> Hollow<'a> {
                 at.vertex[v] = Some(out.vertices.len());
                 out.vertices.push(spec.vertices[v]);
                 names.vertices.push(self.names.vertices[v].clone());
-                at.inner_vertex[v] = Some(out.vertices.len());
-                out.vertices.push(self.inner_point(v));
+            }
+        }
+        // The inner vertices, each once: vertices joined where a face
+        // collapses share one, named after the first.
+        for v in 0..spec.vertices.len() {
+            let i = self.copies.vertex[v];
+            if self.walled[v] && at.inner_vertex[i].is_none() {
+                at.inner_vertex[i] = Some(out.vertices.len());
+                out.vertices.push(self.inner.vertices[i]);
                 names.vertices.push(inner_name(&self.names.vertices[v]));
             }
         }
-        let (vertex, inner_vertex) = (&at.vertex, &at.inner_vertex);
+        let inner_vertex_of = |v: usize| at.inner_vertex[self.copies.vertex[v]];
+        let inner_vertex: Vec<Option<usize>> =
+            (0..spec.vertices.len()).map(inner_vertex_of).collect();
+        let vertex = &at.vertex;
         let mut push_edge = |curve: Curve3, start: usize, end: usize, name: String| {
             out.edges.push(EdgeSpec { curve, start, end });
             names.edges.push(name);
@@ -488,19 +874,25 @@ impl<'a> Hollow<'a> {
         for (e, original) in spec.edges.iter().enumerate() {
             let name = &self.names.edges[e];
             let (s, t) = (original.start, original.end);
-            if let Some(curve) = &self.inner_curves[e] {
+            if !self.open_edge[e] {
                 at.edge[e] = push_edge(
                     original.curve.clone(),
                     vertex[s].unwrap(),
                     vertex[t].unwrap(),
                     name.clone(),
                 );
-                at.inner_edge[e] = push_edge(
-                    curve.clone(),
-                    inner_vertex[s].unwrap(),
-                    inner_vertex[t].unwrap(),
-                    inner_name(name),
-                );
+                // Its inner copy, once for the edges sharing it.
+                if let Some((i, Sense::Forward)) = self.copies.edge[e]
+                    && at.inner_edge[i].is_none()
+                {
+                    let copy = &self.inner.edges[i];
+                    at.inner_edge[i] = push_edge(
+                        copy.curve.clone(),
+                        at.inner_vertex[copy.start].unwrap(),
+                        at.inner_vertex[copy.end].unwrap(),
+                        inner_name(name),
+                    );
+                }
             }
             let (first, second) = &self.pieces[e];
             if let Some(curve) = first {
@@ -524,11 +916,15 @@ impl<'a> Hollow<'a> {
             CoedgeOn::Edge(e, sense) => CoedgeOn::Edge(edges[e].unwrap(), sense),
             CoedgeOn::Vertex(v) => CoedgeOn::Vertex(vertices[v].unwrap()),
         };
+        let inner_vertex = &inner_vertex;
 
         let mut outer_faces = Vec::new();
         let mut inner_faces = Vec::new();
         for (f, face) in spec.faces.iter().enumerate() {
             let name = &self.names.faces[f];
+            if self.smooth[f] {
+                continue;
+            }
             if self.removed[f] {
                 let rims = self.rims(f, &at)?;
                 let several = rims.len() > 1;
@@ -559,21 +955,22 @@ impl<'a> Hollow<'a> {
             });
             names.faces.push(name.clone());
 
-            let inner_loop = |l: usize| -> GeopResult<Vec<CoedgeSpec>> {
-                (0..face.loops()[l].len())
-                    .map(|k| {
-                        let mut c = self.inner_coedge(At { f, l, k });
-                        c.on = map(c.on, &at.inner_edge, &at.inner_vertex);
-                        Ok(c)
+            let Some(copy) = self.copies.face[f] else {
+                continue;
+            };
+            let copy = &self.inner.faces[copy];
+            let inner_loop = |lp: &Vec<CoedgeSpec>| -> Vec<CoedgeSpec> {
+                lp.iter()
+                    .map(|c| CoedgeSpec {
+                        on: map(c.on, &at.inner_edge, &at.inner_vertex),
+                        pcurve: c.pcurve.clone(),
                     })
                     .collect()
             };
             let inner = FaceSpec {
-                surface: self.inner_surface(f).clone(),
-                outer: inner_loop(0)?,
-                holes: (1..=face.holes.len())
-                    .map(inner_loop)
-                    .collect::<GeopResult<_>>()?,
+                surface: copy.surface.clone(),
+                outer: inner_loop(&copy.outer),
+                holes: copy.holes.iter().map(inner_loop).collect(),
             };
             inner_faces.push(out.faces.len());
             out.faces.push(inner.reversed());
@@ -584,11 +981,11 @@ impl<'a> Hollow<'a> {
         // inner copy, `side[v]`.
         let mut side: Vec<Option<usize>> = vec![None; spec.vertices.len()];
         let mut walls = Vec::new();
-        for (_, c) in self.coedges() {
+        for (here, c) in self.coedges() {
             let CoedgeOn::Edge(e, sense) = c.on else {
                 continue;
             };
-            if !self.free_edge[e] {
+            if !self.free_edge[e] || self.removed[here.f] {
                 continue;
             }
             let (x, y) = spec.ends(c.on)?;
@@ -598,7 +995,7 @@ impl<'a> Hollow<'a> {
                     out.edges.push(EdgeSpec {
                         curve: NurbCurve3D::line(spec.vertices[v], self.inner_point(v))?,
                         start: at.vertex[v].unwrap(),
-                        end: at.inner_vertex[v].unwrap(),
+                        end: inner_vertex[v].unwrap(),
                     });
                     names
                         .edges
@@ -606,12 +1003,18 @@ impl<'a> Hollow<'a> {
                 }
             }
             let outer = sense.orient(&spec.edges[e].curve);
-            let inner = sense.orient(self.inner_curves[e].as_ref().expect("not open"));
+            let inner = sense.orient(&self.inner_curve(e).expect("a free edge has a copy"));
+            let (copy, along) = self.copies.edge[e].expect("a free edge has a copy");
+            let copy_sense = if along == Sense::Forward {
+                sense
+            } else {
+                sense.opposite()
+            };
             // From the inner copy, at `v = 0`, out to the edge, at `v = 1`:
             // running round it counter-clockwise, the wall runs the edge
             // the other way than its face does, and faces away from it.
             let lp = [
-                CoedgeOn::Edge(at.inner_edge[e].unwrap(), sense),
+                CoedgeOn::Edge(at.inner_edge[copy].unwrap(), copy_sense),
                 CoedgeOn::Edge(side[y].unwrap(), Sense::Reversed),
                 CoedgeOn::Edge(at.edge[e].unwrap(), sense.opposite()),
                 CoedgeOn::Edge(side[x].unwrap(), Sense::Forward),
@@ -641,50 +1044,36 @@ impl<'a> Hollow<'a> {
 
     /// The inner side alone, as a sheet of its own: the inner copy of every
     /// face, facing the way the face does, and of every edge and vertex,
-    /// each copy of `X` named `N(X)` for `namer`'s `N`.
+    /// each copy of `X` named `N(X)` for `namer`'s `N` — of the first `X`
+    /// where several share one.
     fn inner_side(&self, namer: &Namer) -> GeopResult<(BodySpec, BodyNames)> {
-        let spec = self.spec;
-        let mut out = BodySpec::new(false);
-        let mut names = BodyNames::default();
-        let mut vertex = vec![None; spec.vertices.len()];
-        for (v, name) in self.names.vertices.iter().enumerate() {
-            vertex[v] = Some(out.vertices.len());
-            out.vertices.push(self.inner_point(v));
-            names.vertices.push(namer.name(&[name]));
-        }
-        let mut edge = vec![None; spec.edges.len()];
-        for (e, original) in spec.edges.iter().enumerate() {
-            edge[e] = Some(out.edges.len());
-            out.edges.push(EdgeSpec {
-                curve: self.inner_curves[e].clone().expect("not open"),
-                start: vertex[original.start].unwrap(),
-                end: vertex[original.end].unwrap(),
-            });
-            names.edges.push(namer.name(&[&self.names.edges[e]]));
-        }
-        for (f, face) in spec.faces.iter().enumerate() {
-            let inner_loop = |l: usize| -> GeopResult<Vec<CoedgeSpec>> {
-                (0..face.loops()[l].len())
-                    .map(|k| {
-                        let mut c = self.inner_coedge(At { f, l, k });
-                        c.on = match c.on {
-                            CoedgeOn::Edge(e, sense) => CoedgeOn::Edge(edge[e].unwrap(), sense),
-                            CoedgeOn::Vertex(v) => CoedgeOn::Vertex(vertex[v].unwrap()),
-                        };
-                        Ok(c)
-                    })
-                    .collect()
-            };
-            out.faces.push(FaceSpec {
-                surface: self.inner_surface(f).clone(),
-                outer: inner_loop(0)?,
-                holes: (1..=face.holes.len())
-                    .map(inner_loop)
-                    .collect::<GeopResult<_>>()?,
-            });
-            names.faces.push(namer.name(&[&self.names.faces[f]]));
-        }
+        let mut out = self.inner.clone();
+        out.solid = false;
         out.shells = vec![(0..out.faces.len()).collect()];
+        let names = BodyNames {
+            vertices: self
+                .copies
+                .names
+                .vertices
+                .iter()
+                .map(|n| namer.name(&[n]))
+                .collect(),
+            edges: self
+                .copies
+                .names
+                .edges
+                .iter()
+                .map(|n| namer.name(&[n]))
+                .collect(),
+            faces: self
+                .copies
+                .names
+                .faces
+                .iter()
+                .map(|n| namer.name(&[n]))
+                .collect(),
+            solid: None,
+        };
         Ok((out, names))
     }
 
@@ -693,7 +1082,10 @@ impl<'a> Hollow<'a> {
     /// numbered `at`.
     fn rims(&self, f: usize, at: &Numbering) -> GeopResult<Vec<FaceSpec>> {
         let spec = self.spec;
-        let (vertex, inner_vertex) = (&at.vertex, &at.inner_vertex);
+        let vertex = &at.vertex;
+        let inner_vertex: Vec<Option<usize>> = (0..spec.vertices.len())
+            .map(|v| at.inner_vertex[self.copies.vertex[v]])
+            .collect();
         let surface = &spec.faces[f].surface;
         let unsupported = |v: usize| {
             GeopError::new(format!(
@@ -725,16 +1117,21 @@ impl<'a> Hollow<'a> {
                     vertex[x].unwrap(),
                     vertex[y].unwrap(),
                 ));
-                // ...and its inner copy, the other way.
-                let inner = self.inner_coedge(here);
-                coedges.push((
-                    CoedgeSpec {
-                        on: CoedgeOn::Edge(at.inner_edge[e].unwrap(), sense.opposite()),
-                        pcurve: inner.pcurve.reverse(),
-                    },
-                    inner_vertex[y].unwrap(),
-                    inner_vertex[x].unwrap(),
-                ));
+                // ...and its inner copy, the other way, where it has one.
+                if let Some(inner) = self.inner_coedge(here) {
+                    let CoedgeOn::Edge(copy, copy_sense) = inner.on else {
+                        unreachable!("the copy of an edge");
+                    };
+                    let (from, to) = self.inner.ends(inner.on)?;
+                    coedges.push((
+                        CoedgeSpec {
+                            on: CoedgeOn::Edge(at.inner_edge[copy].unwrap(), copy_sense.opposite()),
+                            pcurve: inner.pcurve.reverse(),
+                        },
+                        at.inner_vertex[to].unwrap(),
+                        at.inner_vertex[from].unwrap(),
+                    ));
+                }
                 continue;
             }
             // An edge to another face taken away: what is left of it, from
