@@ -531,11 +531,14 @@ fn rounding_the_top_of_a_blade_section() {
 /// resolves taken as one, the vertex's station dropped by them — and the
 /// rolled tool is built, but the boolean leaves the first span's face
 /// through `c4` straddling the tool (`classify_face`: an intersection curve
-/// not imprinted). The turbine's own sections, not scaled alike, cross it
-/// apart, and its trailing edge is rounded
-/// (`rounding_a_turbine_blades_trailing_edge`).
+/// not imprinted). With that boolean fixed, the one station kept for the
+/// two crossings still left one side's contact `7.6e-7` short of the
+/// section edge it crosses, and validation refused the tool's edge between
+/// the two: the station now takes each side's contact on its own edge. The
+/// turbine's own sections, not scaled alike, cross it apart, and its
+/// trailing edge is rounded (`rounding_a_turbine_blades_trailing_edge`).
 #[test]
-#[ignore = "bug: a lofted blade's trailing edge, the sections scaled alike, is rounded but the boolean misses an intersection curve on the first span's face by the middle section (classify_face: straddles); the turbine's own sections round"]
+#[ignore = "slow: 40 s, a lofted blade's trailing edge rounded — run with `cargo test -- --ignored`"]
 fn rounding_the_trailing_edge_of_a_lofted_blade() {
     let mut program = Program::new();
     let heights = [0.0, 7.07, 25.27];

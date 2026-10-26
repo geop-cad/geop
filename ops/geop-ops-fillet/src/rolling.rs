@@ -1297,8 +1297,9 @@ type Cross<'a> =
     Box<dyn Fn(usize, &Station, &Station, (f64, f64)) -> GeopResult<(f64, Station)> + 'a>;
 
 /// The one section where both sides move at one place, if two such are one
-/// (see [`Placing`]).
-type Merge<'a> = Box<dyn Fn(&Station, &Station) -> GeopResult<Option<Station>> + 'a>;
+/// (see [`Placing`]): apart by no more than the blend may stray from the
+/// ball, or by less than `within` where given.
+type Merge<'a> = Box<dyn Fn(&Station, &Station, Option<f64>) -> GeopResult<Option<Station>> + 'a>;
 
 /// The balls rolled along a chain: at the stations, by their positions
 /// along it — link index plus fraction of its edge — and between each two
@@ -1691,7 +1692,7 @@ fn roll_chain(
         // same place, as at the seams of two surfaces of revolution on one
         // axis: one station, meeting each on its own edge.
         if let [(f0, s0), (_, s1)] = found.as_slice()
-            && let Some(merged) = (placing.merge)(s0, s1)?
+            && let Some(merged) = (placing.merge)(s0, s1, None)?
         {
             found = vec![(*f0, merged)];
         }
@@ -1720,8 +1721,17 @@ fn roll_chain(
                 b.faces[k2]
             );
             let (f2, second) = (placing.cross)(k2, &moved, b, (from, cb)).with_context(ctx)?;
-            found = if distance(&station.center, &second.center) < resolution {
-                vec![(f1, station)]
+            // Taken as one, the section takes each side's contact on its
+            // own edge: one left short of the edge it crosses there puts a
+            // vertex of the tool a hair from that edge, an edge the boolean
+            // cannot resolve between them.
+            let (s0, s1) = if k1 == 0 {
+                (&station, &second)
+            } else {
+                (&second, &station)
+            };
+            found = if let Some(merged) = (placing.merge)(s0, s1, Some(resolution))? {
+                vec![(f1, merged)]
             } else {
                 vec![(f1, station), (f1 + f2 * (1.0 - f1), second)]
             };
@@ -1991,20 +2001,22 @@ fn fillet_placing<'a>(
         let station = crossing(topology, k, a, b, radius_at(ca + f * (cb - ca)))?;
         Ok((along(&station)?, station))
     };
-    let merge = move |s0: &Station, s1: &Station| -> GeopResult<Option<Station>> {
-        let scale = s0.center.sub(&s0.contact[0]).norm().upper().to_f64();
-        if distance(&s0.center, &s1.center) > DEVIATION * scale {
-            return Ok(None);
-        }
-        Ok(Some(section(
-            s0.center,
-            [s0.contact[0], s1.contact[1]],
-            [s0.normals[0], s1.normals[1]],
-            [s0.faces[0], s1.faces[1]],
-            [s0.uv[0], s1.uv[1]],
-            true,
-        )?))
-    };
+    let merge =
+        move |s0: &Station, s1: &Station, within: Option<f64>| -> GeopResult<Option<Station>> {
+            let scale = s0.center.sub(&s0.contact[0]).norm().upper().to_f64();
+            let apart = distance(&s0.center, &s1.center);
+            if within.map_or(apart > DEVIATION * scale, |within| apart >= within) {
+                return Ok(None);
+            }
+            Ok(Some(section(
+                s0.center,
+                [s0.contact[0], s1.contact[1]],
+                [s0.normals[0], s1.normals[1]],
+                [s0.faces[0], s1.faces[1]],
+                [s0.uv[0], s1.uv[1]],
+                true,
+            )?))
+        };
     Placing {
         place: Box::new(place_at),
         cross: Box::new(cross),
@@ -2056,19 +2068,22 @@ fn chamfer_placing<'a>(
     let cross = move |k: usize, a: &Station, b: &Station, range: (f64, f64)| {
         chamfer_crossing(topology, chain, k, a, b, range, distances)
     };
-    let merge = move |s0: &Station, s1: &Station| -> GeopResult<Option<Station>> {
-        let (p0, p1) = (chord_edge_point(s0)?, chord_edge_point(s1)?);
-        if distance(&p0, &p1) > DEVIATION * distances[0].min(distances[1]) {
-            return Ok(None);
-        }
-        Ok(Some(chord(
-            &p0,
-            [s0.contact[0], s1.contact[1]],
-            [s0.normals[0], s1.normals[1]],
-            [s0.faces[0], s1.faces[1]],
-            [s0.uv[0], s1.uv[1]],
-        )?))
-    };
+    let merge =
+        move |s0: &Station, s1: &Station, within: Option<f64>| -> GeopResult<Option<Station>> {
+            let (p0, p1) = (chord_edge_point(s0)?, chord_edge_point(s1)?);
+            let apart = distance(&p0, &p1);
+            let most = DEVIATION * distances[0].min(distances[1]);
+            if within.map_or(apart > most, |within| apart >= within) {
+                return Ok(None);
+            }
+            Ok(Some(chord(
+                &p0,
+                [s0.contact[0], s1.contact[1]],
+                [s0.normals[0], s1.normals[1]],
+                [s0.faces[0], s1.faces[1]],
+                [s0.uv[0], s1.uv[1]],
+            )?))
+        };
     Placing {
         place: Box::new(place_at),
         cross: Box::new(cross),

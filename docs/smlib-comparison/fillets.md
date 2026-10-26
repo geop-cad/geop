@@ -77,6 +77,19 @@ Paths below: SMLib = `/home/tobiasjacob/usd-brep/source/SMLib/`, geop = `/home/t
 
 ## 2. Special cases to port (prioritised by how often a user hits them)
 
+**Status after round 2.** One fillet path: every edge is rolled. The
+extruded and revolved tools are gone; the rolled skin interpolates each
+section multiplied by the edge's weight, so a section carried unchanged
+along a line or round a circle is reproduced exactly, and such a blend is
+left untilted (tangent, as the swept one was). P4 (mixed convexity: the
+odd edge first, then the two as one chain round its round), P12 (refused
+by name where a face bends more tightly than the ball), P14 (partial arcs
+are exact by the same weights where the edge is an exact arc), the P15
+169° upright and lofted-blade trailing edge are done. A rolled ball now
+rolls on its faces carried on past a cliff, which P3's cuts then trim.
+Still open: P7, P9, the N-sided corner patch, setbacks, two-radius/conic
+sections.
+
 Each: SMLib location, the case and SMLib's handling, geop today, geop-style sketch.
 
 ### P1. Straight edge between planes ending at an oblique or curved wall / third face
