@@ -65,14 +65,16 @@ pub fn sphere() -> Program {
     body_with(PrimitiveArgs::sphere([0.0; 3], 1.0), vec![])
 }
 
-/// The block with a corner cut off.
+/// The block with a vertical edge cut off: a prism whose slanted side,
+/// `x + y = 3.5`, crosses the block's top and bottom and two of its sides,
+/// on none of its corners.
 pub fn block_corner_cut_off() -> Program {
     body_with(
         PrimitiveArgs::block([0.0, 0.0, 0.0], [2.0, 2.0, 1.0]),
         vec![(
             "corner",
             BooleanOp::Difference,
-            PrimitiveArgs::prism(&[[1.5, 2.5], [2.5, 1.5], [2.5, 2.5]], 0.0, 1.0).shape,
+            PrimitiveArgs::prism(&[[1.0, 2.5], [2.5, 1.0], [2.5, 2.5]], -0.5, 1.5).shape,
         )],
     )
 }
@@ -280,6 +282,19 @@ mod tests {
     use super::*;
     use crate::Primitive;
     use geop_core_program::operation::Operation;
+
+    /// The block with an edge cut off really has it cut off: a seventh
+    /// face, and a prism of an eighth of a unit less. (Its cut once only
+    /// touched the block along that edge, and every sweep over it swept a
+    /// plain block.)
+    #[test]
+    fn the_cut_off_edge_is_cut_off() {
+        let (part, solid) = one_solid(&block_corner_cut_off());
+        assert_eq!(part.topology().faces.len(), 7);
+        let id = part.solid_id(&solid).unwrap();
+        let volume = part.topology().mass_properties(id).unwrap().volume.to_f64();
+        assert!((volume - (4.0 - 0.125)).abs() < 1e-9, "{volume}");
+    }
 
     /// Every body builds one valid solid, named by its last step.
     #[test]
