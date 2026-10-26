@@ -9,14 +9,14 @@ use geop_core_topology::{Body, FaceId, SolidId};
 use geop_lib_booleans::{RemeshParams, boolean};
 use geop_lib_sweep::{
     polyline, revolve_at_oriented,
-    shapes::{revolved_cylinder, v3},
+    shapes::{Axis, revolved_cylinder, revolved_cylinder_along_axis, v3},
 };
 use geop_ops_model::{
     BooleanOp, NamedModel, Namer, Profile,
     testing::{assert_valid, middle},
 };
 
-use crate::shell;
+use crate::{offset_faces, shell, thicken};
 
 /// A revolved cylinder of radius 1 and height 2 on the origin, drilled
 /// through along `z` at `(x, 0)` with a hole of `radius`: the solid
@@ -291,4 +291,104 @@ fn a_cone_closed_all_round() {
     shell(&mut part, &namer, solid, &[], Scalar::from_f64(0.1)).unwrap();
     assert_valid(&part);
     assert!(has_vertex_at(&part, [0., 0., 2. - 0.1 * 5f64.sqrt()]));
+}
+
+/// A pipe tee: a pipe of radius 0.5 along `x`, from `x = -1` to `1`, and a
+/// branch of radius 0.3 standing up from its axis to `z = 1`, joined.
+fn pipe_tee() -> (NamedModel, SolidId) {
+    let mut part = NamedModel::new();
+    let pipe = revolved_cylinder_along_axis(
+        &mut part,
+        "pipe",
+        v3(-1., 0., 0.),
+        Scalar::from_f64(0.5),
+        Scalar::from_f64(2.),
+        Axis::X,
+    )
+    .unwrap();
+    let branch = revolved_cylinder(
+        &mut part,
+        "branch",
+        v3(0., 0., 0.),
+        Scalar::from_f64(0.3),
+        Scalar::from_f64(1.),
+    )
+    .unwrap();
+    let namer = Namer::new("tee", "t").unwrap();
+    let solid = boolean(
+        &mut part,
+        &namer,
+        pipe,
+        branch,
+        BooleanOp::Union,
+        RemeshParams::default(),
+    )
+    .unwrap()
+    .expect("a pipe tee");
+    assert_valid(&part);
+    (part, solid)
+}
+
+/// Where the branch meets the pipe, the edges are where two cylinders
+/// cross, neither straight nor circular: each inner copy is where the two
+/// inner cylinders cross, between the moved vertices. Closed all round,
+/// every face gets an inner copy.
+#[test]
+fn a_pipe_tee_shelled_closed() {
+    let (part, solid) = pipe_tee();
+    let faces = |part: &NamedModel, solid| {
+        part.topology()
+            .body_faces(Body::Solid(solid))
+            .unwrap()
+            .len()
+    };
+    let before = faces(&part, solid);
+    let (part, shelled) = shelled_valid(part, solid, &[]);
+    assert_eq!(faces(&part, shelled), 2 * before);
+}
+
+/// The faces of the pipe tee's pipe: every vertex of them 0.5 from `x`.
+fn pipe_faces(part: &NamedModel, solid: SolidId) -> Vec<FaceId> {
+    let model = part.topology();
+    model
+        .body_faces(Body::Solid(solid))
+        .unwrap()
+        .into_iter()
+        .filter(|&f| {
+            model.face_edges(f).all(|e| {
+                let edge = model.get_edge(e).unwrap();
+                [edge.start_vertex, edge.end_vertex].iter().all(|&v| {
+                    let p = model.get_vertex(v).unwrap().point;
+                    let r2 = p[1].to_f64().powi(2) + p[2].to_f64().powi(2);
+                    (r2 - 0.25).abs() < 1e-9
+                })
+            })
+        })
+        .collect()
+}
+
+/// The pipe of the tee, without the branch, offset outward and thickened:
+/// a sheet with holes where the branch stood, bordered by the edges where
+/// the two cylinders cross. Those are free edges of the sheet, used by one
+/// face; the copy of each runs along the same pcurve on the face's offset.
+/// The thickened sheet gets a wall along each.
+#[test]
+fn the_pipe_of_a_tee_offset_and_thickened() {
+    let (mut part, solid) = pipe_tee();
+    let faces = pipe_faces(&part, solid);
+    assert!(!faces.is_empty());
+    let namer = Namer::new("offset", "o").unwrap();
+    let sheet = offset_faces(&mut part, &namer, &faces, Scalar::from_f64(0.1))
+        .unwrap_or_else(|e| panic!("{e:?}"));
+    assert_valid(&part);
+    let namer = Namer::new("thicken", "t").unwrap();
+    thicken(
+        &mut part,
+        &namer,
+        sheet.shells[0],
+        Scalar::from_f64(0.05),
+        false,
+    )
+    .unwrap_or_else(|e| panic!("{e:?}"));
+    assert_valid(&part);
 }

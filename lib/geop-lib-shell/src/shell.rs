@@ -12,9 +12,11 @@
 //! its inner copy is what the opening leaves of it. A vertex moves to where
 //! the offsets of the faces around it meet, an edge to where the offsets of
 //! its two faces meet — a line from one moved vertex to the other for a
-//! straight edge, an arc around the same axis for a circular one. A vertex
-//! on the axis of a revolved face, at its pole, moves to the pole of the
-//! face's inner copy: for a cone's apex, the offset cone's apex.
+//! straight edge, an arc around the same axis for a circular one, and for
+//! any other the branch where the two offsets cross between the moved
+//! vertices, found at the edge's own stations and fitted through them. A
+//! vertex on the axis of a revolved face, at its pole, moves to the pole of
+//! the face's inner copy: for a cone's apex, the offset cone's apex.
 //!
 //! **The opening.** Where a face `F` is taken away, its inner copy `F'`
 //! lies on `F`'s own surface, inside it, and what is left of `F` is `F`
@@ -36,22 +38,26 @@
 //! inner one, and along every free edge, used by one face only, a wall
 //! joins the edge to its inner copy — the ruled surface between them, with
 //! a straight edge from each of its vertices to that vertex's inner copy.
-//! The inner side alone is the sheet offset ([`offset_faces`]).
+//! A free edge's copy, like a seam's, is the edge carried along its face's
+//! normal. The inner side alone is the sheet offset ([`offset_faces`]).
 //!
 //! What it does not do (yet): offset faces that are neither planes nor
-//! surfaces of revolution with a straight or circular meridian, edges that
-//! are neither straight nor circular, take away part of a smooth surface —
-//! a face tangent to one that stays — take away a face that meets one kept
-//! at an inward corner — a pocket's floor, a step, the face a boss stands
-//! on: the wall kept there is thickened away from the face, so the inner
-//! copy reaches past it and the opening is no longer the face less its
-//! inner copy — or open a solid that already has a void. Walls so thick that a straight edge's inner copy turns around are
+//! surfaces of revolution with a straight or circular meridian, take away
+//! part of a smooth surface — a face tangent to one that stays — take away
+//! a face that meets one kept at an inward corner — a pocket's floor, a
+//! step, the face a boss stands on: the wall kept there is thickened away
+//! from the face, so the inner copy reaches past it and the opening is no
+//! longer the face less its inner copy — or open a solid that already has
+//! a void. Walls so thick that an edge's inner copy turns around are
 //! refused; that the inner side runs into itself otherwise is not noticed.
 
 use std::collections::HashMap;
 
 use geop_core_geometry::{
-    intersection::curve_surface_overlaps,
+    intersection::{
+        curve_surface_overlaps,
+        surface_surface::{OnBoth, fit_branch, predictor_corrector_step},
+    },
     meet::{Offset, meet, tangent_groups},
     nurb_curve::{NurbCurve2D, NurbCurve3D, loop_signed_area},
     nurb_surface::NurbSurface3D,
@@ -309,6 +315,10 @@ struct Hollow<'a> {
     /// Per face: the surface its inner copy lies on — for a face taken
     /// away, its own — with room around the face (see [`extended`]).
     inner_surfaces: Vec<NurbSurface3D>,
+    /// Per face: how far its inner surface is from it along its normal —
+    /// against it, by the thickness, for a face kept; nothing for a face
+    /// taken away.
+    offsets: Vec<Scalar>,
     /// Per vertex: its inner copy, where it is walled.
     inner_points: Vec<Option<Vector3>>,
     /// Per edge: its inner copy's curve, unless it is open.
@@ -347,6 +357,10 @@ impl<'a> Hollow<'a> {
         // the face's surface.
         let around = spec.vertex_faces()?;
 
+        let offsets: Vec<Scalar> = removed
+            .iter()
+            .map(|&r| if r { Scalar::ZERO } else { thickness.neg() })
+            .collect();
         let inner_surfaces =
             spec.faces
                 .iter()
@@ -451,6 +465,7 @@ impl<'a> Hollow<'a> {
             open_edge,
             free_edge: uses.iter().map(|&n| n == 1).collect(),
             inner_surfaces,
+            offsets,
             inner_points,
             inner_curves: Vec::new(),
             pieces: Vec::new(),
@@ -512,7 +527,10 @@ impl<'a> Hollow<'a> {
             err.with_context(format!("the inner copy of edge {}", self.names.edges[e]))
         };
         let (start, end) = (self.inner_point(edge.start), self.inner_point(edge.end));
-        let curve = shaped_like(&edge.curve, start, end, edge.start == edge.end).map_err(ctx)?;
+        let curve = match shaped_like(&edge.curve, start, end, edge.start == edge.end) {
+            Some(curve) => curve.map_err(ctx)?,
+            None => self.traced_inner_curve(e, start, end).map_err(ctx)?,
+        };
         // It is only right if it lies on both inner surfaces: say so if not,
         // rather than build an edge off its faces.
         if let Some((f, middle)) =
@@ -532,17 +550,243 @@ impl<'a> Hollow<'a> {
         if !self.open_edge[e] {
             return Ok((None, None));
         }
+        // Both faces stay where they are, so the inner copy of each walled
+        // end lies on the edge itself, and what is left is the edge's own
+        // curve from the end to it.
         let edge = &self.spec.edges[e];
-        let piece = |from: Vector3, to: Vector3| shaped_like(&edge.curve, from, to, false);
+        let ctx = |err: GeopError| {
+            err.with_context(format!("what is left of edge {}", self.names.edges[e]))
+        };
         let (s, t) = (edge.start, edge.end);
+        let (t0, t1) = edge.curve.domain();
+        let at = |point: Vector3, seed: Scalar| parameter_at(&edge.curve, point, seed).map_err(ctx);
         Ok((
             self.walled[s]
-                .then(|| piece(self.spec.vertices[s], self.inner_point(s)))
+                .then(|| edge.curve.sub_curve(t0, at(self.inner_point(s), t0)?))
                 .transpose()?,
             self.walled[t]
-                .then(|| piece(self.inner_point(t), self.spec.vertices[t]))
+                .then(|| edge.curve.sub_curve(at(self.inner_point(t), t1)?, t1))
                 .transpose()?,
         ))
+    }
+
+    /// The inner copy of edge `e` of face `f` alone — free, or a seam where
+    /// `f` meets itself — from `start` to `end`, the edge's coedge on `f`
+    /// of `sense` and with `pcurve`: each point of the edge carried onto
+    /// `f`'s inner surface. An offset keeps `(u, v)`, so a point of the
+    /// edge is carried to the inner surface at its foot point on the face.
+    /// Carried as the point moved along the face's normal there, not as the
+    /// inner surface at the foot point: the foot point is as wide as the
+    /// edge, and the surface evaluated over it spreads that width over
+    /// every coordinate, so each copy of a copy came out wider. Moving the
+    /// point keeps its own width, and the normal hardly varies over the
+    /// foot point's box. The point lies on the face, so the true copy is
+    /// the point plus the offset times a normal in that box.
+    ///
+    /// Carried from the edge's own curve, not the pcurve: the pcurve of a
+    /// traced edge is as wide as its fit to the curve, and evaluating the
+    /// surface along it spreads that width over the copy. The copy is
+    /// fitted through the edge's breakpoints carried, enclosing it between
+    /// them too (see [`NurbCurve3D::fit_enclosing`]).
+    fn lifted_inner_curve(
+        &self,
+        e: usize,
+        f: usize,
+        sense: Sense,
+        pcurve: &Curve2,
+        start: Vector3,
+        end: Vector3,
+    ) -> GeopResult<Curve3> {
+        let curve = &self.spec.edges[e].curve;
+        let (outer, offset) = (&self.spec.faces[f].surface, self.offsets[f]);
+        let (a, b) = pcurve.ends()?;
+        let seed = match sense {
+            Sense::Forward => a,
+            Sense::Reversed => b,
+        };
+        // The point of the edge at `t`, carried, and its foot point.
+        let carried = |t: Scalar, seed: Vector2| -> GeopResult<(Vector3, Vector2)> {
+            let point = curve.evaluate(t)?;
+            let (u, v) = outer.project(
+                point,
+                seed[0].sharpen(),
+                seed[1].sharpen(),
+                PROJECT_ITERATIONS,
+            )?;
+            let normal = outer.normal(u, v)?;
+            Ok((
+                point.add(&normal.prod_scalar(offset)),
+                Vector2::from_array([u, v]),
+            ))
+        };
+        let params = curve.breakpoints();
+        let last = params.len() - 1;
+        let mut stations = Vec::with_capacity(params.len());
+        let mut foot = seed;
+        for (i, &t) in params.iter().enumerate() {
+            let (point, uv) = carried(t, foot)?;
+            foot = uv;
+            // The moved vertices are where the copy starts and ends: on the
+            // edge's ends carried, or the vertex and the face disagree.
+            let point = match i {
+                _ if i == 0 || i == last => {
+                    let vertex = if i == 0 { start } else { end };
+                    if !point.could_be_equal(&vertex) {
+                        return Err(GeopError::new(format!(
+                            "the copy of a vertex, {vertex:?}, is not where the edge's end is carried onto the face's inner surface, {point:?}"
+                        )));
+                    }
+                    vertex
+                }
+                _ => point,
+            };
+            stations.push((point, (t, uv)));
+        }
+        let mut widest = None;
+        NurbCurve3D::fit_enclosing(
+            &stations,
+            |&(_, (from, uv)), &(_, (to, _)), frac| {
+                let t = from.add(to.sub(from).mul(frac)).sharpen();
+                let (point, uv) = carried(t, uv)?;
+                Ok((point, (t, uv)))
+            },
+            &mut widest,
+            &|err| err,
+        )
+        .map_err(|err| {
+            err.with_context(format!(
+                "carrying the edge onto the face's inner surface; the widest point between stations: {widest:?}"
+            ))
+        })
+    }
+
+    /// The inner copy of edge `e`, from `start` to `end`, where shaping it
+    /// like the edge does not say what it is: the branch where the inner
+    /// surfaces of the edge's two faces meet, between the moved vertices.
+    ///
+    /// The branch is found where the edge is, not marched to: each station
+    /// of the edge — its breakpoints and the middles of its spans — is
+    /// carried onto both inner surfaces at once on the plane through it
+    /// square to the edge, by the corrector the booleans trace with. Which
+    /// branch is the copy is then a question the topology answers: it is
+    /// the one through the moved vertices at both ends, and between them
+    /// it runs the way the edge does. A station whose copy runs the other
+    /// way is where the walls turn the copy inside out, and is refused.
+    /// The curve is fitted through the stations, enclosing the branch
+    /// between them too ([`fit_branch`]); the caller checks it lies on both
+    /// inner surfaces.
+    fn traced_inner_curve(&self, e: usize, start: Vector3, end: Vector3) -> GeopResult<Curve3> {
+        let edge = &self.spec.edges[e];
+        let uses = &self.spec.edge_uses()[e];
+        let [(f, f_sense, f_pcurve), (g, g_sense, g_pcurve)] = match uses.as_slice() {
+            [a, b] if a.0 != b.0 => [a, b].map(|&(f, sense, pcurve)| (f, sense, pcurve.clone())),
+            [(f, sense, pcurve), ..] => {
+                return self.lifted_inner_curve(e, *f, *sense, pcurve, start, end);
+            }
+            [] => unreachable!("an edge of a face"),
+        };
+        let (outer_f, outer_g) = (&self.spec.faces[f].surface, &self.spec.faces[g].surface);
+        let (inner_f, inner_g) = (&self.inner_surfaces[f], &self.inner_surfaces[g]);
+        // Where the edge starts on each face, as a seed: the coedge's pcurve
+        // starts there if it runs the edge's way.
+        let first_uv = |sense: Sense, pcurve: &Curve2| -> GeopResult<Vector2> {
+            let (a, b) = pcurve.ends()?;
+            Ok(match sense {
+                Sense::Forward => a,
+                Sense::Reversed => b,
+            })
+        };
+        let (mut seed_f, mut seed_g) =
+            (first_uv(f_sense, &f_pcurve)?, first_uv(g_sense, &g_pcurve)?);
+        let onto = |surface: &NurbSurface3D, point: Vector3, seed: &mut Vector2| {
+            let (u, v) = surface.project_in_domain(
+                point,
+                seed[0].sharpen(),
+                seed[1].sharpen(),
+                PROJECT_ITERATIONS,
+            )?;
+            *seed = Vector2::from_array([u, v]);
+            Ok::<_, GeopError>((u, v))
+        };
+
+        let breakpoints = edge.curve.breakpoints();
+        let mut stations = Vec::new();
+        for pair in breakpoints.windows(2) {
+            stations.push(pair[0].add(pair[1]).div(Scalar::TWO)?.sharpen());
+            stations.push(pair[1]);
+        }
+        stations.pop();
+
+        let on_both = |point: Vector3, sf: &mut Vector2, sg: &mut Vector2| -> GeopResult<OnBoth> {
+            let (uf, vf) = onto(inner_f, point, sf)?;
+            let (ug, vg) = onto(inner_g, point, sg)?;
+            Ok((uf, vf, ug, vg))
+        };
+        let mut points = vec![start];
+        let mut uvs = vec![on_both(start, &mut seed_f, &mut seed_g)?];
+        for t in stations {
+            let ctx = |err: GeopError| err.with_context(format!("the station at t={t:?}"));
+            let point = edge.curve.evaluate(t).map_err(ctx)?;
+            let along = edge
+                .curve
+                .tangent(t)
+                .and_then(|d| d.normalize())
+                .map_err(ctx)?;
+            let seeds = on_both(point, &mut seed_f, &mut seed_g).map_err(ctx)?;
+            let (copy, (uf, vf, ug, vg)) = predictor_corrector_step(
+                inner_f,
+                inner_g,
+                point,
+                along,
+                seeds.0,
+                seeds.1,
+                seeds.2,
+                seeds.3,
+                Scalar::ZERO,
+            )
+            .map(|(p, uf, vf, ug, vg)| (p, (uf, vf, ug, vg)))
+            .map_err(ctx)?;
+            // The edge runs along `n_f × n_g` one way; its copy, where the
+            // inner surfaces face the way the faces do, runs the same way.
+            let (puf, pvf) = outer_f
+                .project(point, uf.sharpen(), vf.sharpen(), PROJECT_ITERATIONS)
+                .map_err(ctx)?;
+            let (pug, pvg) = outer_g
+                .project(point, ug.sharpen(), vg.sharpen(), PROJECT_ITERATIONS)
+                .map_err(ctx)?;
+            let way = |a: Vector3, b: Vector3| a.prod_cross(&b).prod_dot(&along);
+            let outer_way = way(
+                outer_f.normal(puf, pvf).map_err(ctx)?,
+                outer_g.normal(pug, pvg).map_err(ctx)?,
+            );
+            let inner_way = way(
+                inner_f.normal(uf, vf).map_err(ctx)?,
+                inner_g.normal(ug, vg).map_err(ctx)?,
+            );
+            let same = (outer_way.definitely_greater(Scalar::ZERO)
+                && inner_way.definitely_greater(Scalar::ZERO))
+                || (outer_way.definitely_less(Scalar::ZERO)
+                    && inner_way.definitely_less(Scalar::ZERO));
+            if !same {
+                return Err(GeopError::new(format!(
+                    "the walls are too thick: the inner copy of the edge at {copy:?} could run the other way than the edge at {point:?} ({inner_way:?} against {outer_way:?})"
+                )));
+            }
+            points.push(copy);
+            uvs.push((uf, vf, ug, vg));
+            seed_f = Vector2::from_array([uf, vf]);
+            seed_g = Vector2::from_array([ug, vg]);
+        }
+        points.push(end);
+        uvs.push(on_both(end, &mut seed_f, &mut seed_g)?);
+        let mut widest = None;
+        let ctx = |err: GeopError| err;
+        fit_branch(inner_f, inner_g, &points, &uvs, &mut widest, &ctx).map_err(|err| {
+            err.with_context(format!(
+                "fitting the copy through {} stations; the widest true point between them: {widest:?}",
+                points.len()
+            ))
+        })
     }
 
     /// Where every coedge's inner copy ends on its face's inner surface, at
@@ -1028,17 +1272,36 @@ impl<'a> Hollow<'a> {
 
 /// A curve shaped like `curve` from `start` to `end` — all the way round
 /// a circle back to `start`, if `closed`: a line for a straight one, an arc
-/// around the same axis for a circular one. Fails for any other curve, and
-/// for an `end` not on the circle around that axis through `start`.
-fn shaped_like(curve: &Curve3, start: Vector3, end: Vector3, closed: bool) -> GeopResult<Curve3> {
-    if curve.as_line()?.is_some() {
-        return NurbCurve3D::line(start, end);
+/// around the same axis for a circular one, exact. `None` for any other
+/// curve, whose copy is traced instead (see `Hollow::traced_inner_curve`);
+/// an error for an `end` not on the circle around that axis through
+/// `start`.
+fn shaped_like(
+    curve: &Curve3,
+    start: Vector3,
+    end: Vector3,
+    closed: bool,
+) -> Option<GeopResult<Curve3>> {
+    match curve.as_line() {
+        Err(e) => return Some(Err(e)),
+        Ok(Some(_)) => return Some(NurbCurve3D::line(start, end)),
+        Ok(None) => {}
     }
-    let Some(arc) = curve.as_arc()? else {
-        return Err(GeopError::new(
-            "the edge is neither straight nor circular: offsetting it is not supported",
-        ));
-    };
+    match curve.as_arc() {
+        Err(e) => Some(Err(e)),
+        Ok(None) => None,
+        Ok(Some(arc)) => Some(arc_like(curve, &arc, start, end, closed)),
+    }
+}
+
+/// [`shaped_like`] for a circular `curve`, the arc `arc`.
+fn arc_like(
+    curve: &Curve3,
+    arc: &Arc,
+    start: Vector3,
+    end: Vector3,
+    closed: bool,
+) -> GeopResult<Curve3> {
     let axis = arc.circle.axis();
     let center = axis.project(&start);
     let radius = start.sub(&center).norm();
@@ -1089,6 +1352,20 @@ fn shaped_like(curve: &Curve3, start: Vector3, end: Vector3, closed: bool) -> Ge
         end,
     }
     .to_curve()
+}
+
+/// The parameter of `curve` at `point`, a point of it, found from `seed`:
+/// refined until it pins the point down, and checked to be at it.
+fn parameter_at(curve: &Curve3, point: Vector3, seed: Scalar) -> GeopResult<Scalar> {
+    let t = curve.closest_parameter_from(&point, seed)?;
+    let t = curve.refine_parameter_at_point(t, &point);
+    let at = curve.evaluate(t)?;
+    if !at.could_be_equal(&point) {
+        return Err(GeopError::new(format!(
+            "{point:?} is not on the curve: the nearest point is {at:?}, at t={t:?}"
+        )));
+    }
+    Ok(t)
 }
 
 /// The first of the faces `faces`, indices into `surfaces`, whose surface

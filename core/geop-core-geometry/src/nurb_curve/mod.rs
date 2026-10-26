@@ -7,6 +7,8 @@ pub use construct::bezier_knots;
 mod evaluate;
 mod extend;
 mod extrema;
+mod fit;
+pub use fit::WidestBetween;
 mod helix;
 pub use helix::{Handedness, HelixRow, arc_span, cos_sin, helix_rows, sqrt2_over_2};
 mod interpolate;

@@ -1,7 +1,7 @@
 //! Programs from tutorials and bug reports, rebuilt in Rust: the shell of a
 //! box whose edges were rounded first, as the beginners' lessons do it.
 
-use geop_core_math::geop_error::GeopResult;
+use geop_core_math::{geop_error::GeopResult, scalars::Scalar};
 use geop_core_program::{
     element::ElementReference, operation_registry::OperationRegistry, program::Program,
 };
@@ -48,15 +48,17 @@ fn top_face_at(part: &NamedModel, z: f64) -> String {
 /// vertical edges rounded with radius 10, then shelled from the top with
 /// walls 5 thick.
 ///
-/// The shell is refused: "the edge is neither straight nor circular:
+/// The shell was refused: "the edge is neither straight nor circular:
 /// offsetting it is not supported", naming the edge where a blend meets
 /// the bottom face. That edge is a quarter circle of radius 10 (a rolling
 /// ball between two planes meets a third plane square to both in an arc),
-/// but the fillet's boolean traced it as a fitted curve, so the shell does
-/// not recognise it. Shelling first and rounding afterwards builds (see
-/// `geop-ops-fillet`'s regression tests for what that leaves behind).
+/// which the fillet's boolean traced as a fitted curve. The boolean now
+/// splices the exact arc there (`geop_core_geometry::shape::circle_through`).
+///
+/// The volumes are integrated enclosures (the blend's spans are rational,
+/// so the quadrature's error is estimated), and each has to hold the true
+/// volume: the rounded block's, and the walls'.
 #[test]
-#[ignore = "bug: shelling a box whose vertical edges were rounded is refused — the blends' edges on the caps are quarter circles the fillet left as traced curves, which the shell cannot offset"]
 fn shell_of_a_box_with_rounded_vertical_edges() {
     let mut program = Program::new();
     program.push(
@@ -68,6 +70,20 @@ fn shell_of_a_box_with_rounded_vertical_edges() {
     assert_eq!(vertical.len(), 4, "{vertical:?}");
     program.push("round", FilletArgs::constant(vertical, 10.0));
     let part = program.build_model(registry).unwrap();
+    let corner = 1.0 - std::f64::consts::PI / 4.0;
+    let outer = 100.0 * 60.0 * 50.0 - 4.0 * corner * 100.0 * 50.0;
+    let volume = |part: &NamedModel, name: &str| {
+        let id = part.solid_id(name).unwrap();
+        part.topology().mass_properties(id).unwrap().volume
+    };
+    // Integrated: an enclosure of the volume, which has to hold the true one.
+    let encloses = |volume: Scalar, expected: f64| {
+        assert!(
+            volume.could_be_equal(Scalar::from_f64(expected)),
+            "{volume:?} vs {expected}"
+        )
+    };
+    encloses(volume(&part, "fillet(round)"), outer);
     let top = top_face_at(&part, 50.0);
     program.push(
         "shell",
@@ -79,14 +95,6 @@ fn shell_of_a_box_with_rounded_vertical_edges() {
     );
     let part = program.build_model(registry).unwrap();
     assert_valid(&part);
-    let id = part.solid_id("shell(shell)").unwrap();
-    let volume = part.topology().mass_properties(id).unwrap().volume.to_f64();
-    let corner = 1.0 - std::f64::consts::PI / 4.0;
-    let outer = 100.0 * 60.0 * 50.0 - 4.0 * corner * 100.0 * 50.0;
     let inner = 90.0 * 50.0 * 45.0 - 4.0 * corner * 25.0 * 45.0;
-    assert!(
-        (volume - (outer - inner)).abs() < 1e-6,
-        "{volume} vs {}",
-        outer - inner
-    );
+    encloses(volume(&part, "shell(shell)"), outer - inner);
 }
