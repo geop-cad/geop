@@ -9,8 +9,9 @@
 //! `geop_core_topology::validation::face_orientation`) — so each triangle
 //! is wound to agree with them.
 //!
-//! Faces are sampled one by one, so two faces sharing an edge each sample
-//! it on their own: the mesh is as watertight as those samplings agree.
+//! Faces meet along their edges' shared samples, and at each other's
+//! points along them (see [`crate::rasterize`]): a solid's mesh is closed, every
+//! side of a triangle the side of one other, the other way round.
 
 use std::io::{self, Write};
 
@@ -82,12 +83,12 @@ pub fn stl_triangles(raster: &RasterizedModel, faces: &[FaceId]) -> Vec<StlTrian
 /// tetrahedra they span with a corner of the mesh, negative if they are
 /// wound in. Exact for a closed mesh, up to its `f32` corners.
 ///
-/// A rasterized model is closed only nearly: each face is sampled along
-/// its own pcurves, so two faces meet along a curved edge in two polygons
-/// of it, a sliver apart. A sliver's tetrahedron weighs by its distance
-/// from the apex, so the apex is a corner of the mesh, not the origin: a
-/// plate at `(10000, -5000, 2000)` summed from the origin came out 5.5
-/// over for a bore of 142, and its mirror image 5.4 under.
+/// The apex is a corner of the mesh, not the origin: in `f32`, a corner
+/// far from the origin is rounded by more than the mesh's own size there,
+/// and the tetrahedra spanned from the origin weigh that rounding by their
+/// distance: a plate at `(10000, -5000, 2000)` summed from the origin came
+/// out 5.5 over for a bore of 142, back when faces met in two polygons of
+/// an edge a sliver apart.
 pub fn enclosed_volume(triangles: &[StlTriangle]) -> f64 {
     let Some(first) = triangles.first() else {
         return 0.0;
