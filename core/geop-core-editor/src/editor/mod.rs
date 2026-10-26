@@ -24,6 +24,7 @@
 
 mod build;
 mod context;
+mod kept;
 mod protocol;
 #[cfg(test)]
 mod tests;
@@ -66,6 +67,7 @@ use geop_core_math::{
     scalars::Scalar,
     vector::Vector3,
 };
+use kept::Kept;
 
 /// How many files' builds an editor keeps (see `Editor::builds`): each
 /// holds every step's part, so a few large files are as many as fit.
@@ -73,10 +75,6 @@ const KEPT_BUILDS: usize = 6;
 
 /// A part drawn, by what it was made of (see [`Reader::seen`]).
 type Drawing = (Seen, Rc<PartView>);
-
-/// How many components no placed part uses a viewer keeps (see
-/// [`SceneState::forgotten`]).
-const KEPT_COMPONENTS: usize = 8;
 
 /// How many parts drawn an editor keeps whole (see `Editor::views`): the
 /// part before the step edited, the part with it, and those of the last
@@ -216,11 +214,9 @@ pub struct Editor {
     /// component each is drawn from, and where it is, as sent — `None`
     /// when the viewer may have none (see [`SceneState`]).
     placed: Option<HashMap<String, (String, [f64; 12])>>,
-    /// The components the viewer has, by key: the scene each was last used
-    /// in (see [`SceneState::forgotten`]).
-    components: BTreeMap<String, u64>,
-    /// How many scenes were sent.
-    scenes: u64,
+    /// What the viewer keeps of the scenes it was sent: the components and
+    /// the meshes of faces, by key.
+    kept: Kept,
     /// The tool in hand, if one is.
     tool: Option<InHand>,
     /// The inspector the last command asked, and what it told it: to answer
@@ -279,8 +275,7 @@ impl Editor {
             written: Vec::new(),
             exported: None,
             placed: None,
-            components: BTreeMap::new(),
-            scenes: 0,
+            kept: Kept::default(),
             tool: None,
             asked: None,
             drawn: None,
@@ -511,12 +506,11 @@ impl Editor {
         let all = before.is_none();
         let before = before.unwrap_or_default();
         if all {
-            self.components.clear();
+            self.kept.clear();
         }
-        self.scenes += 1;
+        let sent = self.kept.send(&part);
         let mut placed = HashMap::new();
         let mut instances = Vec::new();
-        let mut components = BTreeMap::new();
         for instance in &part.instances {
             let f = &instance.frame;
             let frame = [f.origin(), f.u(), f.v(), f.w()].map(|p| p.to_array().map(|c| c.to_f64()));
@@ -528,24 +522,7 @@ impl Editor {
             if before.get(&instance.name) != Some(&drawn) {
                 instances.push(instance.clone());
             }
-            let used = (self.components).insert(instance.component.clone(), self.scenes);
-            if used.is_none() {
-                components.insert(instance.component.clone(), instance.view.clone());
-            }
             placed.insert(instance.name.clone(), drawn);
-        }
-        // Of those no placed part uses now, the viewer keeps the last used.
-        let mut unused: Vec<(u64, String)> = (self.components.iter())
-            .filter(|(_, used)| **used < self.scenes)
-            .map(|(key, used)| (*used, key.clone()))
-            .collect();
-        unused.sort();
-        let forget = unused.len().saturating_sub(KEPT_COMPONENTS);
-        let forgotten: Vec<String> = (unused.into_iter().take(forget))
-            .map(|(_, key)| key)
-            .collect();
-        for key in &forgotten {
-            self.components.remove(key);
         }
         let mut removed: Vec<String> = (before.keys())
             .filter(|name| !placed.contains_key(*name))
@@ -564,8 +541,10 @@ impl Editor {
             instances,
             all,
             removed,
-            components,
-            forgotten,
+            components: sent.components,
+            forgotten: sent.forgotten,
+            meshes: sent.meshes,
+            forgotten_meshes: sent.forgotten_meshes,
         }
     }
 

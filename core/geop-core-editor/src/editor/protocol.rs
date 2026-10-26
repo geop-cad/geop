@@ -13,7 +13,7 @@ use crate::{
     output::{Export, ExporterInfo, Inspection, InspectorInfo},
     registry::{Panel, StructureItem},
     tools::ToolInfo,
-    view::{PartView, ViewInstance},
+    view::{FaceMesh, PartView, ViewInstance},
 };
 
 /// Something the user did.
@@ -241,6 +241,9 @@ pub struct ProgramState {
 
 /// What is drawn: a part, and which of its sketches and datums not to.
 ///
+/// Its faces' triangles are sent by key, each mesh once (see
+/// [`SceneState::meshes`]).
+///
 /// The parts placed in it — however many, however deep — are sent as what
 /// changed since the last scene: a viewer keeps them by name, and the
 /// views of their components by key, each sent once. So moving one placed
@@ -257,7 +260,8 @@ pub struct SceneState {
     /// moved or drawn from another component since the last scene — every
     /// one, if `all`.
     pub instances: Vec<ViewInstance>,
-    /// Whether `instances` are all there are: a viewer forgets any others.
+    /// Whether the scene is all there is: a viewer forgets any other placed
+    /// parts, and every component and mesh it kept.
     pub all: bool,
     /// The names of the placed parts drawn last time and gone now.
     pub removed: Vec<String>,
@@ -271,6 +275,16 @@ pub struct SceneState {
     /// editing a step before a large part placed after it does not send
     /// that part again when it shows again.
     pub forgotten: Vec<String>,
+    /// The meshes of the faces drawn — of the part, and of the components
+    /// sent — that the viewer does not have, by key (see
+    /// [`crate::view::FaceMesh`]): a face is sent by the key of its mesh,
+    /// and each mesh once, kept until it is `forgotten_meshes`. So showing
+    /// a part again with other sketches, or with one face changed, sends
+    /// the faces of none, or of that one.
+    pub meshes: BTreeMap<String, Rc<FaceMesh>>,
+    /// The meshes the viewer forgets now: no face drawn has used them for
+    /// longest.
+    pub forgotten_meshes: Vec<String>,
     /// What the part has beyond its faces, to list and show or hide (see
     /// [`crate::registry::Drawer::structure`]).
     pub structure: Vec<StructureItem>,

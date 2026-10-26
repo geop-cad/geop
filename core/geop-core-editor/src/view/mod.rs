@@ -170,7 +170,9 @@ pub struct ViewEdge {
     pub ends: [String; 2],
 }
 
-/// A face of the part, as drawn: its name, and its triangles.
+/// A face of the part, as drawn: its name, and its triangles. Serialized,
+/// the triangles are named by their key ([`FaceMesh::key`]): a viewer is
+/// sent each mesh once ([`crate::editor::SceneState::meshes`]).
 #[derive(Clone, Debug, Serialize)]
 pub struct ViewFace {
     pub name: String,
@@ -179,7 +181,7 @@ pub struct ViewFace {
     /// The step whose feature made it, if one did.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub feature: Option<String>,
-    #[serde(flatten)]
+    #[serde(serialize_with = "FaceMesh::serialize_key")]
     pub mesh: Rc<FaceMesh>,
 }
 
@@ -212,6 +214,11 @@ impl FaceMesh {
             triangles,
             normals,
         })
+    }
+
+    /// Serializes `mesh` as its key.
+    fn serialize_key<S: serde::Serializer>(mesh: &Rc<Self>, s: S) -> Result<S::Ok, S::Error> {
+        s.serialize_str(&mesh.key)
     }
 }
 

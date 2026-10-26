@@ -194,7 +194,11 @@ Each crate draws its own targets into a view — the model its vertices,
 edges and faces, the sketches theirs, the datums theirs, the placed parts
 theirs — by a `Drawer` of its registry, and the registry composes them
 (`Registry::draw`: every drawer in turn, then what the steps annotate),
-then `PartView::finish` measures the result.
+then `PartView::finish` measures the result. What each drawer drew is kept
+by what it read (`Drawings`, `Reader::recorded`): the part shown again
+with other sketches — a sketch opened, or closed — draws its sketches
+again, never its faces. A face's triangles are one `FaceMesh`, known by a
+hash of what a viewer is sent of it.
 
 The parts placed in a part are drawn by reference: each placed part —
 however deep — is listed once, with where it is (`ViewInstance`), and drawn
@@ -396,6 +400,9 @@ edited is always at hand, and a change to it makes again only what reads
 what changed. The builds of the last few files edited are kept, so opening
 one again builds nothing. The parts placed in the part drawn are sent as
 what changed since the last scene: their components once each, by key.
+So are the faces' meshes, of the part and of the components: a face is
+sent by its mesh's key, each mesh once, and the viewer forgets one when
+told to (`forgotten_meshes`), once nothing drawn has used it for longest.
 
 What the shown steps built on — their reference fields' values — is hidden
 from the drawing: sketches and whole datums, since what was made from them

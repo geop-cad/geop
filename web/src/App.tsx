@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import "./App.css";
 import {
   applyScene,
+  NOTHING_PLACED,
   loadGeop,
   runTool,
   send,
@@ -15,7 +16,7 @@ import {
   type Presentation,
   type Program,
   type ProgramState,
-  type SceneState,
+  type DrawnScene,
   type StepState,
   type Update,
   type Value,
@@ -95,13 +96,13 @@ function App() {
   const [wasmError, setWasmError] = useState<string | null>(null);
 
   const [program, setProgram] = useState<ProgramState | null>(null);
-  const [scene, setScene] = useState<SceneState | null>(null);
+  const [scene, setScene] = useState<DrawnScene | null>(null);
   /**
    * The placed parts drawn, and the views of their components: the kernel
    * sends what changed (see [[applyScene]]). Kept in a ref too, so that
    * updates answered one after another each apply to the one before.
    */
-  const [placed, setPlaced] = useState<Placed>({ instances: new Map(), components: {} });
+  const [placed, setPlaced] = useState<Placed>(NOTHING_PLACED);
   const placedRef = useRef(placed);
   const instances = useMemo(() => [...placed.instances.values()], [placed]);
   const components = placed.components;
@@ -193,14 +194,15 @@ function App() {
       );
     }
     if (update.scene) {
-      setScene(update.scene);
+      const applied = applyScene(placedRef.current, update.scene);
+      setScene(applied.scene);
       // The answers were about the part as it was.
       setAnswers({});
-      placedRef.current = applyScene(placedRef.current, update.scene);
+      placedRef.current = applied.placed;
       setPlaced(placedRef.current);
       const drawn = {
-        extent: update.scene.part.extent,
-        solids: update.scene.part.solids.length + placedRef.current.instances.size,
+        extent: applied.scene.part.extent,
+        solids: applied.scene.part.solids.length + placedRef.current.instances.size,
       };
       if (drawnRef.current && wantsFraming(drawnRef.current, drawn, poseRef.current)) frameRef.current = true;
       drawnRef.current = drawn;
