@@ -25,6 +25,15 @@
 //! to them, share one copy, where those faces' offsets meet — a sharp inner
 //! corner; its edges across it vanish, and their ends share one vertex.
 //!
+//! **Faces that turn inside out.** A chamfer narrower than the walls has
+//! an offset, but the offsets of the faces it cuts meet before it: placed
+//! where the offsets meet, its edges across it turn around. Such an edge
+//! vanishes, and a face left with two edges by it vanishes too, its two
+//! remaining edges sharing one copy, as a collapsed blend's do. The
+//! vertices are placed again without it, until no edge turns around. An
+//! edge that turns around between two faces that stay vanishes the same
+//! way, its ends one vertex where four faces meet.
+//!
 //! **The opening.** Where a face `F` is taken away, its inner copy `F'`
 //! lies on `F`'s own surface, inside it, and what is left of `F` is `F`
 //! without `F'`: a rim, the walls' cut edge. Its boundary is `F`'s
@@ -96,7 +105,7 @@ use geop_core_topology::{
 use geop_lib_booleans::{RemeshParams, boolean};
 use geop_ops_model::{BodyNames, BooleanOp, NamedModel, Namer};
 
-use crate::rebuild::{along, rebuilt, room, smooth_along};
+use crate::rebuild::{Placed, along, room, smooth_along};
 
 /// Seed of the ray casting that finds which outer loop a hole lies in:
 /// any gives the same answer (see `pcurves_contain`), a constant keeps it
@@ -391,39 +400,56 @@ struct Contracted {
     face: Vec<Option<usize>>,
 }
 
-/// What the copy of each edge of `spec` is, given which faces collapse (see
-/// [`Copy`]). An edge of a collapsed face vanishes, unless the face is
-/// tangent along it to a face that does not collapse: a blend narrower than
-/// the walls are thick leaves the two faces it rounds meeting in a sharp
-/// inner corner along it, and across it — where it meets a face square to
-/// it, or another collapsed blend — nothing. Of the two edges along it, the
-/// second takes the first's copy. A collapsed face with other than two such
-/// edges, a free edge or a seam is refused: what would take its place is
-/// not that corner.
-fn collapse_edges(spec: &BodySpec, names: &BodyNames, collapsed: &[bool]) -> GeopResult<Vec<Copy>> {
+/// What the copy of each edge of `spec` is, given which faces collapse —
+/// whose offset does — which invert — whose copy turns inside out — and
+/// which edges' copies shrink to nothing (see [`Copy`]).
+///
+/// An edge whose copy shrinks to nothing vanishes, its ends' copies one
+/// point, as does one between two faces gone. Of a face gone, the edges to
+/// faces that stay are along it: a blend narrower than the walls are thick
+/// leaves the two faces it rounds meeting in a sharp inner corner along it,
+/// and a chamfer turned inside out leaves the two it cuts meeting there.
+/// For a collapsed face, that is where it is tangent to them, and across it
+/// — where it meets a face square to it — nothing. For an inverted face,
+/// it is where its edges did not shrink. Of the two edges along it, the
+/// second takes the first's copy; with none, the face shrinks to a point.
+/// A face gone with other than two such edges or none, a free edge or a
+/// seam is refused: what would take its place is not that corner.
+fn collapse_edges(
+    spec: &BodySpec,
+    names: &BodyNames,
+    collapsed: &[bool],
+    inverted: &[bool],
+    shrunk: &[bool],
+) -> GeopResult<Vec<Copy>> {
     let uses = spec.edge_uses();
+    let gone = |f: usize| collapsed[f] || inverted[f];
     let mut copy = vec![Copy::Own; spec.edges.len()];
     let mut along: Vec<Vec<usize>> = vec![Vec::new(); spec.faces.len()];
     for (e, at) in uses.iter().enumerate() {
         let [(f, ..), (g, ..)] = match *at.as_slice() {
             [a, b] if a.0 != b.0 => [a, b],
             _ => {
-                if at.iter().any(|&(f, ..)| collapsed[f]) {
+                if at.iter().any(|&(f, ..)| gone(f)) || shrunk[e] {
                     return Err(GeopError::new(format!(
-                        "the walls are too thick: face {} collapses, and its edge {} is free or a seam, which is not supported",
+                        "the walls are too thick: face {} collapses, or the copy of its edge {} shrinks to nothing, and that edge is free or a seam, which is not supported",
                         names.faces[at[0].0], names.edges[e]
                     )));
                 }
                 continue;
             }
         };
-        match (collapsed[f], collapsed[g]) {
+        if shrunk[e] {
+            copy[e] = Copy::Vanishes;
+            continue;
+        }
+        match (gone(f), gone(g)) {
             (false, false) => {}
             (true, true) => copy[e] = Copy::Vanishes,
             _ => {
-                let gone = if collapsed[f] { f } else { g };
-                if smooth_along(spec, &spec.edges[e], f, g)? {
-                    along[gone].push(e);
+                let x = if gone(f) { f } else { g };
+                if inverted[x] || smooth_along(spec, &spec.edges[e], f, g)? {
+                    along[x].push(e);
                 } else {
                     copy[e] = Copy::Vanishes;
                 }
@@ -436,7 +462,7 @@ fn collapse_edges(spec: &BodySpec, names: &BodyNames, collapsed: &[bool]) -> Geo
             [first, second] => copy[second] = Copy::As(first),
             _ => {
                 return Err(GeopError::new(format!(
-                    "the walls are too thick: face {} collapses, and is tangent along {} of its edges to faces that stay, where a blend is along two: not supported",
+                    "the walls are too thick: face {} vanishes — its inner copy collapses or turns around — and {} of its edges to faces that stay are left, where a blend or a chamfer leaves two: not supported",
                     names.faces[f],
                     edges.len()
                 )));
@@ -444,6 +470,29 @@ fn collapse_edges(spec: &BodySpec, names: &BodyNames, collapsed: &[bool]) -> Geo
         }
     }
     Ok(copy)
+}
+
+/// Per face of `spec`, whether its copy turns inside out: a face kept,
+/// some of whose edges' copies `shrunk` to nothing, left with two edges or
+/// fewer by them — a chamfer narrower than the walls, between the two
+/// faces it cuts, its edges across it turned around. What is left of it
+/// has no area: the faces either side of it meet, or it shrinks to a
+/// point. A face with holes is not decided so.
+fn inverted(spec: &BodySpec, kept: &[bool], shrunk: &[bool]) -> Vec<bool> {
+    (spec.faces.iter().enumerate())
+        .map(|(f, face)| {
+            let edges: Vec<usize> = (face.outer.iter())
+                .filter_map(|c| match c.on {
+                    CoedgeOn::Edge(e, _) => Some(e),
+                    CoedgeOn::Vertex(_) => None,
+                })
+                .collect();
+            kept[f]
+                && face.holes.is_empty()
+                && edges.iter().any(|&e| shrunk[e])
+                && edges.iter().filter(|&&e| !shrunk[e]).count() <= 2
+        })
+        .collect()
 }
 
 /// `spec` — the faces on their inner surfaces — contracted where faces
@@ -732,14 +781,51 @@ impl<'a> Hollow<'a> {
                 }
             }
         }
-        let copy = collapse_edges(spec, names, &collapsed)?;
-        let gone: Vec<bool> = (0..spec.faces.len())
-            .map(|f| collapsed[f] || smooth[f])
-            .collect();
-        let copies = contract(&offsets, names, &kept, &gone, &copy)?;
-        let reseat = vec![false; copies.spec.vertices.len()];
-        let inner = rebuilt(&copies.spec, &copies.names, &copies.kept, &reseat)
-            .map_err(|e| e.with_context("building the walls' inner side"))?;
+        // The edges whose copies shrink to nothing: those that turn
+        // around, found by placing the inner side's vertices. Each time some do, they vanish, and
+        // the faces they leave with no area with them, until none does.
+        let mut shrunk = vec![false; spec.edges.len()];
+        let (copies, inner) = loop {
+            let inverted = inverted(spec, &kept, &shrunk);
+            let copy = collapse_edges(spec, names, &collapsed, &inverted, &shrunk)?;
+            let gone: Vec<bool> = (0..spec.faces.len())
+                .map(|f| collapsed[f] || inverted[f] || smooth[f])
+                .collect();
+            if (0..spec.faces.len()).all(|f| !kept[f] || gone[f]) {
+                return Err(GeopError::new(
+                    "the walls are too thick: the inner copy of every face kept turns around or shrinks to nothing",
+                ));
+            }
+            let copies = contract(&offsets, names, &kept, &gone, &copy)?;
+            let reseat = vec![false; copies.spec.vertices.len()];
+            let placed = Placed::new(&copies.spec, &copies.names, &copies.kept, &reseat).map_err(|e| {
+                // Where faces gave way to their neighbours, those may not
+                // meet either: the walls turn the inner side inside out
+                // across more than a chamfer.
+                match (shrunk.iter().position(|&t| t), inverted.iter().position(|&i| i)) {
+                    (Some(t), Some(f)) => GeopError::new(format!(
+                        "the walls are too thick: edge {} turns around, and the inner copy of face {} with it, but the faces either side of it do not meet in its place ({})",
+                        names.edges[t],
+                        names.faces[f],
+                        e.root_message()
+                    )),
+                    _ => e,
+                }
+                .with_context("placing the walls' inner side's vertices")
+            })?;
+            let now = placed.turned();
+            if now.is_empty() {
+                let inner = placed
+                    .rebuilt()
+                    .map_err(|e| e.with_context("building the walls' inner side"))?;
+                break (copies, inner);
+            }
+            for (e, copied) in copies.edge.iter().enumerate() {
+                if copied.is_some_and(|(i, _)| now.contains(&i)) {
+                    shrunk[e] = true;
+                }
+            }
+        };
         let mut hollow = Self {
             spec,
             names,

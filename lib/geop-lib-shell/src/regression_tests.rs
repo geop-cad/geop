@@ -9,7 +9,7 @@ use geop_core_math::{
 use geop_core_topology::{Body, FaceId, ShellId, SolidId, build::BodySpec};
 use geop_lib_booleans::{RemeshParams, boolean};
 use geop_lib_sweep::{
-    Apex, Ends, Section, loft, polygon, polyline, revolve_at_oriented,
+    Apex, Ends, Section, SweepLoop, extrude, loft, polygon, polyline, revolve_at_oriented,
     shapes::{Axis, revolved_cylinder, revolved_cylinder_along_axis, v3},
 };
 use geop_ops_model::{
@@ -622,15 +622,66 @@ fn a_step_opened_at_its_lower_top() {
 
 /// A can whose top edge is chamfered 0.05, shelled 0.2 thick: the
 /// chamfer is narrower than the walls, so its inner copy turns inside out,
-/// as a blend narrower than the walls collapses.
+/// as a blend narrower than the walls collapses. The seams across the
+/// chamfer's quarters turn around, the quarters vanish, and the inner top
+/// and side meet in a sharp corner: the hollow is the plain cylinder 0.8
+/// round and 1.6 high.
 #[test]
-#[ignore = "bug: refused, 'its moved ends ... lie the other way round along it: a face it bounds has vanished' on the seam revolved(r,c1,a0) between two quarters of the chamfer cone. The chamfer's offset is a cone that does not collapse (unlike a blend's), but its inner copy turns inside out: the offsets of the top and the side meet beyond it. The collapse machinery (collapse_edges/contract) keys collapse on the offset returning None and merges only edges tangent to the faces kept; a face whose copy inverts needs to be found (the rebuild knows: the seams across it turn around) and its two edges to the faces kept made one copy, tangent or not."]
 fn a_chamfer_narrower_than_the_walls() {
     let (mut part, solid) = revolved(&[[0., 2.], [0.95, 2.], [1., 1.95], [1., 0.], [0., 0.]]);
     let namer = Namer::new("shell", "s").unwrap();
-    let result = shell(&mut part, &namer, solid, &[], Scalar::from_f64(0.2), &[]);
-    assert!(result.is_ok(), "{result:?}");
+    let shelled = shell(&mut part, &namer, solid, &[], Scalar::from_f64(0.2), &[])
+        .unwrap_or_else(|e| panic!("{e:?}"));
     assert_valid(&part);
+    let volume = part.topology().mass_properties(shelled).unwrap().volume;
+    // The chamfer's ring: a triangle of legs 0.05 round its centroid.
+    let pi = std::f64::consts::PI;
+    let ring = 2. * pi * (1. - 0.05 / 3.) * 0.05 * 0.05 / 2.;
+    let walls = pi * 2. - ring - pi * 0.8 * 0.8 * 1.6;
+    assert!(
+        volume.could_be_equal(Scalar::from_f64(walls)),
+        "{volume:?} vs {walls}"
+    );
+}
+
+/// A 2 x 1 x 1 block whose top edge along `y` at `x = 2` is chamfered
+/// 0.05, shelled 0.2 thick: the chamfer's edges to the end faces turn
+/// around, and its inner copy vanishes between the top's and the side's,
+/// which meet in a sharp corner. The hollow is the block shrunk by 0.2.
+#[test]
+fn a_straight_chamfer_narrower_than_the_walls() {
+    let mut part = NamedModel::new();
+    let corners: Vec<Vector2> = [[0., 0.], [2., 0.], [2., 0.95], [1.95, 1.], [0., 1.]]
+        .iter()
+        .map(|&c| Vector2::from_array(c.map(Scalar::from_f64)))
+        .collect();
+    let [x, y, z] = [0, 1, 2].map(Vector3::axis);
+    let plane = CoordinateSystem::try_new(v3(0., 0., 0.), x, z, y).unwrap();
+    let namer = Namer::new("prism", "p").unwrap();
+    let solid = extrude(
+        &mut part,
+        &namer,
+        Some(&namer.root()),
+        &plane,
+        &[Scalar::ZERO, Scalar::ONE],
+        &[SweepLoop::plain(Profile::closed(
+            polygon(&corners).unwrap(),
+        ))],
+    )
+    .unwrap()
+    .solid
+    .unwrap();
+    assert_valid(&part);
+    let namer = Namer::new("shell", "s").unwrap();
+    let shelled = shell(&mut part, &namer, solid, &[], Scalar::from_f64(0.2), &[])
+        .unwrap_or_else(|e| panic!("{e:?}"));
+    assert_valid(&part);
+    let volume = part.topology().mass_properties(shelled).unwrap().volume;
+    let walls = 2. - 0.05 * 0.05 / 2. - 1.6 * 0.6 * 0.6;
+    assert!(
+        volume.could_be_equal(Scalar::from_f64(walls)),
+        "{volume:?} vs {walls}"
+    );
 }
 
 /// A cone cut off near its tip, 0.1 across there, shelled 0.2 thick: the

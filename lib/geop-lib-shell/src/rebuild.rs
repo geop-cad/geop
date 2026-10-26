@@ -167,6 +167,50 @@ pub fn rebuilt(
     Rebuild::new(spec, names, replaced, reseat)?.result()
 }
 
+/// The body `spec` with its vertices moved as [`rebuilt`] moves them, its
+/// edges not yet rebuilt: what a caller asks of before it rebuilds them,
+/// whether an edge turns around ([`Placed::turned`]).
+pub(crate) struct Placed<'a>(Rebuild<'a>);
+
+impl<'a> Placed<'a> {
+    /// The vertices of `spec` moved (see [`rebuilt`]).
+    pub(crate) fn new(
+        spec: &'a BodySpec,
+        names: &'a BodyNames,
+        replaced: &'a [bool],
+        reseat: &[bool],
+    ) -> GeopResult<Self> {
+        Rebuild::new(spec, names, replaced, reseat).map(Self)
+    }
+
+    /// The edges whose moved ends lie the other way round than they did:
+    /// moved this far, the edge shrank through nothing, and a face it
+    /// bounds may vanish with it. Decided from the ends alone, against the
+    /// chord they had: an edge between two moved planes is parallel to
+    /// what it was, so its ends swap exactly when it turns around. A closed
+    /// edge, its ends one vertex, never does. One that could have shrunk to
+    /// a point exactly is not counted: [`rebuilt`] refuses it by name.
+    pub(crate) fn turned(&self) -> Vec<usize> {
+        let rebuild = &self.0;
+        (rebuild.spec.edges.iter().enumerate())
+            .filter(|(_, edge)| {
+                edge.start != edge.end && (rebuild.moved[edge.start] || rebuild.moved[edge.end])
+            })
+            .filter(|(_, edge)| {
+                let was = rebuild.spec.vertices[edge.end].sub(&rebuild.spec.vertices[edge.start]);
+                let now = rebuild.points[edge.end].sub(&rebuild.points[edge.start]);
+                now.prod_dot(&was).definitely_less(Scalar::ZERO)
+            })
+            .map(|(e, _)| e)
+            .collect()
+    }
+
+    /// The body rebuilt (see [`rebuilt`]).
+    pub(crate) fn rebuilt(self) -> GeopResult<BodySpec> {
+        self.0.result()
+    }
+}
+
 /// A face to be put on another surface, `f`, that meets a face kept, `g`,
 /// tangentially along the edge `e` — a fillet or a smooth blend along it —
 /// if there is one: `(f, g, e)`. Asked of `spec` before the surfaces change.
@@ -287,13 +331,6 @@ impl<'a> Rebuild<'a> {
                     .map_err(|e| e.with_context(format!("moving vertex {}", names.vertices[v])))?;
             }
         }
-        rebuild.curves = (0..spec.edges.len())
-            .map(|e| {
-                rebuild
-                    .curve(e, &along[e])
-                    .map_err(|err| err.with_context(format!("edge {}", names.edges[e])))
-            })
-            .collect::<GeopResult<_>>()?;
         Ok(rebuild)
     }
 
@@ -743,9 +780,18 @@ impl<'a> Rebuild<'a> {
             .map_err(|e| e.with_context("tracing it where its faces meet"))
     }
 
-    /// The rebuilt body, described whole.
-    fn result(&self) -> GeopResult<BodySpec> {
+    /// The rebuilt body, described whole: its edges rebuilt between the
+    /// moved vertices.
+    fn result(mut self) -> GeopResult<BodySpec> {
         let spec = self.spec;
+        let along = spec.edge_uses();
+        let curves = (0..spec.edges.len())
+            .map(|e| {
+                self.curve(e, &along[e])
+                    .map_err(|err| err.with_context(format!("edge {}", self.names.edges[e])))
+            })
+            .collect::<GeopResult<_>>()?;
+        self.curves = curves;
         let edges = (spec.edges.iter().zip(&self.curves))
             .map(|(edge, curve)| EdgeSpec {
                 curve: curve.clone().unwrap_or_else(|| edge.curve.clone()),
