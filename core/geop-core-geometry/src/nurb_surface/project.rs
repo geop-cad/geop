@@ -15,12 +15,18 @@ impl NurbSurface<4> {
     /// Fixed-iteration-count Newton foot-point projection of `target` onto
     /// this surface, starting from `(u0, v0)`.
     ///
-    /// Each step solves the exact 2x2 system `J·Δ = r` where
-    /// `r = (residual·Su, residual·Sv)` and `J = [[Su·Su, Su·Sv], [Su·Sv,
-    /// Sv·Sv]]` (the first fundamental form — exact for the degree-1
-    /// bilinear/low-degree patches used in this crate's tests, since second
-    /// derivatives are dropped), then clamps `(u, v)` into `domain_u()` /
-    /// `domain_v()` before the next iteration. Runs `iterations` times with no
+    /// Each step is Newton's on the squared distance: it solves the 2x2
+    /// system `H·Δ = r` where `r = (residual·Su, residual·Sv)` and `H` its
+    /// Hessian, `[[Su·Su − residual·Suu, Su·Sv − residual·Suv], [·, Sv·Sv −
+    /// residual·Svv]]`, then clamps `(u, v)` into `domain_u()` /
+    /// `domain_v()` before the next iteration. Where `H` is not definitely
+    /// positive definite — far from the foot point, or by a pole — the step
+    /// is Gauss-Newton's, `H` without the second derivatives (the first
+    /// fundamental form). Without them always, the step over a curved
+    /// surface overshoots by the target's distance over the surface's
+    /// radius of curvature: a target twice the radius off a cylinder, a
+    /// ball rounding a fill of its own radius, swung from side to side of
+    /// its foot point for ever. Runs `iterations` times with no
     /// convergence tolerance — interval scalars can't judge "close enough" —
     /// but stops early, with the identical result, once the sharpened
     /// iterate repeats one before it exactly — a fixed point, or a cycle in
@@ -89,6 +95,22 @@ impl NurbSurface<4> {
                 let a22 = sv.prod_dot(&sv);
                 let b1 = su.prod_dot(&r);
                 let b2 = sv.prod_dot(&r);
+
+                // Newton's step where the Hessian is positive definite.
+                let [suu, suv, svv] = self.second_derivatives(u, v)?;
+                let (h11, h12, h22) = (
+                    a11.sub(r.prod_dot(&suu)),
+                    a12.sub(r.prod_dot(&suv)),
+                    a22.sub(r.prod_dot(&svv)),
+                );
+                let definite = h11.definitely_greater(Scalar::ZERO)
+                    && h11
+                        .mul(h22)
+                        .sub(h12.mul(h12))
+                        .definitely_greater(Scalar::ZERO);
+                if definite && let Ok((du, dv)) = solve_symmetric2((h11, h12, h22), (b1, b2)) {
+                    return Ok(Step::Next((u.add(du), v.add(dv))));
+                }
 
                 let (du, dv) = match solve_symmetric2((a11, a12, a22), (b1, b2)) {
                     Ok(step) => step,

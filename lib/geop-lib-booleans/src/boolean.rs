@@ -38,6 +38,7 @@ use geop_core_topology::{
 };
 use geop_ops_model::{BooleanOp, NamedModel, Namer};
 
+use crate::naming::{name_lone_pieces, origins_by_name};
 use crate::remesh::{RemeshParams, remesh};
 
 /// Where one solid's face sits relative to the *other* solid.
@@ -433,6 +434,7 @@ fn combine(
     // Pieces of one face that end up side by side — split along an edge of
     // the other solid that is no edge of the result — are made one again:
     // they lie on the very surface they were cut from.
+    let by_name = origins_by_name(model, &origins, solid).with_context(&ctx)?;
     let origin = |f: FaceId| origins.faces.get(&f);
     let merged = model
         .merge_faces_on_one_surface(solid.into(), |f, g| {
@@ -440,7 +442,10 @@ fn combine(
         })
         .with_context(&ctx)?;
     match merged {
-        geop_core_topology::Body::Solid(solid) => Ok(Reach::Stopped(Some(solid))),
+        geop_core_topology::Body::Solid(solid) => {
+            name_lone_pieces(model, &by_name, solid).with_context(&ctx)?;
+            Ok(Reach::Stopped(Some(solid)))
+        }
         geop_core_topology::Body::Sheet(_) => Err(ctx(GeopError::new(
             "merging the faces of the result on one surface left no solid",
         ))),

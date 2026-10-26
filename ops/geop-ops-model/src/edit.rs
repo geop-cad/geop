@@ -4,9 +4,9 @@
 
 use std::collections::HashSet;
 
+use geop_core_geometry::deform::Deformation;
 use geop_core_math::{
     geop_error::{GeopError, GeopResult},
-    primitives::Motion,
     scalars::Scalar,
     vector::Vector3,
 };
@@ -337,8 +337,8 @@ impl NamedModel {
 
     /// Forwards to [`geop_core_topology::Model::transform_body`]. Creates
     /// and deletes nothing, so every entity keeps its name.
-    pub fn transform_body(&mut self, body: Body, motion: &Motion) -> GeopResult<()> {
-        self.topology.transform_body(body, motion)
+    pub fn transform_body(&mut self, body: Body, map: &dyn Deformation) -> GeopResult<()> {
+        self.topology.transform_body(body, map)
     }
 
     /// Forwards to [`geop_core_topology::Model::assemble_solid`], naming the

@@ -59,10 +59,10 @@ geop is missing almost the whole *direct-edit* toolbox:
 | Uniform scale | `Transform(..., cpOptScale)` isotropic | **missing** (`Motion` has no scale: `core/geop-core-math/src/primitives/pose.rs:714`) | **Missing** |
 | Non-uniform scale (to B-splines) | `Transform` non-isotropic branch (28800+): everything to NURBS | missing | **Missing** (exact for NURBS: an affine map of control points) |
 | General 4x4 transform | `SmBrep.cpp:28975 Transform(matrix)` | missing | low priority |
-| Bend about an axis (neutral radius, K-factor) | `SmBendVolume.cpp` (math `h:40-75`), `SmSpaceBend.cpp:161 DoSpaceBend` | missing as a global deformation; sheet metal bends by construction (`ops/geop-ops-sheetmetal`) | **Missing** |
+| Bend about an axis (neutral radius, K-factor) | `SmBendVolume.cpp` (math `h:40-75`), `SmSpaceBend.cpp:161 DoSpaceBend` | `ops/geop-ops-pattern/src/deform_body.rs DeformBody` (bend), `core/geop-core-geometry/src/deform.rs AxialMap::bend` | **Done**: zone imprinted, rest carried on rigidly, proven bound, pcurves kept |
 | Unbend (flatten about an axis) | `SmUnbendVolume.cpp`, `SmSpaceUnbend.cpp:183` | `FlatPattern` for sheet-metal bodies only (`ops/geop-ops-sheetmetal/src/flat_pattern.rs`) | Partial (sheet metal only) |
-| Twist about an axis | `SmTwistVolume.cpp` (no B-rep driver!) | missing (sweep twist only, at construction) | **Missing** |
-| Taper, pinch, shear (axial shape function) | `NL_Geom.cpp:4740 N_TransformPtWithShapeFuncAndScale` (points only; curve and surface versions compiled out) | missing | **Missing** (SMLib effectively lacks it too) |
+| Twist about an axis | `SmTwistVolume.cpp` (no B-rep driver!) | `DeformBody` (twist), `AxialMap::twist` | **Done**, either hand |
+| Taper, pinch, shear (axial shape function) | `NL_Geom.cpp:4740 N_TransformPtWithShapeFuncAndScale` (points only; curve and surface versions compiled out) | `DeformBody` (taper), `AxialMap::taper` | **Done** (taper, exact); pinch and shear not |
 | Set deform points (free-form: move control points) | `SmBrep.cpp:9324 GetDeformPoints` / 9382 `SetDeformPoints` | missing (subd has a cage editor) | low priority |
 | Mesh (triangles) to B-rep | `SmBrep.cpp:3128 CreateFromTriangleBag` (one planar face per triangle, then stitch), 3073 `CreateFromPolyBrep` (`MakeFaceFromPolyFace`) | missing (STL export only, `core/geop-core-rasterize`) | **Missing** |
 | Split a face at C0/C1 discontinuities of its surface | `SmBrep.cpp:18366 SubdivideFaceAtDiscontinuities`, 17702 `FixAllFaceDiscontinuities` | missing (fillet puts stations at kinks; no generic split) | Missing (medium) |
@@ -136,6 +136,12 @@ deeper than a neighbour.
   shell sweep does.
 
 ### 2.2 Delete face and heal (close the gap by extending neighbours) — P0
+
+**geop (round 2).** `geop_lib_shell::delete_faces` heals a gap of 3 to 8 sides, left by one face
+or a chain of them (a fillet chain): the faces around the gap close it as some triangulation of
+its polygon of sides, each three meeting at a corner, each two sharing two corners along a new
+edge; every triangulation is tried through `rebuilt` and the first it accepts is kept. No branch
+on the number of sides or on surface kinds.
 
 **SMLib.** `SmFeatureExecutive.cpp:1922 ExtSurfaceRebuild`:
 - Collect the faces along the loop edges.
@@ -357,6 +363,11 @@ steps that geop's STEP `heal` does not:
     edge between two vertices whose enclosures overlap. Port: in `normalize`, merge the
     vertices and drop the edge when the vertex enclosures overlap and the curve's hull
     lies within their union (exact, topological).
+  - **Done (round 2):** `Builder::join_coincident_vertices` makes an edge's two ends one
+    where they and the curve's hull lie within the file's uncertainty, and drops the edge;
+    the vertex is then re-met where its faces meet by `heal`, nothing squeezed. Likewise
+    where one coedge of a loop ends at a vertex and the next starts at another within the
+    uncertainty. Vertices joined by no loop or edge stay two (proximity is not membership).
 - **Coincident vertices** (steps 5/6, `CombineCoincidentVertices`, `SmBrep.cpp:1266`):
   every branch (no edges / shared short edge → squeeze / shared face → temp edge and
   squeeze / nothing shared → glue).
@@ -475,7 +486,7 @@ are dead code):
     becomes a cylinder; a line along Bin becomes a circle (sampled checks).
 - Pcurves are deleted and re-projected.
 
-**geop today.** Missing. Sheet metal builds bends and flat patterns by construction.
+**geop today.** Done (taper, twist, bend; unbend not): `AxialMap` in `core/geop-core-geometry/src/deform.rs` composes each Bézier piece with the map on its control points (Bernstein products; the trigonometric coefficients replaced by Chebyshev cubics with a proven bound that widens the result), `Model::transform_body` takes any `Deformation`, and `DeformBody` imprints the zone ends first. Sheet metal still builds bends and flat patterns by construction.
 
 **Port** (a lib `geop-lib-deform` and an op crate `geop-ops-deform`):
 1. **Split** the solid at the zone's planes with `geop_lib_booleans::split`.

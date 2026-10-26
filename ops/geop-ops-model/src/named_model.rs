@@ -153,6 +153,17 @@ impl NamedModel {
         self.names.rename(id, new_name)
     }
 
+    /// Gives `id` back the name `earlier` of what it turned out to be — a
+    /// face a boolean only trimmed, though its splits left it a piece's
+    /// name — its name so far standing for it too, so that what referred
+    /// to it by that still finds it.
+    pub fn restore_name(&mut self, id: impl Into<RefId>, earlier: &str) -> GeopResult<()> {
+        let id = id.into();
+        let current = self.name(id)?.to_string();
+        self.names.rename(id, earlier)?;
+        self.names.alias(current, earlier)
+    }
+
     fn exists(&self, id: RefId) -> bool {
         let topology = &self.topology;
         match id {

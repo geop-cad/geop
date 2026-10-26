@@ -1,5 +1,7 @@
 pub mod aabb;
+pub(crate) mod bernstein;
 pub mod contains;
+pub mod deform;
 mod exact;
 mod fat_line;
 pub mod intersection;

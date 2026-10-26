@@ -32,13 +32,16 @@ below is what was missing then, and where each item stands now.
 - Linear and circular patterns and mirrors of bodies and of features (cuts,
   bosses, holes with their threads, picked by a face they made), move/copy
   body, scale body (evenly or along each axis, exact on the NURBS: a circle
-  scaled unevenly is an exact ellipse).
+  scaled unevenly is an exact ellipse), deform body (taper, twist or bend
+  about an axis over a zone along it, the rest carried on rigidly: composed
+  with the NURBS on its control points, exactly for a taper, within a proven
+  bound for a twist or a bend, every pcurve kept).
 - Rib, lip and groove, draft on planar faces.
 - Direct edits of any solid, imported ones too: faces moved, pushed or
   pulled along their normals (taking along the faces they run smoothly
   into), put on another face's surface, and deleted — holes, bosses,
   pockets — picked whole by one face of them (defeaturing) — chamfers,
-  fillets and cut corners healed over by the faces
+  fillets, chains of them and cut corners healed over by the faces
   around them, or the solid left open; the solid rebuilt face by face
   around them, for any NURBS faces, every name kept. Faces that lie on
   one surface (blocks united flush, a pattern of overlapping blocks) merged

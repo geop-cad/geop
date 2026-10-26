@@ -69,9 +69,17 @@ fn assert_has_face(model: &NamedModel, name: &str) {
 /// the two sides `0.2` from the edge, which is gone.
 #[test]
 fn cube_fillet_one_edge() {
-    let model = blended(unit_cube(), &["cube(b,p0)"], BlendShape::round(0.2));
+    let cube = unit_cube();
+    let faces: Vec<String> = (cube.topology().faces.keys())
+        .filter_map(|&f| cube.name_of(f).map(String::from))
+        .collect();
+    let model = blended(cube, &["cube(b,p0)"], BlendShape::round(0.2));
     assert_eq!(model.topology().faces.len(), 7);
     assert_has_face(&model, "fillet(F,cube(b,p0),fillet)");
+    // Every face of the cube is trimmed, none split: each keeps its name.
+    for face in &faces {
+        assert_has_face(&model, face);
+    }
     for p in [
         [0.2, 0.0, 0.0],
         [0.0, 0.2, 0.0],
@@ -126,7 +134,7 @@ fn cylinder_rim_fillet() {
         vec!["cylinder(c,p1,q0)", "cylinder(c,p1,q2)"],
     ] {
         let model = blended(cylinder(), &edges, BlendShape::round(0.1));
-        assert_has_face(&model, "fillet(F,cylinder(c,p1,q0),fillet,q0)");
+        assert_has_face(&model, "fillet(F,cylinder(c,p1,q0),fillet,s0)");
         let on_circle = |r: f64, z: f64| {
             model.topology().vertices.values().any(|vertex| {
                 let p = vertex.point;
@@ -205,7 +213,8 @@ pub(super) fn refusal(mut model: NamedModel, edges: &[impl ToString], shape: Ble
 
 /// What is refused: a radius that is not positive, no edges, an edge that
 /// is not there, and blends too large for the faces they run into — past
-/// their boundary, or ending exactly on the cube's opposite edge.
+/// their boundary, or ending exactly on the cube's opposite edge — and
+/// one wider than the cylinder whose rim it rounds bends.
 #[test]
 fn refuses_what_it_cannot_blend() {
     let round = |radius| BlendShape::round(radius);
@@ -218,7 +227,7 @@ fn refuses_what_it_cannot_blend() {
     let on_edge = refusal(unit_cube(), &["cube(b,p0)"], bevel(1.0));
     assert!(on_edge.contains("runs exactly along edge"), "{on_edge}");
     let wide = refusal(cylinder(), &["cylinder(c,p1,q0)"], round(0.6));
-    assert!(wide.contains("too large"), "{wide}");
+    assert!(wide.contains("bends more tightly"), "{wide}");
 }
 
 /// Checks the faces of `model` whose names end in `corner)` are pieces of
@@ -294,6 +303,41 @@ fn cube_fillet_all_edges() {
         }
     }
     assert_corner_balls(&model, r, &centers);
+    assert_rounds_tangent(&model);
+}
+
+/// Checks every blend face of `model`, its name a fillet's, meets every
+/// face beside it that is no blend tangentially: their normals, halfway
+/// along the edge between them, could be parallel — what a shell or a
+/// draft asks before taking a face along with its neighbour.
+fn assert_rounds_tangent(model: &NamedModel) {
+    use geop_core_geometry::search::{MAX_NODES, min_subdivision_size};
+    let topology = model.topology();
+    let blend =
+        |f| (model.name_of(f)).is_some_and(|n| n.contains(",fillet") || n.ends_with(",corner)"));
+    for (&id, edge) in &topology.edges {
+        let Some([f, g]) = topology.faces_of_edge(id) else {
+            continue;
+        };
+        if blend(f) == blend(g) {
+            continue;
+        }
+        let point = edge
+            .curve
+            .evaluate(edge.curve.mid_parameter().unwrap())
+            .unwrap();
+        let normal = |f| {
+            (topology.get_face(f).unwrap().surface)
+                .normal_at(&point, MAX_NODES, min_subdivision_size())
+                .unwrap()
+        };
+        assert!(
+            normal(f).could_be_parallel(&normal(g)),
+            "{:?} and {:?} meet at a crease at {point:?}",
+            model.name_of(f),
+            model.name_of(g)
+        );
+    }
 }
 
 /// A block of 2 x 2 x 1 with a pocket of 1 x 1, 0.4 deep, in its top.
@@ -331,32 +375,32 @@ fn pocket_floor_fillet() {
     assert_corner_balls(&model, r, &centers);
 }
 
-/// Every edge of the pocketed block rounded is refused: at the rim's
-/// corners the rim is cut away and the upright edge filled in.
+/// Every edge of the pocketed block rounded: at the rim's corners the rim
+/// is cut away and the upright edge filled in. The upright edges and the
+/// floor's, joined at the floor's corners by balls, are rounded first;
+/// then the rim runs round each upright's round, one chain, and the
+/// block's own edges are rounded with it.
 #[test]
-fn pocketed_block_fillet_every_edge_is_refused() {
+#[ignore = "slow: twenty-four edges blended in two passes — run with `cargo test -- --ignored`"]
+fn pocketed_block_fillet_every_edge() {
     let model = pocketed();
     let edges = edges_where(&model, |_| true);
-    let why = refusal(model, &edges, BlendShape::round(0.1));
-    assert!(why.contains("bend the same way"), "{why}");
+    let r = 0.1;
+    let built = blended(model, &edges, BlendShape::round(r));
+    let at = |p: [f64; 3]| geop_ops_model::testing::classify(&built, "fillet(F)", p);
+    use geop_core_topology::contains::shell::PointClassification as P;
+    // The rim cut round past its corner, the upright edge filled below it.
+    assert_eq!(at([0.49, 0.49, 0.995]), P::Outside);
+    assert_eq!(at([0.51, 0.51, 0.75]), P::Inside);
 }
 
 /// The three edges at a corner of the pocket's rim rounded: the rim's two,
 /// convex, cut away; the upright one, concave, filled in. No ball touches
-/// the three faces there on one side of them all, so the corner would be
-/// bevelled: each tool ending on its own — the rim's mitred with each
-/// other, the fill flush with the top — and the cuts meeting the fill
-/// where the boolean finds them.
-///
-/// Tried by planning no corner there: it builds, but the fill's cap, flush
-/// with the top, is left a face of its own beside the top
-/// (`[0.4, 0.6]^2` at `z = 1`), and validation cannot decide whether the
-/// rim's contact edge `ta`, lying in the cap's plane along its side,
-/// crosses it (`curve_curve_crossings` exhausted). Needs the union to merge
-/// a fill's flush cap into the face it is flush with, or a corner patch
-/// (a G1 three-sided patch between the three blends' end sections).
+/// the three faces there on one side of them all. The upright edge, the
+/// one bending the other way, is filled first, flush with the top; the
+/// rim then runs on round the fill's top edge, one tangent chain, and is
+/// rounded along it — a torus round the corner.
 #[test]
-#[ignore = "missing: a corner of mixed convexity (pocket rim + upright edge); bevelled by planning no corner, the fill's flush cap stays a face of its own and validation exhausts on the rim's contact edge in its plane"]
 fn pocket_rim_corner_with_its_upright_edge_rounded() {
     let model = pocketed();
     let corner = v3(0.5, 0.5, 1.0);

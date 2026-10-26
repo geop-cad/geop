@@ -663,6 +663,56 @@ fn a_vertex_off_its_faces_is_put_where_they_meet() {
     assert!(corner.could_be_equal(&v3(3.0, 2.0, 1.0)), "{corner:?}");
 }
 
+/// The box's corner `6` given twice, the second `1e-9` above the first —
+/// within the file's uncertainty of `1e-7` — and an edge between the two
+/// on the top and the back: an edge of no length the file can tell. It is
+/// taken out, the two corners one, put where the three planes meet.
+#[test]
+fn an_edge_shorter_than_the_files_uncertainty_is_taken_out() {
+    let mut p = BOX.to_vec();
+    p.push([3.0, 2.0, 1.0 + 1e-9]);
+    let faces: [&[usize]; 6] = [
+        &[0, 3, 2, 1],
+        &[4, 5, 6, 8, 7],
+        &[0, 1, 5, 4],
+        &[5, 1, 2, 6],
+        &[2, 3, 7, 8, 6],
+        &[3, 0, 4, 7],
+    ];
+    let part = import(&file(".MILLI.,.METRE.", &polyhedron(&p, &faces)));
+    let model = part.topology();
+    assert_eq!(counts(model), (6, 12, 8));
+    assert!(
+        (model.vertices.values()).any(|v| v.point.could_be_equal(&v3(3.0, 2.0, 1.0))),
+        "no corner at (3, 2, 1)"
+    );
+}
+
+/// The box's corner `6` given twice, `1e-9` apart: the edge from it to `7`
+/// starts at the second, every other edge at the first. Within the file's
+/// uncertainty, where one coedge of a loop ends and the next starts, they
+/// are one vertex.
+#[test]
+fn a_corner_given_twice_where_a_loop_passes_it_is_one() {
+    let mut p = BOX.to_vec();
+    p.push([3.0, 2.0, 1.0 + 1e-9]);
+    let faces: [&[usize]; 6] = [
+        &[0, 3, 2, 1],
+        &[4, 5, 6, 7],
+        &[0, 1, 5, 4],
+        &[5, 1, 2, 6],
+        &[2, 3, 7, 6],
+        &[3, 0, 4, 7],
+    ];
+    // Point k is written as #(101 + 2k), its vertex as #(102 + 2k).
+    let text = polyhedron(&p, &faces);
+    let from_six = "EDGE_CURVE('',#114,#116,";
+    assert!(text.contains(from_six), "{text}");
+    let text = text.replace(from_six, "EDGE_CURVE('',#118,#116,");
+    let part = import(&file(".MILLI.,.METRE.", &text));
+    assert_eq!(counts(part.topology()), (6, 12, 8));
+}
+
 /// Four planes at a vertex that do not meet in a point: the box's top cut
 /// along a diagonal into two triangles, one of them tilted so that it
 /// passes 3e-4 above the corner the other three planes meet at. No point

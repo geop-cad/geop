@@ -12,9 +12,8 @@
 //! through `C` — set back from the corner — and the corner's piece of the
 //! ball is the spherical triangle between the three arcs.
 //!
-//! A straight edge between planes is swept, and its section through `C` is
-//! the one square to the edge, there. Any other edge is rolled along (see
-//! [`crate::rolling`]), up to a station built from the corner's ball
+//! Each edge is rolled along (see [`crate::rolling`]), up to a station
+//! built from the corner's ball
 //! exactly: its arc the ball's great arc, not tilted off the faces as the
 //! stations between are.
 //!
@@ -56,36 +55,29 @@ use geop_ops_model::tangent::TangentChain as Chain;
 use geop_ops_model::{NamedModel, Namer};
 
 use crate::{
-    blend::{Bend, BlendShape, End, Plan, Sweep, ToolProfile, check_touch},
+    blend::{Bend, BlendShape, check_touch},
     rolling::{ChainCorner, RadiusLaw, chain_bend, foot, seed_on},
     tool::{Corner, CornerEnd},
 };
 
 /// The corners every edge of which is filleted, planned (see
-/// [`plan_corners`]): each with its tools' ends — by index into the plans,
-/// and past them into the chains — and, per chain, the corners' balls at its
-/// start and end.
+/// [`plan_corners`]): each with its tools' ends — by index into the chains
+/// — and, per chain, the corners' balls at its start and end.
 pub(crate) struct Corners {
     pub corners: Vec<Corner>,
     pub chains: Vec<[Option<ChainCorner>; 2]>,
 }
 
-/// How a tool reaches a corner: a straight swept edge, by its index into
-/// the plans, or a chain, by its index into the chains and which end of it.
-#[derive(Clone, Copy)]
-enum Reaching {
-    Swept(usize),
-    Chain(usize, bool),
-}
+/// How a chain reaches a corner: by its index into the chains, and whether
+/// at its end.
+type Reaching = (usize, bool);
 
-/// Plans the corner blends of the straight edges of `plans` and of
-/// `chains`, the blends of the edges `covered`, into `shape`, named by
-/// `namer` (see the module docs): every corner every edge of which is
-/// filleted. The plans' ends there are set to it.
+/// Plans the corner blends of `chains`, the blends of the edges `covered`,
+/// into `shape`, named by `namer` (see the module docs): every corner every
+/// edge of which is filleted.
 pub(crate) fn plan_corners(
     model: &NamedModel,
     namer: &Namer,
-    plans: &mut [(Plan, ToolProfile)],
     chains: &[(String, Chain)],
     covered: &[EdgeId],
     shape: &BlendShape,
@@ -121,15 +113,6 @@ pub(crate) fn plan_corners(
         let mut bends = Vec::new();
         for &edge in &incident {
             let edge_name = model.name_of(edge).unwrap_or("?");
-            let swept = plans.iter().position(|(plan, _)| {
-                model.edge_id(&plan.edge).ok() == Some(edge)
-                    && matches!(plan.section.sweep, Sweep::Straight { .. })
-            });
-            if let Some(i) = swept {
-                bends.push(plans[i].0.section.bend);
-                reaching.push(Reaching::Swept(i));
-                continue;
-            }
             let Some(k) = chains.iter().position(|(_, c)| c.edges().contains(&edge)) else {
                 return Err(GeopError::new(format!(
                     "every edge at the corner is filleted, but edge {edge_name:?} is blended round a whole circle: a corner is only rounded where the fillets end at it"
@@ -156,7 +139,7 @@ pub(crate) fn plan_corners(
                 .with_context(ctx);
             };
             bends.push(chain_bend(topology, chain).with_context(ctx)?);
-            reaching.push(Reaching::Chain(k, at_end));
+            reaching.push((k, at_end));
         }
         if bends.iter().any(|b| *b != bends[0]) {
             return Err(GeopError::new(
@@ -173,13 +156,12 @@ pub(crate) fn plan_corners(
         }
         // The fillets' radii at the corner: the ball's, where they agree.
         let mut at_corner = Vec::new();
-        for &reach in &reaching {
-            at_corner.push(match reach {
-                Reaching::Swept(_) => radii.radius,
-                Reaching::Chain(k, at_end) => RadiusLaw::new(model, &chains[k].1, radii)
+        for &(k, at_end) in &reaching {
+            at_corner.push(
+                RadiusLaw::new(model, &chains[k].1, radii)
                     .with_context(ctx)?
                     .at_end(usize::from(at_end)),
-            });
+            );
         }
         // Fillets meeting with different radii have no one ball to round
         // the corner with: it is bevelled, each tool ending on its own and
@@ -192,7 +174,6 @@ pub(crate) fn plan_corners(
             namer,
             vertex,
             &name,
-            plans,
             chains,
             &reaching,
             bends[0],
@@ -205,33 +186,23 @@ pub(crate) fn plan_corners(
     Ok(planned)
 }
 
-/// The faces either side of the tool reaching a corner as `reaching` does.
-fn faces_of(
-    plans: &[(Plan, ToolProfile)],
-    chains: &[(String, Chain)],
-    reaching: Reaching,
-) -> [FaceId; 2] {
-    match reaching {
-        Reaching::Swept(i) => plans[i].0.section.faces,
-        Reaching::Chain(k, at_end) => {
-            let links = &chains[k].1.links;
-            let link = if at_end { links.last() } else { links.first() };
-            link.expect("a chain has links").faces
-        }
-    }
+/// The faces either side of the chain reaching a corner as `reaching` does.
+fn faces_of(chains: &[(String, Chain)], (k, at_end): Reaching) -> [FaceId; 2] {
+    let links = &chains[k].1.links;
+    let link = if at_end { links.last() } else { links.first() };
+    link.expect("a chain has links").faces
 }
 
 /// The corner at `vertex`, named `name`, where the tools `reaching` it
 /// meet, filleted with `radius`, bending `bend` (see the module docs): its
-/// ball, contacts and apex, and its tools' ends — set to it in `plans`, and
-/// in `chain_corners` for the chains.
+/// ball, contacts and apex, and its tools' ends — set to it in
+/// `chain_corners`.
 #[allow(clippy::too_many_arguments)]
 fn plan_corner(
     model: &NamedModel,
     namer: &Namer,
     vertex: VertexId,
     name: &str,
-    plans: &mut [(Plan, ToolProfile)],
     chains: &[(String, Chain)],
     reaching: &[Reaching],
     bend: Bend,
@@ -242,7 +213,7 @@ fn plan_corner(
     let at = topology.get_vertex(vertex)?.point;
     let mut faces: Vec<FaceId> = Vec::new();
     for &r in reaching {
-        for face in faces_of(plans, chains, r) {
+        for face in faces_of(chains, r) {
             if !faces.contains(&face) {
                 faces.push(face);
             }
@@ -269,62 +240,17 @@ fn plan_corner(
 
     let mut ends = Vec::new();
     for &reach in reaching {
-        match reach {
-            Reaching::Swept(i) => {
-                let (plan, _) = &mut plans[i];
-                let ctx = with_context!("edge {:?}", plan.edge);
-                let Sweep::Straight {
-                    start,
-                    end,
-                    ends: tool_ends,
-                    vertices,
-                    ..
-                } = &mut plan.section.sweep
-                else {
-                    unreachable!("only straight edges are swept into corners");
-                };
-                let length = end.sub(start).norm();
-                let setback = center.sub(start).prod_dot(&end.sub(start).normalize()?);
-                let at_end = vertices[1] == vertex;
-                let k = usize::from(at_end);
-                // The corner's ball touches the edge's faces within the
-                // edge, short of the other end — and of its own corner.
-                let other = match &tool_ends[1 - k] {
-                    End::Corner { setback } => *setback,
-                    _ if at_end => Scalar::ZERO,
-                    _ => length,
-                };
-                let within = if at_end {
-                    setback.definitely_greater(other) && setback.definitely_less(length)
-                } else {
-                    setback.definitely_greater(Scalar::ZERO) && setback.definitely_less(other)
-                };
-                if !within {
-                    return Err(GeopError::new(format!(
-                        "the fillet is too large for the edge: the ball rounding the corner at vertex {name:?} touches its faces {setback:?} along it, past its other end or that end's corner"
-                    )))
-                    .with_context(ctx);
-                }
-                tool_ends[k] = End::Corner { setback };
-                ends.push(CornerEnd {
-                    tool: i,
-                    at_end,
-                    contacts: [0, 0],
-                });
-            }
-            Reaching::Chain(k, at_end) => {
-                let link_faces = faces_of(plans, chains, reach);
-                chain_corners[k][usize::from(at_end)] = Some(ChainCorner {
-                    center,
-                    contacts: link_faces.map(contact_on),
-                });
-                ends.push(CornerEnd {
-                    tool: plans.len() + k,
-                    at_end,
-                    contacts: [0, 0],
-                });
-            }
-        }
+        let (k, at_end) = reach;
+        let link_faces = faces_of(chains, reach);
+        chain_corners[k][usize::from(at_end)] = Some(ChainCorner {
+            center,
+            contacts: link_faces.map(contact_on),
+        });
+        ends.push(CornerEnd {
+            tool: k,
+            at_end,
+            contacts: [0, 0],
+        });
     }
     Ok(Corner {
         namer: namer.scoped(name),

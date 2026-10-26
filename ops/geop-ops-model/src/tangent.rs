@@ -96,7 +96,13 @@ impl Link {
             Scalar::ONE.sub(fraction)
         };
         let t = Scalar::interpolate(t0, t1, f);
-        let tangent = curve.tangent(t)?.normalize()?;
+        let ctx = |e: GeopError| {
+            e.with_context(format!(
+                "Link::at(edge={}, fraction={fraction:?}, t={t:?}): control points {:?}",
+                self.edge, curve.control_points
+            ))
+        };
+        let tangent = curve.tangent(t).map_err(ctx)?.normalize().map_err(ctx)?;
         Ok((
             curve.evaluate(t)?,
             if self.forward { tangent } else { tangent.neg() },

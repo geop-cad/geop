@@ -24,16 +24,16 @@ use crate::{
 /// Rounds the edges named `edges` of a solid with a fillet of `radius`, for
 /// the operation `F`: the solid is consumed and the result named
 /// `fillet(F)`. Every face, edge and vertex that survives keeps its name;
-/// the round face of edge `E` is `fillet(F,E,fillet)` — by quarter turn,
-/// `fillet(F,E,fillet,q0)`, ..., for a circle, and by edge of its tangent
-/// chain, `fillet(F,E,fillet,s0)`, ..., for one rolled along several (see
+/// the round face of edge `E` is `fillet(F,E,fillet)` — by span,
+/// `fillet(F,E,fillet,s0)`, ..., for one skinned in several (see
 /// [`crate::rolling`]) — and what applying it creates is named as a
 /// boolean names it, `fillet(F,E,...)` (see [`crate::blend::blend`]). A
 /// convex edge is cut round, a concave one filled in.
 ///
-/// Any edge is rounded: a straight one between two planes and a circle
-/// around its faces' axis exactly, every other one by a ball rolled along
-/// it, which also takes its tangent chain along. With `end_radius` the
+/// Any edge is rounded, by a ball rolled along it, which also takes its
+/// tangent chain along: exactly where the ball's section is carried along
+/// the edge unchanged, a straight one between two planes or a circle
+/// around its faces' axis. With `end_radius` the
 /// radius changes linearly along each chain, from `radius` where its first
 /// picked edge starts to `end_radius` where the chain ends; `vertex_radii`
 /// set it at vertices along a chain, linearly in between. A corner every

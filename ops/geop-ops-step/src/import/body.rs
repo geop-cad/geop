@@ -689,6 +689,7 @@ impl Builder<'_> {
     /// Brings the faces read into the shape geop needs: wrapping faces cut
     /// into sectors, closed edges split.
     fn normalize(&mut self) -> GeopResult<()> {
+        self.join_coincident_vertices();
         // Each step keeps the face `f` and moves on, or cuts it, taking it
         // out and adding its pieces at the end, to be looked at in turn.
         let mut f = 0;
@@ -759,6 +760,77 @@ impl Builder<'_> {
             }
         }
         Ok(())
+    }
+
+    /// Makes one of the vertices the file gives twice within its
+    /// uncertainty: where a coedge of a loop ends at one and the next
+    /// starts at the other, and at the two ends of an edge of no length the
+    /// file can tell — every point of its curve's hull within the
+    /// uncertainty of where it starts — which then leaves its loops. The
+    /// vertex kept is where either was said to be, united. Nothing is
+    /// squeezed: it is put where its faces meet, and the edges from it
+    /// rebuilt there, by the healing every vertex goes through (see
+    /// `heal`).
+    fn join_coincident_vertices(&mut self) {
+        let tolerance = self.scope.uncertainty;
+        let near = |vertices: &[Vertex], a: usize, b: usize| {
+            distance(
+                vertices[a].origin.to_f64_array(),
+                vertices[b].origin.to_f64_array(),
+            ) <= tolerance
+        };
+        for f in 0..self.faces.len() {
+            for l in 0..self.faces[f].loops.len() {
+                let n = self.faces[f].loops[l].len();
+                for k in 0..n {
+                    let lp = &self.faces[f].loops[l];
+                    let (a, b) = (lp[k], lp[(k + 1) % n]);
+                    let end = self.edges[a.0].ends(a.1).1;
+                    let start = self.edges[b.0].ends(b.1).0;
+                    if end != start && near(&self.vertices, end, start) {
+                        self.merge_vertex(end, start);
+                    }
+                }
+            }
+        }
+        for e in 0..self.edges.len() {
+            let edge = &self.edges[e];
+            if !edge.alive || edge.start == edge.end || !near(&self.vertices, edge.start, edge.end)
+            {
+                continue;
+            }
+            let at = self.vertices[edge.start].origin.to_f64_array();
+            let short = (edge.curve.control_points.iter()).all(|c| {
+                c.dehomogenized()
+                    .is_ok_and(|p| distance(p.to_f64_array(), at) <= tolerance)
+            });
+            if !short {
+                continue;
+            }
+            let (start, end) = (edge.start, edge.end);
+            self.edges[e].alive = false;
+            self.merge_vertex(start, end);
+            for face in &mut self.faces {
+                for lp in &mut face.loops {
+                    lp.retain(|&(x, _)| x != e);
+                }
+            }
+        }
+    }
+
+    /// The vertex `gone` made one with `keep`: every edge from it from
+    /// `keep`, which is where either was said to be.
+    fn merge_vertex(&mut self, keep: usize, gone: usize) {
+        let point = self.vertices[gone].point;
+        self.vertices[keep].point = self.vertices[keep].point.union(&point);
+        for edge in &mut self.edges {
+            if edge.start == gone {
+                edge.start = keep;
+            }
+            if edge.end == gone {
+                edge.end = keep;
+            }
+        }
     }
 
     /// Takes out of face `f` every edge it runs along twice, once each
