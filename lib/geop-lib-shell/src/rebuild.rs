@@ -828,7 +828,7 @@ fn turns_around(guide: &Curve3, points: &[Vector3]) -> GeopResult<()> {
 
 /// `surface` with room around it: [`extended`] where it is straight, and
 /// carried on past each side where it is not ([`NurbSurface3D::extended`])
-/// by as much of its parameter as its domain is long that way — or by a
+/// by as much of its parameter as its end span is long that way — or by a
 /// half, a quarter or an eighth of that where more would carry it too far,
 /// an arc round past where its weights stay positive. Not past a side
 /// that is a single point, a pole: the pole would end up inside the patch,
@@ -849,12 +849,20 @@ fn room(surface: NurbSurface3D) -> GeopResult<NurbSurface3D> {
             if side_is_pole(&surface, along_u, at_end)? {
                 continue;
             }
-            let (lo, hi) = if along_u {
-                surface.domain_u()
+            // By as much as the end span is long: carried further, a short
+            // end span of a curved patch extrapolates far, its control
+            // points running off by the cube of how much further.
+            let breaks = if along_u {
+                surface.breakpoints_u()
             } else {
-                surface.domain_v()
+                surface.breakpoints_v()
             };
-            let mut by = hi.sub(lo);
+            let n = breaks.len();
+            let mut by = if at_end {
+                breaks[n - 1].sub(breaks[n - 2])
+            } else {
+                breaks[1].sub(breaks[0])
+            };
             for _ in 0..4 {
                 if let Ok(longer) = surface.extended(along_u, at_end, by.sharpen()) {
                     surface = longer;
