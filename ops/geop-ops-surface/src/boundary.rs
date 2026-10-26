@@ -16,7 +16,7 @@
 //!   it is made tangent to the face each of those edges bounds, continuing
 //!   it smoothly (see [`NurbSurface3D::tangent_to`]): exactly to a flat
 //!   face, and to a curved one leaving it at a millionth of a radian
-//!   outwards, checked all along, so that it never dips through it.
+//!   outwards, proven so all along, so that it never dips through it.
 //! - **three, or five and more**: a flat inner polygon and a quadrilateral
 //!   along every edge, between the edge, the spokes from its ends to the
 //!   inner polygon and the polygon's side (see [`NurbSurface3D::fill`]).

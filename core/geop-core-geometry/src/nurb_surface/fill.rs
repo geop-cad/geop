@@ -139,7 +139,7 @@ impl NurbSurface3D {
             let (patches, spokes) = build(&curves, neighbours, &frames, &inner, &plane, &added)?;
             let mut again = false;
             for k in (0..n).filter(|&k| curved(k)) {
-                for stray in patches[k].strays(&outer(neighbours, k))? {
+                for stray in patches[k].misses(&outer(neighbours, k))? {
                     // The knot span it strayed in, halved.
                     let knots = &patches[k].knot_vector_u;
                     let after = knots.iter().position(|t| t.definitely_greater(stray.at));

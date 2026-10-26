@@ -10,7 +10,8 @@ use crate::{
     knot_insertion::is_clamped_at,
     nurb_curve::dehomogenize,
     spline::{
-        centered, de_boor, find_span, hodograph, homogeneous_derivatives, rational_derivatives,
+        centered, de_boor, find_span, find_spans, hodograph, homogeneous_derivatives,
+        rational_derivatives,
     },
 };
 
@@ -82,12 +83,42 @@ impl NurbSurface<4> {
     /// values over the box are independent intervals, and their third
     /// differences, divided by the span's width cubed, came out a hundred
     /// times wider than the partial itself.
+    ///
+    /// A box reaching over a knot is taken span by span, and the partials
+    /// over the pieces united (see [`find_spans`]): one span's polynomial
+    /// carried on over the next encloses nothing of the surface there, and
+    /// a proof over the box (`NurbSurface3D::enclose_foot`) would prove
+    /// nothing.
     pub fn partials(&self, u: Scalar, v: Scalar, order: usize) -> GeopResult<Vec<Vec<Vector3>>> {
+        let (p, q) = (self.degree_u, self.degree_v);
+        let us = find_spans(p, &self.knot_vector_u, self.num_u - 1, u)?;
+        let vs = find_spans(q, &self.knot_vector_v, self.num_v - 1, v)?;
+        let mut out: Option<Vec<Vec<Vector3>>> = None;
+        for &u in &us {
+            for &v in &vs {
+                let piece = self.partials_in(u, v, order)?;
+                out = Some(match out {
+                    None => piece,
+                    Some(all) => (all.iter().zip(&piece))
+                        .map(|(a, b)| a.iter().zip(b).map(|(a, b)| a.union(b)).collect())
+                        .collect(),
+                });
+            }
+        }
+        Ok(out.expect("a span at least"))
+    }
+
+    /// [`Self::partials`] over the part `u` of span `span_u` along `u` and
+    /// `v` of `span_v` along `v`.
+    fn partials_in(
+        &self,
+        (span_u, u): (usize, Scalar),
+        (span_v, v): (usize, Scalar),
+        order: usize,
+    ) -> GeopResult<Vec<Vec<Vector3>>> {
         let (p, q) = (self.degree_u, self.degree_v);
         let (ku, kv) = (&self.knot_vector_u, &self.knot_vector_v);
         let nv = self.num_v;
-        let span_u = find_span(p, ku, self.num_u - 1, u)?;
-        let span_v = find_span(q, kv, nv - 1, v)?;
         let local: Vec<Vector<4>> = (span_u - p..=span_u)
             .flat_map(|i| (span_v - q..=span_v).map(move |j| i * nv + j))
             .map(|k| self.control_points[k])
@@ -414,6 +445,46 @@ mod tests {
         // evaluating rows first, the third partials were a hundred times
         // wider.
         assert!(worst < 50., "{table}");
+    }
+
+    /// Over a box reaching over a knot, every partial encloses its values
+    /// on both sides of it: a surface's span is not carried on over the
+    /// next one. A net joined at a knot only by its position there, bent
+    /// at that joint, so that its derivatives jump, which one span's
+    /// polynomial carried on misses.
+    #[test]
+    fn partials_over_a_knot_enclose_both_spans() {
+        let surface = revolved(1., 0.).refined([4, 1]).unwrap();
+        // Raised, its knots are joints of position only; bent at one.
+        let mut surface = surface.elevate_degree(true).unwrap();
+        let nv = surface.num_v;
+        let mid = surface.degree_u;
+        for j in 0..nv {
+            let cp = &mut surface.control_points[mid * nv + j];
+            cp[2] = cp[2].add(cp[3].mul(Scalar::from_f64(0.3)));
+        }
+        let knot = surface.knot_vector_u[surface.degree_u + 1];
+        let box_u = knot
+            .sub(Scalar::from_f64(0.05))
+            .union(knot.add(Scalar::from_f64(0.05)));
+        let v = Scalar::from_f64(0.4);
+        let over = surface.partials(box_u, v, 2).unwrap();
+        for i in 0..=10 {
+            let u = Scalar::interpolate(
+                box_u.lower(),
+                box_u.upper(),
+                Scalar::from_ratio(i, 10).unwrap(),
+            );
+            let at = surface.partials(u, v, 2).unwrap();
+            for (k, l) in [(0, 0), (1, 0), (0, 1), (2, 0), (1, 1), (0, 2)] {
+                assert!(
+                    at[k][l].could_be_equal(&over[k][l]),
+                    "S[{k}][{l}] at {u:?}: {:?}, over the box {:?}",
+                    at[k][l],
+                    over[k][l]
+                );
+            }
+        }
     }
 
     /// Flat unit patch in the xy-plane: normal should be constant +z everywhere.

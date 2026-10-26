@@ -74,7 +74,7 @@ Verdicts:
 | Ruled surface | `N_CreateRuledSrf` `NL_SrfCommon.cpp:846` | `patch.rs:58` `ruled` | par |
 | **Ruled surface between a curve and a point (cone to an apex)** | `N_CreateRuledSrfBetweenCrvAndPt` `NL_SrfCommon.cpp:2171` | refused (`boundary.rs`: "two edges sharing an end — the ruled face would come to a point") | **missing** |
 | Coons patch | `N_CreateCoonsSrf`, `N_CreateCoonsSrfTwist` | `patch.rs:127` `coons` | par |
-| **Coons with cross-boundary derivatives (G1 to curved neighbours)** | `N_CreateCoonsSrfCrossBoundaryDerivs` `NL_SrfAdv.cpp:22012`, `SmTangentField` | `patch.rs` `tangent_to`: exact to flat neighbours; to curved ones leaving them at `TILT` (1e-6 rad) towards their normal, collocated at the Greville abscissae and checked between, refined while it strays | par |
+| **Coons with cross-boundary derivatives (G1 to curved neighbours)** | `N_CreateCoonsSrfCrossBoundaryDerivs` `NL_SrfAdv.cpp:22012`, `SmTangentField` | `patch.rs` `tangent_to`: exact to flat neighbours; to curved ones leaving them at `TILT` (1e-6 rad) towards their normal, collocated at the Greville abscissae, and *proven* over the whole side (`strays`: mean value form of `into·n` over stretches, the face's feet enclosed by Krawczyk, `enclose_foot`), refined while it strays | better (SMLib's tangency is to an angle, unchecked between) |
 | Gordon surface | `N_CreateGordonSrf` | `gordon.rs:172` | par |
 | **N-sided G1 hole fill** | `N_FillNSidedHole` `NL_SrfAdv.cpp:18585` (k+1 patches, cross-derivative curves, central tangent plane) | `nurb_surface/fill.rs` `NurbSurface3D::fill(sides, neighbours)`: a quad per side about a flat inner polygon, every edge whole. G1 across the spokes *exactly* (each side's cross derivative `α V + β T` in one polynomial plane field), tangent to the polygon with flat inner corners (degree-5 spokes osculating it), tangent to the faces along the sides (exact to flat ones, `TILT` to curved, the corner twist set from how the face's normal turns, spans halved where it strays) | better (exact G1 inside; SMLib's is to an angle) |
 | Skinning (loft surface): degree, closed C1, approximation tolerance, given params/knots | `N_CreateSkinSrf` `NL_SrfAdv.cpp:7899` (flags `cld`, `deg`, `knotTol`), `...Approx`, `...ApproxTol`, `...Params`, `...Interp` | `lib/geop-lib-sweep/src/loft.rs` (`through` is a cubic Bessel spline), `skin.rs` | worse (see §2) |
@@ -365,7 +365,18 @@ a circle whose walls touch inside a station edge (`sweep_a_pipe_round_a_corner_o
 
 ### Tier B: common surfacing and construction
 
-**11. Coons / loft G1 to *curved* neighbouring faces.**
+**11. Coons / loft G1 to *curved* neighbouring faces.** *Done*, and the tangency is proven, not
+sampled: over a stretch `I` of the side, `f(I) ⊆ f(c) + f'(I)(I − c)` for `f = into·n`, with `n`
+and `n'` (`normal_turning`) over the box of `(u, v)` Krawczyk proves the face's foot points lie in
+(`enclose_foot`, on the face carried past its edges). The bound's width goes as `|I|²`, so a
+millionth of a radian is shown over stretches of about `1e-4`: some thousands of stretches per
+side, a second or so. A second-order form (needing the face's third partials) would cut that by
+a few. At a corner where the side meets another in the tangent plane, `f` is zero, and the proof
+takes `f'` from the corner instead. Two things it needed first: `partials` over a box reaching
+over a knot carried one span's polynomial over the next, which encloses nothing there (it now
+unites the spans, as curves do); and the corner's twist had to take in how the face's normal
+turns along the side (`twist` in `fill.rs`), or the tilt dipped and bulged just off the corner,
+shrinking only as `h²` with the spans there. Original plan, for reference:
 - **SMLib:** `N_CreateCoonsSrfCrossBoundaryDerivs` `NL_SrfAdv.cpp:22012` and `SmTangentField`
   (`inc/SmTangentField.h`): the cross-boundary tangent along an edge is interpolated between its end
   tangents and projected into the neighbour's tangent plane at `uvcurve(t)`.
