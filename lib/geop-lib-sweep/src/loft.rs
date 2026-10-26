@@ -94,9 +94,9 @@ pub struct Section {
 
 /// A section as it is skinned: its frame and its profile in it.
 #[derive(Clone, Debug)]
-struct Placed {
-    frame: Frame,
-    profile: Profile,
+pub(crate) struct Placed {
+    pub(crate) frame: Frame,
+    pub(crate) profile: Profile,
 }
 
 impl Placed {
@@ -493,7 +493,7 @@ fn corner_anchors(
 /// The sections made to correspond, as the module docs say — closed ones
 /// winding so that the loft runs against each frame's `e1 x e2`, which
 /// makes the skinned walls face out.
-fn correspond(sections: &[Section]) -> GeopResult<Vec<Placed>> {
+pub(crate) fn correspond(sections: &[Section]) -> GeopResult<Vec<Placed>> {
     let closed = sections[0].profile.is_closed();
     if sections.iter().any(|s| s.profile.is_closed() != closed) {
         return Err(GeopError::new(

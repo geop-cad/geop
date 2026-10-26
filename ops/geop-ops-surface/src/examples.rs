@@ -100,6 +100,7 @@ pub fn curved_panel() -> Program {
             sketch: whole_sketch("block_sketch"),
             extent: Extents::blind(15.0),
             output: Output::Solid(Combine::NewBody),
+            draft: 0.0,
         },
     );
     program.push(

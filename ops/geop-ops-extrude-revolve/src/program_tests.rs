@@ -1800,3 +1800,199 @@ fn runner_reports_the_failing_step() {
     let built = read_model(&before).unwrap();
     assert!(built.solid_id("extrude(box)").is_ok());
 }
+
+// ── drafted extrusions ──────────────────────────────────────────────────────
+
+/// The rectangle `[0, 4] x [0, 2]` with its corners rounded to `r`, each
+/// arc tangent to the lines either side; and the curves, the arcs at the
+/// odd places.
+fn rounded_rectangle(r: f64) -> (Sketch, Vec<geop_core_sketch::CurveId>) {
+    let mut s = Sketch::new();
+    let corners = [
+        [r, 0.0],
+        [4.0 - r, 0.0],
+        [4.0, r],
+        [4.0, 2.0 - r],
+        [4.0 - r, 2.0],
+        [r, 2.0],
+        [0.0, 2.0 - r],
+        [0.0, r],
+    ];
+    let p: Vec<PointId> = corners
+        .iter()
+        .map(|c| s.add_point(n(c[0]), n(c[1])))
+        .collect();
+    let curves: Vec<_> = (0..8)
+        .map(|k| {
+            let (a, b) = (p[k], p[(k + 1) % 8]);
+            if k % 2 == 0 {
+                s.add_line(a, b)
+            } else {
+                s.add_arc(a, b, n(PI / 2.0))
+            }
+        })
+        .collect();
+    for k in 0..8 {
+        s.constrain(Constraint::Tangent {
+            a: curves[k],
+            b: curves[(k + 1) % 8],
+        });
+    }
+    (s, curves)
+}
+
+/// `sketch` on the origin's xy plane extruded by `extent`, drafted by
+/// `draft` degrees, into a new body.
+fn drafted(sketch: Sketch, extent: Extents, draft: f64) -> GeopResult<NamedModel> {
+    let mut program = Program::new();
+    program.push(
+        "profile",
+        AddSketchArgs::on(on_origin(FrameAxis::Z), sketch),
+    );
+    program.push(
+        "e",
+        ExtrudeArgs {
+            draft,
+            ..extrusion("profile", extent, Combine::NewBody)
+        },
+    );
+    program.build_model(registry)
+}
+
+/// A square drafted by ten degrees narrows to its top by `tan(10°)` on
+/// every side: its walls are planes at the draft angle, ruled from each
+/// side to its offset.
+#[test]
+fn drafted_square_narrows_to_its_top() {
+    let part = drafted(
+        outline(&[[0.0, 0.0], [1.0, 0.0], [1.0, 1.0], [0.0, 1.0]]),
+        Extents::blind(1.0),
+        10.0,
+    )
+    .unwrap();
+    assert_valid(&part);
+    let topology = part.topology();
+    assert_eq!(topology.faces.len(), 6);
+    let inset = 10f64.to_radians().tan();
+    let mut top = 0;
+    for v in topology.vertices.values() {
+        if v.point[2].could_be_equal(Scalar::ONE) {
+            top += 1;
+            for k in 0..2 {
+                let x = v.point[k];
+                assert!(
+                    x.could_be_equal(Scalar::from_f64(inset))
+                        || x.could_be_equal(Scalar::from_f64(1.0 - inset)),
+                    "{:?}",
+                    v.point
+                );
+            }
+        }
+    }
+    assert_eq!(top, 4);
+    // A frustum of a pyramid: h / 3 (A + a + sqrt(A a)).
+    let a = (1.0 - 2.0 * inset).powi(2);
+    let expected = (1.0 + a + a.sqrt()) / 3.0;
+    assert_exact_volume(&part, expected);
+}
+
+/// A rounded plate with a round hole, drafted: the outline shrinks, the
+/// arcs into cones about their own centres, and the hole grows.
+#[test]
+fn drafted_rounded_plate_with_a_hole_is_valid() {
+    let (mut s, _) = rounded_rectangle(0.5);
+    let c = s.add_point(n(2.0), n(1.0));
+    s.add_circle(c, n(0.3));
+    let part = drafted(s, Extents::blind(1.0), 5.0).unwrap();
+    assert_valid(&part);
+    // The area at height `h`, inset by `d = h tan(5°)`: a quadratic in
+    // `h`, so Simpson's rule integrates it exactly.
+    let t = 5f64.to_radians().tan();
+    let area = |h: f64| {
+        let d = h * t;
+        (4.0 - 2.0 * d) * (2.0 - 2.0 * d) - (4.0 - PI) * (0.5 - d).powi(2) - PI * (0.3 + d).powi(2)
+    };
+    let expected = (area(0.0) + 4.0 * area(0.5) + area(1.0)) / 6.0;
+    assert_exact_volume(&part, expected);
+}
+
+/// A half disc drafted inwards: its arc meets its diameter at sharp
+/// corners, which move along a curve as the height grows — the offset
+/// circle and line meet at `x = ±sqrt((1 - d)² - d²)` — so the ruled walls
+/// between the profile and its offset are near the drafted cone and plane,
+/// not on them: each runs from a point of the arc to the point the same
+/// fraction along its offset, a chord inside the cone where the two arcs
+/// span different angles. Valid, and within half a percent of the drafted
+/// volume (0.3 % under it).
+#[test]
+fn drafted_half_disc_is_near_the_drafted_volume() {
+    let mut s = Sketch::new();
+    let a = s.add_point(n(-1.0), n(0.0));
+    let b = s.add_point(n(1.0), n(0.0));
+    s.add_line(a, b);
+    s.add_arc(b, a, n(PI));
+    let part = drafted(s, Extents::blind(1.0), 10.0).unwrap();
+    assert_valid(&part);
+    let t = 10f64.to_radians().tan();
+    let area = |h: f64| {
+        let (d, r) = (h * t, 1.0 - h * t);
+        r * r * (d / r).acos() - d * (r * r - d * d).sqrt()
+    };
+    // Simpson's rule, fine enough for the comparison below.
+    let k = 64;
+    let expected = (0..k)
+        .map(|i| {
+            let (h0, h1) = (i as f64 / k as f64, (i + 1) as f64 / k as f64);
+            (area(h0) + 4.0 * area((h0 + h1) / 2.0) + area(h1)) / (6.0 * k as f64)
+        })
+        .sum::<f64>();
+    let solid = part.solid_id("extrude(e)").unwrap();
+    let volume = part
+        .topology()
+        .mass_properties(solid)
+        .unwrap()
+        .volume
+        .to_f64();
+    assert!(
+        (volume - expected).abs() < 5e-3 * expected,
+        "{volume}, drafted {expected}"
+    );
+}
+
+/// Drafted both ways from the sketch's plane, the solid narrows away from
+/// it either way: a ridge of edges on the plane.
+#[test]
+fn drafted_symmetric_extrude_has_a_ridge_on_the_plane() {
+    let s = outline(&[[0.0, 0.0], [1.0, 0.0], [1.0, 1.0], [0.0, 1.0]]);
+    let part = drafted(s, both_ways(1.0), 10.0).unwrap();
+    assert_valid(&part);
+    let topology = part.topology();
+    assert_eq!(topology.faces.len(), 2 + 8);
+    assert_eq!(topology.vertices.len(), 12);
+}
+
+/// A rounded corner smaller than the draft's inset would shrink to a point
+/// and past it: refused, naming the arc.
+#[test]
+fn drafted_past_a_rounded_corner_is_refused_by_name() {
+    let (s, curves) = rounded_rectangle(0.1);
+    let Err(error) = drafted(s, Extents::blind(1.0), 30.0) else {
+        panic!("drafted");
+    };
+    assert!(
+        error.root_message().contains(&format!("{}", curves[1])),
+        "{error:?}"
+    );
+}
+
+/// Checks the drafted solid `extrude(e)` of `part` encloses `expected`, by
+/// its mass properties (integrated from its faces, not its mesh).
+#[track_caller]
+fn assert_exact_volume(part: &NamedModel, expected: f64) {
+    let solid = part.solid_id("extrude(e)").unwrap();
+    let volume = part.topology().mass_properties(solid).unwrap().volume;
+    assert!(
+        (volume.to_f64() - expected).abs() <= 1e-9 * expected,
+        "encloses {volume:?}, expected {expected}"
+    );
+}

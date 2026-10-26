@@ -46,6 +46,7 @@ pub fn hole_plate() -> Program {
             sketch: whole_sketch("outline"),
             extent: Extents::blind(10.0),
             output: Output::Solid(Combine::NewBody),
+            draft: 0.0,
         },
     );
     let points = |at: &[P2]| {

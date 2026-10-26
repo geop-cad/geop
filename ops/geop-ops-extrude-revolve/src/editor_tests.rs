@@ -433,6 +433,45 @@ fn a_chosen_cut_stays_a_cut() {
     ));
 }
 
+/// The drill hole's cut, opened and given a draft in its dialog, tapers:
+/// it narrows down into the box, and the box stays a valid solid.
+#[test]
+fn a_draft_typed_into_the_dialog_tapers_the_hole() {
+    let (mut editor, _) = editor();
+    handled(&mut editor, open("hole"));
+    let update = editor.handle(dialog("draft", Value::Number(5.0)));
+    let step = update.step.unwrap();
+    assert_eq!(step.error, None);
+    let Some(Control::Number(draft)) = step.presentation.dialog.get("draft") else {
+        panic!("no draft field: {:?}", step.presentation.dialog);
+    };
+    assert_eq!(draft.value, 5.0);
+    handled(&mut editor, Command::Commit);
+    let hole: ExtrudeArgs = args(&editor.program().steps[3]);
+    assert_eq!(hole.draft, 5.0);
+    let part = model_of(&built(&editor).unwrap());
+    let params = geop_core_topology::validation::ValidationParameters::default();
+    geop_core_topology::validation::validate(&params, part.topology()).unwrap();
+    // The hole's floor, half way down, is narrower than its rim.
+    let radius_at = |z: f64| {
+        let topology = part.topology();
+        topology
+            .vertices
+            .values()
+            .filter(|v| v.point[2].could_be_equal(Scalar::from_f64(z)))
+            .map(|v| (v.point[0].to_f64() - 1.0).hypot(v.point[1].to_f64() - 1.0))
+            .filter(|r| *r < 0.9)
+            .fold(0.0, f64::max)
+    };
+    let narrowed = 0.4 - 0.5 * 5f64.to_radians().tan();
+    assert!(
+        (radius_at(0.5) - narrowed).abs() < 1e-9,
+        "{}",
+        radius_at(0.5)
+    );
+    assert!((radius_at(1.0) - 0.4).abs() < 1e-9, "{}", radius_at(1.0));
+}
+
 /// A revolve picks its axis in the viewport, like anything else it builds
 /// on: any line in the sketch's plane — here the origin's y axis.
 #[test]

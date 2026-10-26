@@ -135,6 +135,7 @@ fn mirrored_l_bracket_with_a_slot_round_trips() {
             sketch: whole_sketch("profile"),
             extent: Extents::blind(20.0),
             output: Output::Solid(Combine::NewBody),
+            draft: 0.0,
         },
     );
     // A slot 3 deep into the upright's outer face `y = 0`, 10 along `x`
