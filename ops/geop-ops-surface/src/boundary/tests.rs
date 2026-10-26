@@ -469,6 +469,54 @@ fn fill_and_knit(n: usize, lift: f64) {
     assert_eq!(part.topology().shells.len(), 1, "{n} sides, lifted {lift}");
 }
 
+/// The five-sided hole filled smoothly: the quadrilaterals either side of
+/// each spoke share their normal all along it, as SMLib's
+/// `N_FillNSidedHole` does.
+#[test]
+#[ignore = "bug: the fill is a C0 patchwork across its spokes. Making each quadrilateral \
+    tangent (`NurbSurface3D::tangent_to`) to the one before it along their spoke and to \
+    the flat inner polygon along its inner side was tried: spokes leaving the loop's \
+    corners in the plane of its edges there, arriving in the polygon's plane. It rings \
+    at the inner corners and cannot converge, for a reason that is no numerics: where \
+    two quadrilaterals and the flat polygon meet, each tangent to the other two, the \
+    symmetric shape operator of each quadrilateral vanishes on both polygon sides, so \
+    the corner has to be a flat point of both (the vertex enclosure problem). Cubic \
+    spokes arriving in the plane are not flat there; the corner 3 x 3 control points of \
+    each quadrilateral have to lie in the polygon's plane, with spokes of degree five \
+    osculating it. The attempt is in no commit."]
+fn five_sided_hole_filled_smoothly() {
+    let n = 5;
+    let part = ring_of_strips(n, 0.3);
+    let edges: Vec<String> = (0..n).map(|k| format!("strip{k}(e0)")).collect();
+    let part = span(part, &edges, &[]).unwrap();
+    let model = part.topology();
+    for (&edge, e) in &model.edges {
+        if !part.name_of(edge).unwrap().ends_with("spoke)") {
+            continue;
+        }
+        let middle = e.curve.evaluate(e.curve.mid_parameter().unwrap()).unwrap();
+        let normals: Vec<Vector3> = (model.coedges_of_edge(edge).iter())
+            .map(|&c| {
+                let face = model.get_coedge(c).unwrap().face;
+                let surface = &model.get_face(face).unwrap().surface;
+                surface
+                    .normal_at(
+                        &middle,
+                        geop_core_geometry::search::MAX_NODES,
+                        geop_core_geometry::search::min_subdivision_size(),
+                    )
+                    .unwrap()
+            })
+            .collect();
+        let off = normals[0].prod_cross(&normals[1]).norm().to_f64();
+        assert!(
+            off < 3.0 * TILT,
+            "across {}: {off:e}",
+            part.name_of(edge).unwrap()
+        );
+    }
+}
+
 /// A five-sided hole that is not flat: filled with five quadrilaterals,
 /// which knit to the ring around it.
 #[test]

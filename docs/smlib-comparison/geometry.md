@@ -74,9 +74,9 @@ Verdicts:
 | Ruled surface | `N_CreateRuledSrf` `NL_SrfCommon.cpp:846` | `patch.rs:58` `ruled` | par |
 | **Ruled surface between a curve and a point (cone to an apex)** | `N_CreateRuledSrfBetweenCrvAndPt` `NL_SrfCommon.cpp:2171` | refused (`boundary.rs`: "two edges sharing an end — the ruled face would come to a point") | **missing** |
 | Coons patch | `N_CreateCoonsSrf`, `N_CreateCoonsSrfTwist` | `patch.rs:127` `coons` | par |
-| **Coons with cross-boundary derivatives (G1 to curved neighbours)** | `N_CreateCoonsSrfCrossBoundaryDerivs` `NL_SrfAdv.cpp:22012`, `SmTangentField` | `patch.rs:339` `tangent_to_planes`: G1 to *flat* neighbours only | **worse** |
+| **Coons with cross-boundary derivatives (G1 to curved neighbours)** | `N_CreateCoonsSrfCrossBoundaryDerivs` `NL_SrfAdv.cpp:22012`, `SmTangentField` | `patch.rs` `tangent_to`: exact to flat neighbours; to curved ones leaving them at `TILT` (1e-6 rad) towards their normal, collocated at the Greville abscissae and checked between, refined while it strays | par |
 | Gordon surface | `N_CreateGordonSrf` | `gordon.rs:172` | par |
-| **N-sided G1 hole fill** | `N_FillNSidedHole` `NL_SrfAdv.cpp:18585` (k+1 patches, cross-derivative curves, central tangent plane) | `boundary.rs`: a C0 "honest patchwork" of Coons quads about a flat inner polygon | **worse** |
+| **N-sided G1 hole fill** | `N_FillNSidedHole` `NL_SrfAdv.cpp:18585` (k+1 patches, cross-derivative curves, central tangent plane) | `boundary.rs`: a C0 "honest patchwork" of Coons quads about a flat inner polygon; G1 across the spokes is an ignored reproducer (`five_sided_hole_filled_smoothly`: the inner corners must be flat points) | **worse** |
 | Skinning (loft surface): degree, closed C1, approximation tolerance, given params/knots | `N_CreateSkinSrf` `NL_SrfAdv.cpp:7899` (flags `cld`, `deg`, `knotTol`), `...Approx`, `...ApproxTol`, `...Params`, `...Interp` | `lib/geop-lib-sweep/src/loft.rs` (`through` is a cubic Bessel spline), `skin.rs` | worse (see §2) |
 | **Skin with boundary continuity (G1 to adjacent surfaces at the first and last section)** | `N_CreateSkinSrfBoundaryContinuity` `NL_SrfAdv.cpp:13262`, `N_CreateSkinSrfBoundaryDerivs` | none | **missing** |
 | Skin along a spine | `N_CreateSkinSpine` `NL_SrfAdv.cpp:10401` | none (guides at most 3, affine) | missing |

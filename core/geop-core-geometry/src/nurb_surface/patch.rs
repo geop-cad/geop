@@ -325,13 +325,14 @@ impl NurbSurface3D {
     /// smoothly.
     ///
     /// The patch is first raised in degree until each such side has a row
-    /// of its own next to it, away from the opposite side's. Each control
+    /// of its own next to it, not next to the opposite side. Each control
     /// point of that row is then moved, along the face's normal, into the
     /// face's tangent plane where the side is at that point's Greville
     /// abscissa: the derivative across a side is a combination of that row
     /// less the side, so a row in the tangent plane makes the patch tangent
-    /// there. Where two such rows cross, the point goes onto the line the
-    /// two tangent planes meet in.
+    /// there — along a curved face, that plane leant by [`TILT`] (see
+    /// below). Where two such rows cross, the point goes onto the line the
+    /// two planes meet in.
     ///
     /// Along a flat face the tangent plane is one plane, and the patch is
     /// tangent to it exactly — rational or not. Along a curved one it
@@ -370,10 +371,16 @@ impl NurbSurface3D {
     /// The patch's rows next to the sides of `sides` set as
     /// [`NurbSurface3D::tangent_to`] says, once, at its knots.
     fn tangent_rows(&self, sides: &[Option<Neighbour<'_>>; SIDES]) -> GeopResult<Self> {
-        let rows_needed = |a: usize, b: usize| match (sides[a].is_some(), sides[b].is_some()) {
-            (true, true) => 4,
-            (true, false) | (false, true) => 3,
-            (false, false) => 0,
+        // Four rows across, wherever a side is made tangent: the row moved
+        // is then next to that side alone, and the patch leaves the
+        // opposite side as it did — a face made tangent to it later sees
+        // the patch as it was built.
+        let rows_needed = |a: usize, b: usize| {
+            if sides[a].is_some() || sides[b].is_some() {
+                4
+            } else {
+                0
+            }
         };
         let mut surface = self.clone();
         // Raised along `v` for the sides 0 and 2, along `u` for 1 and 3,
@@ -440,18 +447,31 @@ impl NurbSurface3D {
             for j in 0..nv {
                 // The side, its tangent plane through the point on the
                 // side, the way away from it, and that point.
-                type Constraint = (usize, usize, Plane, Vector3, Vector3);
+                // The side, the position along it, the tangent plane
+                // through the point on the side, the plane the point goes
+                // into — that plane leant by [`TILT`] along a curved face —
+                // the way away from the face, and that point.
+                type Constraint = (usize, usize, Plane, Plane, Vector3, Vector3);
                 let mut constraints: Vec<Constraint> = Vec::new();
                 for k in 0..SIDES {
                     let Some((position, (bi, bj))) = next_row(k, i, j) else {
                         continue;
                     };
-                    if sides[k].is_none() {
-                        continue;
-                    }
+                    let Some(side) = &sides[k] else { continue };
                     let (normal, away) = planes[k][position];
                     let base = original[at(bi, bj)].dehomogenized()?;
-                    constraints.push((k, position, Plane::try_new(base, normal)?, away, base));
+                    let leant = match side.flat {
+                        true => normal,
+                        false => normal.sub(&away.normalize()?.prod_scalar(Scalar::from_f64(TILT))),
+                    };
+                    constraints.push((
+                        k,
+                        position,
+                        Plane::try_new(base, normal)?,
+                        Plane::try_new(base, leant)?,
+                        away,
+                        base,
+                    ));
                 }
                 if constraints.is_empty() {
                     continue;
@@ -476,8 +496,8 @@ impl NurbSurface3D {
                     p
                 } else {
                     match constraints.as_slice() {
-                        [(_, _, plane, ..)] => plane.project(&p),
-                        [(_, _, a, ..), (_, _, b, ..)] => {
+                        [(_, _, _, plane, ..)] => plane.project(&p),
+                        [(_, _, _, a, ..), (_, _, _, b, ..)] => {
                             if a.normal
                                 .prod_cross(&b.normal)
                                 .norm_sq()
@@ -497,7 +517,7 @@ impl NurbSurface3D {
                         }
                     }
                 };
-                for (k, _, _, away, base) in &constraints {
+                for (k, _, _, _, away, base) in &constraints {
                     if !moved
                         .sub(base)
                         .prod_dot(away)
@@ -548,7 +568,6 @@ impl NurbSurface3D {
         if free.is_empty() {
             return Ok(());
         }
-        let tilt = Scalar::from_f64(TILT);
         let point = |i: usize, row: usize| -> GeopResult<(Vector3, Scalar)> {
             let cp = self.control_points[if row == 0 {
                 rows.index(i).0
@@ -584,7 +603,7 @@ impl NurbSurface3D {
                 }
             }
             a.push(row);
-            let target = tilt.mul(into.norm());
+            let target = Scalar::from_f64(TILT).mul(into.norm());
             rhs.push(Vector::from_array([target.sub(into.prod_dot(&normal))]));
         }
         let moves = solve_pivoted(a, rhs).map_err(|e| {
@@ -626,19 +645,31 @@ impl NurbSurface3D {
                 checked.push(pair[0]);
                 checked.push(pair[0].add(pair[1]).div(Scalar::TWO)?.sharpen());
             }
-            for s in checked.into_iter().skip(1) {
-                let (u, v) = rows.uv(self, s);
-                let point = self.evaluate(u, v)?;
+            // How steeply it leaves the face at `s`, in radians, and
+            // whether away from it.
+            let leaving = |s: Scalar| -> GeopResult<(Scalar, bool)> {
                 let (normal, away) = (side.at)(rows.fraction(self, s)?)?;
                 let into = rows.across(self, s)?;
-                let lean = into.prod_dot(&normal);
-                let ok = into.prod_dot(&away).definitely_greater(Scalar::ZERO)
-                    && lean.definitely_greater(Scalar::ZERO)
-                    && lean.definitely_less(tilt.mul(into.norm()));
-                if !ok {
-                    let angle = lean.div(into.norm())?;
+                Ok((
+                    into.prod_dot(&normal).div(into.norm())?,
+                    into.prod_dot(&away).definitely_greater(Scalar::ZERO),
+                ))
+            };
+            for (c, s) in checked.iter().enumerate().skip(1) {
+                let (angle, away) = leaving(*s)?;
+                if !(away && angle.definitely_greater(Scalar::ZERO) && angle.definitely_less(tilt))
+                {
+                    let (u, v) = rows.uv(self, *s);
+                    let point = self.evaluate(u, v)?;
+                    let around = (checked[c.saturating_sub(4)..(c + 5).min(checked.len())].iter())
+                        .map(|&s| Ok((s.to_f64(), leaving(s)?.0.to_f64())))
+                        .collect::<GeopResult<Vec<_>>>()?;
                     return Ok(Some(format!(
-                        "along side {k} at {s:?}, at {point:?}, it leaves the face at {angle:?} radians towards its normal"
+                        "along side {k} at {s:?}, at {point:?}, it leaves the face at {angle:?} radians towards its normal{}, between abscissae {} and {} of {}; around it, at (s, angle): {around:?}",
+                        if away { "" } else { ", not away from it" },
+                        c / 2,
+                        c / 2 + 1,
+                        abscissae.len(),
                     )));
                 }
             }
