@@ -710,6 +710,95 @@ fn a_cone_cut_off_short_of_its_tip_shelled_past_it() {
     );
 }
 
+/// A 4 x 4 x 4 block with a 2 x 2 x 2 void in its middle: the block less
+/// a block inside it.
+fn block_with_a_void() -> (NamedModel, SolidId) {
+    let mut part = NamedModel::new();
+    let outside = geop_lib_sweep::shapes::block(&mut part, "o", [0., 0., 0.], [4., 4., 4.]);
+    let inside = geop_lib_sweep::shapes::block(&mut part, "i", [1., 1., 1.], [3., 3., 3.]);
+    let namer = Namer::new("hollow", "h").unwrap();
+    let solid = boolean(
+        &mut part,
+        &namer,
+        outside,
+        inside,
+        BooleanOp::Difference,
+        RemeshParams::default(),
+    )
+    .unwrap()
+    .expect("a block with a void");
+    assert_valid(&part);
+    assert_eq!(part.topology().get_solid(solid).unwrap().shells.len(), 2);
+    (part, solid)
+}
+
+/// A block with a void, shelled 0.2 thick closed all round: each of its
+/// shells is offset into the material, and the wall round the void stands
+/// free in the hollow, a solid of its own. Opened at the top, the same,
+/// the outside's walls open.
+#[test]
+fn a_block_with_a_void_shelled() {
+    for open_top in [false, true] {
+        let (mut part, solid) = block_with_a_void();
+        let open = if open_top {
+            faces_at_height(&part, solid, 4.)
+        } else {
+            Vec::new()
+        };
+        let namer = Namer::new("shell", "s").unwrap();
+        let shelled = shell(&mut part, &namer, solid, &open, Scalar::from_f64(0.2), &[])
+            .unwrap_or_else(|e| panic!("{e:?}"));
+        assert_valid(&part);
+        let solids = part.solid_names();
+        assert_eq!(solids.len(), 2, "{solids:?}");
+        let volume = |s: SolidId| part.topology().mass_properties(s).unwrap().volume;
+        let outside = if open_top {
+            64. - 3.6 * 3.6 * 3.8
+        } else {
+            64. - 3.6 * 3.6 * 3.6
+        };
+        assert!(
+            volume(shelled).could_be_equal(Scalar::from_f64(outside)),
+            "{:?} vs {outside}",
+            volume(shelled)
+        );
+        let wall = part
+            .solid_id(&namer.name(&["void", "1"]))
+            .expect("the void's wall");
+        let around = 2.4 * 2.4 * 2.4 - 8.;
+        assert!(
+            volume(wall).could_be_equal(Scalar::from_f64(around)),
+            "{:?} vs {around}",
+            volume(wall)
+        );
+    }
+}
+
+/// A block with a void, shelled 0.2 thick outward: the walls grow out of
+/// the block, and into the void.
+#[test]
+fn a_block_with_a_void_shelled_outward() {
+    let (mut part, solid) = block_with_a_void();
+    let namer = Namer::new("shell", "s").unwrap();
+    let shelled = shell(&mut part, &namer, solid, &[], Scalar::from_f64(-0.2), &[])
+        .unwrap_or_else(|e| panic!("{e:?}"));
+    assert_valid(&part);
+    let volume = |s: SolidId| part.topology().mass_properties(s).unwrap().volume;
+    let outside = 4.4 * 4.4 * 4.4 - 64.;
+    assert!(
+        volume(shelled).could_be_equal(Scalar::from_f64(outside)),
+        "{:?} vs {outside}",
+        volume(shelled)
+    );
+    let wall = part.solid_id(&namer.name(&["void", "1"])).unwrap();
+    let inside = 8. - 1.6 * 1.6 * 1.6;
+    assert!(
+        volume(wall).could_be_equal(Scalar::from_f64(inside)),
+        "{:?} vs {inside}",
+        volume(wall)
+    );
+}
+
 /// A pyramid on a 2 x 2 square, its tip 2 up over `(tip_x, 0)`: four
 /// planar walls ruled into the tip, each a patch with its pole there.
 fn pyramid(tip_x: f64) -> (NamedModel, SolidId) {

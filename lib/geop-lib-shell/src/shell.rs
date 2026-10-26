@@ -66,6 +66,11 @@
 //! the rims, as one solid. Without an opening, the inner side is a void of
 //! its own: a second shell.
 //!
+//! **A solid with voids.** Each of its shells is offset into the material
+//! on its own: the wall round a void stands free in the hollow, a solid of
+//! its own (`shell(Scalar,void,k)` for the `k`-th shell), its void the
+//! void's faces, its outside their inner copies.
+//!
 //! **A sheet** — faces standing on their own — is shelled the same way
 //! ([`thicken`]): its faces are the outer side, their inner copies the
 //! inner one, and along every free edge, used by one face only, a wall
@@ -75,8 +80,8 @@
 //!
 //! What it does not do (yet): take away a face tangent to faces kept along
 //! some of its edges and not others, open the walls grown outward where a
-//! face taken away meets one kept at an inward corner, or open a solid
-//! that already has a void. Walls so thick
+//! face taken away meets one kept at an inward corner, or open the wall
+//! round a void. Walls so thick
 //! that an inner edge turns around or shrinks to a point, or that an edge
 //! of the result crosses one of its faces, are refused; two faces crossing
 //! along a curve no edge reaches are not noticed.
@@ -151,66 +156,91 @@ pub fn shell(
         }
     }
     let model = part.topology();
-    if model.get_solid(solid).with_context(ctx)?.shells.len() != 1 {
-        return Err(GeopError::new(
-            "the solid already has a void: the wall round it would float free in the hollow, a second solid, so shelling it is not supported",
-        ))
-        .with_context(ctx);
-    }
     let faces = model.solid_faces(solid).with_context(ctx)?;
-    if let Some(f) = open.iter().find(|f| !faces.contains(f)) {
+    if let Some(f) = (open.iter())
+        .chain(thicker.iter().map(|(f, _)| f))
+        .find(|f| !faces.contains(f))
+    {
         return Err(GeopError::new(format!(
             "face {f} is not a face of the solid being shelled"
         )))
         .with_context(ctx);
     }
-    let (mut spec, sources) = model.body_spec(&faces, true).with_context(ctx)?;
-    if outward {
-        for face in &mut spec.faces {
-            *face = face.reversed();
-        }
+    // Each shell of the solid, its outside first and then each void's,
+    // offset into the material: around a void, the wall stands free in
+    // the hollow, a solid of its own.
+    let mut shells = Vec::new();
+    for &s in &model.get_solid(solid).with_context(ctx)?.shells {
+        shells.push(model.get_shell(s).with_context(ctx)?.faces.clone());
     }
-    let names = part.source_names(&sources).with_context(ctx)?;
-    let removed: Vec<bool> = sources.faces.iter().map(|f| open.contains(f)).collect();
-    if let Some((f, _)) = thicker.iter().find(|(f, _)| !faces.contains(f)) {
+    if let Some(&f) = open.iter().find(|f| !shells[0].contains(f)) {
         return Err(GeopError::new(format!(
-            "face {f} is not a face of the solid being shelled"
+            "face {} bounds a void of the solid: opening the wall round a void is not supported",
+            part.name(f)?
         )))
         .with_context(ctx);
     }
     // Per face, how thick its wall is: a face of one thickness and its
     // neighbour of another still meet where their offsets do.
-    let thickness: Vec<Scalar> = (sources.faces.iter())
-        .map(|f| {
-            sign(
-                (thicker.iter())
-                    .find(|(g, _)| g == f)
-                    .map_or(thickness, |&(_, t)| t),
-            )
-        })
-        .collect();
-    let corner = inward_corner(&spec, &removed).with_context(ctx)?;
-    if let Some((f, g, e)) = corner.filter(|_| outward) {
-        return Err(GeopError::new(format!(
-            "face {} is taken away where it meets face {} at an inward corner, along edge {}, and the walls grow outward: not supported",
-            names.faces[f], names.faces[g], names.edges[e]
-        )))
-        .with_context(ctx);
+    let thick = |f: &FaceId| {
+        sign(
+            (thicker.iter())
+                .find(|(g, _)| g == f)
+                .map_or(thickness, |&(_, t)| t),
+        )
+    };
+    let mut bodies: Vec<(BodySpec, BodyNames)> = Vec::new();
+    let mut inner_of_opening = None;
+    for (k, faces) in shells.iter().enumerate() {
+        let (mut spec, sources) = model.body_spec(faces, true).with_context(ctx)?;
+        if outward {
+            for face in &mut spec.faces {
+                *face = face.reversed();
+            }
+        }
+        let names = part.source_names(&sources).with_context(ctx)?;
+        let removed: Vec<bool> = sources.faces.iter().map(|f| open.contains(f)).collect();
+        let thickness: Vec<Scalar> = sources.faces.iter().map(thick).collect();
+        let corner = inward_corner(&spec, &removed).with_context(ctx)?;
+        if let Some((f, g, e)) = corner.filter(|_| outward) {
+            return Err(GeopError::new(format!(
+                "face {} is taken away where it meets face {} at an inward corner, along edge {}, and the walls grow outward: not supported",
+                names.faces[f], names.faces[g], names.edges[e]
+            )))
+            .with_context(ctx);
+        }
+        let hollow = Hollow::new(&spec, &names, removed, &thickness).with_context(ctx)?;
+        if corner.is_some() {
+            inner_of_opening = Some(hollow.inner_side(namer).with_context(ctx)?);
+            continue;
+        }
+        let (mut result, mut result_names) = hollow.result(namer).with_context(ctx)?;
+        // Turned inside out, outward, the faces face the void they bound
+        // now, and their offsets, turned around as inner copies are, face
+        // out: the offsets are the outside, listed first. So too round a
+        // void: its faces bound the wall's void, its offsets the wall.
+        if outward != (k > 0) {
+            result.shells.reverse();
+        }
+        if k > 0 {
+            result_names.solid = Some(namer.name(&["void", &k.to_string()]));
+        }
+        bodies.push((result, result_names));
     }
-    let hollow = Hollow::new(&spec, &names, removed, &thickness).with_context(ctx)?;
-    if corner.is_some() {
-        return hollow.subtracted(part, namer, solid).with_context(ctx);
+    refuse_crossing(&bodies).with_context(ctx)?;
+    let mut walls = bodies.into_iter();
+    let shelled = match inner_of_opening {
+        Some(inner) => subtracted(part, namer, solid, inner).with_context(ctx)?,
+        None => {
+            let (result, names) = walls.next().expect("the outside's walls");
+            part.replace_with_solid(&[solid.into()], result, names)
+                .with_context(ctx)?
+        }
+    };
+    for (result, names) in walls {
+        part.build_body(result, names).with_context(ctx)?;
     }
-    let (mut result, result_names) = hollow.result(namer).with_context(ctx)?;
-    if outward {
-        // The faces turned inside out face the void they bound now, and
-        // their offsets, turned around as inner copies are, face out: the
-        // offsets are the outside, listed first.
-        result.shells.reverse();
-    }
-    refuse_crossing(&result, &result_names).with_context(ctx)?;
-    part.replace_with_solid(&[solid.into()], result, result_names)
-        .with_context(ctx)
+    Ok(shelled)
 }
 
 /// Thickens the sheet `sheet` of `part` into a solid of walls `thickness`
@@ -253,7 +283,9 @@ pub fn thicken(
     let thickness = vec![thickness; spec.faces.len()];
     let hollow = Hollow::new(&spec, &names, removed, &thickness).with_context(ctx)?;
     let (result, result_names) = hollow.result(namer).with_context(ctx)?;
-    refuse_crossing(&result, &result_names).with_context(ctx)?;
+    let bodies = [(result, result_names)];
+    refuse_crossing(&bodies).with_context(ctx)?;
+    let [(result, result_names)] = bodies;
     part.replace_with_solid(&[Body::Sheet(sheet)], result, result_names)
         .with_context(ctx)
 }
@@ -283,38 +315,73 @@ pub fn offset_faces(
     let removed = vec![false; spec.faces.len()];
     let thickness = vec![distance.neg(); spec.faces.len()];
     let hollow = Hollow::new(&spec, &names, removed, &thickness).with_context(ctx)?;
-    let (result, result_names) = hollow.inner_side(namer).with_context(ctx)?;
-    refuse_crossing(&result, &result_names).with_context(ctx)?;
+    let bodies = [hollow.inner_side(namer).with_context(ctx)?];
+    refuse_crossing(&bodies).with_context(ctx)?;
+    let [(result, result_names)] = bodies;
     part.build_body(result, result_names).with_context(ctx)
 }
 
-/// Refuses the body `spec`, named `names`, if it would run into itself:
-/// an edge of it that crosses one of its faces away from every vertex.
-/// The walls are built face by face from the faces' offsets, which say
-/// nothing about where faces apart from each other end up: a hole closer
-/// to a side than the walls are thick moves its wall through the side's.
-/// Asked of the body built on its own, so the part is left as it was.
-fn refuse_crossing(spec: &BodySpec, names: &BodyNames) -> GeopResult<()> {
+/// Refuses the bodies `bodies`, each with its names, if they would run
+/// into themselves or each other: an edge of one that crosses a face of
+/// one away from every vertex. The walls are built face by face from the
+/// faces' offsets, which say nothing about where faces apart from each
+/// other end up: a hole closer to a side than the walls are thick moves
+/// its wall through the side's, a void's wall can reach the outside's.
+/// Asked of the bodies built on their own, so the part is left as it was.
+fn refuse_crossing(bodies: &[(BodySpec, BodyNames)]) -> GeopResult<()> {
     let mut model = Model::new();
-    let built = model.build_body(spec.clone())?;
+    let mut built = Vec::new();
+    for (spec, _) in bodies {
+        built.push(model.build_body(spec.clone())?);
+    }
     let params = ValidationParameters::default();
-    let Some((edge, face, point)) = body_crossing(&params, &model, built.body()?)? else {
+    let all = built
+        .iter()
+        .map(|b| b.body())
+        .collect::<GeopResult<Vec<_>>>()?;
+    let Some((edge, face, point)) = body_crossing(&params, &model, &all)? else {
         return Ok(());
     };
-    let edge = built
-        .edges
-        .iter()
-        .position(|&e| e == edge)
-        .expect("an edge built");
-    let face = built
-        .faces
-        .iter()
-        .position(|&f| f == face)
-        .expect("a face built");
+    let name = |find: &dyn Fn(&BuiltBody) -> Option<usize>, of: fn(&BodyNames) -> &Vec<String>| {
+        (built.iter().zip(bodies))
+            .find_map(|(b, (_, names))| find(b).map(|i| of(names)[i].clone()))
+            .expect("built from these")
+    };
     Err(GeopError::new(format!(
         "the walls run into each other: edge {} crosses face {} at {point:?}: the walls are too thick for this part, which is not supported",
-        names.edges[edge], names.faces[face]
+        name(&|b| b.edges.iter().position(|&e| e == edge), |n| &n.edges),
+        name(&|b| b.faces.iter().position(|&f| f == face), |n| &n.faces),
     )))
+}
+
+/// The solid `solid` of `part` less `inner`, the inner side of its
+/// outside (see [`Hollow::inner_side`]), closed into a solid: the walls,
+/// open where faces are taken away, as a boolean finds them (see the
+/// module docs). The inner side's faces keep their names, the rest as the
+/// boolean names what is left of the solid's.
+fn subtracted(
+    part: &mut NamedModel,
+    namer: &Namer,
+    solid: SolidId,
+    (mut inner, mut names): (BodySpec, BodyNames),
+) -> GeopResult<SolidId> {
+    inner.solid = true;
+    names.solid = Some(namer.name(&["inner"]));
+    let inner = part
+        .build_body(inner, names)
+        .map_err(|e| e.with_context("closing the inner side into a solid"))?
+        .solid
+        .ok_or_else(|| GeopError::new("the inner side closes into no solid"))?;
+    boolean(
+        part,
+        namer,
+        solid,
+        inner,
+        BooleanOp::Difference,
+        RemeshParams::default(),
+    )
+    .map_err(|e| e.with_context("the solid less its inner side"))?
+    .ok_or_else(|| GeopError::new("the walls leave nothing of the solid"))
 }
 
 /// A face taken away, `f`, that meets a face kept, `g`, at an inward
@@ -1176,37 +1243,6 @@ impl<'a> Hollow<'a> {
             vec![outer_faces, inner_faces]
         };
         Ok((out, names))
-    }
-
-    /// The solid `solid` of `part`, this hollow's, less its inner side
-    /// closed into a solid: the walls, open where faces are taken away, as
-    /// a boolean finds them (see the module docs). The inner side's faces
-    /// are named as [`Self::inner_side`] names them, the rest as the
-    /// boolean names what is left of the solid's.
-    fn subtracted(
-        &self,
-        part: &mut NamedModel,
-        namer: &Namer,
-        solid: SolidId,
-    ) -> GeopResult<SolidId> {
-        let (mut inner, mut names) = self.inner_side(namer)?;
-        inner.solid = true;
-        names.solid = Some(namer.name(&["inner"]));
-        let inner = part
-            .build_body(inner, names)
-            .map_err(|e| e.with_context("closing the inner side into a solid"))?
-            .solid
-            .ok_or_else(|| GeopError::new("the inner side closes into no solid"))?;
-        boolean(
-            part,
-            namer,
-            solid,
-            inner,
-            BooleanOp::Difference,
-            RemeshParams::default(),
-        )
-        .map_err(|e| e.with_context("the solid less its inner side"))?
-        .ok_or_else(|| GeopError::new("the walls leave nothing of the solid"))
     }
 
     /// The inner side alone, as a sheet of its own: the inner copy of every
