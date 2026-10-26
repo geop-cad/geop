@@ -38,7 +38,7 @@ fn is_refusal(message: &str) -> bool {
         "the other way round",
         "passes through itself",
         "past its",
-        "neither pair of its opposite sides meet",
+        "meet in none of the",
         "part of no feature",
     ]
     .iter()
