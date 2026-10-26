@@ -1109,6 +1109,15 @@ ball's centre exactly there, and `meet` ran off along the fill's end. The
 step is Newton's on the squared distance wherever its Hessian is
 definitely positive definite, and Gauss-Newton's only where it is not.
 
+## A trimmed face is still that face
+
+A boolean names a piece split off a face `N(F,E)`, and the other piece
+keeps `F` — whichever one the splice left the name on. Where the boolean
+then keeps only one piece, that piece is the face, trimmed: it takes the
+name back (`name_lone_pieces`), its piece's name standing for it too. A
+fillet rolled instead of extruded split the box's bottom along its tool
+the other way round, and the draft about the bottom no longer found it.
+
 ## A hash map's order is no order
 
 `Model`'s entities live in `HashMap`s, whose iteration order differs between

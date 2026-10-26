@@ -123,10 +123,11 @@ fn row_of_holes_cut_by_a_patterned_tool() {
     let expected = 8.0 * 2.0 * 0.5 - 4.0 * PI * 0.3 * 0.3 * 0.5;
     assert_volume(&part, "linear_pattern(holes)", expected, 1e-3);
     // The wall of the third copy's hole is the pin's side, copied — cut
-    // where the plate's faces cross it, and named by the cut after it.
+    // where the plate's faces cross it, its one piece left keeping the
+    // copy's name.
     let wall = part.names().iter().any(|(id, name)| {
         matches!(id, geop_ops_model::RefId::Face(_))
-            && name.starts_with("combine(holes,3,linear_pattern(holes,3,cylinder(pin,c")
+            && name.starts_with("linear_pattern(holes,3,cylinder(pin,c")
     });
     assert!(wall, "no face of the third hole");
 }

@@ -282,7 +282,7 @@ mod delete_face {
         assert_volume(&part, &part.solid_names()[0], 4.0 - 0.125, 1e-5);
         let cut: Vec<String> = faces_named(&part, "")
             .into_iter()
-            .filter(|n| n.starts_with("combine(corner,prism("))
+            .filter(|n| n.starts_with("prism(corner,"))
             .collect();
         assert_eq!(cut.len(), 1, "{cut:?}");
         let part = deleted(program, cut, HealGap::Heal);
