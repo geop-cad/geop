@@ -384,8 +384,50 @@ fn a_slot_cut_into_a_slotted_disc_classifies_the_faces_it_touches() {
 }
 
 /// The slotted disc with thirty-two slots, eight to a quarter of its rim.
+/// The 32nd cut once left the slot's footprint on the cap's quarter
+/// straddling the slot, its corner on the rim `4e-10` below the cap: each
+/// cut of the rim had carried the width of its parameter into the pieces,
+/// three times wider per cut.
 #[test]
-#[ignore = "bug: the 32nd cut leaves the slot's footprint on the cap quarter boundary(cut31,cylinder(disc,c0,q3),..) straddling (classify_face): bounded by its four corners, it is offered an interior point at (3.754, -0.061, 1), outside them, as if its loop ran the other way; the rim vertex at its corner boundary(cut31,cylinder(disc,p1,q3),cube(slot31,c2),0,1) lies 4e-10 below the cap. The quarter rim has been split sixteen times by then (AGENTS.md: width along a split edge), not confirmed as the cause; sixteen slots build"]
 fn a_disc_with_thirty_two_slots() {
-    slotted_disc(32);
+    let (model, _, _) = slotted_disc(32);
+    if let Err(errors) = validate(&validation(), model.topology()) {
+        panic!("{} error(s): {}", errors.len(), errors[0]);
+    }
+}
+
+/// The widest control point coordinate of any arc of `solid` (an edge of
+/// degree two), and the arc's name.
+fn widest_arc(model: &NamedModel, solid: SolidId) -> (f64, String) {
+    let topology = model.topology();
+    let mut widest = (0.0, String::new());
+    for face in topology.solid_faces(solid).unwrap() {
+        for edge in topology.face_edges(face) {
+            let curve = &topology.get_edge(edge).unwrap().curve;
+            if curve.degree != 2 {
+                continue;
+            }
+            for point in &curve.control_points {
+                for k in 0..4 {
+                    let width = point[k].width().to_f64();
+                    if width > widest.0 {
+                        widest = (width, model.name_of(edge).unwrap_or("?").to_string());
+                    }
+                }
+            }
+        }
+    }
+    widest
+}
+
+/// The rims of a disc are cut twice by every slot, so with sixteen slots
+/// each quarter of them eight times over: their pieces are as narrow as a
+/// rim cut once, to the rounding of each cut. When a cut carried the width
+/// of its parameter into the pieces, the bottom rim's quarter
+/// `cylinder(disc,p2,q3)` came out `1.2e-8` wide.
+#[test]
+fn the_rims_of_a_slotted_disc_stay_as_narrow_as_cut_once() {
+    let (model, disc, _) = slotted_disc(16);
+    let (width, edge) = widest_arc(&model, disc);
+    assert!(width < 1e-13, "{edge}: {width:e}");
 }

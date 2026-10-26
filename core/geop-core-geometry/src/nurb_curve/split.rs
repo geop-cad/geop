@@ -12,22 +12,15 @@ impl<const D: usize> NurbCurve<D> {
     /// only they know what it means, so this function neither assumes nor
     /// imposes an answer.
     ///
-    /// What `t` must be is *narrow*, not sharp. Boehm insertion cannot absorb
-    /// a wide parameter: its width flows into `alpha = (t - e) / (s - e)` — `s - e` shrinks with every successive
-    /// split while an unsharpened width does not, so their ratio widens
-    /// without bound — and on into the sub-curves' control points, until
-    /// downstream subdivision searches stop converging.
-    ///
-    /// Callers used to meet that by sharpening, which was a real geometric
-    /// error: it moved the cut to the interval's midpoint rather than the
-    /// point actually located, off by `|t_mid - t*| x |C'(t)|`, which is how
-    /// an edge endpoint ended up ~1e-8 from the vertex it was anchored to.
-    /// They now Newton-refine instead — see
-    /// [`NurbCurve::refine_parameter_at_point`] and
-    /// `intersection::curve_surface::refine_crossing` — which yields a
-    /// parameter that is narrow *and* still an honest enclosure. Subdivision
-    /// isolates the solution, Newton polishes it; neither does the other's
-    /// job. No caller on the split path sharpens any more.
+    /// A wide `t` gives every piece the curve could be cut into there, in
+    /// one: its width flows into `alpha = (t - e) / (s - e)`, into the
+    /// pieces' control points and into their end knot. A piece cut again
+    /// is then found wider at the next cut, and its pieces wider still.
+    /// To end a piece at a point, cut at a sharp parameter of the refined
+    /// enclosure of where the curve reaches it
+    /// ([`NurbCurve::split_parameter_at_point`]): which one is a free
+    /// choice, and the pieces then carry no more than the rounding of
+    /// the cut.
     ///
     /// See "Sharpen only where the value is a free choice" in `AGENTS.md`.
     pub fn split(&self, t: Scalar) -> GeopResult<(NurbCurve<D>, NurbCurve<D>)> {
@@ -144,6 +137,50 @@ mod tests {
         let c = line([0.; 3], [1., 0., 0.]);
         assert!(c.split(Scalar::ZERO).is_err());
         assert!(c.split(Scalar::ONE).is_err());
+    }
+
+    /// A quarter of a disc's rim cut again and again, as slots cut into a
+    /// disc one after another cut it: each cut where a plane crosses the
+    /// piece left by the cut before, at the vertex the piece gives there,
+    /// as `Model::split_edge_at_vertex` cuts. Cut once, the piece is
+    /// `2e-15` wide; each further cut adds one subdivision's rounding and
+    /// nothing more. Cut at the whole refined parameter, the width grew
+    /// threefold per cut, to `0.08` by the 27th, and the 28th failed.
+    #[test]
+    fn a_rim_cut_many_times_stays_as_narrow_as_cut_once() {
+        use crate::contains::curve::curve_could_contain;
+        use geop_core_math::vector::Vector3;
+        let f = Scalar::from_f64;
+        let v = |x: f64, y: f64, z: f64| Vector3::from_array([f(x), f(y), f(z)]);
+        let mut piece = NurbCurve::<4>::arc(
+            v(0.0, -4.0, 1.0),
+            v(4.0, -4.0, 1.0),
+            v(4.0, 0.0, 1.0),
+            crate::nurb_curve::sqrt2_over_2(),
+        )
+        .unwrap();
+        for k in 1..=40 {
+            let angle = -std::f64::consts::FRAC_PI_2 * (1.0 - k as f64 / 41.0);
+            let crossing = v(4.0 * angle.cos(), 4.0 * angle.sin(), 1.0);
+            let t = curve_could_contain(&piece, &crossing, 10_000, f(1e-4))
+                .unwrap()
+                .unwrap();
+            let t = piece.refine_parameter_at_point(t, &crossing);
+            let vertex = piece.evaluate(t).unwrap();
+            let t = piece.split_parameter_at_point(t, &vertex).unwrap();
+            piece = piece.split(t).unwrap().1;
+            let widest = piece
+                .control_points
+                .iter()
+                .flat_map(|p| (0..4).map(move |c| p[c].width().to_f64()))
+                .fold(0.0, f64::max);
+            assert!(widest < 1e-13, "cut {k}: {widest:e}");
+            let z = piece.evaluate(piece.mid_parameter().unwrap()).unwrap()[2];
+            assert!(
+                z.could_be_equal(Scalar::ONE) && z.width().to_f64() < 1e-13,
+                "cut {k}: {z:?}"
+            );
+        }
     }
 
     #[test]
