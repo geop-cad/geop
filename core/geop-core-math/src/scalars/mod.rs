@@ -519,6 +519,17 @@ impl Scalar {
         // Neither dominates: the first is what a repeatedly-split curve's
         // weights need, the second is what a surface patch with genuinely
         // wide control points needs.
+        //
+        // Yet neither collapses as the first promises: `b - a` rounds
+        // outward even where it is exactly zero, and `a` plus that is `a`
+        // widened by a bit. So a point between two equal enclosures, no
+        // further than either end, is taken as it is: whatever two values
+        // they stand for, every point between them lies in that enclosure
+        // too. A polynomial patch cut in pieces keeps its weights exactly
+        // one, and stays a polynomial (see `Model::mass_properties`).
+        if a.is_exactly(b) && alpha.lo >= 0.0 && alpha.hi <= 1.0 {
+            return a;
+        }
         let via_delta = a.add(alpha.mul(b.sub(a)));
         let via_weights = Self::ONE.sub(alpha).mul(a).add(alpha.mul(b));
         via_delta.intersect(via_weights)

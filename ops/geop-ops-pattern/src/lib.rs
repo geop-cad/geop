@@ -7,6 +7,7 @@
 //! - [`Mirror`]: a mirror image in a plane.
 //! - [`MoveBody`]: bodies, or a copy of them, turned and shifted.
 //! - [`ScaleBody`]: bodies scaled about a point, evenly or along each axis.
+//! - [`DeformBody`]: bodies tapered, twisted or bent about an axis.
 //!
 //! The first three repeat bodies or features.
 //!
@@ -39,6 +40,7 @@
 
 mod circular;
 mod common;
+mod deform_body;
 #[cfg(test)]
 mod editor_tests;
 #[cfg(any(test, feature = "examples"))]
@@ -57,6 +59,7 @@ mod tests;
 
 pub use circular::{CircularPattern, CircularPatternArgs};
 pub use common::{BodyRef, Seeds, body};
+pub use deform_body::{Deform, DeformBody, DeformBodyArgs};
 pub use features::{Feature, FeatureRef, feature};
 pub use linear::{Direction, LinearPattern, LinearPatternArgs};
 pub use mirror::{Mirror, MirrorArgs};
@@ -75,7 +78,8 @@ pub fn register(r: Registry) -> GeopResult<Registry> {
         .operation(CircularPattern)?
         .operation(Mirror)?
         .operation(MoveBody)?
-        .operation(ScaleBody)?;
+        .operation(ScaleBody)?
+        .operation(DeformBody)?;
     #[cfg(any(test, feature = "examples"))]
     let r = r.examples(examples::set())?;
     Ok(r)
