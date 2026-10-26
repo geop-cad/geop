@@ -5,6 +5,10 @@
 use std::{collections::BTreeMap, rc::Rc};
 
 use geop_core_editor::registry::Registry;
+use geop_core_geometry::{
+    intersection::curve_curve_overlaps_and_crossings,
+    search::{MAX_NODES, min_subdivision_size},
+};
 use geop_core_math::{geop_error::GeopResult, scalars::Scalar};
 use geop_core_program::{
     part::Part,
@@ -385,6 +389,53 @@ fn subd_mouse_from_the_front_and_back_draws() {
     let part = &model(&build(&subd_mouse()));
     view(part, ViewKind::Front);
     view(part, ViewKind::Back);
+}
+
+/// The mug's inside floor from the right: the faces `f25,v86` and
+/// `f25,v90` are mirror images in `x = 0`, and each has one silhouette
+/// piece, bowing out from the mirror plane and back, from near the floor's
+/// middle to the wall. Seen along `x` the two are one line on the paper,
+/// and the view has to see them run along each other: two curves only
+/// interpolating it each drifted from it its own way, `1e-9` apart all
+/// along, so the search for where they cross ran out of nodes. Enclosing
+/// the silhouette between the points fitted, they overlap from end to end.
+#[test]
+fn subd_mug_floor_silhouettes_are_one_line_from_the_right() {
+    let part = &model(&build(&geop_ops_subd::examples::subd_mug()));
+    let frame = ViewKind::Right.frame().unwrap();
+    let d = frame.direction.vector();
+    let on_paper: Vec<_> = ["subd(mug,f25,v86)", "subd(mug,f25,v90)"]
+        .map(|name| {
+            let Some(RefId::Face(face)) = part.names().id_of(name) else {
+                panic!("no face {name}");
+            };
+            let pieces = crate::silhouette::face_silhouettes(part.topology(), face, &d).unwrap();
+            assert_eq!(pieces.len(), 1, "{name}");
+            frame.project_curve(&pieces[0].curve).unwrap()
+        })
+        .into();
+    let (overlaps, crossings) = curve_curve_overlaps_and_crossings(
+        &on_paper[0],
+        &on_paper[1],
+        MAX_NODES,
+        min_subdivision_size(),
+    )
+    .unwrap();
+    assert!(crossings.is_empty(), "{crossings:?}");
+    let [overlap] = overlaps.as_slice() else {
+        panic!("{overlaps:?}");
+    };
+    let (a, b) = on_paper[0].domain();
+    assert!(overlap.start.t.could_be_equal(a) && overlap.end.t.could_be_equal(b));
+}
+
+/// The subdivided mug seen from the right and the left (see
+/// `subd_mug_floor_silhouettes_are_one_line_from_the_right`).
+#[test]
+fn subd_mug_from_the_side_draws() {
+    let part = &model(&build(&geop_ops_subd::examples::subd_mug()));
+    view(part, ViewKind::Right);
+    view(part, ViewKind::Left);
 }
 
 /// The flange turned about `y`, seen from the back along that axis: the
