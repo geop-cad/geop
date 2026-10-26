@@ -326,9 +326,6 @@ fn straight_section(model: &Model, edge: EdgeId, line: &Axis) -> GeopResult<Sect
     for (vertex, leaving) in [(e.start_vertex, d.neg()), (e.end_vertex, d)] {
         let ctx = with_context!("the edge's end at vertex {vertex}");
         let (end, _) = tool_end(model, vertex, [left, right], &leaving, bend).with_context(ctx)?;
-        if let End::Flush { unless: Some(why) } = &end {
-            return Err(GeopError::new(why.clone())).with_context(ctx);
-        }
         ends.push(end);
     }
     let ends = [ends[0].clone(), ends[1].clone()];
@@ -1084,12 +1081,88 @@ fn round_plan(
     )))
 }
 
-/// How the edge named `name` is blended into `shape`. A straight edge
-/// between two planes, on its own, and a whole circle between planes across
-/// its axis and cylinders and cones around it, are swept exactly — when the
-/// radius is the same all along. Every other blend is rolled along the
-/// edge's tangent chain.
-fn plan_edge(model: &NamedModel, name: &str, shape: &BlendShape) -> GeopResult<Planned> {
+/// Whether the straight edge `edge`'s swept tool, cross-section `section`,
+/// can end as its ends say, among the edges `picked` blended into `shape`:
+/// an end flush with the third face needs it a plane square to the edge,
+/// and so does one at a wall — unless a mitre or a corner's ball takes it
+/// instead (see [`blend`]): the wall's own edge along a face they share
+/// blended too, straight and running into this edge's wall alike, or, for
+/// a fillet, every edge at the vertex. Where an end cannot, the edge is
+/// rolled, which ends at any face (see [`crate::rolling`]).
+fn swept_ends_hold(
+    model: &Model,
+    edge: EdgeId,
+    section: &Section,
+    picked: &[EdgeId],
+    shape: &BlendShape,
+) -> GeopResult<bool> {
+    let Sweep::Straight { ends, vertices, .. } = &section.sweep else {
+        return Ok(true);
+    };
+    for (end, &vertex) in ends.iter().zip(vertices) {
+        match end {
+            End::Flush { unless: Some(_) } => return Ok(false),
+            End::Wall { unless: Some(_) } => {
+                let incident = model.edges_at_vertex(vertex);
+                let cornered = matches!(shape, BlendShape::Fillet { .. })
+                    && incident.iter().all(|e| picked.contains(e));
+                if !cornered && !mitred_at(model, edge, section, vertex, picked)? {
+                    return Ok(false);
+                }
+            }
+            _ => {}
+        }
+    }
+    Ok(true)
+}
+
+/// Whether the straight edge `edge`, cross-section `section`, running into
+/// a wall at `vertex`, has a partner there among `picked` to be mitred with
+/// (see [`mitres`]): an edge sharing one of its faces, straight between
+/// planes, whose own tool runs into a wall at `vertex` too.
+fn mitred_at(
+    model: &Model,
+    edge: EdgeId,
+    section: &Section,
+    vertex: VertexId,
+    picked: &[EdgeId],
+) -> GeopResult<bool> {
+    for other in model.edges_at_vertex(vertex) {
+        if other == edge || !picked.contains(&other) {
+            continue;
+        }
+        let Some(line) = model.get_edge(other)?.curve.as_line()? else {
+            continue;
+        };
+        let theirs = faces(model, other)?;
+        if !theirs.iter().any(|f| section.faces.contains(f)) || !between_planes(model, other)? {
+            continue;
+        }
+        let Sweep::Straight { ends, vertices, .. } = straight_section(model, other, &line)?.sweep
+        else {
+            continue;
+        };
+        let k = usize::from(vertices[1] == vertex);
+        if matches!(ends[k], End::Wall { .. }) {
+            return Ok(true);
+        }
+    }
+    Ok(false)
+}
+
+/// How the edge named `name` is blended into `shape`, among the edges
+/// `picked`. A straight edge between two planes, on its own, and a whole
+/// circle between planes across its axis and cylinders and cones around
+/// it, are swept exactly — when the radius is the same all along, and a
+/// straight one's ends are ones a swept tool takes (see
+/// [`swept_ends_hold`]). Every other blend is rolled along the edge's
+/// tangent chain.
+fn plan_edge(
+    model: &NamedModel,
+    name: &str,
+    shape: &BlendShape,
+    picked: &[EdgeId],
+) -> GeopResult<Planned> {
     let topology = model.topology();
     let edge = model.edge_id(name)?;
     let curve = &topology.get_edge(edge)?.curve;
@@ -1106,6 +1179,9 @@ fn plan_edge(model: &NamedModel, name: &str, shape: &BlendShape) -> GeopResult<P
             && between_planes(topology, edge)?
         {
             let section = straight_section(topology, edge, &line)?;
+            if !swept_ends_hold(topology, edge, &section, picked, shape)? {
+                return Ok(Planned::Rolled(chain));
+            }
             return Ok(Planned::Swept(
                 Plan {
                     edge: name.to_string(),
@@ -1307,6 +1383,14 @@ pub fn blend(
             model.vertex_id(vertex).with_context(ctx)?;
         }
     }
+    let mut picked: Vec<EdgeId> = Vec::new();
+    for name in edges {
+        let ctx = with_context!("edge {name:?}");
+        let edge = model.edge_id(name).with_context(ctx)?;
+        for link in tangent_chain(model.topology(), edge).with_context(ctx)?.links {
+            picked.push(link.edge);
+        }
+    }
     let mut solid: Option<SolidId> = None;
     let mut covered: Vec<EdgeId> = Vec::new();
     let mut plans: Vec<(Plan, ToolProfile)> = Vec::new();
@@ -1331,7 +1415,7 @@ pub fn blend(
         if covered.contains(&edge) {
             continue;
         }
-        let planned = plan_edge(model, name, shape)
+        let planned = plan_edge(model, name, shape, &picked)
             .map_err(|e| e.with_context(corners_of(model, edge)))
             .with_context(ctx)?;
         match planned {
@@ -1472,12 +1556,12 @@ pub fn blend(
                 let mut tool =
                     tool::build_tools(model, &[(&scope, half)], &[], &[], scope.name(&["tool"]))
                         .with_context(ctx)?;
-                // Cut off at its own end, kept where the halves meet.
+                // Cut off at its own end, the piece past the face dropped.
                 if let Some(surface) = &rolled.trims[k] {
                     let station = if k == 0 {
-                        half.stations.last().expect("stations")
-                    } else {
                         &half.stations[0]
+                    } else {
+                        half.stations.last().expect("stations")
                     };
                     tool = trimmed(model, &scope, tool, surface, &station.vertices[2])
                         .with_context(ctx)?;
@@ -1490,16 +1574,21 @@ pub fn blend(
         let mut tool = tools
             .build(model, namer, &component)
             .with_context(with_context!("the tool of edge {edge:?}"))?;
-        // Each rolled tool cut off by the faces it runs on through, kept
-        // where its middle station is.
+        // Each rolled tool cut off by the faces it runs on through, the
+        // piece holding its end past each dropped. (Not a piece kept by a
+        // station between: the stations are where the spans break, and a
+        // tool of one span has none but its ends.)
         for &i in &component {
             let Some((_, rolled)) = i.checked_sub(plans.len()).map(|r| &tools.rolled[r]) else {
                 continue;
             };
             let stations = &rolled.tool.stations;
-            let middle = &stations[stations.len() / 2];
-            for surface in rolled.trims.iter().flatten() {
-                tool = trimmed(model, &scope, tool, surface, &middle.vertices[2])
+            let ends = [&stations[0], stations.last().expect("stations")];
+            for (surface, end) in rolled.trims.iter().zip(ends) {
+                let Some(surface) = surface else {
+                    continue;
+                };
+                tool = trimmed(model, &scope, tool, surface, &end.vertices[2])
                     .with_context(with_context!("the tool of edge {:?}", tools.edge(i)))?;
             }
         }
@@ -1510,15 +1599,15 @@ pub fn blend(
 }
 
 /// The tool `tool` cut off by `surface` (see [`crate::rolling::Rolled::trims`]):
-/// split along a sheet on it, and of the pieces the one with a vertex at
-/// `keep` kept, the sheet and every other piece deleted. Named by `namer`
-/// as a split names what it makes.
+/// split along a sheet on it, the piece with a vertex at `past` — its end
+/// run on past the face — and the sheet deleted, and the one other piece
+/// kept. Named by `namer` as a split names what it makes.
 fn trimmed(
     model: &mut NamedModel,
     namer: &Namer,
     tool: SolidId,
     surface: &NurbSurface3D,
-    keep: &Vector3,
+    past: &Vector3,
 ) -> GeopResult<SolidId> {
     let namer = namer.scoped("trim");
     let spec = BodySpec::sheet_on(surface.clone())?;
@@ -1534,7 +1623,8 @@ fn trimmed(
         .first()
         .ok_or_else(|| GeopError::new("a sheet came out as no shell"))?;
     let pieces = split(model, &namer, tool, sheet, RemeshParams::default())?;
-    let mut kept = None;
+    let mut dropped = false;
+    let mut kept = Vec::new();
     let mut rest = vec![Body::Sheet(sheet)];
     for piece in pieces {
         let topology = model.topology();
@@ -1544,25 +1634,33 @@ fn trimmed(
                 holds |= topology
                     .coedge_start_vertex(coedge)?
                     .point
-                    .could_be_equal(keep);
+                    .could_be_equal(past);
             }
         }
-        match (holds, kept) {
-            (true, None) => kept = Some(piece),
-            (true, Some(_)) => {
-                return Err(GeopError::new(format!(
-                    "the blend's tool cut off by a face it runs on through came apart in two pieces at {keep:?}"
-                )));
-            }
-            (false, _) => rest.push(Body::Solid(piece)),
+        if holds && !dropped {
+            dropped = true;
+            rest.push(Body::Solid(piece));
+        } else if holds {
+            return Err(GeopError::new(format!(
+                "the blend's tool cut off by a face it runs on through has two pieces holding its end past the face, at {past:?}"
+            )));
+        } else {
+            kept.push(piece);
         }
     }
+    if !dropped {
+        return Err(GeopError::new(format!(
+            "the blend's tool cut off by a face it runs on through came apart in no piece holding its end past the face, at {past:?}"
+        )));
+    }
+    let [piece] = kept[..] else {
+        return Err(GeopError::new(format!(
+            "the blend's tool cut off by a face it runs on through came apart in {} pieces short of the face, not one",
+            kept.len()
+        )));
+    };
     model.delete_bodies(&rest)?;
-    kept.ok_or_else(|| {
-        GeopError::new(format!(
-            "the blend's tool cut off by a face it runs on through kept no piece at {keep:?}"
-        ))
-    })
+    Ok(piece)
 }
 
 /// Every tool of a blend: the swept ones' plans, the rolled ones — by index

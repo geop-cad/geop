@@ -701,9 +701,10 @@ fn carried_fraction(fraction: f64) -> f64 {
 }
 
 /// `surface` carried on ([`NurbSurface3D::extended`]) past every side of
-/// it the point `at` lies on, far enough to reach `reach` on past it (see
-/// [`carried_fraction`]), by how fast it runs there: where a face ending at
-/// `at` would go on.
+/// it nearer the point `at` than `reach`, far enough to reach `reach` on
+/// past it (see [`carried_fraction`]), by how fast it runs there: where a
+/// face ending at `at` would go on — at its surface's side, or at a trim
+/// short of it.
 fn carried_on_past(surface: &NurbSurface3D, at: &Vector3, reach: f64) -> GeopResult<NurbSurface3D> {
     let Some((u, v)) = surface.locate(at, MAX_NODES, min_subdivision_size())? else {
         return Err(GeopError::new(format!(
@@ -725,8 +726,12 @@ fn carried_on_past(surface: &NurbSurface3D, at: &Vector3, reach: f64) -> GeopRes
         let by = width
             .mul(Scalar::from_f64(carried_fraction(fraction)))
             .sharpen();
+        // Every side nearer `at` than `reach`, at the speed there: the
+        // side `at` lies on, and one a face trimmed short of its surface's
+        // end has beyond its boundary — a free choice, only ever farther.
         for (at_end, side) in [(false, t0), (true, t1)] {
-            if t.could_be_equal(side) {
+            let gap = side.sub(t).abs().mul(speed.norm()).lower().to_f64();
+            if t.could_be_equal(side) || gap < reach {
                 carried = carried.extended(along_u, at_end, by)?;
             }
         }
