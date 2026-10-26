@@ -18,7 +18,10 @@
 //! beside it close over it with a coedge sitting at the vertex (see
 //! [`CoedgeOn::Vertex`]). A curve *on the axis* runs between two poles,
 //! sweeps no wall, and is one edge at every station — or none, where no cap
-//! bounds it. And a strip may be joined to what was built before it: a
+//! bounds it. An *apex* is a station where the whole loop collapses to one
+//! point, as a loft to a point ends: one vertex for every joint, no edges
+//! there, and each wall closes over it with a coedge sitting at the vertex.
+//! And a strip may be joined to what was built before it: a
 //! joint at a station to a vertex already in the spec, or a whole station
 //! to a station of an earlier strip, with its vertices and its curves'
 //! edges ([`Glue`]).
@@ -107,6 +110,9 @@ pub struct Strip<'a> {
     pub poles: &'a [bool],
     /// Per curve: whether it lies on the axis, between two poles.
     pub on_axis: &'a [bool],
+    /// Per station, or none for no station: whether the whole loop
+    /// collapses to a point there — an *apex*, as a loft to a point has.
+    pub apex: &'a [bool],
     pub glued: Vec<Glue>,
     pub geometry: &'a dyn StripGeometry,
 }
@@ -124,6 +130,11 @@ impl Strip<'_> {
     /// The station after station `j`, around a closed path.
     fn station_after(&self, j: usize) -> usize {
         (j + 1) % self.station_names.len()
+    }
+
+    /// Whether the loop collapses to a point at station `s`.
+    fn is_apex(&self, s: usize) -> bool {
+        self.apex.get(s).copied().unwrap_or(false)
     }
 
     /// `name` qualified by the span `j`'s name, if it has one.
@@ -159,6 +170,15 @@ impl Strip<'_> {
                 self.poles.len(),
                 self.on_axis.len()
             )));
+        }
+        if !self.apex.is_empty() {
+            let poles = self.poles.iter().any(|&p| p) || self.on_axis.iter().any(|&a| a);
+            if self.apex.len() != stations || (poles && self.apex.iter().any(|&a| a)) {
+                return Err(GeopError::new(format!(
+                    "skin: {} apex flags for {stations} stations, or an apex with poles",
+                    self.apex.len()
+                )));
+            }
         }
         Ok(())
     }
@@ -257,6 +277,17 @@ pub fn skin(
         }
 
         let mut vertex = vec![vec![0; strip.joints()]; stations];
+        // An apex: one vertex for every joint, named after its station.
+        let mut apex_vertex = vec![None; stations];
+        for (s, at) in apex_vertex.iter_mut().enumerate() {
+            if strip.is_apex(s) {
+                spec.vertices.push(strip.geometry.joint(s, 0)?);
+                names
+                    .vertices
+                    .push(strip.namer.name(&[&strip.station_names[s]]));
+                *at = Some(spec.vertices.len() - 1);
+            }
+        }
         for i in 0..strip.joints() {
             let name = &strip.joint_names[i];
             if strip.poles[i] {
@@ -268,7 +299,7 @@ pub fn skin(
                 continue;
             }
             for s in 0..stations {
-                vertex[s][i] = match glued_vertex[s][i] {
+                vertex[s][i] = match apex_vertex[s].or(glued_vertex[s][i]) {
                     Some(v) => v,
                     None => {
                         spec.vertices.push(strip.geometry.joint(s, i)?);
@@ -301,7 +332,7 @@ pub fn skin(
                 }
                 continue;
             }
-            for s in 0..stations {
+            for s in (0..stations).filter(|&s| !strip.is_apex(s)) {
                 let (from, to) = (vertex[s][i], vertex[s][next]);
                 edges[s][i] = Some(match glued_section[s] {
                     Some((m, at)) => built.edges[m][at]
@@ -384,12 +415,17 @@ pub fn skin(
                     pcurve: pcurve.clone(),
                 };
                 // Along the curve at a station, the other way where its
-                // edge runs against it.
+                // edge runs against it; at the apex, where it collapses.
                 let at = |s: usize, sense: Sense, pcurve: &NurbCurve2D| {
-                    let (edge, against) =
-                        built.edges[l][s][i].expect("a curve off the axis has an edge");
+                    let on = if strip.is_apex(s) {
+                        CoedgeOn::Vertex(built.vertices[l][s][i])
+                    } else {
+                        let (edge, against) =
+                            built.edges[l][s][i].expect("a curve off the axis has an edge");
+                        CoedgeOn::Edge(edge, along(sense, against))
+                    };
                     CoedgeSpec {
-                        on: CoedgeOn::Edge(edge, along(sense, against)),
+                        on,
                         pcurve: pcurve.clone(),
                     }
                 };

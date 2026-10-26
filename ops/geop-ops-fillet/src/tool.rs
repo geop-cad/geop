@@ -346,6 +346,7 @@ pub(crate) fn build_tools(
             closed: tool.closed,
             poles: &flags,
             on_axis: &flags,
+            apex: &[],
             glued,
             geometry: *tool,
         });

@@ -328,6 +328,39 @@ fn loft_a_square_to_a_circle() {
     assert!(part.face_id("loft(transition,end)").is_ok());
 }
 
+/// A square below, a sketch of a single point above it: the loft comes to
+/// the point, a pyramid of four walls and a cap, its apex named after the
+/// point's sketch. A point between two profiles is refused.
+#[test]
+fn loft_a_square_to_a_point_is_a_pyramid() {
+    let mut program = Program::new();
+    program.push(
+        "bottom",
+        AddSketchArgs::on(on_origin(FrameAxis::Z), square(1.0)),
+    );
+    lifted(&mut program, "top_plane", 3.0);
+    let mut tip = Sketch::new();
+    tip.add_point(n(0.25), n(0.0));
+    program.push("tip", AddSketchArgs::on(on_datum("top_plane"), tip));
+    program.push("spire", lofted(&["bottom", "tip"]));
+    let part = program.build_model(registry).unwrap();
+    assert_valid(&part);
+    assert_eq!(part.topology().faces.len(), 4 + 1);
+    assert!(part.vertex_id("loft(spire,tip)").is_ok());
+    let solid = part.solid_id("loft(spire)").unwrap();
+    let volume = part.topology().mass_properties(solid).unwrap().volume;
+    assert!((volume.to_f64() - 4.0).abs() < 1e-9, "{volume:?}");
+
+    program.push("through", lofted(&["bottom", "tip", "bottom"]));
+    let Err(error) = program.build_model(registry) else {
+        panic!("lofted through a point");
+    };
+    assert!(
+        error.root_message().contains("only at its start or end"),
+        "{error:?}"
+    );
+}
+
 /// Through three profiles — a square, a circle, a smaller square — and
 /// cut out of a block: a loft as a tool.
 #[test]

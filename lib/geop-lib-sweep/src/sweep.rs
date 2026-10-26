@@ -323,6 +323,9 @@ pub struct SweepLoop {
     pub poles: Vec<bool>,
     /// Per curve: whether it lies along the axis.
     pub on_axis: Vec<bool>,
+    /// Whether the loop is collapsed to one point, every curve degenerate
+    /// there: the apex a loft to a point comes to (see [`skin`]).
+    pub apex: bool,
 }
 
 impl SweepLoop {
@@ -332,6 +335,7 @@ impl SweepLoop {
             poles: vec![false; profile.joint_names.len()],
             on_axis: vec![false; profile.curves.len()],
             profile,
+            apex: false,
         }
     }
 
@@ -348,6 +352,7 @@ impl SweepLoop {
             profile: self.profile.reversed(),
             poles,
             on_axis: self.on_axis.iter().rev().copied().collect(),
+            apex: self.apex,
         }
     }
 
@@ -485,10 +490,14 @@ pub fn skin(
     let geometry: Vec<Placed<'_>> = (0..loops.len())
         .map(|l| Placed { path, sections, l })
         .collect();
+    let apexes: Vec<Vec<bool>> = (0..loops.len())
+        .map(|l| sections.iter().map(|section| section[l].apex).collect())
+        .collect();
     let strips: Vec<Strip<'_>> = loops
         .iter()
         .zip(&geometry)
-        .map(|(lp, geometry)| Strip {
+        .zip(&apexes)
+        .map(|((lp, geometry), apex)| Strip {
             namer,
             joint_names: &lp.profile.joint_names,
             curve_names: &lp.profile.curve_names,
@@ -497,6 +506,7 @@ pub fn skin(
             closed: path.closed,
             poles: &lp.poles,
             on_axis: &lp.on_axis,
+            apex,
             glued: Vec::new(),
             geometry,
         })
@@ -506,6 +516,17 @@ pub fn skin(
         // Each parametrized so that it runs the outer loop counter-clockwise.
         for (s, forward, name) in [(0, true, "start"), (path.stations.len() - 1, false, "end")] {
             let (frame, section) = (&path.stations[s], &sections[s]);
+            // A section collapsed to its apex needs no cap.
+            if section.iter().any(|lp| lp.apex) {
+                if section.len() > 1 {
+                    return Err(GeopError::new(format!(
+                        "skin: the section at {} comes to a point, and has holes",
+                        path.station_names[s]
+                    )))
+                    .with_context(ctx);
+                }
+                continue;
+            }
             let patch = FlatPatch::around(
                 frame.origin,
                 frame.e1,

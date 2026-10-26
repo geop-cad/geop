@@ -433,6 +433,40 @@ fn a_chosen_cut_stays_a_cut() {
     ));
 }
 
+/// A new loft, after a square and a sketch of a single point, lofts the
+/// square into the point: committed, a pyramid.
+#[test]
+fn a_new_loft_into_a_point_sketch_is_a_pyramid() {
+    use geop_ops_model::sketch::{
+        Sketch,
+        figures::{n, on_origin, outline},
+    };
+    let mut program = geop_core_program::program::Program::new();
+    let square = outline(&[[-1.0, -1.0], [1.0, -1.0], [1.0, 1.0], [-1.0, 1.0]]);
+    program.push("base", AddSketchArgs::on(on_origin(FrameAxis::Z), square));
+    // On the yz plane, 1.5 up whichever way its axes run.
+    let mut tip = Sketch::new();
+    tip.add_point(n(1.5), n(1.5));
+    program.push("tip", AddSketchArgs::on(on_origin(FrameAxis::X), tip));
+    let mut editor = Editor::new(registry(), BTreeMap::new());
+    handled(
+        &mut editor,
+        Command::Load {
+            program,
+            path: None,
+        },
+    );
+    let update = editor.handle(Command::New {
+        kind: "loft".into(),
+    });
+    assert_eq!(update.step.unwrap().error, None);
+    handled(&mut editor, Command::Commit);
+    let part = model_of(&built(&editor).unwrap());
+    assert_eq!(part.topology().faces.len(), 4 + 1);
+    let params = geop_core_topology::validation::ValidationParameters::default();
+    geop_core_topology::validation::validate(&params, part.topology()).unwrap();
+}
+
 /// The drill hole's cut, opened and given a draft in its dialog, tapers:
 /// it narrows down into the box, and the box stays a valid solid.
 #[test]

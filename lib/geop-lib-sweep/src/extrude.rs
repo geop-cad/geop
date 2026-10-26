@@ -139,7 +139,7 @@ pub fn drafted(
             })
             .collect::<GeopResult<Vec<_>>>()
             .with_context(ctx)?;
-        let placed = correspond(&loft_sections).with_context(ctx)?;
+        let placed = correspond(&loft_sections, [None, None]).with_context(ctx)?;
         // Every loop of a level lies in one plane, and which way a loft
         // runs through it is the same for all of them: one frame.
         let these: Vec<Frame> = placed.iter().map(|p| p.frame.clone()).collect();

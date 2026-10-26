@@ -428,6 +428,7 @@ impl ModelOperation for Revolve {
                     profile,
                     poles,
                     on_axis: along_axis,
+                    apex: false,
                 })
             })
             .collect::<GeopResult<Vec<_>>>()

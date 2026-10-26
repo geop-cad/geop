@@ -490,10 +490,39 @@ fn corner_anchors(
     Ok(points)
 }
 
+/// The section `next` to an apex at `point`, collapsed into it: a frame at
+/// the point, square as `next`'s, and every curve of `next` with all its
+/// control points there — its degree, knots and weights kept, so that it
+/// is compatible with `next`'s and the walls between are ruled into the
+/// point. Named as `next` is.
+fn collapsed(next: &Placed, point: &Vector3) -> GeopResult<Placed> {
+    let profile = next.profile.map_curves(|c| {
+        let mut c = c.clone();
+        for cp in &mut c.control_points {
+            cp[0] = Scalar::ZERO;
+            cp[1] = Scalar::ZERO;
+        }
+        c.recompute_aabb();
+        c
+    });
+    Ok(Placed {
+        frame: Frame {
+            origin: *point,
+            ..next.frame.clone()
+        },
+        profile,
+    })
+}
+
 /// The sections made to correspond, as the module docs say — closed ones
 /// winding so that the loft runs against each frame's `e1 x e2`, which
-/// makes the skinned walls face out.
-pub(crate) fn correspond(sections: &[Section]) -> GeopResult<Vec<Placed>> {
+/// makes the skinned walls face out. `beyond` are points the loft runs to
+/// before the first section and after the last, if any: which way it runs
+/// through a section next to one is towards it, or from it.
+pub(crate) fn correspond(
+    sections: &[Section],
+    beyond: [Option<[f64; 3]>; 2],
+) -> GeopResult<Vec<Placed>> {
     let closed = sections[0].profile.is_closed();
     if sections.iter().any(|s| s.profile.is_closed() != closed) {
         return Err(GeopError::new(
@@ -520,10 +549,18 @@ pub(crate) fn correspond(sections: &[Section]) -> GeopResult<Vec<Placed>> {
     // loft running against the frame's `e1 x e2`.
     if closed {
         let n = placed.len();
+        let v = |a: [f64; 3]| Vector3::from_array(a.map(Scalar::from_f64));
         for s in 0..n {
-            let (from, to) = if s + 1 < n { (s, s + 1) } else { (s - 1, s) };
-            let v = |a: [f64; 3]| Vector3::from_array(a.map(Scalar::from_f64));
-            let along = v(centres[to]).sub(&v(centres[from]));
+            let (from, to) = match (s + 1 < n, s > 0, beyond) {
+                (true, _, _) => (centres[s], centres[s + 1]),
+                (false, _, [_, Some(after)]) => (centres[s], after),
+                (false, true, _) => (centres[s - 1], centres[s]),
+                (false, false, [Some(before), None]) => (before, centres[s]),
+                (false, false, [None, None]) => {
+                    return Err(GeopError::new("loft: one profile, and nothing to loft to"));
+                }
+            };
+            let along = v(to).sub(&v(from));
             let frame = &placed[s].frame;
             let facing = frame.e1.prod_cross(&frame.e2).prod_dot(&along);
             if facing.definitely_greater(Scalar::ZERO) {
@@ -1156,32 +1193,61 @@ fn through(placed: &[Placed]) -> GeopResult<Vec<Span>> {
         .collect())
 }
 
+/// A point a loft comes to before its first section or after its last:
+/// every curve of the profile next to it runs into it, as a cone into its
+/// apex. Its station is named `name`.
+#[derive(Clone, Debug)]
+pub struct Apex {
+    pub point: Vector3,
+    pub name: String,
+}
+
 /// Lofts through `sections` (see the module docs): closed loops into a solid
 /// named `solid` — capped by the first and last sections — or, without one,
-/// into sheets; open chains into sheets only.
+/// into sheets; open chains into sheets only. `apexes` are points the loft
+/// comes to before its first section and after its last, if any: there it
+/// closes in a point instead of a cap (see [`Apex`]). The tangent of a
+/// smooth loft into an apex is a free choice, as at any end section: from
+/// its neighbours (see [`through`]).
 ///
 /// Named after the first section's curves `X` and joints `P` and the
 /// sections' names `K` (see [`skin`]): the walls `N(X)` — `N(X,K>L)` between
 /// the sections `K` and `L` when there are more than two — the curves at the
 /// sections `N(X,K)`, the edges between them `N(P)` or `N(P,K>L)`, the
-/// vertices `N(P,K)`, the caps `N(start)` and `N(end)`.
+/// vertices `N(P,K)`, the caps `N(start)` and `N(end)`; an apex `A` is the
+/// vertex `N(A)`.
 pub fn loft(
     model: &mut NamedModel,
     namer: &Namer,
     solid: Option<&str>,
     sections: &[Section],
+    apexes: &[Option<Apex>; 2],
     guides: &[Chain<NurbCurve3D>],
 ) -> GeopResult<BuiltBody> {
     let ctx = with_context!(
-        "loft({}, through {:?})",
+        "loft({}, through {:?}, apexes {:?})",
         namer.root(),
-        sections.iter().map(|s| &s.name).collect::<Vec<_>>()
+        sections.iter().map(|s| &s.name).collect::<Vec<_>>(),
+        apexes.iter().flatten().map(|a| &a.name).collect::<Vec<_>>()
     );
-    if sections.len() < 2 {
+    let ends = apexes.iter().flatten().count();
+    if sections.is_empty() || sections.len() + ends < 2 {
         return Err(GeopError::new(format!(
-            "loft: needs two profiles or more, not {}",
+            "loft: needs two profiles or more, or a profile and a point, not {} profile(s) and {ends} point(s)",
             sections.len()
         )))
+        .with_context(ctx);
+    }
+    if ends > 0 && !guides.is_empty() {
+        return Err(GeopError::new(
+            "loft: guides run from the first profile to the last, and a loft to a point has a point at an end: loft to the point without guides",
+        ))
+        .with_context(ctx);
+    }
+    if ends > 0 && !sections[0].profile.is_closed() {
+        return Err(GeopError::new(
+            "loft: only a closed profile comes to a point",
+        ))
         .with_context(ctx);
     }
     let (sections, crossed) = if guides.is_empty() {
@@ -1189,9 +1255,25 @@ pub fn loft(
     } else {
         guided(sections, guides).with_context(ctx)?
     };
-    let sections = sections.as_slice();
-    let placed = correspond(sections).with_context(ctx)?;
-    let spans = sections.len() - 1;
+    let beyond = [0, 1].map(|k| apexes[k].as_ref().map(|a| a.point.to_f64_array()));
+    let mut placed = correspond(&sections, beyond).with_context(ctx)?;
+    let mut names: Vec<String> = sections.iter().map(|s| s.name.clone()).collect();
+    let mut apex = vec![false; sections.len()];
+    for (k, end) in apexes.iter().enumerate() {
+        let Some(end) = end else { continue };
+        let next = if k == 0 { 0 } else { placed.len() - 1 };
+        let point = collapsed(&placed[next], &end.point).with_context(ctx)?;
+        if k == 0 {
+            placed.insert(0, point);
+            names.insert(0, end.name.clone());
+            apex.insert(0, true);
+        } else {
+            placed.push(point);
+            names.push(end.name.clone());
+            apex.push(true);
+        }
+    }
+    let spans = placed.len() - 1;
     let through = if crossed.is_empty() && spans > 1 {
         Some(through(&placed).with_context(ctx)?)
     } else {
@@ -1230,19 +1312,25 @@ pub fn loft(
         spans: span_list,
         closed: false,
         along_normal: false,
-        station_names: sections.iter().map(|s| s.name.clone()).collect(),
         span_names: if spans == 1 {
             vec![None]
         } else {
-            sections
+            names
                 .windows(2)
-                .map(|w| Some(format!("{}>{}", w[0].name, w[1].name)))
+                .map(|w| Some(format!("{}>{}", w[0], w[1])))
                 .collect()
         },
+        station_names: names,
     };
     let loops: Vec<Vec<SweepLoop>> = placed
         .into_iter()
-        .map(|p| vec![SweepLoop::plain(p.profile)])
+        .zip(apex)
+        .map(|(p, apex)| {
+            vec![SweepLoop {
+                apex,
+                ..SweepLoop::plain(p.profile)
+            }]
+        })
         .collect();
     skin(model, namer, &path, &loops, solid).with_context(ctx)
 }
@@ -1285,7 +1373,15 @@ mod tests {
     fn lofted(sections: &[Section]) -> NamedModel {
         let mut model = NamedModel::new();
         let namer = Namer::new("loft", "l").unwrap();
-        loft(&mut model, &namer, Some(&namer.root()), sections, &[]).unwrap();
+        loft(
+            &mut model,
+            &namer,
+            Some(&namer.root()),
+            sections,
+            &[None, None],
+            &[],
+        )
+        .unwrap();
         model.check_names().unwrap();
         assert_model_valid(model.topology());
         model
@@ -1312,6 +1408,91 @@ mod tests {
                 );
             }
         }
+    }
+
+    /// Lofts `sections` into a point `apex` at its start or end, as
+    /// `at_end` says; checks the solid is valid and returns it.
+    fn lofted_to(sections: &[Section], apex: Vector3, at_end: bool) -> NamedModel {
+        let mut model = NamedModel::new();
+        let namer = Namer::new("loft", "l").unwrap();
+        let apex = Apex {
+            point: apex,
+            name: "tip".into(),
+        };
+        let ends = if at_end {
+            [None, Some(apex)]
+        } else {
+            [Some(apex), None]
+        };
+        loft(
+            &mut model,
+            &namer,
+            Some(&namer.root()),
+            sections,
+            &ends,
+            &[],
+        )
+        .unwrap();
+        model.check_names().unwrap();
+        assert_model_valid(model.topology());
+        model
+    }
+
+    /// The volume of the solid `loft(l)` of `model`, from its faces.
+    fn volume(model: &NamedModel) -> f64 {
+        let solid = model.solid_id("loft(l)").unwrap();
+        let mass = model.topology().mass_properties(solid).unwrap();
+        mass.volume.to_f64()
+    }
+
+    /// A square into a point above: a pyramid, its four walls ruled into
+    /// the apex, one cap — a third of the base times the height.
+    #[test]
+    fn loft_square_to_a_point_is_a_pyramid() {
+        let model = lofted_to(
+            &[section("a", level(0.0), square(1.0))],
+            v3(0.0, 0.0, 3.0),
+            true,
+        );
+        let topology = model.topology();
+        assert_eq!(topology.faces.len(), 4 + 1);
+        assert_eq!(topology.vertices.len(), 5);
+        assert!(model.vertex_id("loft(l,tip)").is_ok());
+        assert!((volume(&model) - 4.0).abs() < 1e-9, "{}", volume(&model));
+    }
+
+    /// A point below a circle, off its axis: an oblique cone, from the
+    /// point up — a third of the base times the height all the same.
+    #[test]
+    fn loft_from_a_point_to_a_circle_is_a_cone() {
+        let model = lofted_to(
+            &[section("a", level(2.0), circle(1.0))],
+            v3(0.5, 0.0, 0.0),
+            false,
+        );
+        let expected = std::f64::consts::PI * 2.0 / 3.0;
+        assert!(
+            (volume(&model) - expected).abs() < 1e-9,
+            "{}",
+            volume(&model)
+        );
+    }
+
+    /// Through two sections into a point, smoothly: the walls are cubic
+    /// through all three stations, the tangent at the point from its
+    /// neighbours, as at any end section.
+    #[test]
+    fn loft_through_two_sections_into_a_point() {
+        let model = lofted_to(
+            &[
+                section("a", level(0.0), square(1.0)),
+                section("b", level(1.0), circle(0.8)),
+            ],
+            v3(0.0, 0.0, 2.0),
+            true,
+        );
+        let topology = model.topology();
+        assert_eq!(topology.faces.len(), 2 * 4 + 1);
     }
 
     /// The upper plane tilted, and facing down: still a valid solid.
@@ -1412,6 +1593,7 @@ mod tests {
             &namer,
             None,
             &[open("a", level(0.0), line), open("b", level(1.0), arc)],
+            &[None, None],
             &[],
         )
         .unwrap();
@@ -1427,7 +1609,17 @@ mod tests {
         let mut model = NamedModel::new();
         let namer = Namer::new("loft", "l").unwrap();
         let only = section("a", level(0.0), regular(4, 1.0, 0.0));
-        assert!(loft(&mut model, &namer, Some("loft(l)"), &[only], &[]).is_err());
+        assert!(
+            loft(
+                &mut model,
+                &namer,
+                Some("loft(l)"),
+                &[only],
+                &[None, None],
+                &[]
+            )
+            .is_err()
+        );
     }
 
     // ── guide curves ────────────────────────────────────────────────────────
@@ -1459,7 +1651,15 @@ mod tests {
     fn guided_loft(sections: &[Section], guides: &[Chain<NurbCurve3D>]) -> NamedModel {
         let mut model = NamedModel::new();
         let namer = Namer::new("loft", "l").unwrap();
-        loft(&mut model, &namer, Some(&namer.root()), sections, guides).unwrap();
+        loft(
+            &mut model,
+            &namer,
+            Some(&namer.root()),
+            sections,
+            &[None, None],
+            guides,
+        )
+        .unwrap();
         model.check_names().unwrap();
         assert_model_valid(model.topology());
         model
@@ -1575,7 +1775,15 @@ mod tests {
         let refused = |sections: &[Section], guides: &[Chain<NurbCurve3D>], says: &str| {
             let mut model = NamedModel::new();
             let namer = Namer::new("loft", "l").unwrap();
-            let error = loft(&mut model, &namer, Some("loft(l)"), sections, guides).unwrap_err();
+            let error = loft(
+                &mut model,
+                &namer,
+                Some("loft(l)"),
+                sections,
+                &[None, None],
+                guides,
+            )
+            .unwrap_err();
             assert!(error.root_message().contains(says), "{error:?}");
         };
         // Starting off the first profile's plane.
