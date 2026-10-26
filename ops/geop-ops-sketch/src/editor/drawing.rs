@@ -617,77 +617,149 @@ fn build(
     }
 }
 
-/// The two lines meeting at the corner `p`, each with its end there and its
-/// other end — `None` where `p` is no corner of exactly two lines.
+/// The two curves meeting at the corner `p`, each with its end there and
+/// its other end — `None` where `p` is no corner of exactly two curves
+/// that are lines, or arcs where `arcs` says.
 type Corner = [(CurveId, PointId, PointId); 2];
 
-fn corner_lines(sketch: &Sketch, p: PointId) -> Option<Corner> {
+fn corner_curves(sketch: &Sketch, p: PointId, arcs: bool) -> Option<Corner> {
     let class = sketch.point_classes();
     let at_p = |q: PointId| class[&q] == class[&p];
-    let lines: Vec<(CurveId, PointId, PointId)> = sketch
+    let curves: Vec<(CurveId, PointId, PointId)> = sketch
         .curves
         .iter()
         .filter(|(_, c)| !c.construction && !c.fixed)
         .filter_map(|(&id, c)| match c.kind {
             CurveKind::Line { start, end } if at_p(start) => Some((id, start, end)),
             CurveKind::Line { start, end } if at_p(end) => Some((id, end, start)),
+            CurveKind::Arc { start, end, .. } if arcs && at_p(start) => Some((id, start, end)),
+            CurveKind::Arc { start, end, .. } if arcs && at_p(end) => Some((id, end, start)),
             _ => None,
         })
         .collect();
-    lines.try_into().ok()
+    curves.try_into().ok()
 }
 
-/// Cuts both lines of `corner` back to `to`: each line's end at the corner
-/// moved to its point of `to`.
-fn cut_back(sketch: &mut Sketch, corner: &Corner, to: [PointId; 2]) -> Option<()> {
-    for (&(line, old, _), new) in corner.iter().zip(to) {
-        if let CurveKind::Line { start, end } = &mut sketch.curves.get_mut(&line)?.kind {
-            if *start == old {
-                *start = new;
-            } else {
-                *end = new;
+/// The circle an arc from `start` to `end` turning by `sweep` lies on: its
+/// center and radius.
+fn arc_circle(start: P2, end: P2, sweep: f64) -> Option<(P2, f64)> {
+    let chord = sub(end, start);
+    let half = 0.5 * chord[0].hypot(chord[1]);
+    let radius = half / (0.5 * sweep).sin().abs();
+    let middle = add(start, scale(chord, 0.5));
+    let center = add(
+        middle,
+        scale(perp(unit(chord)?), half / (0.5 * sweep).tan()),
+    );
+    radius.is_finite().then_some((center, radius))
+}
+
+/// Along the curve of a corner, `(curve, at, far)`, from its end `at`: how
+/// long it is, and the point `d` along it from `at` with the unit way it
+/// runs there, away from `at`.
+fn along(
+    sketch: &Sketch,
+    (curve, at, far): (CurveId, PointId, PointId),
+    d: f64,
+) -> Option<(f64, P2, P2)> {
+    let (a, f) = (xy(sketch, at), xy(sketch, far));
+    match &sketch.curves.get(&curve)?.kind {
+        CurveKind::Line { .. } => {
+            let u = unit(sub(f, a))?;
+            let length = distance(a, f);
+            Some((length, add(a, scale(u, d)), u))
+        }
+        CurveKind::Arc { start, sweep, .. } => {
+            // Turning from `at` the way the arc runs from there.
+            let sweep = sweep.to_f64();
+            let turn = if *start == at { sweep } else { -sweep };
+            let (center, radius) = arc_circle(a, f, turn)?;
+            let angle = turn.signum() * d / radius;
+            let point = add(center, rotate(sub(a, center), angle));
+            let way = scale(perp(unit(sub(point, center))?), turn.signum());
+            Some((radius * turn.abs(), point, way))
+        }
+        _ => None,
+    }
+}
+
+/// Cuts each curve of `corner` back by `by` along it: its end at the
+/// corner moved to its point of `to` — an arc's sweep shortened with it,
+/// on the same circle.
+fn cut_back(sketch: &mut Sketch, corner: &Corner, to: [PointId; 2], by: f64) -> Option<()> {
+    for (&(curve, old, far), new) in corner.iter().zip(to) {
+        let (a, f) = (xy(sketch, old), xy(sketch, far));
+        match &mut sketch.curves.get_mut(&curve)?.kind {
+            CurveKind::Line { start, end } => {
+                if *start == old {
+                    *start = new;
+                } else {
+                    *end = new;
+                }
             }
+            CurveKind::Arc { start, end, sweep } => {
+                let turn = sweep.to_f64();
+                let (_, radius) = arc_circle(a, f, turn)?;
+                *sweep = Scalar::from_f64(turn - turn.signum() * by / radius);
+                if *start == old {
+                    *start = new;
+                } else {
+                    *end = new;
+                }
+            }
+            _ => return None,
         }
     }
     Some(())
 }
 
-/// Cuts off the corner where two lines meet at `p`, both lines cut back by
-/// a third of the shorter one, and leaves a dimension to give:
+/// Cuts off the corner where two curves meet at `p`, both cut back along
+/// them by a third of the shorter one, and leaves a dimension to give:
 ///
 /// - `round`, a fillet: an arc tangent to both between them, its radius
-///   the dimension. The corner is gone, unless something else holds on to
-///   it.
-/// - otherwise, a chamfer: a line between them, how far they are cut back
-///   the dimension. The corner stays, as the point both cut-back pieces —
-///   kept as construction lines — run from, on both lines by constraint.
+///   the dimension — between lines, arcs or one of each. The corner is
+///   gone, unless something else holds on to it.
+/// - otherwise, a chamfer of two lines: a line between them, how far they
+///   are cut back the dimension. The corner stays, as the point both
+///   cut-back pieces — kept as construction lines — run from, on both
+///   lines by constraint.
 ///
-/// `None` where `p` is no corner of exactly two lines.
+/// `None` where `p` is no corner of exactly two such curves, or they meet
+/// tangentially.
 fn cut_corner(sketch: &mut Sketch, p: PointId, round: bool) -> Option<Built> {
-    let corner = corner_lines(sketch, p)?;
-    let [(l1, _, q1), (l2, _, q2)] = corner;
-    let at = xy(sketch, p);
-    let (d1, d2) = (sub(xy(sketch, q1), at), sub(xy(sketch, q2), at));
-    let (u1, u2) = (unit(d1)?, unit(d2)?);
+    let corner = corner_curves(sketch, p, round)?;
+    let [(l1, _, _), (l2, _, _)] = corner;
+    let ((len1, _, u1), (len2, _, u2)) = (
+        along(sketch, corner[0], 0.0)?,
+        along(sketch, corner[1], 0.0)?,
+    );
     let theta = angle_between(u1, u2).abs();
     if theta <= 0.0 || theta >= PI {
         return None;
     }
-    let setback = d1[0].hypot(d1[1]).min(d2[0].hypot(d2[1])) / 3.0;
-    let t1 = sketch.new_point_at(add(at, scale(u1, setback)));
-    let t2 = sketch.new_point_at(add(at, scale(u2, setback)));
-    cut_back(sketch, &corner, [t1, t2])?;
+    let setback = len1.min(len2) / 3.0;
+    let (_, p1, w1) = along(sketch, corner[0], setback)?;
+    let (_, p2, w2) = along(sketch, corner[1], setback)?;
+    let t1 = sketch.new_point_at(p1);
+    let t2 = sketch.new_point_at(p2);
+    cut_back(sketch, &corner, [t1, t2], setback)?;
     let prompt = if round {
-        // Turning from coming in along the first line to leaving along the
-        // second, with the radius that makes the arc tangent where they
-        // are cut back to.
-        let turn = cross(scale(u1, -1.0), u2).signum() * (PI - theta);
+        // Turning from coming in along the first curve, towards the
+        // corner, to leaving along the second, with the radius of the arc
+        // through the two points tangent to both there — on lines, the
+        // one tangent where they are cut back to.
+        let turn = angle_between(scale(w1, -1.0), w2);
+        let chord = distance(p1, p2);
+        let radius = chord / (2.0 * (0.5 * turn).sin().abs());
+        if !radius.is_finite() {
+            return None;
+        }
         let arc = sketch.add_arc(t1, t2, Scalar::from_f64(turn));
         sketch.constrain(Constraint::Tangent { a: l1, b: arc });
         sketch.constrain(Constraint::Tangent { a: l2, b: arc });
         let prompt = sketch.constrain(Constraint::Radius {
             curve: arc,
-            value: Scalar::from_f64(setback * (theta / 2.0).tan()),
+            value: Scalar::from_f64(radius),
         });
         let used = sketch.curves.values().any(|c| c.points().contains(&p))
             || sketch.constraints.values().any(|k| k.points().contains(&p));
