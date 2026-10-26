@@ -31,6 +31,7 @@ export const commands = [
   {"command":"event","event":{"pointer":{"ray":{"dir":[0,0,0],"origin":[0,0,0]},"reach":{"radius":0,"type":"tube"}},"shift":true,"type":"hover"}},
   {"command":"event","event":{"pointer":{"ray":{"dir":[0,0,0],"origin":[0,0,0]},"reach":{"slope":0,"type":"cone"}},"shift":false,"type":"hover"}},
   {"command":"event","event":{"type":"leave"}},
+  {"command":"event","event":{"type":"view","up":[0,0,0]}},
   {"command":"export","date":"2026-10-16","exporter":"step","format":"step","options":null},
   {"command":"export","exporter":"stl"},
   {"command":"files","files":{"gone.geop":null,"parts/notes.step":"ISO-10303-21;"}},

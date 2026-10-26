@@ -340,6 +340,10 @@ pub struct SketchSession {
     circumscribed: bool,
     /// The options of the tools that make geometry from geometry.
     modify: ModifyOptions,
+    /// Whether the sketch is seen turned a quarter, its `x` running up the
+    /// screen: then what is horizontal on screen is its `y` (see
+    /// [`constraints::as_seen`]).
+    turned: bool,
 }
 
 /// What mirror, patterns and offset are set to make.
@@ -388,6 +392,7 @@ impl Default for SketchSession {
             error: None,
             stroke: Stroke::default(),
             circumscribed: false,
+            turned: false,
             modify: ModifyOptions::default(),
         }
     }

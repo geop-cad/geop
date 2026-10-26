@@ -341,7 +341,9 @@ export type PointerEvent_ =
   | { type: "hover"; pointer: Pointer; shift: boolean }
   | { type: "leave" }
   | { type: "click"; pointer: Pointer; button: "primary" | "secondary"; double: boolean; shift: boolean }
-  | { type: "drag"; from: Pointer; to: Pointer; done: boolean; shift: boolean };
+  | { type: "drag"; from: Pointer; to: Pointer; done: boolean; shift: boolean }
+  /** The view settled: `up` is the world direction pointing up the screen. */
+  | { type: "view"; up: Vec3 };
 
 /** One thing the user did while editing a step. */
 export type EditEvent = { type: "dialog"; key: string; value: Value } | { type: "key"; key: string } | PointerEvent_;

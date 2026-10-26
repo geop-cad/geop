@@ -96,7 +96,7 @@ impl Editing<'_> {
         }
         let sketch = self.sketch();
         let world = |q: P2| to_world(&self.frame, q);
-        let hidden = visuals::axis_ends(self.args);
+        let hidden = visuals::hidden_points(self.args);
         let class = sketch.point_classes();
         let excluded = |q: &PointId| exclude.iter().any(|e| class[e] == class[q]);
         let mut candidates = Vec::new();
