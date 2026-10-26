@@ -1659,9 +1659,48 @@ fn trace_one_side(
         if let Some(hit) = reached(step).with_context(&ctx)? {
             return Ok(repeat::Step::Done(hit));
         }
-        let (next_point, na, va, nb, vb) =
-            predictor_corrector_step(&surf_a, &surf_b, cur_point, dir, u_a, v_a, u_b, v_b, step)
-                .with_context(&ctx)?;
+        // Failing, it says which vertex on both surfaces lies nearest within
+        // a few strides, if any: where the curve leaves a patch it should end
+        // at one, and one missing, or out of reach, is what lost the trace.
+        let ahead = |e: GeopError| {
+            let nearest = reached(step.mul(Scalar::from_f64(4.0)));
+            let seen = match nearest {
+                Ok(Some(w)) => match topology.get_vertex(w) {
+                    Ok(vertex) => {
+                        let offset = vertex.point.sub(&cur_point);
+                        format!(
+                            "the nearest vertex on both surfaces within four strides is {w} at {:?}, {:?} away, {:?} along the stride",
+                            vertex.point,
+                            offset.norm(),
+                            offset.prod_dot(&dir)
+                        )
+                    }
+                    Err(_) => format!("{w}"),
+                },
+                Ok(None) => "no vertex on both surfaces lies within four strides".to_string(),
+                Err(found) => format!("looking for a vertex ahead failed: {found}"),
+            };
+            ctx(e.with_context(seen))
+        };
+        let stride =
+            predictor_corrector_step(&surf_a, &surf_b, cur_point, dir, u_a, v_a, u_b, v_b, step);
+        let (next_point, na, va, nb, vb) = match stride {
+            Ok(stride) => stride,
+            // Where the curve bends, it can end at a vertex short of the
+            // plane yet farther than `step`, and leave a patch there that
+            // the stride, landing on the plane, would have to leave too. So
+            // when the stride fails, a vertex short of the plane counts
+            // within the chord of a curve turning less than an eighth of a
+            // revolution over it, as the check after a stride counts it
+            // within the chord it took. A tapered thread's flank met a
+            // hole's wall `5e-5` outside the ball at the end of a quarter.
+            Err(e) => match reached(step.mul(Scalar::from_f64(std::f64::consts::SQRT_2)))
+                .with_context(&ctx)?
+            {
+                Some(hit) => return Ok(repeat::Step::Done(hit)),
+                None => return Err(ahead(e)),
+            },
+        };
         // The rest of the stride: where the curve bends away from `dir` it
         // meets the plane farther than `step` away, and a vertex in between
         // lies ahead of the plane but outside a ball of radius `step`. Within

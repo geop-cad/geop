@@ -340,6 +340,90 @@ fn a_tapped_hole_draws_its_thread() {
     );
 }
 
+/// The pipe port's 1/2 NPT hole, tapered 1:16: from the front and the
+/// right, its wall and its thread are each two hidden lines closing in by
+/// the taper over its 15 of depth, the thread's at the major diameter, the
+/// wall's at the minor one; from above, the thread is an arc at the major
+/// diameter at the face, and the rim dimensioned by its diameter.
+#[test]
+fn a_tapered_pipe_thread_is_drawn_and_its_hole_dimensioned() {
+    use crate::layer;
+    use geop_lib_sheet::Shape;
+    let built = build(&geop_ops_hole::examples::pipe_port());
+    let part = model(&built);
+    let topology = part.topology();
+    let (minor, major) = (18.3207, 21.2235);
+    let rim = name_where(&part, |id| match id {
+        RefId::Edge(e) => topology
+            .get_edge(e)
+            .unwrap()
+            .curve
+            .as_arc()
+            .unwrap()
+            .is_some_and(|arc| (arc.circle.radius.to_f64() - minor / 2.0).abs() < 1e-3),
+        _ => false,
+    });
+    let scale = 2.0;
+    let args = DrawingArgs {
+        scale: Some(scale),
+        annotations: vec![Annotation::Radius {
+            view: DrawnView::View(ViewKind::Top),
+            edge: rim,
+            diameter: true,
+            label: [12.0, 12.0],
+        }],
+        ..Default::default()
+    };
+    let sheet = compose(&built.current(), &args, "", &[]).unwrap();
+    assert!(
+        sheet.labels.iter().any(|l| l.text.starts_with("⌀18.32")),
+        "the rim's diameter: {:?}",
+        sheet.labels.iter().map(|l| &l.text).collect::<Vec<_>>()
+    );
+    let arcs: Vec<f64> = (sheet.strokes.iter())
+        .filter_map(|s| match &s.shape {
+            Shape::Arc { radius, .. } if s.layer == layer::THREAD => Some(*radius / scale),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(arcs.len(), 1, "{arcs:?}");
+    assert!((arcs[0] - major / 2.0).abs() < 1e-3, "{arcs:?}");
+    // Hidden lines 15 deep, closing in by 15 / 32 each: where each starts
+    // at the top, across the hole.
+    let closing = scale * 15.0 / 32.0;
+    let tops: Vec<f64> = (sheet.strokes.iter())
+        .filter_map(|s| match &s.shape {
+            Shape::Line(a, b)
+                if s.layer == layer::HIDDEN
+                    && ((a[1] - b[1]).abs() - scale * 15.0).abs() < 1e-6
+                    && ((a[0] - b[0]).abs() - closing).abs() < 1e-6 =>
+            {
+                Some(if a[1] > b[1] { a[0] } else { b[0] })
+            }
+            _ => None,
+        })
+        .collect();
+    let apart = |d: f64| {
+        let mut pairs = 0;
+        for (i, a) in tops.iter().enumerate() {
+            for b in &tops[i + 1..] {
+                if ((a - b).abs() / scale - d).abs() < 1e-3 {
+                    pairs += 1;
+                }
+            }
+        }
+        pairs
+    };
+    assert_eq!((apart(minor), apart(major)), (2, 2), "{tops:?}");
+    assert_eq!(
+        (sheet.labels.iter())
+            .filter(|l| l.text == "1/2-14 NPT")
+            .count(),
+        1,
+        "labelled once"
+    );
+}
+
 /// The mouse's face `f11` seen from the front: every piece of its
 /// silhouette traced once — no two pieces between the same two points.
 ///

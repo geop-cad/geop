@@ -66,6 +66,10 @@ pub(super) fn named<K>(name: &str) -> ElementReference<NamedModel, K> {
     ElementReference::new(model(), name)
 }
 
+pub(super) fn npt(size: &str) -> Standard {
+    Standard::Npt { size: size.into() }
+}
+
 pub(super) fn iso(size: &str, fit: Fit) -> Standard {
     Standard::Iso {
         size: size.into(),
@@ -257,6 +261,106 @@ fn tapped_hole_carries_a_cosmetic_thread() {
     assert!(error.root_message().contains("only 8"), "{error}");
 }
 
+/// A 1/4 NPT tapped hole, 8 deep: reamed to the taper, Ø11.358 at the
+/// face — the thread's minor diameter there — narrowing 1:16 into the
+/// plate; its wall carrying the cosmetic thread 1/4-18 NPT, from the face
+/// in, tapered as the wall is, its helix on the wall.
+#[test]
+fn npt_tapped_hole_is_reamed_to_the_taper() {
+    let part = drilled(
+        plate(&[[20.0, 20.0]]),
+        hole(HoleKind::Tapped, npt("1/4"), Extent::blind(8.0)),
+    );
+    let size = crate::pipe::npt("1/4").unwrap();
+    let (major, minor) = size.diameters(true);
+    assert!((minor - 11.358).abs() < 1e-3, "{minor}");
+    let (r0, r1) = (minor / 2.0, minor / 2.0 - 8.0 / 32.0);
+    let removed = PI * 8.0 / 3.0 * (r0 * r0 + r0 * r1 + r1 * r1);
+    assert_volume(&part, "hole(h)", plate_volume() - removed, 5e-3 * removed);
+    let wall = part.face_id("hole(h,centres,p0,wall,q0)").unwrap();
+    let round = (part.topology().get_face(wall).unwrap().surface)
+        .as_round_wall()
+        .unwrap()
+        .expect("a round wall");
+    assert!(
+        round
+            .taper
+            .abs()
+            .could_be_equal(Scalar::from_f64(1.0 / 32.0)),
+        "{:?}",
+        round.taper
+    );
+
+    let thread = part.thread("hole(h,centres,p0,thread)").unwrap();
+    assert_eq!(thread.designation, "1/4-18 NPT");
+    assert!(thread.internal);
+    assert_eq!(thread.length, 8.0);
+    assert_eq!(
+        (thread.major_diameter, thread.minor_diameter),
+        (major, minor)
+    );
+    assert!(thread.taper.could_be_equal(Scalar::from_f64(-1.0 / 32.0)));
+    assert!(thread.radius.could_be_equal(Scalar::from_f64(r0)));
+    // Every point of its helix is where the wall is at its height, to the
+    // helix's own approximation of the cone (a fraction of what the radius
+    // changes in a quarter turn).
+    let quarter = size.pitch() / 4.0 / 32.0;
+    for p in thread.polyline().unwrap() {
+        let depth = 10.0 - p[2].to_f64();
+        let r = ((p[0].to_f64() - 20.0).powi(2) + (p[1].to_f64() - 20.0).powi(2)).sqrt();
+        assert!(
+            (r - (r0 - depth / 32.0)).abs() < quarter,
+            "at depth {depth}: {r}"
+        );
+    }
+}
+
+/// The thread of a pipe size on a wall that does not taper as it does is
+/// refused, and an ISO thread on a tapered wall; an NPT size for a hole
+/// that is not tapped.
+#[test]
+fn threads_must_taper_as_their_walls_do() {
+    let refused = |program: Program, says: &str| {
+        let error = program.build_model(registry).expect_err("refused");
+        assert!(error.root_message().contains(says), "{error}");
+    };
+    let mut simple = plate(&[[20.0, 20.0]]);
+    simple.push("h", hole(HoleKind::Simple, npt("1/4"), Extent::blind(8.0)));
+    refused(simple, "make the hole tapped");
+
+    let thread_on = |size: &str| ThreadArgs {
+        face: Some(named("hole(h,centres,p0,wall,q0)")),
+        size: size.into(),
+        length: None,
+        reversed: false,
+        modelled: false,
+    };
+    let mut tapered = plate(&[[20.0, 20.0]]);
+    tapered.push("h", hole(HoleKind::Tapped, npt("1/4"), Extent::blind(8.0)));
+    let mut metric = tapered.clone();
+    metric.push("t", thread_on("M12"));
+    refused(metric, "but a M12x1.75 thread runs on a straight wall");
+    // Recorded again by a thread step, the hole's own taper and size fit.
+    tapered.push("t", thread_on("1/4 NPT"));
+    let part = made(&tapered).unwrap();
+    let thread = part.thread("thread(t)").unwrap();
+    assert!(thread.internal);
+    assert!(thread.taper.could_be_equal(Scalar::from_f64(-1.0 / 32.0)));
+    assert!(thread.axis.point[2].could_be_equal(Scalar::from_f64(10.0)));
+
+    let mut straight = plate(&[[20.0, 20.0]]);
+    straight.push(
+        "h",
+        hole(
+            HoleKind::Tapped,
+            iso("M12", Fit::Normal),
+            Extent::blind(8.0),
+        ),
+    );
+    straight.push("t", thread_on("1/4 NPT"));
+    refused(straight, "is straight, but a 1/4-18 NPT thread tapers 1:16");
+}
+
 /// Four points of one sketch: four holes, each named after its point.
 #[test]
 fn a_pattern_of_points_in_one_sketch() {
@@ -436,7 +540,7 @@ fn unsupported_holes_are_refused() {
             },
             Extent::blind(5.0),
         ),
-        "pick an ISO size",
+        "pick an ISO or an NPT size",
     );
     refused(
         plate(&[[20.0, 20.0]]),
@@ -603,6 +707,37 @@ fn modelled_thread_in_a_tapped_hole() {
     assert!(removed > 0.0, "removed {removed}");
 }
 
+/// A modelled 1/4 NPT thread cut into the wall of a tapped hole reamed to
+/// its taper, from the face it was tapped from, 6 deep: valid, and the
+/// thread's teeth taken out of the plate.
+#[test]
+#[ignore = "slow: a modelled thread's booleans take half a minute or more — run with `cargo test -- --ignored`"]
+fn modelled_npt_thread_in_a_tapered_hole() {
+    let mut program = plate(&[[20.0, 20.0]]);
+    program.push("h", hole(HoleKind::Tapped, npt("1/4"), Extent::blind(9.0)));
+    let blank = program.build_model(registry).unwrap();
+    program.push(
+        "t",
+        ThreadArgs {
+            face: Some(named("hole(h,centres,p0,wall,q0)")),
+            size: "1/4 NPT".into(),
+            length: Some(6.0),
+            reversed: false,
+            modelled: true,
+        },
+    );
+    let part = program.build_model(registry).unwrap();
+    assert_valid(&part);
+    assert!(
+        part.names()
+            .iter()
+            .any(|(_, name)| name.starts_with("thread(t,c")),
+        "no face of the thread is left"
+    );
+    let removed = solid_volume(&blank, "hole(h)") - solid_volume(&part, "thread(t)");
+    assert!(removed > 0.0, "removed {removed}");
+}
+
 /// Every ISO size, every kind of hole, blind and through all, in a plate
 /// thick enough for the largest: each valid, each removing what its
 /// dimensions say.
@@ -668,5 +803,30 @@ fn hole_plate_round_trips() {
 fn hole_plate_builds_incrementally() {
     let registry = std::rc::Rc::new(registry().unwrap());
     let programs = geop_core_program::testing::edit_sequence(&crate::examples::hole_plate());
+    geop_core_program::testing::assert_incremental(registry, None, &programs);
+}
+
+/// The pipe port example is one valid solid carrying its NPT thread, and,
+/// saved and loaded, builds what it built.
+#[test]
+fn pipe_port_round_trips() {
+    let registry = std::rc::Rc::new(registry().unwrap());
+    let program = crate::examples::pipe_port();
+    let built = geop_core_program::testing::assert_round_trips(registry, None, &program);
+    let part = geop_ops_model::testing::model_of(&built);
+    geop_ops_model::testing::assert_valid(&part);
+    assert_eq!(part.solid_names(), ["hole(port)"]);
+    let threads = read_threads(&built.current()).unwrap().into_owned();
+    let thread = threads.get("hole(port,middle,p0,thread)").unwrap();
+    assert_eq!(thread.designation, "1/2-14 NPT");
+    assert_eq!(thread.length, 15.0);
+}
+
+/// The example `pipe_port`, edited as a user edits it, builds incrementally
+/// what it builds from scratch.
+#[test]
+fn pipe_port_builds_incrementally() {
+    let registry = std::rc::Rc::new(registry().unwrap());
+    let programs = geop_core_program::testing::edit_sequence(&crate::examples::pipe_port());
     geop_core_program::testing::assert_incremental(registry, None, &programs);
 }

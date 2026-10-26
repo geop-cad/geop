@@ -517,12 +517,15 @@ impl NurbSurface3D {
         Ok(None)
     }
 
-    /// The cylinder the surface lies on, if it is a piece of one: a
+    /// The round wall the surface lies on, if it is a piece of one: a
     /// surface of revolution (see [`NurbSurface3D::axis_of_revolution`])
-    /// whose every row of control points is an arc of one radius — the same
-    /// arc, then, moved along the axis — with no row collapsed to a pole.
-    /// `None` for a cone, a sphere, a disc or any other surface.
-    pub fn as_cylinder(&self) -> GeopResult<Option<Cylinder>> {
+    /// whose rows of control points are arcs whose centres along the axis
+    /// and radii lie on one straight line — the revolution of a straight
+    /// profile, with no row collapsed to a pole. Every point of the surface
+    /// is a blend of the rows with the same weights for its height and its
+    /// radius, so it lies on that line too. A cylinder has no taper; `None`
+    /// for a sphere, a disc, a torus or any other surface.
+    pub fn as_round_wall(&self) -> GeopResult<Option<RoundWall>> {
         for along_u in [true, false] {
             let Some(revolution) = self.revolution_rows(along_u)? else {
                 continue;
@@ -530,14 +533,39 @@ impl NurbSurface3D {
             if !revolution.poles.is_empty() {
                 continue;
             }
-            let first = revolution.radii[0];
-            if revolution.radii.iter().all(|r| r.could_be_equal(first)) {
-                let radius = revolution.radii.iter().fold(first, |a, &r| a.union(r));
-                return Ok(Some(Cylinder {
-                    axis: revolution.axis,
-                    radius,
-                }));
+            let axis = revolution.axis;
+            let along = |c: &Vector3| c.sub(&axis.point).prod_dot(&axis.direction);
+            let rows: Vec<(Scalar, Scalar)> = (revolution.rows.iter())
+                .map(|(c, r)| (along(c), *r))
+                .collect();
+            let (&(z0, r0), &(z1, r1)) = match (rows.first(), rows.last()) {
+                (Some(first), Some(last)) => (first, last),
+                _ => continue,
+            };
+            let straight = rows.iter().all(|(_, r)| r.could_be_equal(r0));
+            let taper = if straight {
+                Scalar::ZERO
+            } else if z1.could_be_equal(z0) {
+                continue;
+            } else {
+                r1.sub(r0).div(z1.sub(z0))?
+            };
+            let radius = r0.sub(taper.mul(z0));
+            let on_line = |&(z, r): &(Scalar, Scalar)| r.could_be_equal(radius.add(taper.mul(z)));
+            if !rows.iter().all(on_line) {
+                continue;
             }
+            let radius = if straight {
+                // The radii's union, whatever the rows' heights.
+                rows.iter().fold(r0, |a, &(_, r)| a.union(r))
+            } else {
+                radius
+            };
+            return Ok(Some(RoundWall {
+                axis,
+                radius,
+                taper,
+            }));
         }
         Ok(None)
     }
@@ -571,7 +599,7 @@ impl NurbSurface3D {
         // starts at, and the weights every row is proportional to.
         let mut reference: Option<(Arc, Vec<Scalar>)> = None;
         let mut poles = Vec::new();
-        let mut radii = Vec::new();
+        let mut arcs = Vec::new();
         for j in 0..rows {
             let cps = row(j);
             let weights: Vec<Scalar> = cps.iter().map(|p| p[3]).collect();
@@ -593,7 +621,7 @@ impl NurbSurface3D {
             let Some(arc) = NurbCurve::try_new(degree, cps, knots.clone())?.as_arc()? else {
                 return Ok(None);
             };
-            radii.push(arc.circle.radius);
+            arcs.push((arc.circle.center, arc.circle.radius));
             match &reference {
                 None => reference = Some((arc, weights)),
                 Some((first, _)) => {
@@ -619,23 +647,57 @@ impl NurbSurface3D {
         Ok(poles
             .iter()
             .all(|p| axis.could_contain(p))
-            .then_some(Revolution { axis, radii, poles }))
+            .then_some(Revolution {
+                axis,
+                rows: arcs,
+                poles,
+            }))
     }
 }
 
 /// What [`NurbSurface3D::revolution_rows`] finds a surface of revolution's
-/// control rows to be: arcs around `axis` of `radii`, and `poles` on it.
+/// control rows to be: arcs around `axis`, each by its centre and radius,
+/// and `poles` on it.
 struct Revolution {
     axis: Axis,
-    radii: Vec<Scalar>,
+    rows: Vec<(Vector3, Scalar)>,
     poles: Vec<Vector3>,
 }
 
-/// A cylinder: the points `radius` away from `axis`.
+/// A round wall: the points `radius + taper t` away from `axis` at `t`
+/// along it from `axis.point` — a cylinder with no taper, else a piece of a
+/// cone, as a tapered hole's wall or a pipe thread's.
 #[derive(Clone, Debug)]
-pub struct Cylinder {
+pub struct RoundWall {
     pub axis: Axis,
     pub radius: Scalar,
+    /// How much the radius grows per unit along `axis.direction`.
+    pub taper: Scalar,
+}
+
+impl RoundWall {
+    /// How far along its axis `p` lies, from `axis.point`.
+    pub fn along(&self, p: &Vector3) -> Scalar {
+        p.sub(&self.axis.point).prod_dot(&self.axis.direction)
+    }
+
+    /// Its radius where `p` lies along its axis.
+    pub fn radius_at(&self, p: &Vector3) -> Scalar {
+        self.radius.add(self.taper.mul(self.along(p)))
+    }
+
+    /// Whether `other` could be the same wall: on the same axis, of the
+    /// same radius where `other`'s axis point lies and the same taper,
+    /// whichever way either axis runs.
+    pub fn could_be_equal(&self, other: &RoundWall) -> bool {
+        let same_way = self.axis.direction.prod_dot(&other.axis.direction);
+        self.axis.could_be_parallel(&other.axis)
+            && self.axis.could_contain(&other.axis.point)
+            && self
+                .radius_at(&other.axis.point)
+                .could_be_equal(other.radius)
+            && self.taper.mul(same_way).could_be_equal(other.taper)
+    }
 }
 
 #[cfg(test)]
@@ -827,11 +889,12 @@ mod tests {
         twisted.control_points[1] = h(2., 0.1, 3., 1.);
         assert!(twisted.axis_of_revolution().unwrap().is_none());
 
-        let found = cylinder.as_cylinder().unwrap().expect("a cylinder");
+        let found = cylinder.as_round_wall().unwrap().expect("a cylinder");
         assert!(found.radius.could_be_equal(Scalar::from_f64(2.0)));
+        assert!(found.taper.could_be_equal(Scalar::ZERO));
         assert!(found.axis.could_contain(&v(0., 0., -1.)));
         // Narrowing towards the top: a cone, which turns around the same
-        // axis but is no cylinder.
+        // axis, its radius shrinking by a third per unit up.
         let mut cone = cylinder.clone();
         for (k, &(x, y, w)) in [(1., 0., 1.), (1., 1., R2), (0., 1., 1.)]
             .iter()
@@ -840,7 +903,35 @@ mod tests {
             cone.control_points[2 * k + 1] = h(x, y, 3., w);
         }
         assert!(cone.axis_of_revolution().unwrap().is_some());
-        assert!(cone.as_cylinder().unwrap().is_none());
+        let found = cone.as_round_wall().unwrap().expect("a cone");
+        let up = found.axis.direction[2].to_f64().signum();
+        assert!(
+            found
+                .taper
+                .mul(Scalar::from_f64(up))
+                .could_be_equal(Scalar::from_f64(-1. / 3.))
+        );
+        assert!(
+            found
+                .radius_at(&v(0., 0., 1.5))
+                .could_be_equal(Scalar::from_f64(1.5))
+        );
+        // Bulging in the middle: no straight profile.
+        let bulged = NurbSurface::try_new(
+            2,
+            2,
+            [(2., 0., 1.), (2., 2., R2), (0., 2., 1.)]
+                .iter()
+                .flat_map(|&(x, y, w)| {
+                    [h(x, y, 0., w), h(1.5 * x, 1.5 * y, 1.5, w), h(x, y, 3., w)]
+                })
+                .collect(),
+            knots(&[0., 0., 0., 1., 1., 1.]),
+            knots(&[0., 0., 0., 1., 1., 1.]),
+        )
+        .unwrap();
+        assert!(bulged.axis_of_revolution().unwrap().is_some());
+        assert!(bulged.as_round_wall().unwrap().is_none());
     }
 
     #[test]
