@@ -110,8 +110,7 @@ below is what was missing then, and where each item stands now.
 
 - Booleans and geometry: surface evaluation over an interval parameter
   still uses one knot span (curves now unite all spans), the main remaining
-  cost in the slow stress tests; an arc split many times grows wide (so
-  gears stop at 80 teeth).
+  cost in the slow stress tests.
 - Fillets: rolling over a crease, mitres for rolled fillets, corners where
   fillets arrive with different radii.
 - STEP: pcurves fitted wide on B-spline surfaces (most of the remaining
