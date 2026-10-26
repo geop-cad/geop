@@ -303,6 +303,41 @@ fn cube_fillet_all_edges() {
         }
     }
     assert_corner_balls(&model, r, &centers);
+    assert_rounds_tangent(&model);
+}
+
+/// Checks every blend face of `model`, its name a fillet's, meets every
+/// face beside it that is no blend tangentially: their normals, halfway
+/// along the edge between them, could be parallel — what a shell or a
+/// draft asks before taking a face along with its neighbour.
+fn assert_rounds_tangent(model: &NamedModel) {
+    use geop_core_geometry::search::{MAX_NODES, min_subdivision_size};
+    let topology = model.topology();
+    let blend =
+        |f| (model.name_of(f)).is_some_and(|n| n.contains(",fillet") || n.ends_with(",corner)"));
+    for (&id, edge) in &topology.edges {
+        let Some([f, g]) = topology.faces_of_edge(id) else {
+            continue;
+        };
+        if blend(f) == blend(g) {
+            continue;
+        }
+        let point = edge
+            .curve
+            .evaluate(edge.curve.mid_parameter().unwrap())
+            .unwrap();
+        let normal = |f| {
+            (topology.get_face(f).unwrap().surface)
+                .normal_at(&point, MAX_NODES, min_subdivision_size())
+                .unwrap()
+        };
+        assert!(
+            normal(f).could_be_parallel(&normal(g)),
+            "{:?} and {:?} meet at a crease at {point:?}",
+            model.name_of(f),
+            model.name_of(g)
+        );
+    }
 }
 
 /// A block of 2 x 2 x 1 with a pocket of 1 x 1, 0.4 deep, in its top.

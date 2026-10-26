@@ -151,6 +151,15 @@ pub const DEVIATION: f64 = 1e-6;
 /// alone: a crease of a millionth of a radian nobody sees, where exact
 /// tangency was never to be had.
 const TILT: f64 = DEVIATION;
+/// How closely, as a fraction of the radius — or of the distance from the
+/// origin, where that is larger — an untilted skin has to follow the balls
+/// between its stations to be taken as the swept section itself (see
+/// [`span_is_exact`]): as much more closely than a blend has to as
+/// [`DEVIATION`] is a fraction of one — rounding, not approximation. It
+/// decides only whether the blend is tilted off its faces, a free choice of
+/// its shape: below it, what dips through a face does so by the
+/// arithmetic's last bits, as an extruded or revolved section's would.
+const EXACT: f64 = DEVIATION * DEVIATION;
 /// How often the reach for a bracket of where the ball rolls across an
 /// edge doubles, at most: `2^64` times the first reach is past any edge's
 /// domain, which ends the search first.
@@ -2251,18 +2260,38 @@ fn distance(a: &Vector3, b: &Vector3) -> f64 {
 
 /// The control rows of the tool's span `span` through the stations of
 /// `rolling`, interpolated at their parameters (see the module docs); the
-/// contact rows not yet widened.
-fn span_curves(rolling: &Rolling, span: (usize, usize)) -> GeopResult<[NurbCurve3D; 4]> {
-    let params = rolling.params(span);
-    let points: Vec<[Vector4; 4]> = (span.0..=span.1)
-        .map(|i| {
+/// contact rows not yet widened. Cubic through every station — or, of a
+/// lower `degree`, one Bézier piece through as many stations as it takes,
+/// both ends and evenly between: where the skin is the section swept
+/// along a line or an arc, the polynomial it is (see [`along_weight`]),
+/// as plain as the edge, which whatever is built on it — an offset, a
+/// shell — inherits.
+fn span_curves(
+    rolling: &Rolling,
+    span: (usize, usize),
+    degree: usize,
+) -> GeopResult<[NurbCurve3D; 4]> {
+    let all: Vec<usize> = (span.0..=span.1).collect();
+    let picked: Vec<usize> = if degree >= 3 || all.len() <= degree + 1 {
+        all
+    } else {
+        let last = all.len() - 1;
+        (0..=degree)
+            .map(|k| all[(k * last + degree / 2) / degree])
+            .collect()
+    };
+    let params: Vec<Scalar> = (picked.iter())
+        .map(|&i| rolling.param(span, rolling.positions[i]))
+        .collect();
+    let points: Vec<[Vector4; 4]> = (picked.iter())
+        .map(|&i| {
             let weight = rolling.weights[i][usize::from(i == span.0)];
             section_points(&rolling.stations[i]).map(|p| p.prod_scalar(weight))
         })
         .collect();
     let curve = |k: usize| {
         let values: Vec<Vector4> = points.iter().map(|p| p[k]).collect();
-        NurbCurve::interpolate_homogeneous(&values, &params, 3)
+        NurbCurve::interpolate_homogeneous(&values, &params, degree.min(3))
     };
     Ok([curve(0)?, curve(1)?, curve(2)?, curve(3)?])
 }
@@ -2363,22 +2392,28 @@ fn span_deviation(
 }
 
 /// Whether the span `curves` is the balls `between` — of a fillet, not a
-/// chamfer — at their parameters, as closely as their enclosures tell: both
-/// contacts, and the middle of the section.
+/// chamfer — at their parameters, both contacts and the middle of the
+/// section, to within [`EXACT`] of the larger of `radius` and how far the
+/// point is from the origin: the stations are placed independently, each
+/// rounded where it lies, and two of them agree no better than that.
 fn span_is_exact(
     curves: &[NurbCurve3D; 4],
     between: &[Vec<(Scalar, Station)>],
+    radius: f64,
 ) -> GeopResult<bool> {
     let blend = wall_surface(&span_of(curves, None), 0)?;
     let half = Scalar::ONE.div(Scalar::TWO)?;
+    let off = |got: Vector3, truth: Vector3| {
+        let far = truth.norm().upper().to_f64();
+        distance(&got, &truth) > EXACT * radius.max(far)
+    };
     for (s, station) in between.iter().flatten() {
         if station.chord {
             return Ok(false);
         }
         let truth = section_points(station);
         for k in [0, 2] {
-            let point = truth[k].dehomogenized()?;
-            if !curves[k].evaluate(*s)?.could_be_equal(&point) {
+            if off(curves[k].evaluate(*s)?, truth[k].dehomogenized()?) {
                 return Ok(false);
             }
         }
@@ -2386,7 +2421,7 @@ fn span_is_exact(
             .add(&truth[1].prod_scalar(Scalar::TWO))
             .add(&truth[2])
             .dehomogenized()?;
-        if !blend.evaluate(*s, half)?.could_be_equal(&middle) {
+        if off(blend.evaluate(*s, half)?, middle) {
             return Ok(false);
         }
     }
@@ -2955,9 +2990,22 @@ fn refined(
             let mut curves = Vec::new();
             let mut exact = true;
             for span in untilted.spans() {
-                let c = span_curves(&untilted, span)?;
-                exact = exact && span_is_exact(&c, &untilted.between(span))?;
-                curves.push(c);
+                let between = untilted.between(span);
+                let mut found = None;
+                for degree in 1..=3 {
+                    let c = span_curves(&untilted, span, degree)?;
+                    if span_is_exact(&c, &between, smallest)? {
+                        found = Some(c);
+                        break;
+                    }
+                }
+                match found {
+                    Some(c) => curves.push(c),
+                    None => {
+                        exact = false;
+                        break;
+                    }
+                }
             }
             if exact {
                 return Ok(Refine::Done((untilted, curves)));
@@ -2967,7 +3015,7 @@ fn refined(
         let mut deviation = 0.0f64;
         let mut worst = String::new();
         for (j, span) in rolling.spans().into_iter().enumerate() {
-            let c = span_curves(&rolling, span)?;
+            let c = span_curves(&rolling, span, 3)?;
             let (d, where_) = span_deviation(&c, &rolling.between(span))?;
             if d > deviation {
                 deviation = d;

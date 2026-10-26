@@ -1073,8 +1073,12 @@ them has to be as good: the stations' sections are interpolated multiplied
 by the edge's weight at their parameter (`along_weight`), so that a section
 carried along a line or round a circle unchanged is a polynomial in the
 edge's parameter the cubic reproduces exactly. Where the untilted skin
-then meets the ball between stations to its enclosures (`span_is_exact`),
-it is kept untilted. Tilted, a revolved handle's rim showed two
+then meets the ball between stations to rounding (`span_is_exact`: the
+stations are rounded each where it lies, so "to its enclosures" told a
+box's rounds from their stations by `5e-17`), it is kept untilted — and as
+plain as the edge, one Bézier piece of the lowest degree that is still
+the ball: a cubic skin through ten stations of a straight blend is exact
+too, but its offset in a shell came out `1.2e-4` wide. Tilted, a revolved handle's rim showed two
 silhouettes per face where the crease ran, and a draft no longer saw the
 fillet as tangent. The apex closing the section off is the untilted
 arc's either way, so that a tilted tool and an untilted one meet in their
