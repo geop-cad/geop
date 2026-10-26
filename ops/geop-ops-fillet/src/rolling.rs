@@ -491,6 +491,11 @@ fn place(
             for k in 0..2 {
                 seeds[k] = match previous {
                     Some(prev) if prev.faces[k] == pair[k] => sharp_in(surfaces[k], prev.uv[k]),
+                    // A face of the edge's own, new since the ball before:
+                    // from where the edge is on it, not from that ball's
+                    // contact on another face, whose nearest point on this
+                    // one may well lie at its end.
+                    _ if pair[k] == own.faces[k] => sharp_in(surfaces[k], at_edge[k]),
                     Some(prev) => seed_on(surfaces[k], &prev.contact[k])?,
                     None => seed_on(surfaces[k], &p)?,
                 };

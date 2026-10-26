@@ -784,6 +784,13 @@ fn corners_at(model: &NamedModel, vertices: &[VertexId]) -> String {
 /// in several spans, see [`crate::rolling`]). What cutting it away creates is named
 /// as a boolean names it, scoped by the edge: `N(E,...)`. Tools joined at
 /// corners and mitres are one, named after the first.
+///
+/// A corner of three filleted edges that bend different ways — a pocket's
+/// rim, cut away, and its upright edge, filled in; a boss's upright edge
+/// and its foot — has no ball touching its faces on one side of them all.
+/// The edge bending the other way from its two is rounded first: then the
+/// two run on into each other along the round it left, one tangent chain,
+/// and are rounded along it, round the corner (see [`passes`]).
 pub fn blend(
     model: &mut NamedModel,
     namer: &Namer,
@@ -793,6 +800,160 @@ pub fn blend(
     if edges.is_empty() {
         return Err(GeopError::new("pick the edges to blend"));
     }
+    let Some((first, then)) = passes(model, edges, shape)? else {
+        return blend_once(model, namer, edges, shape);
+    };
+    blend_once(model, namer, &first, shape)
+        .with_context(with_context!("rounding first the edges {first:?}, each bending the other way from the two it meets at a corner"))?;
+    // What is left of the others: each as it was, or trimmed by the first
+    // round — the pieces of it a tool of the first named (see the naming of
+    // `geop_lib_booleans`) — or gone into a chain with a piece of another.
+    let mut left: Vec<String> = Vec::new();
+    for name in then {
+        if model.edge_id(&name).is_ok() {
+            left.push(name);
+            continue;
+        }
+        let mut pieces: Vec<(EdgeId, String)> = (model.topology().edges.keys())
+            .filter_map(|&e| {
+                let piece = model.name_of(e)?;
+                (first.iter())
+                    .any(|f| namer.scoped(f).is_piece_of(piece, &name))
+                    .then(|| (e, piece.to_string()))
+            })
+            .collect();
+        pieces.sort_by_key(|(e, _)| e.0);
+        left.extend(pieces.into_iter().map(|(_, piece)| piece));
+    }
+    if left.is_empty() {
+        return Err(GeopError::new(format!(
+            "rounding first the edges {first:?} left none of the others to round"
+        )));
+    }
+    blend_once(model, namer, &left, shape)
+        .with_context(with_context!("rounding then the edges {left:?}"))
+}
+
+/// The edges named `edges` in the two passes they are filleted in, where
+/// some corner of three of them is of mixed convexity (see [`blend`]):
+/// first each edge bending the other way from the two it meets at such a
+/// corner, and with it every edge it reaches through corners every edge
+/// of which is filleted and bends one way (rounded by a ball together);
+/// then the rest. None where there is no such corner, or the shape is a
+/// chamfer, whose corners are left to its chamfers.
+fn passes(
+    model: &NamedModel,
+    edges: &[String],
+    shape: &BlendShape,
+) -> GeopResult<Option<(Vec<String>, Vec<String>)>> {
+    if !matches!(shape, BlendShape::Fillet { .. }) {
+        return Ok(None);
+    }
+    let topology = model.topology();
+    // Each picked edge's chain, once, and which way it bends.
+    let mut chains: Vec<(Vec<String>, Chain, Bend)> = Vec::new();
+    for name in edges {
+        let edge = model.edge_id(name)?;
+        if let Some(c) = chains
+            .iter_mut()
+            .find(|(_, c, _)| c.edges().contains(&edge))
+        {
+            c.0.push(name.clone());
+            continue;
+        }
+        let chain = tangent_chain(topology, edge)?;
+        let bend = rolling::chain_bend(topology, &chain)?;
+        chains.push((vec![name.clone()], chain, bend));
+    }
+    let chain_of = |edge: EdgeId| {
+        chains
+            .iter()
+            .position(|(_, c, _)| c.edges().contains(&edge))
+    };
+    let mut vertices: Vec<VertexId> = Vec::new();
+    for (_, chain, _) in &chains {
+        for edge in chain.edges() {
+            let e = topology.get_edge(edge)?;
+            for v in [e.start_vertex, e.end_vertex] {
+                if !vertices.contains(&v) {
+                    vertices.push(v);
+                }
+            }
+        }
+    }
+    vertices.sort_by_key(|v| v.0);
+    // Chains joined by a corner rounded by a ball, and per chain whether it
+    // is odd one out at a mixed corner (`Some(true)`) or one of the two
+    // there (`Some(false)`).
+    let mut group: Vec<usize> = (0..chains.len()).collect();
+    let find = |group: &[usize], mut i: usize| {
+        while group[i] != i {
+            i = group[i];
+        }
+        i
+    };
+    let mut odd: Vec<Option<bool>> = vec![None; chains.len()];
+    for vertex in vertices {
+        let incident = topology.edges_at_vertex(vertex);
+        let reaching: Option<Vec<usize>> = incident.iter().map(|&e| chain_of(e)).collect();
+        let (Some(reaching), 3) = (reaching, incident.len()) else {
+            continue;
+        };
+        let bends: Vec<Bend> = reaching.iter().map(|&c| chains[c].2).collect();
+        if bends.iter().all(|&b| b == bends[0]) {
+            for &c in &reaching[1..] {
+                let (a, b) = (find(&group, reaching[0]), find(&group, c));
+                group[b] = a;
+            }
+            continue;
+        }
+        for (k, &c) in reaching.iter().enumerate() {
+            let alone = bends.iter().filter(|&&b| b == bends[k]).count() == 1;
+            match odd[c] {
+                Some(was) if was != alone => {
+                    return Err(GeopError::new(format!(
+                        "the fillet of edge {:?} bends the other way from the two it meets at one corner of mixed convexity, and the same way as another it meets at vertex {}: no order rounds both corners",
+                        chains[c].0[0],
+                        model.name_of(vertex).unwrap_or("?")
+                    )));
+                }
+                _ => odd[c] = Some(alone),
+            }
+        }
+    }
+    if odd.iter().all(Option::is_none) {
+        return Ok(None);
+    }
+    let first_groups: Vec<usize> = (0..chains.len())
+        .filter(|&c| odd[c] == Some(true))
+        .map(|c| find(&group, c))
+        .collect();
+    let (mut first, mut then) = (Vec::new(), Vec::new());
+    for (c, (names, _, _)) in chains.iter().enumerate() {
+        let early = first_groups.contains(&find(&group, c));
+        if early && odd[c] == Some(false) {
+            return Err(GeopError::new(format!(
+                "the fillet of edge {:?} meets a corner of mixed convexity as one of its two edges bending one way, and is rounded by a ball together with an edge bending the other way from its two at another: no order rounds both corners",
+                names[0]
+            )));
+        }
+        if early {
+            first.extend(names.iter().cloned());
+        } else {
+            then.extend(names.iter().cloned());
+        }
+    }
+    Ok(Some((first, then)))
+}
+
+/// [`blend`], in one pass: every edge at a corner of three filleted edges
+/// bending one way.
+fn blend_once(
+    model: &mut NamedModel,
+    namer: &Namer,
+    edges: &[String],
+    shape: &BlendShape,
+) -> GeopResult<()> {
     if let BlendShape::Fillet { radii } = shape {
         radii.check()?;
         for (vertex, _) in &radii.at_vertices {
@@ -1277,6 +1438,11 @@ fn corner_contact(faces: &[FaceId], face: FaceId) -> GeopResult<usize> {
 /// by `scope`: the solid that is left. The blend face, the one piece of
 /// its tool kept, keeps its own name (see the naming of
 /// `geop_lib_booleans`).
+///
+/// A fill capped flush with a face it ends at — a pocket's upright edge
+/// filled up to the top — leaves its cap a face of its own in that face's
+/// surface, and the edges between them on the solid, where nothing bends:
+/// each such piece of the tool is made one with the face beside it.
 fn apply_tool(
     model: &mut NamedModel,
     scope: &Namer,
@@ -1284,7 +1450,10 @@ fn apply_tool(
     tool: SolidId,
     bend: Bend,
 ) -> GeopResult<SolidId> {
-    boolean(
+    let tool_faces: Vec<String> = (model.topology().solid_faces(tool)?.into_iter())
+        .filter_map(|f| model.name_of(f).map(str::to_string))
+        .collect();
+    let solid = boolean(
         model,
         scope,
         target,
@@ -1292,5 +1461,29 @@ fn apply_tool(
         bend.op(),
         RemeshParams::default(),
     )?
-    .ok_or_else(|| GeopError::new("the blend cut the whole solid away"))
+    .ok_or_else(|| GeopError::new("the blend cut the whole solid away"))?;
+    if bend == Bend::Convex {
+        return Ok(solid);
+    }
+    let from_tool: Vec<FaceId> = (model.topology().solid_faces(solid)?.into_iter())
+        .filter(|&f| {
+            model.name_of(f).is_some_and(|name| {
+                tool_faces
+                    .iter()
+                    .any(|t| name == t || scope.is_piece_of(name, t))
+            })
+        })
+        .collect();
+    match model
+        .merge_faces_on_one_surface(solid.into(), |f, g| {
+            from_tool.contains(&f) != from_tool.contains(&g)
+        })
+        .with_context(with_context!(
+            "making the fill's faces one with those beside them in one surface"
+        ))? {
+        Body::Solid(solid) => Ok(solid),
+        Body::Sheet(_) => Err(GeopError::new(
+            "making the fill's faces one with those beside them left no solid",
+        )),
+    }
 }

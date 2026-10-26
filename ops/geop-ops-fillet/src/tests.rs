@@ -340,32 +340,32 @@ fn pocket_floor_fillet() {
     assert_corner_balls(&model, r, &centers);
 }
 
-/// Every edge of the pocketed block rounded is refused: at the rim's
-/// corners the rim is cut away and the upright edge filled in.
+/// Every edge of the pocketed block rounded: at the rim's corners the rim
+/// is cut away and the upright edge filled in. The upright edges and the
+/// floor's, joined at the floor's corners by balls, are rounded first;
+/// then the rim runs round each upright's round, one chain, and the
+/// block's own edges are rounded with it.
 #[test]
-fn pocketed_block_fillet_every_edge_is_refused() {
+#[ignore = "slow: twenty-four edges blended in two passes — run with `cargo test -- --ignored`"]
+fn pocketed_block_fillet_every_edge() {
     let model = pocketed();
     let edges = edges_where(&model, |_| true);
-    let why = refusal(model, &edges, BlendShape::round(0.1));
-    assert!(why.contains("bend the same way"), "{why}");
+    let r = 0.1;
+    let built = blended(model, &edges, BlendShape::round(r));
+    let at = |p: [f64; 3]| geop_ops_model::testing::classify(&built, "fillet(F)", p);
+    use geop_core_topology::contains::shell::PointClassification as P;
+    // The rim cut round past its corner, the upright edge filled below it.
+    assert_eq!(at([0.49, 0.49, 0.995]), P::Outside);
+    assert_eq!(at([0.51, 0.51, 0.75]), P::Inside);
 }
 
 /// The three edges at a corner of the pocket's rim rounded: the rim's two,
 /// convex, cut away; the upright one, concave, filled in. No ball touches
-/// the three faces there on one side of them all, so the corner would be
-/// bevelled: each tool ending on its own — the rim's mitred with each
-/// other, the fill flush with the top — and the cuts meeting the fill
-/// where the boolean finds them.
-///
-/// Tried by planning no corner there: it builds, but the fill's cap, flush
-/// with the top, is left a face of its own beside the top
-/// (`[0.4, 0.6]^2` at `z = 1`), and validation cannot decide whether the
-/// rim's contact edge `ta`, lying in the cap's plane along its side,
-/// crosses it (`curve_curve_crossings` exhausted). Needs the union to merge
-/// a fill's flush cap into the face it is flush with, or a corner patch
-/// (a G1 three-sided patch between the three blends' end sections).
+/// the three faces there on one side of them all. The upright edge, the
+/// one bending the other way, is filled first, flush with the top; the
+/// rim then runs on round the fill's top edge, one tangent chain, and is
+/// rounded along it — a torus round the corner.
 #[test]
-#[ignore = "missing: a corner of mixed convexity (pocket rim + upright edge); bevelled by planning no corner, the fill's flush cap stays a face of its own and validation exhausts on the rim's contact edge in its plane"]
 fn pocket_rim_corner_with_its_upright_edge_rounded() {
     let model = pocketed();
     let corner = v3(0.5, 0.5, 1.0);
