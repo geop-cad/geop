@@ -50,7 +50,7 @@ apart (see Scripts).
 | `ops/geop-ops-edit` | delete a body, extract a face, project a sketch onto a face; direct edits: move, offset (push-pull), replace and delete faces (healed over or left open), the solid rebuilt around them; faces on one surface merged |
 | `ops/geop-ops-assembly` | placing parts, mates and joints, part patterns, the joints panel, the drag tool, the settler, STL and URDF export |
 | `ops/geop-ops-harness` | wire harnesses routed through connectors and clips |
-| `ops/geop-ops-step` | STEP import and export, assemblies as products and occurrences |
+| `ops/geop-ops-step` | STEP import and export, assemblies as products and occurrences; STL meshes imported as B-reps |
 | `ops/geop-ops-drawing` | 2-D drawings: views, hidden lines, sections, dimensions, title block, parts list |
 | `ops/geop-ops-sheetmetal` | flanges, bends, hems, cuts, the flat pattern and its DXF |
 | `ops/geop-ops-inspect` | mass properties, measurements, interference |

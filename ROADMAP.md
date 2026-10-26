@@ -89,7 +89,8 @@ below is what was missing then, and where each item stands now.
   the dialog; 322 of 361 public corpus files import valid, 299 fully
   (`scripts/fetch_corpus.sh`); an 886-face SolidWorks part in 15 s.
 - URDF export of jointed assemblies for robot simulators.
-- STL download in the web app.
+- STL download in the web app; STL (ASCII) import as a B-rep, the
+  triangles in one plane one face.
 
 ### Editor and front ends
 - Web app and VS Code extension: every operation, inspect and BOM panels,

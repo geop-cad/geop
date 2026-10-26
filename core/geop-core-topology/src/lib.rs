@@ -10,6 +10,7 @@ pub mod face;
 pub mod ids;
 pub mod mass;
 pub mod merge;
+pub mod mesh;
 pub mod model;
 pub mod shell;
 pub mod solid;
