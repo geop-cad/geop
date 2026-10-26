@@ -304,3 +304,35 @@ fn extrude_up_to_next_from_a_face_of_the_target() {
     assert_eq!(heights("post_sketch"), [1000, 2000, 3000]);
     assert_eq!(heights(""), [0, 1000, 2000, 3000]);
 }
+
+/// Two unit blocks overlapping by half, combined by a symmetric
+/// difference: what is in one but not both, two blocks of half the size
+/// touching along the overlap's edges, together of volume one. The step
+/// round-trips and builds incrementally like any other.
+#[test]
+fn symmetric_difference_of_two_overlapping_blocks() {
+    let mut program = Program::new();
+    program.push("a", PrimitiveArgs::block([0.0, 0.0, 0.0], [1.0, 1.0, 1.0]));
+    program.push("b", PrimitiveArgs::block([0.5, 0.0, 0.0], [1.5, 1.0, 1.0]));
+    program.push(
+        "x",
+        BooleanArgs {
+            a: solid("block(a)"),
+            b: solid("block(b)"),
+            op: BooleanOp::SymmetricDifference,
+        },
+    );
+    let part = program.build_model(registry).unwrap();
+    assert_valid(&part);
+    let volume = part
+        .topology()
+        .mass_properties(part.solid_id("boolean(x)").unwrap())
+        .unwrap()
+        .volume;
+    assert!(volume.could_be_equal(Scalar::ONE), "{volume:?}");
+    geop_core_program::testing::assert_round_trips(
+        std::rc::Rc::new(registry().unwrap()),
+        None,
+        &program,
+    );
+}

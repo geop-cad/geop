@@ -9,18 +9,21 @@ use crate::{
     },
 };
 
-/// Every edge of a 2-manifold shell must be shared by exactly two coedges
-/// (one per adjoining face), one traversing it `Forward` and the other
-/// `Reversed` — a free (1-coedge) or non-manifold (3+ coedge) edge breaks
-/// the "shoot a ray and count crossings" containment strategy this whole
-/// `contains` module relies on, and two coedges of the *same* sense would
-/// mean both adjoining faces treat the edge as running the same direction —
-/// a torn (rather than shared) seam, not a genuinely closed manifold edge.
+/// Every edge of a solid's shell must be shared by an even number of
+/// coedges, as many traversing it `Forward` as `Reversed`: two where two
+/// faces meet, four (or more) where the solid touches itself along the
+/// edge — two blocks sharing only an edge, a boss tangent to a wall along a
+/// line — each face on one side of it paired with one on the other. An odd
+/// count is a free edge, a hole in the shell; unbalanced senses mean faces
+/// treating the edge as running the same direction, a torn seam rather
+/// than a shared one. Containment counts crossings of rays that graze no
+/// edge (see `contains::shell`), so an edge touched by more faces costs it
+/// nothing.
 ///
 /// The exceptions bound no volume: a sheet's border, where an edge only one
 /// of its faces uses is simply where it ends, and a wire's edges, which no
 /// face uses.
-fn check_every_edge_has_two_coedges(errors: &mut Vec<GeopError>, model: &Model) {
+fn check_every_edge_has_paired_coedges(errors: &mut Vec<GeopError>, model: &Model) {
     let wire_edges: std::collections::HashSet<crate::EdgeId> = model
         .wires
         .values()
@@ -37,21 +40,21 @@ fn check_every_edge_has_two_coedges(errors: &mut Vec<GeopError>, model: &Model) 
         if n == 1 && on_sheet(&coedge_ids[0]) {
             continue;
         }
-        if n != 2 {
+        if n == 0 || !n.is_multiple_of(2) {
             errors.push(GeopError::new(format!(
-                "edge {} has {} coedge(s) (expected exactly 2 for a manifold shell)",
+                "edge {} has {} coedge(s) (expected an even number, two where two faces meet)",
                 edge_id.0, n
             )));
             continue;
         }
-        let senses: Vec<Sense> = coedge_ids
+        let forward = coedge_ids
             .iter()
-            .map(|id| model.coedges[id].sense)
-            .collect();
-        if senses[0] == senses[1] {
+            .filter(|&id| model.coedges[id].sense == Sense::Forward)
+            .count();
+        if 2 * forward != n {
             errors.push(GeopError::new(format!(
-                "edge {}'s two coedges ({}, {}) both have sense {:?} (expected one Forward and one Reversed)",
-                edge_id.0, coedge_ids[0], coedge_ids[1], senses[0]
+                "edge {}'s {n} coedges {coedge_ids:?} run it Forward {forward} time(s) (expected as many Forward as Reversed)",
+                edge_id.0
             )));
         }
     }
@@ -156,9 +159,8 @@ fn check_ray_direction_consistency(
 }
 
 /// [`validate`] plus two extra whole-model sanity checks that go beyond
-/// per-entity consistency: every edge is shared by exactly two coedges (a
-/// precondition the whole `contains` module's ray-parity strategy relies
-/// on), and — the check that actually exercises that strategy — every
+/// per-entity consistency: every edge is shared by coedges paired up, as
+/// many each way (see [`check_every_edge_has_paired_coedges`]), and — the check that actually exercises that strategy — every
 /// shell classifies a batch of random points identically no matter which
 /// (non-degenerate) random ray direction was used to test them.
 pub fn validate_manifold(
@@ -170,7 +172,7 @@ pub fn validate_manifold(
         Err(e) => e,
     };
 
-    check_every_edge_has_two_coedges(&mut errors, model);
+    check_every_edge_has_paired_coedges(&mut errors, model);
     check_ray_direction_consistency(params, &mut errors, model);
 
     if errors.is_empty() {
@@ -198,7 +200,7 @@ mod tests {
         let mut model = Model::new();
         test_cube_solid(&mut model);
         // Detach one coedge from its edge onto a bogus new one, leaving the
-        // original edge with only 1 coedge — non-manifold.
+        // original edge with only 1 coedge — a free edge.
         let coedge_id = *model.coedges.keys().next().unwrap();
         let orphan_edge = {
             let template = model.edges[&model.coedges[&coedge_id].edge().unwrap()].clone();
@@ -210,7 +212,7 @@ mod tests {
         assert!(
             errors
                 .iter()
-                .any(|e| format!("{e:?}").contains("expected exactly 2"))
+                .any(|e| format!("{e:?}").contains("expected an even number"))
         );
     }
 }

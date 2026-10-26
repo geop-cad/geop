@@ -1,6 +1,7 @@
 mod coincidence;
 pub mod curve_curve;
 pub mod curve_surface;
+pub mod surface_surface;
 
 pub use coincidence::{Hit, Overlap};
 pub use curve_curve::refine_crossing as refine_curve_curve_crossing;
