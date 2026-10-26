@@ -10,7 +10,8 @@
 //!   circular arc (a sphere, a torus): its offset turns the meridian's
 //!   offset, which is again a line or a concentric arc.
 //!
-//! Everything else is refused rather than approximated.
+//! Every other surface's offset is fitted, and widened to enclose the true
+//! one by a bound proven over the whole domain (see `offset_fit`).
 
 use geop_core_math::{
     geop_error::{GeopError, GeopResult},
@@ -52,21 +53,29 @@ impl NurbSurface3D {
     /// from it the points then move a little along the meridian too.
     ///
     /// Exact for a plane and for a surface of revolution whose meridian is a
-    /// line or a circular arc (see the module docs). Fails for any other
-    /// surface, and where the offset would pass through itself: a cylinder
-    /// shrunk past its axis, a sphere past its center.
-    pub fn offset(&self, distance: Scalar) -> GeopResult<Self> {
+    /// line or a circular arc (see the module docs); fitted and enclosed
+    /// for any other.
+    ///
+    /// `None` where the offset collapses: every point of the surface passes
+    /// its centre of curvature, as a cylinder shrunk past its axis, a
+    /// sphere or a torus's tube past its centre, so the offset has no
+    /// area — a blend narrower than the walls a shell builds are thick.
+    /// Fails where only part of it would: a cone shrunk past its apex,
+    /// a free-form surface past a centre of curvature somewhere.
+    pub fn offset(&self, distance: Scalar) -> GeopResult<Option<Self>> {
         if let Some(plane) = self.as_plane()? {
-            return Ok(self.translate(plane.normal.prod_scalar(distance)));
+            return Ok(Some(self.translate(plane.normal.prod_scalar(distance))));
         }
         for along_u in [true, false] {
             if let Some(axis) = self.revolution_along(along_u)? {
-                return self.offset_revolution(&axis, along_u, distance);
+                match self.offset_revolution(&axis, along_u, distance)? {
+                    Exact::Surface(surface) => return Ok(Some(surface)),
+                    Exact::Collapses => return Ok(None),
+                    Exact::Fitted => {}
+                }
             }
         }
-        Err(GeopError::new(
-            "NurbSurface::offset: only planes and surfaces of revolution with a straight or circular meridian have an exact offset",
-        ))
+        self.fitted_offset(distance)
     }
 
     /// [`NurbSurface3D::offset`] of a surface of revolution around `axis`
@@ -80,7 +89,7 @@ impl NurbSurface3D {
     /// is affine in `(h, r)` for each `i`, so turning the offset meridian's
     /// control points gives the offset surface. The net is checked to be
     /// exactly that, point for point, before anything is built from it.
-    fn offset_revolution(&self, axis: &Axis, along_u: bool, distance: Scalar) -> GeopResult<Self> {
+    fn offset_revolution(&self, axis: &Axis, along_u: bool, distance: Scalar) -> GeopResult<Exact> {
         let (rows, len) = if along_u {
             (self.num_v, self.num_u)
         } else {
@@ -199,19 +208,21 @@ impl NurbSurface3D {
             let outward = in_space(hx.sub(hc), rx.sub(rc));
             let scaled = radius.add(signed(distance, points_along(normal.prod_dot(&outward))?));
             if !scaled.definitely_greater(Scalar::ZERO) {
-                return Err(GeopError::new(format!(
-                    "NurbSurface::offset: offsetting by {distance:?} shrinks the meridian's arc of radius {radius:?} past its center"
-                )));
+                return Ok(Exact::Collapses);
             }
             let k = scaled.div(radius)?;
             (0..rows)
                 .map(|j| (hc.add(h[j].sub(hc).mul(k)), rc.add(r[j].sub(rc).mul(k))))
                 .collect()
         } else {
-            return Err(GeopError::new(
-                "NurbSurface::offset: the surface of revolution's meridian is neither a line nor a circular arc",
-            ));
+            return Ok(Exact::Fitted);
         };
+        if offset
+            .iter()
+            .all(|(_, rj)| !rj.definitely_greater(Scalar::ZERO))
+        {
+            return Ok(Exact::Collapses);
+        }
         if offset
             .iter()
             .any(|(_, rj)| rj.definitely_less(Scalar::ZERO))
@@ -235,7 +246,18 @@ impl NurbSurface3D {
             self.knot_vector_u.clone(),
             self.knot_vector_v.clone(),
         )
+        .map(Exact::Surface)
     }
+}
+
+/// What the exact offset of a surface of revolution is.
+enum Exact {
+    Surface(NurbSurface3D),
+    /// Every point passes the axis or the meridian's centre.
+    Collapses,
+    /// None: the meridian is neither a line nor a circular arc, so the
+    /// offset is fitted.
+    Fitted,
 }
 
 #[cfg(test)]
@@ -289,8 +311,16 @@ mod tests {
             knots(&[0., 0., 1., 1.]),
         )
         .unwrap();
-        assert_offset(&flat, &flat.offset(Scalar::from_f64(0.3)).unwrap(), 0.3);
-        assert_offset(&flat, &flat.offset(Scalar::from_f64(-0.3)).unwrap(), -0.3);
+        assert_offset(
+            &flat,
+            &flat.offset(Scalar::from_f64(0.3)).unwrap().unwrap(),
+            0.3,
+        );
+        assert_offset(
+            &flat,
+            &flat.offset(Scalar::from_f64(-0.3)).unwrap().unwrap(),
+            -0.3,
+        );
     }
 
     /// A quarter of a cylinder of radius 2 around the z axis, `u` around it
@@ -315,9 +345,13 @@ mod tests {
     fn cylinders_change_radius() {
         let cylinder = quarter_cylinder();
         for d in [0.5, -0.5, -1.5] {
-            assert_offset(&cylinder, &cylinder.offset(Scalar::from_f64(d)).unwrap(), d);
+            assert_offset(
+                &cylinder,
+                &cylinder.offset(Scalar::from_f64(d)).unwrap().unwrap(),
+                d,
+            );
         }
-        assert!(cylinder.offset(Scalar::from_f64(-2.5)).is_err());
+        assert!(cylinder.offset(Scalar::from_f64(-2.5)).unwrap().is_none());
     }
 
     /// A quarter of a cone around the z axis, from radius 2 at z = 0 to
@@ -337,7 +371,11 @@ mod tests {
             knots(&[0., 0., 1., 1.]),
         )
         .unwrap();
-        assert_offset(&cone, &cone.offset(Scalar::from_f64(-0.25)).unwrap(), -0.25);
+        assert_offset(
+            &cone,
+            &cone.offset(Scalar::from_f64(-0.25)).unwrap().unwrap(),
+            -0.25,
+        );
     }
 
     /// An eighth of the sphere of radius 2 around the origin: `u` around
@@ -363,10 +401,14 @@ mod tests {
         )
         .unwrap();
         // Its natural normal: whichever way, the offset follows it.
-        assert_offset(&sphere, &sphere.offset(Scalar::from_f64(0.5)).unwrap(), 0.5);
         assert_offset(
             &sphere,
-            &sphere.offset(Scalar::from_f64(-0.5)).unwrap(),
+            &sphere.offset(Scalar::from_f64(0.5)).unwrap().unwrap(),
+            0.5,
+        );
+        assert_offset(
+            &sphere,
+            &sphere.offset(Scalar::from_f64(-0.5)).unwrap().unwrap(),
             -0.5,
         );
     }
@@ -392,10 +434,14 @@ mod tests {
             knots(&[0., 0., 0., 1., 1., 1.]),
         )
         .unwrap();
-        assert_offset(&torus, &torus.offset(Scalar::from_f64(0.25)).unwrap(), 0.25);
         assert_offset(
             &torus,
-            &torus.offset(Scalar::from_f64(-0.25)).unwrap(),
+            &torus.offset(Scalar::from_f64(0.25)).unwrap().unwrap(),
+            0.25,
+        );
+        assert_offset(
+            &torus,
+            &torus.offset(Scalar::from_f64(-0.25)).unwrap().unwrap(),
             -0.25,
         );
     }
@@ -408,7 +454,7 @@ mod tests {
     fn a_cones_apex_goes_to_the_offset_cones_apex() {
         let cone = crate::test_fixtures::revolved(1., 0.);
         for d in [0.25, -0.25] {
-            let offset = cone.offset(Scalar::from_f64(d)).unwrap();
+            let offset = cone.offset(Scalar::from_f64(d)).unwrap().unwrap();
             let rim =
                 |s: &NurbSurface3D, u: f64| s.evaluate(Scalar::from_f64(u), Scalar::ONE).unwrap();
             let shift = rim(&offset, 0.5).sub(&rim(&cone, 0.5));
@@ -432,10 +478,16 @@ mod tests {
         }
     }
 
+    /// A quarter cylinder bent out of round: no revolution any more, so
+    /// its offset is fitted, and encloses the true one.
     #[test]
-    fn freeform_surfaces_are_refused() {
+    fn freeform_surfaces_are_fitted() {
         let mut bent = quarter_cylinder();
         bent.control_points[2] = h(2.5, 2., 0., R2);
-        assert!(bent.offset(Scalar::from_f64(0.1)).is_err());
+        assert_offset(
+            &bent,
+            &bent.offset(Scalar::from_f64(0.1)).unwrap().unwrap(),
+            0.1,
+        );
     }
 }

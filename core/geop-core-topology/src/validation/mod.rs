@@ -18,6 +18,7 @@ mod pcurve_loop_continuity;
 mod pointer_check;
 mod two_way_references;
 
+pub use disjointness_check::{body_crossing, edge_crosses_face};
 pub use face_orientation::{Inward, Outward, normal_points_outward};
 pub use manifold_check::validate_manifold;
 pub use parameters::ValidationParameters;

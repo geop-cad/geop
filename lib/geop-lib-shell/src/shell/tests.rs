@@ -29,7 +29,15 @@ fn shelled(
         .map(|name| part.face_id(name).unwrap())
         .collect();
     let namer = Namer::new("shell", "s").unwrap();
-    let solid = shell(&mut part, &namer, solid, &open, Scalar::from_f64(thickness)).unwrap();
+    let solid = shell(
+        &mut part,
+        &namer,
+        solid,
+        &open,
+        Scalar::from_f64(thickness),
+        &[],
+    )
+    .unwrap();
     (part, solid)
 }
 
@@ -195,7 +203,7 @@ fn a_closed_revolved_cylinder() {
 fn walls_too_thick_are_refused() {
     let (mut part, solid) = unit_box();
     let namer = Namer::new("shell", "s").unwrap();
-    let error = shell(&mut part, &namer, solid, &[], Scalar::from_f64(0.6)).unwrap_err();
+    let error = shell(&mut part, &namer, solid, &[], Scalar::from_f64(0.6), &[]).unwrap_err();
     // An inner edge turns around, or shrinks to nothing.
     let message = error.root_message();
     assert!(
@@ -214,11 +222,12 @@ fn a_sphere_closed_all_round() {
     assert!(corners(&part).contains(&[1000, 0, 1500]));
     assert!(corners(&part).contains(&[-500, 0, 0]));
     // Moved along curved faces, the vertices are still as sharp as the
-    // rounding of a few steps.
+    // rounding of a few steps, and of carrying the faces' arcs on past
+    // their ends for room, before the offset and after (see `room`).
     for vertex in part.topology().vertices.values() {
         for k in 0..3 {
             assert!(
-                vertex.point[k].width().to_f64() < 1e-9,
+                vertex.point[k].width().to_f64() < 1e-7,
                 "{:?}",
                 vertex.point
             );
@@ -237,6 +246,74 @@ fn a_sphere_does_not_open_along_a_smooth_seam() {
         .map(|k| part.face_id(&format!("sphere(s,north,q{k})")).unwrap())
         .collect();
     let namer = Namer::new("shell", "s").unwrap();
-    let error = shell(&mut part, &namer, solid, &north, Scalar::from_f64(0.1)).unwrap_err();
+    let error = shell(&mut part, &namer, solid, &north, Scalar::from_f64(0.1), &[]).unwrap_err();
     assert!(error.root_message().contains("tangent"), "{error:?}");
+}
+
+/// A box opened at its top, its floor twice as thick as its sides: each
+/// face's wall its own thickness, the inner floor half up, the inner sides
+/// a quarter in. Faces of different thicknesses still meet where their
+/// offsets do.
+#[test]
+fn a_box_with_a_thicker_floor() {
+    let (mut part, solid) = unit_box();
+    let (top, floor) = ("cube(b,start)", "cube(b,end)");
+    let open = [part.face_id(top).unwrap()];
+    let thicker = [(part.face_id(floor).unwrap(), Scalar::from_f64(0.5))];
+    let namer = Namer::new("shell", "s").unwrap();
+    let solid = shell(
+        &mut part,
+        &namer,
+        solid,
+        &open,
+        Scalar::from_f64(0.25),
+        &thicker,
+    )
+    .unwrap();
+    assert_valid(&part);
+    assert_eq!(faces(&part, solid), 11);
+    let corners = corners(&part);
+    assert!(corners.contains(&[250, 250, 500]), "{corners:?}");
+    assert!(corners.contains(&[1750, 1750, 1000]), "{corners:?}");
+}
+
+/// Walls grown outward: the box's faces are the inside, their offsets the
+/// outside, a quarter out, the box itself a void of its own.
+#[test]
+fn a_box_shelled_outward() {
+    let (part, solid) = unit_box();
+    let (closed, closed_solid) = shelled(part, solid, &[], -0.25);
+    assert_valid(&closed);
+    let shells = &closed.topology().get_solid(closed_solid).unwrap().shells;
+    assert_eq!(shells.len(), 2);
+    let volume = closed
+        .topology()
+        .mass_properties(closed_solid)
+        .unwrap()
+        .volume;
+    let walls = 2.5 * 2.5 * 1.5 - 2.0 * 2.0 * 1.0;
+    assert!(
+        volume.could_be_equal(Scalar::from_f64(walls)),
+        "{volume:?} vs {walls}"
+    );
+}
+
+/// Opened, walls grown outward stand past the face taken away: every edge
+/// of it is an inward corner of the box turned inside out, and that is
+/// refused as such openings are (see `inward_corner`).
+#[test]
+fn a_box_shelled_outward_and_opened_is_refused() {
+    let (mut part, solid) = unit_box();
+    let open = [part.face_id("cube(b,start)").unwrap()];
+    let namer = Namer::new("shell", "s").unwrap();
+    let error = shell(
+        &mut part,
+        &namer,
+        solid,
+        &open,
+        Scalar::from_f64(-0.25),
+        &[],
+    )
+    .unwrap_err();
+    assert!(error.root_message().contains("inward corner"), "{error:?}");
 }

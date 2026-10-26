@@ -240,8 +240,7 @@ mod tests {
             &namer,
             None,
             &plane,
-            Scalar::from_f64(-5.0),
-            Scalar::from_f64(1.0),
+            &[Scalar::from_f64(-5.0), Scalar::from_f64(1.0)],
             &[SweepLoop::plain(profile)],
         )?;
         let edges = imprint_on_face(

@@ -416,14 +416,12 @@ fn a_ball_whose_rim_runs_through_its_pole_imports() {
 /// STEP entities from `#first` on: the kernel's own, exactly on its
 /// cylinder. The id of the curve is `#first`.
 fn helix_entities(first: u64, z0: f64) -> String {
-    use geop_core_geometry::nurb_curve::{Handedness, NurbCurve3D};
+    use geop_core_geometry::nurb_curve::{Handedness, Helix, NurbCurve3D};
     use geop_core_math::primitives::CoordinateSystem;
     let helix = NurbCurve3D::helix(
         &CoordinateSystem::world_at(v3(0.0, 0.0, z0)),
         Scalar::ONE,
-        Scalar::ONE,
-        1.5,
-        Handedness::Right,
+        &Helix::new(Scalar::ONE, 1.5, Handedness::Right),
     )
     .unwrap();
     let mut text = String::new();

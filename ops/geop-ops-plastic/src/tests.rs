@@ -43,6 +43,7 @@ fn enclosure(thickness: f64) -> (NamedModel, SolidId) {
         solid,
         &[top],
         Scalar::from_f64(thickness),
+        &[],
     )
     .unwrap();
     (part, solid)

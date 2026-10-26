@@ -12,7 +12,7 @@
 //! pitch, so that its turns never touch.
 
 use geop_core_geometry::{
-    nurb_curve::{Handedness, cos_sin},
+    nurb_curve::{Handedness, Helix, cos_sin},
     shape::{Axis, Cylinder},
 };
 use geop_core_math::{
@@ -502,9 +502,7 @@ pub fn thread_tool(
         namer,
         solid,
         &axes,
-        Scalar::from_f64(pitch),
-        turns,
-        Handedness::Right,
+        &Helix::new(Scalar::from_f64(pitch), turns, Handedness::Right),
         &[SweepLoop::plain(profile)],
     )
 }

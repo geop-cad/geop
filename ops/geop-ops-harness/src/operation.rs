@@ -217,6 +217,7 @@ fn sweep(
         &plane,
         &[section],
         &Control::default(),
+        None,
     )?;
     Ok(())
 }

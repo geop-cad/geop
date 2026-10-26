@@ -89,8 +89,7 @@ pub fn figure8_profile(model: &mut NamedModel, name: &str) -> GeopResult<SolidId
         &namer,
         Some(&namer.root()),
         &coordinate_system,
-        Scalar::ZERO,
-        Scalar::ONE,
+        &[Scalar::ZERO, Scalar::ONE],
         &loops,
     )?;
     Ok(built.solid.expect("extruded as a solid"))

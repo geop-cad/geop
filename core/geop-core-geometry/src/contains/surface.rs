@@ -15,7 +15,7 @@ use crate::{
     fat_line::{
         Stalled, carried_width, clip_tensor, extent, greville_abscissae, restriction, stalled,
     },
-    knot_insertion::{is_clamped_at, pinned_clamped_end},
+    knot_insertion::pinned_clamped_end,
     nurb_curve::NurbCurve,
     nurb_surface::NurbSurface,
 };
@@ -77,20 +77,12 @@ fn clip(patch: &NurbSurface<4>, point: &Vector3) -> GeopResult<Option<(Scalar, S
 /// the first/last control row, which *is* the surface there when the knot
 /// vector is clamped at that end. `None` if it isn't.
 pub fn boundary_curve(patch: &NurbSurface<4>, u_fixed: bool, first: bool) -> Option<NurbCurve<4>> {
-    let end = |n: usize| if first { 0 } else { n - 1 };
-    if u_fixed {
-        if !is_clamped_at(&patch.knot_vector_u, patch.degree_u, first) {
-            return None;
-        }
-        let row = patch.control_row(true, end(patch.num_u));
-        NurbCurve::try_new(patch.degree_v, row, patch.knot_vector_v.clone()).ok()
+    let (lo, hi) = if u_fixed {
+        patch.domain_u()
     } else {
-        if !is_clamped_at(&patch.knot_vector_v, patch.degree_v, first) {
-            return None;
-        }
-        let column = patch.control_row(false, end(patch.num_v));
-        NurbCurve::try_new(patch.degree_u, column, patch.knot_vector_u.clone()).ok()
-    }
+        patch.domain_v()
+    };
+    patch.iso_curve(u_fixed, if first { lo } else { hi }).ok()
 }
 
 /// "A collapsed domain is handled as a boundary evaluation" (`surface.md`

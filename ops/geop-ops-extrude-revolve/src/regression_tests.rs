@@ -897,6 +897,9 @@ fn mug(extent: Extents) -> Program {
             solid: solid("extrude(body)"),
             faces: vec![geop_ops_model::element("extrude(body,end)")],
             thickness: 4.0.into(),
+            other_faces: Vec::new(),
+            other_thickness: 0.2.into(),
+            outward: false,
         },
     );
     // As drawn in the editor, ids and all: the annulus, and the sketch's

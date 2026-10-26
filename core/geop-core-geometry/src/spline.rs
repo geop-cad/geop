@@ -238,24 +238,37 @@ pub(crate) fn homogeneous_derivatives<const D: usize>(
             continue;
         }
         if k > 0 {
-            // Degree `p − k + 1` → `p − k`: point `j` is `Q_{base + j}`.
-            let scale = Scalar::from_i64((p - k + 1) as i64);
-            points = (0..=p - k)
-                .map(|j| {
-                    let den = knots[base + j + p + 1].sub(knots[base + j + k]);
-                    // A repeated knot contributes nothing (`0/0 = 0`).
-                    match scale.div(den) {
-                        Ok(f) => points[j + 1].sub(&points[j]).prod_scalar(f),
-                        Err(_) => Vector::zero(),
-                    }
-                })
-                .collect();
+            points = hodograph(p, knots, &points, base, k);
         }
         // The `k`-th derivative's knots are `knots[k..]`; shifting them by
         // `base` makes `points` its control points from index 0.
         out.push(de_boor(p - k, &knots[base + k..], &points, t, p - k));
     }
     out
+}
+
+/// The control points of the `k`-th derivative acting on a span, from
+/// those of the `(k−1)`-th, `points` (the span's own for `k = 1`): of
+/// degree `p − k + 1` to `p − k`, point `j` is `Q_{base + j}`, the scaled
+/// difference `(p−k+1)(Q_{j+1} − Q_j) / (u_{base+j+p+1} − u_{base+j+k})`.
+pub(crate) fn hodograph<const D: usize>(
+    p: usize,
+    knots: &[Scalar],
+    points: &[Vector<D>],
+    base: usize,
+    k: usize,
+) -> Vec<Vector<D>> {
+    let scale = Scalar::from_i64((p - k + 1) as i64);
+    (0..=p - k)
+        .map(|j| {
+            let den = knots[base + j + p + 1].sub(knots[base + j + k]);
+            // A repeated knot contributes nothing (`0/0 = 0`).
+            match scale.div(den) {
+                Ok(f) => points[j + 1].sub(&points[j]).prod_scalar(f),
+                Err(_) => Vector::zero(),
+            }
+        })
+        .collect()
 }
 
 /// Cartesian derivatives `[C, C', …, C⁽ⁿ⁾]` (`C = D − 1` components) from the

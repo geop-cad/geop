@@ -147,7 +147,7 @@ fn basis_funs(span: usize, t: Scalar, degree: usize, knots: &[Scalar]) -> Vec<Sc
 ///
 /// Generic over the dimension `C` of `points`, which are solved for as they
 /// are: Cartesian points (see [`with_unit_weights`]) or homogeneous ones.
-fn solve_interpolation_system<const C: usize>(
+pub(crate) fn solve_interpolation_system<const C: usize>(
     t: &[Scalar],
     knots: &[Scalar],
     degree: usize,

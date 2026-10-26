@@ -13,7 +13,7 @@
 
 use crate::sweep::{Frame, Path, Span, SweepLoop, sweep, sweep_drawn};
 use geop_core_geometry::nurb_curve::{
-    Handedness, HelixRow, NurbCurve2D, arc_span, cos_sin, helix_rows,
+    Handedness, Helix, HelixRow, NurbCurve2D, arc_span, cos_sin, helix_rows,
 };
 use geop_core_math::{
     geop_error::{GeopError, GeopResult},
@@ -136,30 +136,31 @@ pub fn revolve(
 }
 
 /// The path of a screw motion around the axis `axes.w()` through
-/// `axes.origin()`: turning from `axes.u()` through `turns` turns while
-/// rising `pitch` along `w` per turn, right-handed — from `u` towards `v` —
-/// or left-handed. A profile point `(r, z)` travels along the helix of
-/// radius `r` raised by `z`: the stations and middles of the path are the
-/// control rows of [`NurbCurve3D::helix`] (see [`helix_rows`]), exactly on
-/// the cylinder, the height within 0.53 % of the pitch of the true helix.
+/// `axes.origin()`: turning from `axes.u()` as `helix` says, right-handed —
+/// from `u` towards `v` — or left-handed. A profile point `(r, z)` travels
+/// along the helix of radius `r` raised by `z`: the stations and middles of
+/// the path are the control rows of [`NurbCurve3D::helix`] (see
+/// [`helix_rows`]), exactly on the cylinder, the height within 0.53 % of
+/// the pitch of the true helix. Tapered, the profile moves out as it rises,
+/// each of its points on a cone, as a pipe thread's does.
 ///
 /// Its stations are `a0`, `a1`, ... and its spans `q0`, `q1`, ..., each at
 /// most a quarter turn. It never closes: a sweep along it has caps `start`
 /// and `end`.
 ///
 /// [`NurbCurve3D::helix`]: geop_core_geometry::nurb_curve::NurbCurve3D::helix
-pub fn screw_path(
-    axes: &CoordinateSystem,
-    pitch: Scalar,
-    turns: f64,
-    handedness: Handedness,
-) -> GeopResult<Path> {
-    let rows = helix_rows(axes, pitch, turns, handedness)?;
+pub fn screw_path(axes: &CoordinateSystem, helix: &Helix) -> GeopResult<Path> {
+    let rows = helix_rows(axes, helix)?;
     let (origin, w) = (axes.origin(), axes.w());
-    let frame = |row: &HelixRow| Frame {
-        origin: origin.add(&w.prod_scalar(row.rise)),
-        e1: row.radial,
-        e2: *w,
+    let frame = |row: &HelixRow| {
+        let raised = origin.add(&w.prod_scalar(row.rise));
+        Frame {
+            origin: row
+                .out
+                .map_or(raised, |out| raised.add(&row.radial.prod_scalar(out))),
+            e1: row.radial,
+            e2: *w,
+        }
     };
     let stations: Vec<Frame> = rows.iter().step_by(2).map(frame).collect();
     let spans: Vec<Span> = rows
@@ -170,7 +171,7 @@ pub fn screw_path(
         .collect();
     // Turning from `u` towards `v` — right-handed — runs against `e1 x e2
     // = u x w = -v` where it starts, as a revolve turning forwards does.
-    let along_normal = handedness == Handedness::Left;
+    let along_normal = helix.handedness == Handedness::Left;
     Ok(Path {
         station_names: (0..stations.len()).map(|k| format!("a{k}")).collect(),
         span_names: (0..spans.len()).map(|k| Some(format!("q{k}"))).collect(),
@@ -192,18 +193,15 @@ pub fn screw_path(
 /// `X` sweeps through span `q`, `N(X,a)` the edge `X` is at station `a`,
 /// `N(P,q)` the helical edge `P` sweeps through `q`, and the caps
 /// `N(start)` and `N(end)`.
-#[allow(clippy::too_many_arguments)]
 pub fn screw(
     model: &mut NamedModel,
     namer: &Namer,
     solid: &str,
     axes: &CoordinateSystem,
-    pitch: Scalar,
-    turns: f64,
-    handedness: Handedness,
+    helix: &Helix,
     loops: &[SweepLoop],
 ) -> GeopResult<SolidId> {
-    let path = screw_path(axes, pitch, turns, handedness)?;
+    let path = screw_path(axes, helix)?;
     sweep_drawn(model, namer, &path, loops, Some(solid))?
         .solid
         .ok_or_else(|| GeopError::new("screw: built no solid"))
@@ -634,6 +632,18 @@ mod tests {
     /// by the pitch per turn.
     #[test]
     fn a_screw_sweeps_a_thread() {
+        a_screw_sweeps_a_thread_tapered(Scalar::ZERO);
+    }
+
+    /// The same thread tapered as a pipe thread is, one in sixteen on the
+    /// diameter: valid, its helical edges the tapered helices, on their
+    /// cones.
+    #[test]
+    fn a_tapered_screw_sweeps_a_pipe_thread() {
+        a_screw_sweeps_a_thread_tapered(Scalar::from_f64(1.0 / 32.0));
+    }
+
+    fn a_screw_sweeps_a_thread_tapered(taper: Scalar) {
         use geop_core_geometry::nurb_curve::NurbCurve3D;
         for handedness in [Handedness::Right, Handedness::Left] {
             let mut model = NamedModel::new();
@@ -655,9 +665,7 @@ mod tests {
                 &namer,
                 "screw(t)",
                 &axes,
-                pitch,
-                1.25,
-                handedness,
+                &Helix::new(pitch, 1.25, handedness).tapered(taper),
                 &[SweepLoop::plain(profile)],
             )
             .unwrap();
@@ -673,7 +681,12 @@ mod tests {
                 Scalar::ZERO,
                 Scalar::from_f64(-0.2),
             ]));
-            let helix = NurbCurve3D::helix(&lowered, Scalar::ONE, pitch, 1.25, handedness).unwrap();
+            let helix = NurbCurve3D::helix(
+                &lowered,
+                Scalar::ONE,
+                &Helix::new(pitch, 1.25, handedness).tapered(taper),
+            )
+            .unwrap();
             for k in 0..=4 {
                 let along = Scalar::from_ratio(k, 4).unwrap();
                 let (t0, t1) = curve.domain();
