@@ -4,12 +4,12 @@
 //! made of: each edge the way the chain runs along it, with the faces
 //! either side.
 
-use geop_core_geometry::search::{MAX_NODES, min_subdivision_size};
 use geop_core_math::{
-    geop_error::{GeopError, GeopResult},
+    geop_error::{GeopError, GeopResult, WithContext},
     scalars::Scalar,
     solvers::walk::{Walked, walk_by},
     vector::Vector3,
+    with_context,
 };
 use geop_core_topology::{EdgeId, FaceId, Model, VertexId};
 
@@ -169,6 +169,18 @@ impl TangentChain {
     }
 }
 
+/// Whether `faces` could meet tangentially at `vertex`, their normals
+/// there parallel: where the edge between them vanishes, the corner
+/// between the faces opening out flat — two equal pipes joined, where
+/// they touch. Its chain ends there, and a blend of it narrows to nothing.
+pub fn vanishes_at(model: &Model, vertex: VertexId, faces: [FaceId; 2]) -> GeopResult<bool> {
+    let (a, b) = (
+        model.normal_at_vertex(faces[0], vertex)?,
+        model.normal_at_vertex(faces[1], vertex)?,
+    );
+    Ok(a.could_be_parallel(&b) && !a.prod_dot(&b).definitely_less(Scalar::ZERO))
+}
+
 /// Whether the unit vectors `a` and `b` could point the same way.
 fn same_direction(a: &Vector3, b: &Vector3) -> bool {
     a.could_be_parallel(b) && a.prod_dot(b).definitely_greater(Scalar::ZERO)
@@ -184,18 +196,27 @@ fn same_direction(a: &Vector3, b: &Vector3) -> bool {
 /// The edges' own tangents only tell which way the next one runs on — an
 /// edge traced as an intersection only encloses its points, not its
 /// direction.
+///
+/// That holds only where the faces cross. Where the link's own faces could
+/// be tangent to each other at the vertex — two equal pipes joined, where
+/// they touch — their normals state no direction at all, every edge there
+/// runs along both tangent planes, and the chain ends: an edge between
+/// faces turning tangent vanishes there (see [`vanishes_at`]), and one
+/// between faces folding back onto each other is no chain's to go on.
 fn next_link(model: &Model, link: &Link) -> GeopResult<Option<Link>> {
     let vertex = link.vertices(model)?[1];
-    let at = model.get_vertex(vertex)?.point;
     let (_, arriving) = link.at(model, Scalar::ONE)?;
     let normals_at = |faces: [FaceId; 2]| -> GeopResult<[Vector3; 2]> {
         let normal = |face| {
-            let surface = &model.get_face(face)?.surface;
-            surface.normal_at(&at, MAX_NODES, min_subdivision_size())
+            let ctx = with_context!("the normal of face {face} at vertex {vertex}");
+            model.normal_at_vertex(face, vertex).with_context(ctx)
         };
         Ok([normal(faces[0])?, normal(faces[1])?])
     };
     let normals = normals_at(link.faces)?;
+    if normals[0].could_be_parallel(&normals[1]) {
+        return Ok(None);
+    }
     let mut found = Vec::new();
     for (&id, e) in &model.edges {
         if id == link.edge {

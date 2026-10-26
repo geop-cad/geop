@@ -34,6 +34,7 @@ import {
   programText,
   type Workspace,
   dataExtensions,
+  fileContent,
   isData,
   isProgram,
   programName,
@@ -535,8 +536,9 @@ function App() {
     const taken = { ...workspaceRef.current.files };
     for (const file of uploaded) {
       if (isData(file.name, reads)) {
-        // Data for an import: kept as it is, next to the programs.
-        const text = await file.text();
+        // Data for an import: kept as it is, next to the programs — bytes
+        // that are not text as a `data:` URL.
+        const text = fileContent(new Uint8Array(await file.arrayBuffer()));
         const path = freePath(taken, file.name);
         taken[path] = text;
         added[path] = text;
@@ -568,7 +570,7 @@ function App() {
    */
   async function chooseFile(file: File): Promise<string | null> {
     try {
-      const text = await file.text();
+      const text = fileContent(new Uint8Array(await file.arrayBuffer()));
       if (host) return await host.addFile(file.name, text);
       const { files, active } = workspaceRef.current;
       const folder = active.slice(0, active.lastIndexOf("/") + 1);

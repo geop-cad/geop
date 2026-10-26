@@ -395,15 +395,19 @@ fn a_disc_with_thirty_two_slots() {
     }
 }
 
-/// The widest control point coordinate of any arc of `solid` (an edge of
-/// degree two), and the arc's name.
-fn widest_arc(model: &NamedModel, solid: SolidId) -> (f64, String) {
+/// The widest control point coordinate of any edge of `solid` that
+/// `which` picks, and the edge's name.
+fn widest_edge(
+    model: &NamedModel,
+    solid: SolidId,
+    which: impl Fn(&geop_core_topology::Curve3) -> bool,
+) -> (f64, String) {
     let topology = model.topology();
     let mut widest = (0.0, String::new());
     for face in topology.solid_faces(solid).unwrap() {
         for edge in topology.face_edges(face) {
             let curve = &topology.get_edge(edge).unwrap().curve;
-            if curve.degree != 2 {
+            if !which(curve) {
                 continue;
             }
             for point in &curve.control_points {
@@ -419,6 +423,29 @@ fn widest_arc(model: &NamedModel, solid: SolidId) -> (f64, String) {
     widest
 }
 
+/// The lines a slot's sides meet the disc's side in are traced, between
+/// the points where they cross its rims. The traced line of the eleventh
+/// slot's side `c0` was `1.7e-12` wide, its ends `6.3e-13`, crossings of
+/// the rims with the slot's side, which its turn had left `1.3e-13` wide:
+/// the turn's quaternion, unit already as cosine and sine, was normalized
+/// again, honestly, and came out four times as wide, and the matrix with
+/// it. Kept as it is, the ends are under `5e-13`. The line is still about
+/// `1.5e-12`: the corrector's points along it are as wide as its ends,
+/// and the fit widened to hold them three to four times that.
+#[test]
+fn the_lines_where_slots_meet_a_disc_side_stay_narrow() {
+    let (model, disc, _) = slotted_disc(16);
+    let (width, edge) = widest_edge(&model, disc, |curve| curve.degree != 2);
+    assert!(width < 2e-12, "{edge}: {width:e}");
+    let topology = model.topology();
+    let e = topology.get_edge(model.edge_id(&edge).unwrap()).unwrap();
+    for v in [e.start_vertex, e.end_vertex] {
+        let p = topology.vertices[&v].point;
+        let width = (0..3).map(|k| p[k].width().to_f64()).fold(0.0, f64::max);
+        assert!(width < 5e-13, "{:?}: {width:e}", model.name_of(v));
+    }
+}
+
 /// The rims of a disc are cut twice by every slot, so with sixteen slots
 /// each quarter of them eight times over: their pieces are as narrow as a
 /// rim cut once, to the rounding of each cut. When a cut carried the width
@@ -427,6 +454,6 @@ fn widest_arc(model: &NamedModel, solid: SolidId) -> (f64, String) {
 #[test]
 fn the_rims_of_a_slotted_disc_stay_as_narrow_as_cut_once() {
     let (model, disc, _) = slotted_disc(16);
-    let (width, edge) = widest_arc(&model, disc);
+    let (width, edge) = widest_edge(&model, disc, |curve| curve.degree == 2);
     assert!(width < 1e-13, "{edge}: {width:e}");
 }

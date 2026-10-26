@@ -600,14 +600,13 @@ mod examples {
     /// the lip, does not end within 4000 steps. The body validates, and is
     /// no different unmirrored: the defect is in the drawing's searches
     /// over that many close, smoothly joined curves.
-    const KNOWN_TO_FAIL: [(&str, ViewKind); 7] = [
+    const KNOWN_TO_FAIL: [(&str, ViewKind); 6] = [
         ("revolved_cone_on_box", ViewKind::Front),
         ("revolved_cone_on_box", ViewKind::Back),
         ("subd_mug", ViewKind::Front),
         ("subd_mug", ViewKind::Back),
         ("subd_mug", ViewKind::Top),
         ("subd_mug", ViewKind::Bottom),
-        ("subd_mug", ViewKind::Left),
     ];
 
     /// Every view of every example builds, and no piece of a line is drawn

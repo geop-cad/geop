@@ -88,6 +88,13 @@
 //!   fill up to a face it leaves the solid through, an outward corner, is
 //!   refused: its end would lie on the corner's other edge.
 //!
+//! Where the faces either side meet tangentially at the vertex — two equal
+//! pipes joined, where they touch — there is no corner left to blend, and
+//! the blend vanishes, whatever else meets there (see [`End::Vanish`]): its
+//! last station is the vertex itself, the ball touching both faces there,
+//! and every section's apex is drawn in as the section narrows (see
+//! [`Station::pinched`]), so that the tool ends in that point.
+//!
 //! Where every edge of a corner is filleted, it ends at the ball rounding
 //! the corner instead, set back from it (see [`crate::corner`]): its last
 //! station that ball's great arc, untilted, the corner's piece of the ball
@@ -407,7 +414,10 @@ fn roll(
     let (n0, n1) = (normal(0, seeds[0])?, normal(1, seeds[1])?);
     // Exact for two planes through `p`: `r` from both.
     let spread = Scalar::ONE.add(n0.prod_dot(&n1));
-    let center = p.add(&n0.add(&n1).prod_scalar(sr.div(spread)?)).sharpen();
+    let ctx = with_context!(
+        "the faces' normals at the seeds {seeds:?}, {n0:?} and {n1:?}, could be opposite"
+    );
+    let center = (p.add(&n0.add(&n1).prod_scalar(sr.div(spread).with_context(ctx)?))).sharpen();
     let mut offsets = [0, 1].map(|k| Offset::new(surfaces[k], seeds[k], sr));
     let center = meet(center, &mut offsets, &[(*tangent, *p)])?.sharpen();
     Ok((center, offsets.map(|o| o.pieces[0].1)))
@@ -950,13 +960,14 @@ fn section(
 
 impl Station {
     /// The ball's great arc, where this station's arc is tilted (see
-    /// [`section`]).
+    /// [`section`]), the tool closed off by the same apex.
     fn untilted(&self) -> GeopResult<Station> {
         if !self.tilted {
             return Ok(self.clone());
         }
         Ok(Station {
             aloof: self.aloof,
+            apex: self.apex,
             ..section(
                 self.center,
                 self.contact,
@@ -967,6 +978,67 @@ impl Station {
             )?
         })
     }
+}
+
+impl Station {
+    /// The station with its apex drawn in as its section narrows: beyond
+    /// the ball's corner as far as the chord between its contacts is long,
+    /// where it is otherwise as far as the ball's center is before it (see
+    /// [`section`]). A free choice, as the apex always is, of a tool whose
+    /// blend vanishes (see [`End::Vanish`]): there its section collapses
+    /// into the vertex, and the tool, its apex too, ends in a point —
+    /// where an apex kept a radius off would leave it a blade.
+    fn pinched(&self) -> GeopResult<Station> {
+        let half = Scalar::ONE.div(Scalar::TWO)?;
+        // The ball's corner: the apex is as far beyond it as its center
+        // is before it.
+        let corner = self.apex.add(&self.center).prod_scalar(half);
+        let out = corner.sub(&self.center).normalize()?;
+        let chord = self.contact[1].sub(&self.contact[0]).norm();
+        Ok(Station {
+            apex: corner.add(&out.prod_scalar(chord)).sharpen(),
+            ..self.clone()
+        })
+    }
+}
+
+/// The ball where the open `chain` vanishes at its start (`k = 0`) or its
+/// end (see [`End::Vanish`]), of signed radius `sr`: at the vertex, where
+/// its faces meet tangentially, it touches both there — its section, and
+/// its corner, the vertex itself.
+fn vanishing(model: &Model, chain: &Chain, k: usize, sr: Scalar) -> GeopResult<Station> {
+    let link = if k == 0 {
+        chain.first()?
+    } else {
+        chain.last()?
+    };
+    let vertex = link.vertices(model)?[k];
+    let at = model.get_vertex(vertex)?.point;
+    let mut uv = [(Scalar::ZERO, Scalar::ZERO); 2];
+    let mut normals = [Vector3::zero(); 2];
+    for side in 0..2 {
+        let surface = &model.get_face(link.faces[side])?.surface;
+        let ctx = with_context!(
+            "the blend vanishing at vertex {vertex}, on face {}",
+            link.faces[side]
+        );
+        uv[side] = seed_on(surface, &at).with_context(ctx)?;
+        normals[side] = surface.normal(uv[side].0, uv[side].1)?.normalize()?;
+    }
+    let center = at.add(&normals[0].prod_scalar(sr)).sharpen();
+    Ok(Station {
+        center,
+        contact: [at, at],
+        faces: link.faces,
+        normals,
+        uv,
+        corner: at,
+        weight: Scalar::ONE,
+        apex: at.prod_scalar(Scalar::TWO).sub(&center).sharpen(),
+        chord: false,
+        tilted: false,
+        aloof: false,
+    })
 }
 
 /// The section's control points, homogeneous: the contact on the left,
@@ -1291,6 +1363,9 @@ struct Placing<'a> {
     /// Where the tool is halved, if it is (see [`Rolled::halves`]): a
     /// station there, where its spans break.
     halve: Option<f64>,
+    /// Whether the sections' apexes are drawn in as they narrow (see
+    /// [`Station::pinched`]): where the blend vanishes at an end.
+    pinch: bool,
 }
 
 /// The weight of the chain's edge at a position — of the link before it,
@@ -1902,6 +1977,14 @@ fn roll_chain(
             between.push(inside);
         }
     }
+    if placing.pinch {
+        for (_, station, _) in &mut all {
+            *station = station.pinched()?;
+        }
+        for (_, station) in between.iter_mut().flatten() {
+            *station = station.pinched()?;
+        }
+    }
     let weights = (all.iter())
         .map(|(c, ..)| Ok([(placing.weigh)(*c, true)?, (placing.weigh)(*c, false)?]))
         .collect::<GeopResult<_>>()?;
@@ -2036,6 +2119,7 @@ fn fillet_placing<'a>(
             .each_ref()
             .map(|r| r.as_ref().map_or(0.0, |(_, reach)| *reach)),
         halve: None,
+        pinch: false,
     }
 }
 
@@ -2101,6 +2185,7 @@ fn chamfer_placing<'a>(
         weigh: Box::new(move |c, before| along_weight(topology, chain, &[None, None], c, before)),
         reach: [0.0; 2],
         halve: None,
+        pinch: false,
     }
 }
 
@@ -2220,6 +2305,7 @@ impl Rolled {
                 plane: forward,
                 flat,
             }),
+            apex: false,
         };
         second.stations[0] = ToolStation {
             points,
@@ -2229,6 +2315,7 @@ impl Rolled {
                 plane: back,
                 flat: mirrored,
             }),
+            apex: false,
         };
         let rows = &mut first.spans[b - 1].rows;
         let k = rows.len() - 1;
@@ -2494,7 +2581,7 @@ fn chain_ends(
         if let (true, End::Wall { .. }) = (run_out[k], &kind) {
             kind = End::RunOut;
         }
-        ends.push((vertex, kind, Some(face), out));
+        ends.push((vertex, kind, face, out));
     }
     let [a, b]: [ChainEnd; 2] = ends
         .try_into()
@@ -2549,7 +2636,7 @@ pub(crate) fn chain_bend(model: &Model, chain: &Chain) -> GeopResult<Bend> {
         let (n_l, n_r) = (normal(link.faces[0])?, normal(link.faces[1])?);
         if n_l.could_be_parallel(&n_r) {
             return Err(GeopError::new(format!(
-                "faces {} and {} could meet tangentially at edge {}: there is no corner to blend",
+                "faces {} and {} could meet tangentially at edge {}: there is no corner to blend (at {p:?} halfway along it, their normals {n_l:?} and {n_r:?})",
                 link.faces[0], link.faces[1], link.edge
             )));
         }
@@ -2687,12 +2774,28 @@ pub(crate) fn plan_rolled(
         )));
     }
     let decided_ends = chain_ends(topology, &chain, bend, meeting_ends, run_out)?;
+    // Where it vanishes, its last station is the vertex itself, and its
+    // apexes are drawn in to end there too.
+    let mut pinch = false;
+    for (k, (_, kind, ..)) in decided_ends.iter().flatten().enumerate() {
+        if let End::Vanish = kind {
+            let sr = side.mul(Scalar::from_f64(law.at_end(k)));
+            let at = if k == 0 {
+                0.0
+            } else {
+                chain.links.len() as f64
+            };
+            at_corners[k] = Some((at, vanishing(topology, &chain, k, sr)?));
+            pinch = true;
+        }
+    }
     let (run_on, trims) = run_ons(model, &chain, &law, side, &decided_ends)?;
     let halve = halving(topology, &chain, &corners)?;
     let (rolling, curves) = {
         let mut placing = fillet_placing(model, &chain, &law, side, &run_on);
         placing.kinks = turns(&chain);
         placing.halve = halve;
+        placing.pinch = pinch;
         refined(law.smallest(), |n| {
             roll_chain(&chain, n, &at_corners, &placing)
         })?
@@ -2943,6 +3046,13 @@ pub(crate) fn plan_chamfer(
     let topology = model.topology();
     let bend = chain_bend(topology, &chain)?;
     let decided_ends = chain_ends(topology, &chain, bend, [None, None], run_out)?;
+    for (vertex, kind, ..) in decided_ends.iter().flatten() {
+        if let End::Vanish = kind {
+            return Err(GeopError::new(format!(
+                "the edge's faces meet tangentially at vertex {vertex}, where a chamfer, its distances into them fixed, would lie in them: only a fillet narrows to nothing there"
+            )));
+        }
+    }
     let halve = halving(topology, &chain, &[None, None])?;
     let smallest = distances[0].min(distances[1]);
     let (rolling, curves) = {
@@ -3139,12 +3249,15 @@ fn assemble(
 
     // Which way round the section runs: the blend's normal — along the
     // chain, crossed with the way from the first contact to the second —
-    // has to face the ball, out of the tool.
+    // has to face the ball, out of the tool. Told at a station in the
+    // middle: one at an end may be collapsed into its vertex.
     let first = &rolling.stations[0];
-    let along = rolling.stations[1].center.sub(&first.center);
+    let middle = (rolling.stations.len() - 1) / 2;
+    let (here, next) = (&rolling.stations[middle], &rolling.stations[middle + 1]);
+    let along = next.center.sub(&here.center);
     let facing = along
-        .prod_cross(&first.contact[1].sub(&first.contact[0]))
-        .prod_dot(&first.center.sub(&first.corner));
+        .prod_cross(&here.contact[1].sub(&here.contact[0]))
+        .prod_dot(&here.center.sub(&here.corner));
     let swap = if facing.definitely_greater(Scalar::ZERO) {
         false
     } else if facing.definitely_less(Scalar::ZERO) {
@@ -3176,6 +3289,7 @@ fn assemble(
             vertices: vertices_of(&rolling.stations[a]),
             name: format!("st{j}"),
             cap: None,
+            apex: false,
         });
         spans.push(span);
     }
@@ -3187,6 +3301,7 @@ fn assemble(
             vertices: vertices_of(last_station),
             name: format!("st{count}"),
             cap: None,
+            apex: false,
         });
     }
 
@@ -3201,6 +3316,19 @@ fn assemble(
             if let End::Corner = &kind {
                 // Joined to a corner's ball: open, its contacts the
                 // corner's.
+                continue;
+            }
+            if let End::Vanish = &kind {
+                // Collapsed into the vertex: the tool ends in a point,
+                // wherever its rows, the contacts' widened, end.
+                let index = if at_end { stations.len() - 1 } else { 0 };
+                let station = &mut stations[index];
+                let mut point = station.points[0].dehomogenized()?;
+                for p in &station.points[1..] {
+                    point = point.union(&p.dehomogenized()?);
+                }
+                station.vertices = [point; 3];
+                station.apex = true;
                 continue;
             }
             let Some(face) = face else {
@@ -3267,6 +3395,7 @@ fn assemble(
                             plane: shifted,
                             flat,
                         }),
+                        apex: false,
                     };
                     let line = |a: [Vector4; 4], b: [Vector4; 4]| ToolSpan {
                         degree: 1,
@@ -3293,7 +3422,7 @@ fn assemble(
                         stations.insert(0, far);
                     }
                 }
-                End::Corner => {
+                End::Corner | End::Vanish => {
                     unreachable!("met above")
                 }
             }

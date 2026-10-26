@@ -436,6 +436,11 @@ operation. Original plan, for reference:
   - Fit the `(u, v)` pcurve with `fit_pcurve`-style enclosure, and lift the 3-D curve by evaluation.
 
 **14. Tapered helix / conical spiral / flat spiral (springs, tapered pipe threads such as NPT).**
+*Done for pipe threads:* `Helix::taper`, the tapered screw, and NPT 1/16 to 2 inch in the hole
+operation (`ops/geop-ops-hole/src/pipe.rs`): a tapped hole reamed to the 1:16 taper, its cosmetic
+thread following it, a modelled thread swept on the tapered screw. Walls are recognised as any
+revolution of a straight profile (`NurbSurface3D::as_round_wall`, taper 0 for a cylinder), never
+as "a cone". A flat spiral is not done.
 - **SMLib:** `N_CrvApproxSpiral` `NL_Spiral.cpp:88` (radius r0 to r1, turns, handedness),
   `N_CreateSpiralSrf` and `N_CreateSpiralSrfTaper` `NL_CrvNurb.cpp:6829` (a profile swept along a
   spiral).

@@ -68,14 +68,14 @@ Consequence: everything SMLib finds from a **face pair** alone — interior loop
 | Registered or suppressed SSI pairs | `RegisterExistingSSI` (TI:265) | missing (geop does have `settled` pairs inside one piercing phase, XF:304) | SMLib better (minor) |
 | Union / intersection / difference | `SM_BO_UNION/INTERSECTION/DIFFERENCE` | `BooleanOp` (`ops/geop-ops-model/src/feature.rs:33`) | par |
 | XOR | `SM_BO_EXCLUSIVE_OR` | missing | SMLib |
-| Imprint body on body (keep both, only split) | `SM_BO_IMPRINT`, `m_bImprinting` (MG:3104) | `remesh` is internal; user op only for sheets onto one face (`imprint_on_face`, `ops/geop-ops-edit/src/project.rs`) | SMLib better |
+| Imprint body on body (keep both, only split) | `SM_BO_IMPRINT`, `m_bImprinting` (MG:3104) | `imprint` (`lib/geop-lib-booleans/src/imprint.rs`): `remesh` alone, both bodies kept, each its own copy of the curves; `imprint_on_face` for one face, any body as the tool; the `Imprint` op (`ops/geop-ops-boolean`) | par (geop splits both bodies; SMLib only A) |
 | Imprint and classify (report what a boolean would drop) | `SM_BO_IMPRINT_CLASSIFY` (MG:4060) | missing | SMLib |
 | Merge (cellular, keep every piece) | `SM_BO_MERGE`, `PARTIAL_MERGE`, `PiecewiseMerge` (MG:341) | missing | SMLib |
 | Extract separate pieces | `SM_BO_EXTRACT_SEPARATE` (MG:5005), `CutBreps` (BR:38618) | `split` (split.rs) for a sheet tool only | SMLib better |
 | Slice / split by a sheet | `SM_BO_SLICE`, `SmSurfaceBiLinearCutter` (SmCutter.cpp:726) | `split` (split.rs:52), **fails on a ring section** (ignored test) | par (both have bugs) |
 | Cut by a plane | `SmPlaneCutter` (SmCutter.cpp:47), `SmApiCut` | `section_part` in the drawing (box difference, `ops/geop-ops-drawing/src/section.rs`); `split` with a planar sheet | par |
-| Section curves (Brep ∩ Brep as wires) | `SmBrep::BrepIntersect` (BR:890) | missing as an op (the drawing section builds a solid) | SMLib |
-| Sheet × sheet keeps the wire | MG:4689–4712 | `trim_surface` uses `remesh` between sheets (`ops/geop-ops-surface/src/trim.rs:203`); no wire output | SMLib better |
+| Section curves (Brep ∩ Brep as wires) | `SmBrep::BrepIntersect` (BR:890) | `section`, `section_by_plane` (`lib/geop-lib-booleans/src/section.rs`): copies remeshed, the shared edges built as a wire; the `Section` op, body × body or body × datum plane; a wire edge picked as a path is its run (`Model::wire_chains`) | par |
+| Sheet × sheet keeps the wire | MG:4689–4712 | `trim_surface` uses `remesh` between sheets (`ops/geop-ops-surface/src/trim.rs:203`); the `Section` op of two sheets gives the wire | par |
 | Wire × solid boolean | `ProcessWiresAndShellVertices` (MG:7239) | missing | SMLib |
 | N-ary / CSG tree boolean | `merge_breps` (MG:1343), `BooleanTrees` (MG:1820), `BooleanLists` (MG:1431) | `combine_tools` (combine.rs) folds tools one after another; `Boolean` op is two solids | SMLib better |
 | Cookie cutter (remove A only, do not add B) | `m_bCookieCutter` (MG:4226) | missing | SMLib |
@@ -293,8 +293,8 @@ Consequence: everything SMLib finds from a **face pair** alone — interior loop
 ## 3. Whole features geop does not offer
 
 1. **Surface/surface intersection as an API and as an op** (curves between two faces or sheets): SMLib `SmSurface::GlobalSurfaceIntersect`, `SmBrep::BrepIntersect` (BR:890). In geop it belongs in `core/geop-core-geometry/src/intersection/surface_surface.rs`, with the interior-loop and node search of cases 1 and 8. `remesh` would then call it per face pair instead of discovering curves only from edges.
-2. **Section curves op:** a solid or sheet ∩ a plane or sheet → wire/sketch curves (SMLib `BrepIntersect`). geop's drawing section subtracts a box (`ops/geop-ops-drawing/src/section.rs`); there is no wire output.
-3. **Imprint op (body onto body):** `SM_BO_IMPRINT`. geop has `remesh` (internal) and `imprint_on_face` (sheets onto one face) only.
+2. ~~**Section curves op**~~ done: `Section` (body × body, body × datum plane) builds a wire; a sweep takes a run of it as a path.
+3. ~~**Imprint op (body onto body)**~~ done: `Imprint`, both bodies kept and divided, or only one face of the first.
 4. **Imprint and classify:** `SM_BO_IMPRINT_CLASSIFY` (MG:4060), for previewing what a boolean would remove. It is cheap to expose from `combine`'s `decisions` map.
 5. **XOR:** `SM_BO_EXCLUSIVE_OR`. The keep table needs only `Outside` from both, plus `Inside` from both reversed; `OnSame` from both is dropped and `OnOpposite` kept from both.
 6. **Merge / partition (cellular, non-manifold):** `SM_BO_MERGE`, `SM_BO_PARTIAL_MERGE`, `PiecewiseMerge` (MG:341). These need non-manifold topology (case 7).

@@ -26,12 +26,16 @@
 //! 3. **Trimming.** The traced curve in `(u, v)` is cut where it crosses the
 //!    face's trim curves, and only the pieces inside the face are kept.
 //! 4. **Curves.** Each piece becomes a 3-D curve through exact silhouette
-//!    points along it.
+//!    points along it, widened to enclose the silhouette between them too
+//!    (as a traced intersection branch is, `NurbCurve3D::fit_enclosing`):
+//!    two silhouettes that are one line on the paper — mirror images seen
+//!    along the mirror's normal — are then seen to run along each other.
 //!
-//! The curve interpolates the silhouette, so a point of it is close to the
-//! silhouette, not on it. Whoever needs a point exactly on it — the
-//! visibility test does: a ray grazing a face at its silhouette tells the
-//! truth only from the exact point — asks [`Silhouette::exact_point`].
+//! The curve encloses the silhouette, so a point of it is near the
+//! silhouette, within its width, not on it. Whoever needs a point exactly
+//! on it — the visibility test does: a ray grazing a face at its silhouette
+//! tells the truth only from the exact point — asks
+//! [`Silhouette::exact_point`].
 
 use std::convert::Infallible;
 
@@ -119,7 +123,8 @@ fn sign(surface: &NurbSurface3D, d: &Vector3, u: Scalar, v: Scalar) -> Option<bo
 /// (the smallest step that zeroes `g` to first order), or why it does not
 /// get there. Every iterate is sharpened: each is only the seed of the
 /// next, and what is returned is a point *of* the silhouette, as good as any
-/// other there. A start outside the domain — a sharpened foot point on its
+/// other there — or, where the seeds only cycle round it, the last step as
+/// wide as it came out, if `g` could vanish over it. A start outside the domain — a sharpened foot point on its
 /// boundary can land a hair past it — is clamped into it first, as every
 /// iterate is.
 fn correct(
@@ -137,11 +142,8 @@ fn correct(
         CORRECTOR_ITERATIONS,
         Repeat::Never,
         |&(u, v)| {
-            let sharp = (
-                u.sharpen().clamped(u_lo, u_hi),
-                v.sharpen().clamped(v_lo, v_hi),
-            );
-            (sharp, sharp)
+            let (u, v) = (u.clamped(u_lo, u_hi), v.clamped(v_lo, v_hi));
+            ((u.sharpen(), v.sharpen()), (u, v))
         },
         |&(u, v)| -> GeopResult<Step<(Scalar, Scalar)>> {
             let (g, gu, gv) = contour(surface, d, u, v)?;
@@ -155,6 +157,14 @@ fn correct(
     )?;
     if corrected.end == End::Done {
         return Ok(corrected.seed);
+    }
+    // No sharp seed lands where `g`, rounded, could vanish — the steps
+    // cycle in the last bits around it. The last step's answer, as wide
+    // as the step left it, may still hold the silhouette: then it is the
+    // point, as precisely as the arithmetic pins it down.
+    let (u, v) = corrected.answer;
+    if contour(surface, d, u, v)?.0.could_be_equal(Scalar::ZERO) {
+        return Ok((u, v));
     }
     Err(GeopError::new(format!(
         "the point does not converge onto the silhouette: from {start:?}, the last \
@@ -943,21 +953,39 @@ fn trim(
                 correct(surface, d, (q[0].sharpen(), q[1].sharpen())).unwrap_or((q[0], q[1]));
             samples.push(Vector2::from_array([u, v]));
         }
-        let mut points3 = Vec::with_capacity(samples.len());
+        let mut stations: Vec<(Vector3, Vector2)> = Vec::with_capacity(samples.len());
         for s in &samples {
             let p = surface.evaluate(s[0], s[1])?;
-            if points3
+            if stations
                 .last()
-                .is_none_or(|q: &Vector3| !q.could_be_equal(&p))
+                .is_none_or(|(q, _): &(Vector3, Vector2)| !q.could_be_equal(&p))
             {
-                points3.push(p);
+                stations.push((p, *s));
             }
         }
-        if points3.len() < 2 {
+        if stations.len() < 2 {
             continue;
         }
-        let curve = NurbCurve3D::interpolate(&points3, (points3.len() - 1).min(3))
-            .map_err(|e| e.with_context(format!("fitting a silhouette through {points3:?}")))?;
+        // A cubic through the stations, widened to enclose the silhouette
+        // between them too: two faces whose silhouettes are one line on
+        // the paper — mirror images seen along the mirror's normal — are
+        // then seen to run along each other, where two interpolants of the
+        // one line, each drifting from it its own way, cross and touch
+        // along all of it and no search could cut them.
+        let locate = |(_, from): &(Vector3, Vector2),
+                      (_, to): &(Vector3, Vector2),
+                      frac: Scalar|
+         -> GeopResult<(Vector3, Vector2)> {
+            let blend = |k: usize| Scalar::fraction(from[k], to[k], frac).sharpen();
+            let (u, v) = correct(surface, d, (blend(0), blend(1)))?;
+            Ok((surface.evaluate(u, v)?, Vector2::from_array([u, v])))
+        };
+        let ctx = |e: GeopError| {
+            e.with_context(format!(
+                "fitting the silhouette of face {face_id} through {stations:?}"
+            ))
+        };
+        let curve = NurbCurve3D::fit_enclosing(&stations, locate, &mut None, &ctx)?;
         silhouettes.push(Silhouette {
             face: face_id,
             curve,

@@ -3,7 +3,8 @@
 // file in a folder is `parts/bolt.geop` — and a program places the parts of
 // others by their paths relative to its own (see `geop_ops::program::library`).
 // A file of another extension an operation reads (see `OperationInfo.reads`:
-// a STEP file a program imports) is data, kept as its text.
+// a STEP file a program imports) is data, kept as its text — or, for bytes
+// that are not text (a binary STL), as a `data:` URL of them (`fileContent`).
 //
 // The files live here, in the page, and are kept in the browser's storage
 // so they survive a reload; the kernel is sent them (`files` command) and
@@ -93,6 +94,27 @@ export function isProgram(path: string): boolean {
 /** The extensions of the files the operations `operations` read, beside programs (see `OperationInfo.reads`). */
 export function dataExtensions(operations: { reads: string[] }[]): string[] {
   return [...new Set(operations.flatMap((o) => o.reads))];
+}
+
+/** What the content of a file of bytes that are not text starts with (see `fileContent`). */
+export const BYTES_PREFIX = "data:application/octet-stream;base64,";
+
+/**
+ * The content of a file of `bytes`, as the workspace holds it: a file holds
+ * text, so the text they spell where they are UTF-8 throughout, and
+ * otherwise — a binary STL — a `data:` URL of them in base64, which the
+ * kernel decodes where it reads bytes (`geop_core_program::workspace::content`).
+ */
+export function fileContent(bytes: Uint8Array): string {
+  try {
+    return new TextDecoder("utf-8", { fatal: true }).decode(bytes);
+  } catch {
+    let binary = "";
+    for (let i = 0; i < bytes.length; i += 0x8000) {
+      binary += String.fromCharCode(...bytes.subarray(i, i + 0x8000));
+    }
+    return BYTES_PREFIX + btoa(binary);
+  }
 }
 
 /** Whether `path` names a file of one of the extensions `reads` — data a program reads, kept beside the programs. */

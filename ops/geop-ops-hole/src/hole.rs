@@ -10,7 +10,8 @@
 //! - `top`: the disc on the face, which the cut takes away;
 //! - `counterbore` and `shoulder`: a counterbore's wall and its floor;
 //! - `countersink`: a countersink's cone;
-//! - `wall`: the drilled hole's wall;
+//! - `wall`: the drilled hole's wall, tapering in towards the bottom for a
+//!   hole reamed for a pipe thread;
 //! - `bottom`: a flat bottom, or `point`: the cone a drill's point leaves.
 
 use geop_core_geometry::nurb_curve::NurbCurve2D;
@@ -25,7 +26,7 @@ use geop_lib_sweep::revolve_at_oriented;
 use geop_ops_model::Profile;
 use geop_ops_model::{NamedModel, Namer};
 
-use crate::iso::MetricSize;
+use crate::thread::ThreadSize;
 
 /// The included angle of a twist drill's point, in degrees.
 pub const DRILL_POINT_ANGLE: f64 = 118.0;
@@ -45,13 +46,16 @@ pub enum Head {
     },
 }
 
-/// A hole's shape across: the drill, the head it sinks, the thread it is
-/// tapped with.
+/// A hole's shape across: the drill's diameter at the face — or below the
+/// head — and how much its radius shrinks per unit of depth (none but for a
+/// hole reamed to a pipe thread's taper), the head it sinks, the thread it
+/// is tapped with.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct HoleShape {
     pub diameter: f64,
+    pub taper: f64,
     pub head: Head,
-    pub thread: Option<&'static MetricSize>,
+    pub thread: Option<ThreadSize>,
 }
 
 /// How deep a hole goes and how it ends there.
@@ -107,32 +111,53 @@ impl HoleShape {
                 "the hole is {depth} deep, but its head alone takes {head_depth}"
             )));
         }
+        let bottom = self.radius_at(-depth);
+        if !(self.taper.is_finite() && bottom > 0.0) {
+            return Err(GeopError::new(format!(
+                "a hole Ø{} at the face, tapering {} per unit in radius, comes to a point before it is {depth} deep",
+                self.diameter, self.taper
+            )));
+        }
         Ok(())
+    }
+
+    /// The drilled hole's radius at `z` along its axis, below the face (see
+    /// the module docs).
+    fn radius_at(&self, z: f64) -> f64 {
+        self.diameter / 2.0 + self.taper * z
     }
 
     /// The half section, top-down from the axis on the face (see the module
     /// docs), with its curves named and its joints `p0`, `p1`, ...
     fn section(&self, depth: HoleDepth) -> GeopResult<Profile> {
         self.check(depth.depth)?;
-        let r = self.diameter / 2.0;
+        let r = |z: f64| self.radius_at(z);
         let mut corners = vec![(0.0, 0.0)];
         let mut names = vec!["top"];
         match self.head {
-            Head::None => corners.push((r, 0.0)),
+            Head::None => corners.push((r(0.0), 0.0)),
             Head::Counterbore { diameter, depth } => {
-                corners.extend([(diameter / 2.0, 0.0), (diameter / 2.0, -depth), (r, -depth)]);
+                corners.extend([
+                    (diameter / 2.0, 0.0),
+                    (diameter / 2.0, -depth),
+                    (r(-depth), -depth),
+                ]);
                 names.extend(["counterbore", "shoulder"]);
             }
             Head::Countersink { diameter } => {
+                // A 90° cone meets the wall where it is as far below the
+                // face as it is in from the countersink's rim.
                 let rs = diameter / 2.0;
-                corners.extend([(rs, 0.0), (r, -(rs - r))]);
+                let z = -(rs - r(0.0)) / (1.0 - self.taper);
+                corners.extend([(rs, 0.0), (r(z), z)]);
                 names.push("countersink");
             }
         }
-        corners.push((r, -depth.depth));
+        let bottom = r(-depth.depth);
+        corners.push((bottom, -depth.depth));
         names.push("wall");
         if depth.point {
-            let tip = r / (DRILL_POINT_ANGLE / 2.0).to_radians().tan();
+            let tip = bottom / (DRILL_POINT_ANGLE / 2.0).to_radians().tan();
             corners.push((0.0, -depth.depth - tip));
             names.push("point");
         } else {

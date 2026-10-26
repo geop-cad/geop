@@ -20,7 +20,7 @@ use geop_core_math::{
 };
 use geop_core_program::{element::ElementReference, part::StepContext, reader::Reader};
 use geop_core_topology::{
-    FaceId, Sense, ShellId,
+    Body, FaceId, Sense, ShellId,
     build::{BodySpec, CoedgeOn, EdgeSpec, FaceSpec},
 };
 use geop_lib_booleans::{RemeshParams, imprint_on_face};
@@ -196,7 +196,8 @@ impl ModelOperation for ProjectCurve {
             }
         };
         let params = RemeshParams::default();
-        imprint_on_face(model, &namer, face, &shells, params)?;
+        let tools: Vec<Body> = shells.into_iter().map(Body::Sheet).collect();
+        imprint_on_face(model, &namer, face, &tools, params)?;
         Ok(())
     }
 }

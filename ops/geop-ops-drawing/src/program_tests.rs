@@ -5,6 +5,10 @@
 use std::{collections::BTreeMap, rc::Rc};
 
 use geop_core_editor::registry::Registry;
+use geop_core_geometry::{
+    intersection::curve_curve_overlaps_and_crossings,
+    search::{MAX_NODES, min_subdivision_size},
+};
 use geop_core_math::{geop_error::GeopResult, scalars::Scalar};
 use geop_core_program::{
     part::Part,
@@ -340,6 +344,90 @@ fn a_tapped_hole_draws_its_thread() {
     );
 }
 
+/// The pipe port's 1/2 NPT hole, tapered 1:16: from the front and the
+/// right, its wall and its thread are each two hidden lines closing in by
+/// the taper over its 15 of depth, the thread's at the major diameter, the
+/// wall's at the minor one; from above, the thread is an arc at the major
+/// diameter at the face, and the rim dimensioned by its diameter.
+#[test]
+fn a_tapered_pipe_thread_is_drawn_and_its_hole_dimensioned() {
+    use crate::layer;
+    use geop_lib_sheet::Shape;
+    let built = build(&geop_ops_hole::examples::pipe_port());
+    let part = model(&built);
+    let topology = part.topology();
+    let (minor, major) = (18.3207, 21.2235);
+    let rim = name_where(&part, |id| match id {
+        RefId::Edge(e) => topology
+            .get_edge(e)
+            .unwrap()
+            .curve
+            .as_arc()
+            .unwrap()
+            .is_some_and(|arc| (arc.circle.radius.to_f64() - minor / 2.0).abs() < 1e-3),
+        _ => false,
+    });
+    let scale = 2.0;
+    let args = DrawingArgs {
+        scale: Some(scale),
+        annotations: vec![Annotation::Radius {
+            view: DrawnView::View(ViewKind::Top),
+            edge: rim,
+            diameter: true,
+            label: [12.0, 12.0],
+        }],
+        ..Default::default()
+    };
+    let sheet = compose(&built.current(), &args, "", &[]).unwrap();
+    assert!(
+        sheet.labels.iter().any(|l| l.text.starts_with("⌀18.32")),
+        "the rim's diameter: {:?}",
+        sheet.labels.iter().map(|l| &l.text).collect::<Vec<_>>()
+    );
+    let arcs: Vec<f64> = (sheet.strokes.iter())
+        .filter_map(|s| match &s.shape {
+            Shape::Arc { radius, .. } if s.layer == layer::THREAD => Some(*radius / scale),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(arcs.len(), 1, "{arcs:?}");
+    assert!((arcs[0] - major / 2.0).abs() < 1e-3, "{arcs:?}");
+    // Hidden lines 15 deep, closing in by 15 / 32 each: where each starts
+    // at the top, across the hole.
+    let closing = scale * 15.0 / 32.0;
+    let tops: Vec<f64> = (sheet.strokes.iter())
+        .filter_map(|s| match &s.shape {
+            Shape::Line(a, b)
+                if s.layer == layer::HIDDEN
+                    && ((a[1] - b[1]).abs() - scale * 15.0).abs() < 1e-6
+                    && ((a[0] - b[0]).abs() - closing).abs() < 1e-6 =>
+            {
+                Some(if a[1] > b[1] { a[0] } else { b[0] })
+            }
+            _ => None,
+        })
+        .collect();
+    let apart = |d: f64| {
+        let mut pairs = 0;
+        for (i, a) in tops.iter().enumerate() {
+            for b in &tops[i + 1..] {
+                if ((a - b).abs() / scale - d).abs() < 1e-3 {
+                    pairs += 1;
+                }
+            }
+        }
+        pairs
+    };
+    assert_eq!((apart(minor), apart(major)), (2, 2), "{tops:?}");
+    assert_eq!(
+        (sheet.labels.iter())
+            .filter(|l| l.text == "1/2-14 NPT")
+            .count(),
+        1,
+        "labelled once"
+    );
+}
+
 /// The mouse's face `f11` seen from the front: every piece of its
 /// silhouette traced once — no two pieces between the same two points.
 ///
@@ -385,6 +473,53 @@ fn subd_mouse_from_the_front_and_back_draws() {
     let part = &model(&build(&subd_mouse()));
     view(part, ViewKind::Front);
     view(part, ViewKind::Back);
+}
+
+/// The mug's inside floor from the right: the faces `f25,v86` and
+/// `f25,v90` are mirror images in `x = 0`, and each has one silhouette
+/// piece, bowing out from the mirror plane and back, from near the floor's
+/// middle to the wall. Seen along `x` the two are one line on the paper,
+/// and the view has to see them run along each other: two curves only
+/// interpolating it each drifted from it its own way, `1e-9` apart all
+/// along, so the search for where they cross ran out of nodes. Enclosing
+/// the silhouette between the points fitted, they overlap from end to end.
+#[test]
+fn subd_mug_floor_silhouettes_are_one_line_from_the_right() {
+    let part = &model(&build(&geop_ops_subd::examples::subd_mug()));
+    let frame = ViewKind::Right.frame().unwrap();
+    let d = frame.direction.vector();
+    let on_paper: Vec<_> = ["subd(mug,f25,v86)", "subd(mug,f25,v90)"]
+        .map(|name| {
+            let Some(RefId::Face(face)) = part.names().id_of(name) else {
+                panic!("no face {name}");
+            };
+            let pieces = crate::silhouette::face_silhouettes(part.topology(), face, &d).unwrap();
+            assert_eq!(pieces.len(), 1, "{name}");
+            frame.project_curve(&pieces[0].curve).unwrap()
+        })
+        .into();
+    let (overlaps, crossings) = curve_curve_overlaps_and_crossings(
+        &on_paper[0],
+        &on_paper[1],
+        MAX_NODES,
+        min_subdivision_size(),
+    )
+    .unwrap();
+    assert!(crossings.is_empty(), "{crossings:?}");
+    let [overlap] = overlaps.as_slice() else {
+        panic!("{overlaps:?}");
+    };
+    let (a, b) = on_paper[0].domain();
+    assert!(overlap.start.t.could_be_equal(a) && overlap.end.t.could_be_equal(b));
+}
+
+/// The subdivided mug seen from the right and the left (see
+/// `subd_mug_floor_silhouettes_are_one_line_from_the_right`).
+#[test]
+fn subd_mug_from_the_side_draws() {
+    let part = &model(&build(&geop_ops_subd::examples::subd_mug()));
+    view(part, ViewKind::Right);
+    view(part, ViewKind::Left);
 }
 
 /// The flange turned about `y`, seen from the back along that axis: the

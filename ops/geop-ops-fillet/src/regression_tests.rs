@@ -881,3 +881,270 @@ fn fillet_wider_than_a_hole_it_rounds_the_floor_of_is_refused() {
     let error = format!("{error:?}");
     assert!(error.contains("bends more tightly"), "{error}");
 }
+
+/// A pipe of radius 0.5 along `x` with a branch of the same radius standing
+/// on it along `z`: the two meet in two half ellipses, in the planes
+/// `x = z` and `x = -z`, which meet where the pipes touch, at
+/// `(0, ±0.5, 0)`, where their normals are one. The pipes' seams cut each
+/// in two quarters at its top, which run on into each other tangentially.
+/// The program, and the half ellipse in `x = z`: its two quarters.
+fn equal_tee() -> (Program, Vec<String>) {
+    let mut program = Program::new();
+    program.push(
+        "pipe",
+        PrimitiveArgs::cylinder([-1.0, 0.0, 0.0], FrameAxis::X, 0.5, 2.0),
+    );
+    program.push(
+        "branch",
+        PrimitiveArgs::cylinder_z([0.0; 3], 0.5, 1.0).join("cylinder(pipe)"),
+    );
+    let before = program.build_model(registry).unwrap();
+    assert_valid(&before);
+    let ellipse = edges_with_middle(&before, |m| {
+        m[0] > 0.1 && near(m[0], m[2]) && m[1].abs() > 0.1
+    });
+    assert_eq!(ellipse.len(), 2, "{ellipse:?}");
+    (program, ellipse)
+}
+
+/// The equal tee's joint rounded along one half ellipse: the faces either
+/// side become tangent at its ends, where the pipes touch, so the fillet
+/// vanishes there, its width going to nothing as the ball's center runs
+/// into the edge (SMLib's degenerate corner).
+#[test]
+fn fillet_of_an_equal_tee_vanishes_where_the_pipes_touch() {
+    let (mut program, ellipse) = equal_tee();
+    program.push("round", FilletArgs::constant(ellipse, 0.1));
+    let part = program.build_model(registry).unwrap();
+    assert_valid(&part);
+    let at = |p| where_in(&part, "fillet(round)", p);
+    // At the top, where the pipes meet square, the fill reaches
+    // `0.1 (sqrt 2 - 1)` out of the corner along the way halving it.
+    let d = 0.02 / 2f64.sqrt();
+    assert_eq!(at([0.5 + d, 0.0, 0.5 + d]), PointClassification::Inside);
+    let d = 0.06 / 2f64.sqrt();
+    assert_eq!(at([0.5 + d, 0.0, 0.5 + d]), PointClassification::Outside);
+    // Beside where the pipes touch, nothing is filled.
+    assert_eq!(at([0.0, 0.51, 0.0]), PointClassification::Outside);
+    assert_eq!(at([0.0, -0.51, 0.0]), PointClassification::Outside);
+}
+
+/// The equal tee's whole joint rounded: both half ellipses, whose fills
+/// vanish at the same two vertices, each into a point there.
+#[test]
+fn fillet_of_an_equal_tees_whole_joint() {
+    let (mut program, _) = equal_tee();
+    let before = program.build_model(registry).unwrap();
+    let joint = edges_with_middle(&before, |m| {
+        near(m[0].abs(), m[2]) && m[1].abs() > 0.1 && m[2] > 0.1
+    });
+    assert_eq!(joint.len(), 4, "{joint:?}");
+    program.push("round", FilletArgs::constant(joint, 0.1));
+    let part = program.build_model(registry).unwrap();
+    assert_valid(&part);
+    let at = |p| where_in(&part, "fillet(round)", p);
+    let d = 0.02 / 2f64.sqrt();
+    assert_eq!(at([-0.5 - d, 0.0, 0.5 + d]), PointClassification::Inside);
+    assert_eq!(at([0.5 + d, 0.0, 0.5 + d]), PointClassification::Inside);
+}
+
+/// Two equal pipes crossing square, kept where they overlap (a Steinmetz
+/// solid): its edges are four half ellipses, convex, meeting four at a
+/// time where the pipes touch, at `(0, ±0.5, 0)`. One of them rounded:
+/// the cut vanishes at both its ends, the other edges there left sharp.
+#[test]
+fn fillet_of_a_bicylinder_edge_vanishes_where_the_pipes_touch() {
+    let mut program = Program::new();
+    program.push(
+        "pipe",
+        PrimitiveArgs::cylinder([-1.0, 0.0, 0.0], FrameAxis::X, 0.5, 2.0),
+    );
+    program.push(
+        "branch",
+        PrimitiveArgs::cylinder_z([0.0, 0.0, -1.0], 0.5, 2.0).combined(Combine::With {
+            op: geop_ops_model::BooleanOp::Intersection,
+            target: geop_ops_model::solid("cylinder(pipe)"),
+        }),
+    );
+    let before = program.build_model(registry).unwrap();
+    assert_valid(&before);
+    let edge = edges_with_middle(&before, |m| {
+        m[0] > 0.1 && near(m[0], m[2]) && m[1].abs() > 0.1
+    });
+    assert_eq!(edge.len(), 2, "{edge:?}");
+    program.push("round", FilletArgs::constant(edge, 0.1));
+    let part = program.build_model(registry).unwrap();
+    assert_valid(&part);
+    let at = |p| where_in(&part, "fillet(round)", p);
+    // Cut away out of the top corner, `0.1 (sqrt 2 - 1)` deep along the
+    // way halving it.
+    let d = 0.02 / 2f64.sqrt();
+    assert_eq!(at([0.5 - d, 0.0, 0.5 - d]), PointClassification::Outside);
+    let d = 0.06 / 2f64.sqrt();
+    assert_eq!(at([0.5 - d, 0.0, 0.5 - d]), PointClassification::Inside);
+}
+
+/// A pyramid 2 across and 1.5 high, as two roofs crossed — a triangle
+/// extruded along `x` and one along `y`, kept where they overlap: its four
+/// faces planes, its apex where the ridges cross a corner of four faces,
+/// each of its four slanted edges leaving the solid past it through the
+/// two faces across. The program, and the slanted edges.
+fn pyramid() -> (Program, Vec<String>) {
+    let mut program = Program::new();
+    // In the sketch's own coordinates: `(y, z)` on the plane square to
+    // `x`, `(x, -z)` on the one square to `y`.
+    let roofs = [
+        (
+            "along_x",
+            FrameAxis::X,
+            [[-1.0, 0.0], [1.0, 0.0], [0.0, 1.5]],
+        ),
+        (
+            "along_y",
+            FrameAxis::Y,
+            [[-1.0, 0.0], [1.0, 0.0], [0.0, -1.5]],
+        ),
+    ];
+    for (k, (name, axis, roof)) in roofs.into_iter().enumerate() {
+        let section = format!("{name}_section");
+        program.push(
+            &section,
+            AddSketchArgs::on(
+                on_origin(axis),
+                geop_ops_model::sketch::figures::outline(&roof),
+            ),
+        );
+        let combine = if k == 0 {
+            Combine::NewBody
+        } else {
+            Combine::With {
+                op: geop_ops_model::BooleanOp::Intersection,
+                target: geop_ops_model::solid("extrude(along_x)"),
+            }
+        };
+        let mut extruded = extrude(&section, 3.0, true);
+        extruded.output = Output::Solid(combine);
+        program.push(name, extruded);
+    }
+    let before = program.build_model(blade_registry).unwrap();
+    assert_valid(&before);
+    let slanted = edges_with_middle(&before, |m| near(m[2], 0.75));
+    assert_eq!(slanted.len(), 4, "{slanted:?}");
+    (program, slanted)
+}
+
+/// A pyramid: a square 2 across on the ground lofted to a point 1.5 above
+/// its middle. Its apex is a corner of four faces, each of its four
+/// slanted edges leaving the solid past it through the two faces across.
+/// The program, and the slanted edges.
+fn lofted_pyramid() -> (Program, Vec<String>) {
+    let mut program = Program::new();
+    program.push("base", GivenDatumArgs::plane([0.0; 3], [0.0, 0.0, 1.0]));
+    program.push(
+        "square",
+        AddSketchArgs::on(
+            SketchPlane::Datum(ElementReference::new(datums(), "base")),
+            geop_ops_model::sketch::figures::rectangle_outline(-1.0, -1.0, 1.0, 1.0),
+        ),
+    );
+    program.push(
+        "top",
+        GivenDatumArgs::plane([0.0, 0.0, 1.5], [0.0, 0.0, 1.0]),
+    );
+    let mut tip = Sketch::new();
+    tip.add_point(n(0.0), n(0.0));
+    program.push(
+        "tip",
+        AddSketchArgs::on(
+            SketchPlane::Datum(ElementReference::new(datums(), "top")),
+            tip,
+        ),
+    );
+    program.push(
+        "spire",
+        LoftArgs {
+            profiles: vec![whole_sketch("square"), whole_sketch("tip")],
+            matches: Vec::new(),
+            guides: Vec::new(),
+            output: Output::Solid(Combine::NewBody),
+        },
+    );
+    let before = program.build_model(blade_registry).unwrap();
+    assert_valid(&before);
+    let slanted = edges_with_middle(&before, |m| near(m[2], 0.75));
+    assert_eq!(slanted.len(), 4, "{slanted:?}");
+    (program, slanted)
+}
+
+/// Two opposite slanted edges of the pyramid rounded: at the apex, each
+/// fillet leaves the solid through the two faces across from it, and runs
+/// out past it there, as at a corner of three faces.
+#[test]
+fn fillet_of_two_opposite_edges_into_a_pyramids_apex() {
+    let (mut program, _) = pyramid();
+    let before = program.build_model(blade_registry).unwrap();
+    let opposite = edges_with_middle(&before, |m| near(m[2], 0.75) && m[0] * m[1] > 0.0);
+    assert_eq!(opposite.len(), 2, "{opposite:?}");
+    program.push("round", FilletArgs::constant(opposite, 0.1));
+    let part = program.build_model(blade_registry).unwrap();
+    assert_valid(&part);
+    assert_rounded_along_the_middle(&part);
+}
+
+/// Checks `part`, the pyramid with its slanted edge through `(1, 1, 0)`
+/// rounded by 0.1, is cut away halfway along it as deep as the round: its
+/// faces, of normals along `(1.5, 0, 1)` and `(0, 1.5, 1)`, meet at
+/// 107.9 degrees, so the ball's arc lies `0.1 (1 / sin 53.96 - 1) = 0.0237`
+/// in from the edge along the way halving them.
+fn assert_rounded_along_the_middle(part: &NamedModel) {
+    let inward = {
+        let n: [f64; 3] = [1.5, 1.5, 2.0];
+        let length = (n[0] * n[0] + n[1] * n[1] + n[2] * n[2]).sqrt();
+        n.map(|x| -x / length)
+    };
+    let at = |depth: f64| {
+        let p = [0.5, 0.5, 0.75];
+        where_in(
+            part,
+            "fillet(round)",
+            [0, 1, 2].map(|k| p[k] + depth * inward[k]),
+        )
+    };
+    assert_eq!(at(0.01), PointClassification::Outside);
+    assert_eq!(at(0.05), PointClassification::Inside);
+}
+
+/// Every slanted edge of the pyramid rounded: no one ball touches the four
+/// faces at its apex, and the corner is bevelled, each fillet running out
+/// past it and the boolean meeting them.
+#[test]
+fn fillet_of_every_edge_into_a_pyramids_apex() {
+    let (mut program, slanted) = pyramid();
+    program.push("round", FilletArgs::constant(slanted, 0.1));
+    let part = program.build_model(blade_registry).unwrap();
+    assert_valid(&part);
+    assert_rounded_along_the_middle(&part);
+}
+
+/// The lofted pyramid's slanted edges rounded, as the crossed roofs' are
+/// in [`fillet_of_every_edge_into_a_pyramids_apex`]. Each fillet runs out
+/// past the apex rolled on its faces carried on past it, and a lofted
+/// face's apex is a pole of its parametrization: carried on, the pole row
+/// is no longer at the end of the domain, where `NurbSurface::normal`
+/// finds poles, but inside it, at the knot the continuation is joined on
+/// at. The ball rolled on from the station at the apex is seeded there
+/// (`u = 1 + 1.6e-15`), its faces' normals come out `±0.75` wide, and
+/// `roll` divides by `1 + n0·n1`, which could be zero. Past the pole the
+/// patch also runs inside out (`S_v` changes sign), so seeding elsewhere
+/// only moves the trouble. Needed: a pole row at a knot of full
+/// multiplicity found as one at the domain's end is, and the ball rolled
+/// on past it with the faces' normals continued through it, as the
+/// offset carries a surface through an apex (`NurbSurface3D::offset`).
+#[test]
+#[ignore = "a fillet run out past an apex that is a pole of its faces' parametrization: the faces carried on through the pole have no usable normal there (see the doc comment)"]
+fn fillet_of_every_edge_into_a_lofted_pyramids_apex() {
+    let (mut program, slanted) = lofted_pyramid();
+    program.push("round", FilletArgs::constant(slanted, 0.1));
+    let part = program.build_model(blade_registry).unwrap();
+    assert_valid(&part);
+}
