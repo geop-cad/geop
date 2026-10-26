@@ -5,7 +5,7 @@ use geop_core_topology::{Body, SolidId, contains::shell::solid_lumps, validation
 use geop_lib_sweep::shapes::{block, sphere_solid, v3};
 use geop_ops_model::{BooleanOp, NamedModel, Namer};
 
-use crate::{boolean, remesh::RemeshParams, scenes::validation};
+use crate::{boolean, faces_classified, remesh::RemeshParams, scenes::validation};
 
 /// The block spanning `[min, max]` with its top face bulged into a dome
 /// rising `rise` above it in the middle: the top's plane raised to a
@@ -228,4 +228,164 @@ fn steinmetz_cylinders_with_a_node_inside_a_face() {
             assert!((got - expected).abs() < 1e-4, "{got} vs {expected}");
         }
     }
+}
+
+/// A prism standing 2 high on a profile whose bottom side is the cubic
+/// `y = x³` from `(-1, -1)` to `(1, 1)` (the rest of it up to `y = 2`), and
+/// a block below the plane `y + z = 0`, the plane through the origin square
+/// to `(0, 1, 1)`. The cubic edge along the prism's foot crosses that plane
+/// at the origin, at its inflection, where it runs along the plane: it is
+/// tangent to the plane there and still crosses it, from below to above.
+/// The prism's faces cross the plane there all the same — the foot along
+/// `y = 0`, the cubic wall along `z = -x³` — so the curves the plane cuts
+/// end at the origin, and need a vertex there, which only that edge's
+/// crossing makes.
+#[test]
+fn cubic_edge_crossing_a_plane_at_its_inflection() {
+    use geop_core_geometry::nurb_curve::NurbCurve2D;
+    use geop_core_math::{
+        primitives::{CoordinateSystem, Pose},
+        vector::Vector3,
+    };
+    use geop_lib_sweep::{SweepLoop, extrude, polyline, shapes::v2};
+    use geop_ops_model::Profile;
+    let build = || {
+        let mut model = NamedModel::new();
+        let s = Scalar::from_f64;
+        let point = |x: f64, y: f64| Vector3::from_array([s(x), s(y), Scalar::ONE]);
+        let cubic = NurbCurve2D::try_new(
+            3,
+            vec![
+                point(-1.0, -1.0),
+                point(-1.0 / 3.0, 1.0),
+                point(1.0 / 3.0, -1.0),
+                point(1.0, 1.0),
+            ],
+            [0.0, 0.0, 0.0, 0.0, 1.0, 1.0, 1.0, 1.0].map(s).to_vec(),
+        )
+        .unwrap();
+        let mut profile = vec![cubic];
+        profile.extend(
+            polyline(&[v2(1.0, 1.0), v2(1.0, 2.0), v2(-1.0, 2.0), v2(-1.0, -1.0)]).unwrap(),
+        );
+        let plane = CoordinateSystem::try_new(
+            v3(0.0, 0.0, 0.0),
+            v3(1.0, 0.0, 0.0),
+            v3(0.0, 1.0, 0.0),
+            v3(0.0, 0.0, 1.0),
+        )
+        .unwrap();
+        let namer = Namer::new("prism", "p").unwrap();
+        let prism = extrude(
+            &mut model,
+            &namer,
+            Some(&namer.root()),
+            &plane,
+            Scalar::ZERO,
+            Scalar::TWO,
+            &[SweepLoop::plain(Profile::closed(profile))],
+        )
+        .unwrap()
+        .solid
+        .unwrap();
+        let cut = block(&mut model, "cut", [-3.0, -3.0, -3.0], [3.0, 0.0, 3.0]);
+        let turn = Pose::rotation_about(
+            &v3(0.0, 0.0, 0.0),
+            &v3(1.0, 0.0, 0.0),
+            Scalar::PI.div(Scalar::from_f64(4.0)).unwrap(),
+        )
+        .unwrap();
+        model
+            .transform_body(Body::Solid(cut), &turn.motion())
+            .unwrap();
+        (model, prism, cut)
+    };
+    // The plane cuts a wedge off the prism, below the foot's `y = 0` and
+    // the wall's `z = -x³`, for `x < 0`: both what is left and what is cut
+    // off are some of the prism, not all of it nor none.
+    let (model, prism, _) = build();
+    let whole = volume(&model, prism);
+    for op in [BooleanOp::Difference, BooleanOp::Intersection] {
+        let (mut model, prism, cut) = build();
+        let result = combined(&mut model, prism, cut, op);
+        let v = volume(&model, result);
+        assert!(
+            v.definitely_greater(Scalar::ZERO) && v.definitely_less(whole),
+            "{op:?}: {v:?} of {whole:?}"
+        );
+    }
+}
+
+/// A disc of radius 4 with `n` slots cut into its rim one after another,
+/// each a block across it at a turn of its own: what a gear's teeth ask of
+/// one body, boolean after boolean. With how many faces the last cut
+/// classified at points of their own.
+fn slotted_disc(n: usize) -> (NamedModel, SolidId, usize) {
+    use geop_core_math::primitives::Pose;
+    use geop_lib_sweep::shapes::cylinder;
+    let mut model = NamedModel::new();
+    let mut disc = cylinder(&mut model, "disc", [0.0, 0.0, 0.0], 4.0, 1.0);
+    let mut last = 0;
+    for k in 0..n {
+        let slot = block(
+            &mut model,
+            &format!("slot{k}"),
+            [3.5, -0.1, -1.0],
+            [5.0, 0.1, 2.0],
+        );
+        let angle = Scalar::from_f64(std::f64::consts::TAU * (k as f64 + 0.5) / n as f64);
+        let turn = Pose::rotation_about(&v3(0.0, 0.0, 0.0), &v3(0.0, 0.0, 1.0), angle).unwrap();
+        model
+            .transform_body(Body::Solid(slot), &turn.motion())
+            .unwrap();
+        let before = faces_classified();
+        let namer = Namer::new("boolean", &format!("cut{k}")).unwrap();
+        let params = RemeshParams::default();
+        disc = boolean(
+            &mut model,
+            &namer,
+            disc,
+            slot,
+            BooleanOp::Difference,
+            params,
+        )
+        .unwrap()
+        .unwrap();
+        last = faces_classified() - before;
+    }
+    (model, disc, last)
+}
+
+/// A slot cut into a disc that already has many classifies the faces it
+/// touches, not every face of the disc: the last of twelve slots as many
+/// as the last of four. The disc's faces apart from the slot take their
+/// side from their neighbours. The disc cut is valid, its volume less the
+/// slots'.
+#[test]
+fn a_slot_cut_into_a_slotted_disc_classifies_the_faces_it_touches() {
+    let (_, _, four) = slotted_disc(4);
+    let (model, disc, twelve) = slotted_disc(12);
+    assert!(
+        twelve <= four,
+        "{twelve} faces classified for the 12th slot, {four} for the 4th"
+    );
+    if let Err(errors) = validate(&validation(), model.topology()) {
+        panic!("{} error(s): {}", errors.len(), errors[0]);
+    }
+    // Each slot takes 0.2 wide, 1 high, from radius 3.5 to the rim: a
+    // rectangle 0.2 by 0.5 less the sliver between the chord and the rim.
+    let disc_volume = Scalar::PI.mul(Scalar::from_f64(16.0));
+    let got = volume(&model, disc).to_f64();
+    let removed = disc_volume.to_f64() - got;
+    assert!(
+        removed > 12.0 * 0.2 * 0.49 && removed < 12.0 * 0.2 * 0.5,
+        "{removed}"
+    );
+}
+
+/// The slotted disc with thirty-two slots, eight to a quarter of its rim.
+#[test]
+#[ignore = "bug: the 32nd cut leaves the slot's footprint on the cap quarter boundary(cut31,cylinder(disc,c0,q3),..) straddling (classify_face): bounded by its four corners, it is offered an interior point at (3.754, -0.061, 1), outside them, as if its loop ran the other way; the rim vertex at its corner boundary(cut31,cylinder(disc,p1,q3),cube(slot31,c2),0,1) lies 4e-10 below the cap. The quarter rim has been split sixteen times by then (AGENTS.md: width along a split edge), not confirmed as the cause; sixteen slots build"]
+fn a_disc_with_thirty_two_slots() {
+    slotted_disc(32);
 }

@@ -331,7 +331,7 @@ where
     let (overlaps, crossings) =
         curve_curve_overlaps_and_crossings(curve_a, curve_b, max_nodes, min_subdivision_size)
             .with_context(&ctx)?;
-    let samples = coincidence::samples(&overlaps, max_solutions, |s| {
+    let samples = coincidence::samples(&overlaps, crossings.len(), max_solutions, |s| {
         point_on(curve_b, curve_a, s, max_nodes, min_subdivision_size)
     })?;
     Ok(coincidence::assemble(

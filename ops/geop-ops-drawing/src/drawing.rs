@@ -12,6 +12,7 @@ use geop_core_geometry::{
     intersection::curve_curve_overlaps_and_crossings,
     nurb_curve::{NurbCurve2D, NurbCurve3D},
     search::{MAX_NODES, min_subdivision_size},
+    shape::{Arc, Circle},
 };
 use geop_core_math::{
     geop_error::{GeopError, GeopResult, WithContext},
@@ -1149,7 +1150,7 @@ fn center_marks(sheet: &mut Sheet, p: &Placed, scale: f64) -> GeopResult<()> {
     let mut circles: Vec<(Vector3, Scalar, f64)> = Vec::new();
     for line in p.view.lines.iter().filter(|l| l.kind == LineKind::Edge) {
         let lifted = line.curve.lifted()?;
-        let Some(arc) = lifted.as_arc()? else {
+        let Some(arc) = arc_of(&lifted)? else {
             continue;
         };
         let sweep = arc.sweep();
@@ -1224,6 +1225,78 @@ pub(crate) fn placed_edge(reader: &Reader, name: &str) -> GeopResult<NurbCurve3D
         Some(pose) => curve.transform(&pose.motion()),
         None => curve.clone(),
     })
+}
+
+/// The arc `curve` runs along, if it is circular: built as the kernel
+/// builds arcs ([`NurbCurve3D::as_arc`]), or any curve lying on the circle
+/// through three of its points — its ends and middle, or for a closed one
+/// three points a third apart, free choices — such as a hole's rim the
+/// boolean traced where a cylinder cuts a face. Reconstructed here, where a
+/// drawing dimensions and marks circles, rather than kept as a kind in the
+/// B-rep: whether the curve lies on that circle is the overlap the kernel's
+/// coincidence search finds, from end to end, not a guess from samples. Two
+/// more points off the circle refuse most curves before it runs.
+pub(crate) fn arc_of(curve: &NurbCurve3D) -> GeopResult<Option<Arc>> {
+    if let Some(arc) = curve.as_arc()? {
+        return Ok(Some(arc));
+    }
+    if curve.as_line()?.is_some() {
+        return Ok(None);
+    }
+    let (t0, t1) = curve.domain();
+    let at = |f: f64| curve.evaluate(Scalar::fraction(t0, t1, Scalar::from_f64(f)).sharpen());
+    let (start, end) = (curve.evaluate(t0)?, curve.evaluate(t1)?);
+    let through = if start.could_be_equal(&end) {
+        [start, at(1.0 / 3.0)?, at(2.0 / 3.0)?]
+    } else {
+        [start, at(0.5)?, end]
+    };
+    let Some(circle) = circle_through(through)? else {
+        return Ok(None);
+    };
+    for f in [0.25, 0.75] {
+        let off = at(f)?.sub(&circle.center).norm();
+        if !off.could_be_equal(circle.radius) {
+            return Ok(None);
+        }
+    }
+    let arc = Arc { circle, start, end };
+    let (overlaps, _) = curve_curve_overlaps_and_crossings(
+        curve,
+        &arc.to_curve()?,
+        MAX_NODES,
+        min_subdivision_size(),
+    )?;
+    let whole =
+        (overlaps.iter()).any(|o| o.start.t.could_be_equal(t0) && o.end.t.could_be_equal(t1));
+    Ok(whole.then_some(arc))
+}
+
+/// The circle through the three points `[p, q, r]`, turning from `p`
+/// through `q` to `r` counter-clockwise about its normal; `None` where they
+/// could lie on one line. Worked relative to a sharp point beside `p`, a
+/// free choice, so its width does not grow with the distance from the
+/// origin: the centre is `p + ((|u|² w - |w|² u) × (u × w)) / (2 |u × w|²)`
+/// for `u = q - p`, `w = r - p`.
+fn circle_through([p, q, r]: [Vector3; 3]) -> GeopResult<Option<Circle>> {
+    let origin = p.sharpen();
+    let (p, q, r) = (p.sub(&origin), q.sub(&origin), r.sub(&origin));
+    let (u, w) = (q.sub(&p), r.sub(&p));
+    let n = u.prod_cross(&w);
+    let n2 = n.norm_sq();
+    if n2.could_be_equal(Scalar::ZERO) {
+        return Ok(None);
+    }
+    let towards = w
+        .prod_scalar(u.norm_sq())
+        .sub(&u.prod_scalar(w.norm_sq()))
+        .prod_cross(&n);
+    let center = p.add(&towards.prod_scalar(Scalar::ONE.div(n2.mul(Scalar::TWO))?));
+    Ok(Some(Circle {
+        center: origin.add(&center),
+        normal: n.normalize()?,
+        radius: p.sub(&center).norm(),
+    }))
 }
 
 /// The border and the title block.
