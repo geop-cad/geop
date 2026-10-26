@@ -5,7 +5,7 @@ use geop_core_topology::{Body, SolidId, contains::shell::solid_lumps, validation
 use geop_lib_sweep::shapes::{block, sphere_solid, v3};
 use geop_ops_model::{BooleanOp, NamedModel, Namer};
 
-use crate::{boolean, remesh::RemeshParams, scenes::validation};
+use crate::{boolean, faces_classified, remesh::RemeshParams, scenes::validation};
 
 /// The block spanning `[min, max]` with its top face bulged into a dome
 /// rising `rise` above it in the middle: the top's plane raised to a
@@ -314,4 +314,71 @@ fn cubic_edge_crossing_a_plane_at_its_inflection() {
             "{op:?}: {v:?} of {whole:?}"
         );
     }
+}
+
+/// A disc of radius 4 with `n` slots cut into its rim one after another,
+/// each a block across it at a turn of its own: what a gear's teeth ask of
+/// one body, boolean after boolean. With how many faces the last cut
+/// classified at points of their own.
+fn slotted_disc(n: usize) -> (NamedModel, SolidId, usize) {
+    use geop_core_math::primitives::Pose;
+    use geop_lib_sweep::shapes::cylinder;
+    let mut model = NamedModel::new();
+    let mut disc = cylinder(&mut model, "disc", [0.0, 0.0, 0.0], 4.0, 1.0);
+    let mut last = 0;
+    for k in 0..n {
+        let slot = block(
+            &mut model,
+            &format!("slot{k}"),
+            [3.5, -0.1, -1.0],
+            [5.0, 0.1, 2.0],
+        );
+        let angle = Scalar::from_f64(std::f64::consts::TAU * (k as f64 + 0.5) / n as f64);
+        let turn = Pose::rotation_about(&v3(0.0, 0.0, 0.0), &v3(0.0, 0.0, 1.0), angle).unwrap();
+        model
+            .transform_body(Body::Solid(slot), &turn.motion())
+            .unwrap();
+        let before = faces_classified();
+        let namer = Namer::new("boolean", &format!("cut{k}")).unwrap();
+        let params = RemeshParams::default();
+        disc = boolean(
+            &mut model,
+            &namer,
+            disc,
+            slot,
+            BooleanOp::Difference,
+            params,
+        )
+        .unwrap()
+        .unwrap();
+        last = faces_classified() - before;
+    }
+    (model, disc, last)
+}
+
+/// A slot cut into a disc that already has many classifies the faces it
+/// touches, not every face of the disc: the last of twelve slots as many
+/// as the last of four. The disc's faces apart from the slot take their
+/// side from their neighbours. The disc cut is valid, its volume less the
+/// slots'.
+#[test]
+fn a_slot_cut_into_a_slotted_disc_classifies_the_faces_it_touches() {
+    let (_, _, four) = slotted_disc(4);
+    let (model, disc, twelve) = slotted_disc(12);
+    assert!(
+        twelve <= four,
+        "{twelve} faces classified for the 12th slot, {four} for the 4th"
+    );
+    if let Err(errors) = validate(&validation(), model.topology()) {
+        panic!("{} error(s): {}", errors.len(), errors[0]);
+    }
+    // Each slot takes 0.2 wide, 1 high, from radius 3.5 to the rim: a
+    // rectangle 0.2 by 0.5 less the sliver between the chord and the rim.
+    let disc_volume = Scalar::PI.mul(Scalar::from_f64(16.0));
+    let got = volume(&model, disc).to_f64();
+    let removed = disc_volume.to_f64() - got;
+    assert!(
+        removed > 12.0 * 0.2 * 0.49 && removed < 12.0 * 0.2 * 0.5,
+        "{removed}"
+    );
 }

@@ -27,7 +27,7 @@ mod scenes;
 mod split;
 mod trim;
 
-pub use boolean::{Reach, boolean, boolean_up_to_next, piece_up_to_next};
+pub use boolean::{Reach, boolean, boolean_up_to_next, faces_classified, piece_up_to_next};
 pub use combine::combine_tools;
 pub use imprint::imprint_on_face;
 pub use remesh::{Origins, RemeshParams, remesh};
