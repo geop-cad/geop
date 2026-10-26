@@ -573,23 +573,32 @@ impl<'a> Rebuild<'a> {
             )));
         };
         let faces = [*f, *g];
-        let curve = if let Some(seam) = &self.seams[e] {
-            restricted(seam, start, end)?
-        } else {
-            let straight = (edge.curve.degree == 1 && edge.curve.control_points.len() == 2)
-                .then(|| NurbCurve3D::line(start, end))
-                .transpose()?
-                .filter(|line| {
-                    matches!(surface_missed(line, faces, &self.surfaces), Ok(None))
-                        && turns_around(&edge.curve, &[start, end]).is_ok()
-                });
-            let uses = [(*f, f_sense, *f_pcurve), (*g, g_sense, *g_pcurve)];
-            match straight {
-                Some(line) => line,
-                None => match self.on_iso_line(edge, start, end, uses)? {
+        // Straight where it was, and the line between its moved ends lies
+        // on both faces.
+        let straight = (edge.curve.degree == 1 && edge.curve.control_points.len() == 2)
+            .then(|| NurbCurve3D::line(start, end))
+            .transpose()?
+            .filter(|line| {
+                matches!(surface_missed(line, faces, &self.surfaces), Ok(None))
+                    && turns_around(&edge.curve, &[start, end]).is_ok()
+            });
+        let curve = match (&self.seams[e], straight) {
+            // A seam that stays: its moved ends on it. One whose ends left it
+            // — two coplanar faces, the vertices at its ends put where other
+            // faces now cross — is any curve between them in the surface,
+            // and a straight one was straight.
+            (Some(seam), straight) => match (restricted(seam, start, end), straight) {
+                (Ok(along), _) => along,
+                (Err(_), Some(line)) => line,
+                (Err(err), None) => return Err(err),
+            },
+            (None, Some(line)) => line,
+            (None, None) => {
+                let uses = [(*f, f_sense, *f_pcurve), (*g, g_sense, *g_pcurve)];
+                match self.on_iso_line(edge, start, end, uses)? {
                     Some(iso) => iso,
                     None => self.traced(&edge.curve, start, end, uses)?,
-                },
+                }
             }
         };
         if let Some((face, middle)) = surface_missed(&curve, faces, &self.surfaces)? {

@@ -31,9 +31,7 @@ mod sweep;
 pub use common::{circle_at, polygon, polyline};
 pub use extrude::{extrude, extrusion};
 pub use loft::{Apex, Ends, Section, loft, mark};
-pub use path_sweep::{
-    Control, Orientation, along_chain, profile_centre, starting_near, sweep_along,
-};
+pub use path_sweep::{Control, Orientation, Rebuild, profile_centre, starting_near, sweep_along};
 pub use revolve::{revolution, revolve, revolve_at_oriented, screw, screw_path};
 pub use skin::{Glue, Skinned, Strip, StripCap, StripGeometry, skin};
 pub use sweep::{Frame, Path, Span, SweepLoop, sweep, sweep_drawn};

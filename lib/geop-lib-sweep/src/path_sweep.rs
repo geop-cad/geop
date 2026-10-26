@@ -17,8 +17,10 @@
 //! At a joint where the path is tangent-continuous the profile carries on.
 //! Where two lines meet at an angle, the profile at the joint is mitred —
 //! projected onto the plane bisecting the corner, along either line — so
-//! the two straight walls meet there exactly. Any other corner, at an arc or
-//! a spline, has no such joint, and is refused.
+//! the two straight walls meet there exactly. At any other corner, at an
+//! arc or a spline, the walls either side are put on the surfaces the
+//! profile sweeps along each curve, and the body rebuilt around them: they
+//! meet where they cross (see [`sweep_along`]).
 //!
 //! Lines, arcs and corners carry the frames along exactly, in the scalars'
 //! own arithmetic. Along a spline, which is approximated anyway, the frames
@@ -37,7 +39,9 @@
 //! way it is drawn ([`Orientation::FixedNormal`]): then every point of it
 //! travels a copy of the path, and every span is exact.
 
-use geop_core_geometry::nurb_curve::NurbCurve3D;
+use std::collections::HashMap;
+
+use geop_core_geometry::{nurb_curve::NurbCurve3D, nurb_surface::NurbSurface3D};
 use geop_core_math::{
     geop_error::{GeopError, GeopResult, WithContext},
     plain::{P3, add, cross, cross2, dot, inverse2, normalize, scale, solve2, sub},
@@ -47,14 +51,14 @@ use geop_core_math::{
     vector::{Vector2, Vector3, Vector4},
     with_context,
 };
-use geop_core_topology::build::BuiltBody;
-use geop_ops_model::{Chain, NamedModel, Namer};
+use geop_core_topology::build::{BodySpec, BuiltBody};
+use geop_ops_model::{BodyNames, Chain, NamedModel, Namer, Profile};
 use serde::{Deserialize, Serialize};
 
 use crate::{
     loft::centre,
     plain::Plain,
-    sweep::{Frame, Path, Span, SweepLoop, sweep_drawn},
+    sweep::{Frame, Path, Span, SweepLoop, skinned, sweep_drawn, wall},
 };
 
 /// Which way the profile faces as it travels along the path.
@@ -71,7 +75,7 @@ pub enum Orientation {
 }
 
 /// How the profile changes as it travels, besides being carried along the
-/// path (see [`along_chain`]). Every section of the sweep is the profile
+/// path (see [`sweep_along`]). Every section of the sweep is the profile
 /// mapped about the path's start point in the profile's plane — its centre
 /// — by a turn and a scale:
 ///
@@ -255,15 +259,28 @@ fn is_smooth(arriving: &Vector3, leaving: &Vector3) -> GeopResult<bool> {
     Ok(parallel)
 }
 
+/// A path along a chain (see [`followed`]), and what a sweep along it
+/// still has to rebuild.
+struct Followed {
+    path: Path,
+    /// Per span, the profile carried rigidly along it: where it starts and
+    /// where it ends, unmitred.
+    rigid: Vec<[Frame; 2]>,
+    /// The joints where the path turns a corner at an arc or a spline: the
+    /// walls either side run to the mitred section there, which is not
+    /// where the swept walls meet (see [`sweep_along`]).
+    rebuilt: Vec<usize>,
+}
+
 /// The path along `chain` for a profile drawn in `plane`'s `(u, v)` (see
 /// the module docs), changing as `control` says: the profile at the first
 /// station where it is drawn, carried along from there. Its stations are
 /// named after the chain's joints, its spans after its curves.
-pub fn along_chain(
+fn followed(
     chain: &Chain<NurbCurve3D>,
     plane: &CoordinateSystem,
     control: &Control,
-) -> GeopResult<Path> {
+) -> GeopResult<Followed> {
     let follow = control.orientation == Orientation::FollowPath;
     let n = chain.curves.len();
     let closed = chain.is_closed();
@@ -300,16 +317,20 @@ pub fn along_chain(
         }
     };
     let mut corner = vec![false; n];
+    let mut rebuilt = Vec::new();
     for k in 0..n {
         let Some(b) = before(k) else { continue };
         // A profile that never turns needs no mitre: it meets itself at
         // any corner.
         if !is_smooth(&arriving[b], &leaving[k])? && follow {
             if !(matches!(kinds[b], Kind::Line) && matches!(kinds[k], Kind::Line)) {
-                return Err(GeopError::new(format!(
-                    "path sweep: the path turns a corner at {}, where only two lines can meet at an angle: make it tangent there",
-                    chain.joint_names[k]
-                )));
+                if !control.is_plain() {
+                    return Err(GeopError::new(format!(
+                        "path sweep: the path turns a corner at {}, where only two lines can meet at an angle while the profile twists, scales or follows rails: make it tangent there",
+                        chain.joint_names[k]
+                    )));
+                }
+                rebuilt.push(k);
             }
             corner[k] = true;
         }
@@ -325,13 +346,19 @@ pub fn along_chain(
         e1: *plane.u(),
         e2: *plane.v(),
     };
+    let done = |path: Path, rigid: Vec<[Frame; 2]>| Followed {
+        path,
+        rigid,
+        rebuilt: rebuilt.clone(),
+    };
     if !follow {
         let path = translated(chain, &drawn, along_normal)?;
         if control.is_plain() {
-            return Ok(path);
+            return Ok(done(path, Vec::new()));
         }
         let starts = path.stations[..n].to_vec();
-        return controlled(chain, &kinds, plane, &path, &starts, &corner, control);
+        let path = controlled(chain, &kinds, plane, &path, &starts, &corner, control)?;
+        return Ok(done(path, Vec::new()));
     }
 
     // `rigid` is the profile carried along so far, square to the path as
@@ -345,8 +372,10 @@ pub fn along_chain(
     let mut rigid = drawn;
     let mut stations: Vec<Frame> = Vec::new();
     let mut spans: Vec<Span> = Vec::new();
-    // The profile carried along, unmitred, where each curve starts.
+    // The profile carried along, unmitred, where each curve starts, and
+    // where it ends.
     let mut starts: Vec<Frame> = Vec::new();
+    let mut rigid_spans: Vec<[Frame; 2]> = Vec::new();
     for k in 0..n {
         let ctx = with_context!(
             "path sweep at {}, along {}",
@@ -369,6 +398,7 @@ pub fn along_chain(
         starts.push(rigid.clone());
         let (span, end) = carry(&chain.curves[k], &kinds[k], &rigid).with_context(ctx)?;
         spans.push(span);
+        rigid_spans.push([rigid.clone(), end.clone()]);
         rigid = end;
     }
     if !closed {
@@ -383,9 +413,10 @@ pub fn along_chain(
         span_names: chain.curve_names.iter().cloned().map(Some).collect(),
     };
     if control.is_plain() {
-        return Ok(path);
+        return Ok(done(path, rigid_spans));
     }
-    controlled(chain, &kinds, plane, &path, &starts, &corner, control)
+    let path = controlled(chain, &kinds, plane, &path, &starts, &corner, control)?;
+    Ok(done(path, Vec::new()))
 }
 
 /// The path along `chain` for a profile placed by `drawn` that keeps facing
@@ -1354,16 +1385,34 @@ pub fn starting_near(
     })
 }
 
+/// Rebuilds a body some of whose faces were put on new surfaces, around
+/// them: [`geop_lib_shell::rebuilt`], which this crate cannot depend on
+/// (its tests sweep their solids), handed in by the caller. `None` where
+/// the caller has none: a corner at an arc or a spline is then refused.
+pub type Rebuild = fn(&BodySpec, &BodyNames, &[bool], &[bool]) -> GeopResult<BodySpec>;
+
 /// Sweeps `loops` — the first the outer loop, counter-clockwise in
 /// `plane`'s `(u, v)`, the rest holes in it, clockwise — along `chain`,
-/// changing as `control` says (see [`along_chain`]): into a solid named
+/// changing as `control` says (see [`followed`]): into a solid named
 /// `solid`, or, without one, into sheets. Either way round, the solid comes
 /// out with its faces pointing outwards.
+///
+/// Where the path turns a corner at an arc or a spline, the profile
+/// projected onto the plane bisecting the corner lies on neither swept
+/// wall, as it does between two lines. Each wall there is then put on the
+/// surface the profile, carried rigidly, sweeps along its own curve, and
+/// the body rebuilt around them (`rebuild`): the walls either side of the
+/// corner meet where they cross, each corner of the profile where its two
+/// walls on either side do. That needs a profile of sharp corners — a
+/// smooth one's joints, swept either side, end at different points of the
+/// crossing — and is refused for one, naming the joint, as for a path
+/// that twists, scales or follows rails round such a corner.
 ///
 /// Named after the profiles' curves `X` and joints `P` and the chain's
 /// curves `C` and joints `J` (see [`crate::sweep::sweep`]): the walls `N(X,C)`, their
 /// edges at the joints `N(X,J)`, the edges between `N(P,C)`, the vertices
 /// `N(P,J)`; for an open chain, the caps `N(start)` and `N(end)`.
+#[allow(clippy::too_many_arguments)]
 pub fn sweep_along(
     model: &mut NamedModel,
     namer: &Namer,
@@ -1372,17 +1421,99 @@ pub fn sweep_along(
     plane: &CoordinateSystem,
     loops: &[SweepLoop],
     control: &Control,
+    rebuild: Option<Rebuild>,
 ) -> GeopResult<BuiltBody> {
-    let path = along_chain(chain, plane, control)?;
+    let along = followed(chain, plane, control)?;
+    let path = &along.path;
     // Whether a bend is tighter than the profile reaches is a question
     // about the profile carried rigidly along the path: a sampled path's
     // stations no longer match the chain's curves one to one.
     let rigid = match control.is_plain() {
         true => None,
-        false => Some(along_chain(chain, plane, &Control::default())?),
+        false => Some(followed(chain, plane, &Control::default())?.path),
     };
-    clear_of_bends(chain, rigid.as_ref().unwrap_or(&path), loops)?;
-    sweep_drawn(model, namer, &path, loops, solid)
+    clear_of_bends(chain, rigid.as_ref().unwrap_or(path), loops)?;
+    let Some(&first) = along.rebuilt.first() else {
+        return sweep_drawn(model, namer, path, loops, solid);
+    };
+    let Some(rebuild) = rebuild else {
+        return Err(GeopError::new(format!(
+            "path sweep: the path turns a corner at {}, where only two lines can meet at an angle: make it tangent there",
+            chain.joint_names[first]
+        )));
+    };
+    let ctx = with_context!(
+        "path sweep: rebuilding the walls at the corners {:?}",
+        (along.rebuilt.iter())
+            .map(|&k| &chain.joint_names[k])
+            .collect::<Vec<_>>()
+    );
+    for lp in loops {
+        if let Some(joint) = smooth_joint(&lp.profile)? {
+            return Err(GeopError::new(format!(
+                "path sweep: the path turns a corner at {} at an arc or a spline, and the profile runs on smoothly at {joint}: a corner like that is swept with a profile of sharp corners only — make the path tangent there",
+                chain.joint_names[first]
+            )));
+        }
+    }
+    let drawn: Vec<SweepLoop> = if path.along_normal {
+        loops.iter().map(SweepLoop::reversed).collect()
+    } else {
+        loops.to_vec()
+    };
+    let sections = vec![drawn.clone(); path.stations.len()];
+    let (mut spec, names) = skinned(namer, path, &sections, solid).with_context(ctx)?;
+    // The walls of the spans either side of each such corner, as the
+    // profile carried rigidly along each sweeps them.
+    let n = chain.curves.len();
+    let mut swept: HashMap<String, NurbSurface3D> = HashMap::new();
+    for &k in &along.rebuilt {
+        for j in [(k + n - 1) % n, k] {
+            let Some(span) = &path.span_names[j] else {
+                continue;
+            };
+            let alone = Path {
+                stations: along.rigid[j].to_vec(),
+                spans: vec![path.spans[j].clone()],
+                closed: false,
+                along_normal: path.along_normal,
+                station_names: vec!["from".into(), "to".into()],
+                span_names: vec![Some(span.clone())],
+            };
+            for (l, lp) in drawn.iter().enumerate() {
+                for (i, curve) in lp.profile.curve_names.iter().enumerate() {
+                    let surface = wall(&alone, &drawn, (l, 0, i)).with_context(ctx)?;
+                    swept.insert(namer.name(&[curve, span]), surface);
+                }
+            }
+        }
+    }
+    let mut replaced = vec![false; spec.faces.len()];
+    for (f, name) in names.faces.iter().enumerate() {
+        if let Some(surface) = swept.remove(name) {
+            spec.faces[f].surface = surface;
+            replaced[f] = true;
+        }
+    }
+    let reseat = vec![false; spec.vertices.len()];
+    let spec = rebuild(&spec, &names, &replaced, &reseat).with_context(ctx)?;
+    model.build_body(spec, names).with_context(ctx)
+}
+
+/// A joint of `profile` where it runs on smoothly — one of its curves
+/// arriving the way the next leaves — if it has one.
+fn smooth_joint(profile: &Profile) -> GeopResult<Option<String>> {
+    let n = profile.curves.len();
+    let joints = if profile.is_closed() { n } else { n - 1 };
+    for j in 0..joints {
+        let (a, b) = (&profile.curves[j], &profile.curves[(j + 1) % n]);
+        let (arriving, leaving) = (a.tangent(Scalar::ONE)?, b.tangent(Scalar::ZERO)?);
+        let cross = arriving[0].mul(leaving[1]).sub(arriving[1].mul(leaving[0]));
+        if cross.could_be_equal(Scalar::ZERO) {
+            return Ok(Some(profile.joint_names[(j + 1) % n].clone()));
+        }
+    }
+    Ok(None)
 }
 
 #[cfg(test)]
@@ -1428,6 +1559,7 @@ mod tests {
             plane,
             &[SweepLoop::plain(Profile::closed(outer))],
             &Control::default(),
+            None,
         )
         .unwrap();
         model.check_names().unwrap();
@@ -1611,6 +1743,7 @@ mod tests {
             &yz(Vector3::zero()),
             &[SweepLoop::plain(profile)],
             &Control::default(),
+            None,
         )
         .unwrap();
         assert!(built.solid.is_none());
@@ -1619,42 +1752,8 @@ mod tests {
         assert_eq!(model.topology().faces.len(), 4);
     }
 
-    /// A line meeting an arc at an angle, a square swept round it: the two
-    /// walls of each side of the square meet where they cross, a valid
-    /// solid.
-    #[test]
-    #[ignore = "bug: a corner at an arc or a spline is refused (`along_chain`). \
-        Projecting the profile onto the bisecting plane, the line-line mitre, \
-        puts the corner's section on neither swept wall when one side is an \
-        arc. Tried in thought, not built: (1) cut each piece, run on past the \
-        corner, by the bisecting plane and unite them, as SMLib's \
-        CreateSweepAlongPlanarPath does — the pieces' sections on that plane \
-        differ for an arc, so the union touches itself in a plane, the overlap \
-        the booleans do not resolve, and leaves steps; (2) build the mitred \
-        topology and rebuild it on the true walls (geop_lib_shell::rebuilt, as \
-        the extrude's draft does) — right for a polygonal profile, whose \
-        corner trajectories cross, but where the profile is smooth (a circle \
-        in pieces) the seams of the two sides end at different points of the \
-        crossing curve, which needs a vertex per seam, not one shared station; \
-        and lib-sweep cannot use lib-shell (lib-shell's tests use lib-sweep)."]
-    fn corner_at_an_arc_is_mitred() {
-        let path = chain(
-            vec![
-                NurbCurve3D::line(v3(0., 0., 0.), v3(2., 0., 0.)).unwrap(),
-                NurbCurve3D::arc(
-                    v3(2., 0., 0.),
-                    v3(2., 1., 0.),
-                    v3(1., 1., 0.),
-                    sqrt2_over_2(),
-                )
-                .unwrap(),
-            ],
-            false,
-        );
-        swept(square(0.2), &yz(Vector3::zero()), &path);
-    }
-
-    /// A line meeting an arc at an angle has no mitre: refused.
+    /// A line meeting an arc at an angle, with nothing to rebuild the walls
+    /// there by (see [`Rebuild`]): refused.
     #[test]
     fn corner_at_an_arc_is_refused() {
         let path = chain(
@@ -1670,7 +1769,17 @@ mod tests {
             ],
             false,
         );
-        let error = along_chain(&path, &yz(Vector3::zero()), &Control::default()).unwrap_err();
+        let error = sweep_along(
+            &mut NamedModel::new(),
+            &Namer::new("sweep", "s").unwrap(),
+            None,
+            &path,
+            &yz(Vector3::zero()),
+            &[SweepLoop::plain(Profile::closed(square(0.2)))],
+            &Control::default(),
+            None,
+        )
+        .unwrap_err();
         assert!(error.root_message().contains("corner"), "{error:?}");
     }
 
@@ -1701,6 +1810,7 @@ mod tests {
             &yz(Vector3::zero()),
             &[SweepLoop::plain(Profile::closed(circle(0.3)))],
             &Control::default(),
+            None,
         )
         .unwrap_err();
         assert!(error.root_message().contains("bend k1"), "{error:?}");
@@ -1714,7 +1824,7 @@ mod tests {
             false,
         );
         let xy = plane(Vector3::zero(), v3(1., 0., 0.), v3(0., 1., 0.));
-        assert!(along_chain(&path, &xy, &Control::default()).is_err());
+        assert!(followed(&path, &xy, &Control::default()).is_err());
     }
 
     // ── twist, scale, fixed normal and rails ────────────────────────────────
@@ -1737,6 +1847,7 @@ mod tests {
             plane,
             &[SweepLoop::plain(Profile::closed(outer))],
             control,
+            None,
         )
         .unwrap();
         model.check_names().unwrap();
@@ -2019,7 +2130,9 @@ mod tests {
     #[test]
     fn controlled_sweeps_refuse_what_they_cannot_build() {
         let refused = |path: &Chain<NurbCurve3D>, control: Control, says: &str| {
-            let error = along_chain(path, &yz(Vector3::zero()), &control).unwrap_err();
+            let error = followed(path, &yz(Vector3::zero()), &control)
+                .err()
+                .unwrap();
             assert!(error.root_message().contains(says), "{error:?}");
         };
         let straight = |name: &str, from: Vector3, to: Vector3| {
@@ -2157,6 +2270,7 @@ mod tests {
                         &yz(Vector3::zero()),
                         &[SweepLoop::plain(Profile::closed(outer.clone()))],
                         &with_rails(guides),
+                        None,
                     )
                     .unwrap_or_else(|e| panic!("{name}, two rails: {two}: {e:?}"));
                     assert_model_valid(model.topology());

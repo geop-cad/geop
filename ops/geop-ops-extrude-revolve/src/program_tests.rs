@@ -141,6 +141,101 @@ fn sweep_a_square_round_a_corner() {
     assert!(part.face_id("sweep(tube,end)").is_ok());
 }
 
+/// A square tube round a corner where a line meets an arc: each wall the
+/// square sweeps along its own curve, the two either side of the corner
+/// meeting where they cross — a solid of eight walls and two caps, every
+/// corner vertex on all four walls around it.
+#[test]
+fn sweep_a_square_round_a_corner_into_an_arc() {
+    let mut program = Program::new();
+    program.push(
+        "profile",
+        AddSketchArgs::on(on_origin(FrameAxis::X), square(0.25)),
+    );
+    program.push("path", AddSketchArgs::on(on_origin(FrameAxis::Z), kinked()));
+    program.push("tube", swept("profile", "path"));
+    let part = program.build_model(registry).unwrap();
+    assert_valid(&part);
+    let model = part.topology();
+    assert_eq!(model.solids.len(), 1);
+    assert_eq!(model.faces.len(), 4 * 2 + 2);
+    // Seen from above, the band `|y| <= 1/4` along the line runs into the
+    // ring `3/4 <= r <= 5/4` about the arc's centre `(1, 0)`, its outer
+    // side meeting the ring's outer side, its inner the inner: the area of
+    // that outline, by Green's theorem, times the height of a half. Its
+    // enclosure is as wide as the pcurves fitted on the ring's flat walls.
+    let chord = |a: [f64; 2], b: [f64; 2]| (a[0] * b[1] - b[0] * a[1]) / 2.0;
+    let arc =
+        |r: f64, from: f64, to: f64| (r * r * (to - from) + r * (to.sin() - from.sin())) / 2.0;
+    let (outer, inner) = ((-0.2f64).asin(), (1.0f64 / 3.0).asin());
+    let corner = |r: f64, angle: f64| [1.0 + r * angle.cos(), r * angle.sin()];
+    let area = chord([0.0, -0.25], corner(1.25, outer))
+        + arc(1.25, outer, PI / 2.0)
+        + chord([1.0, 1.25], [1.0, 0.75])
+        + arc(0.75, PI / 2.0, inner)
+        + chord(corner(0.75, inner), [0.0, 0.25])
+        + chord([0.0, 0.25], [0.0, -0.25]);
+    let expected = area * 0.5;
+    let solid = part.solid_id("sweep(tube)").unwrap();
+    let volume = model.mass_properties(solid).unwrap().volume;
+    assert!(
+        volume.could_be_equal(Scalar::from_f64(expected))
+            && volume.width().to_f64() < 1e-6 * expected,
+        "encloses {volume:?}, expected {expected}"
+    );
+}
+
+/// A square tube with a square hole round corners at a spline: from a line
+/// into a spline, and out of it into a line again. Valid, every wall either
+/// side of each corner on its own swept surface.
+#[test]
+fn sweep_a_hollow_square_round_corners_at_a_spline() {
+    let mut profile = square(0.25);
+    let hole: Vec<PointId> = [[-0.1, -0.1], [-0.1, 0.1], [0.1, 0.1], [0.1, -0.1]]
+        .iter()
+        .map(|c| profile.add_point(n(c[0]), n(c[1])))
+        .collect();
+    for k in 0..4 {
+        profile.add_line(hole[k], hole[(k + 1) % 4]);
+    }
+    let mut path = Sketch::new();
+    let p = [
+        path.add_point(n(0.0), n(0.0)),
+        path.add_point(n(2.0), n(0.0)),
+        path.add_point(n(2.5), n(1.0)),
+        path.add_point(n(3.5), n(1.5)),
+        path.add_point(n(3.5), n(3.0)),
+    ];
+    path.add_line(p[0], p[1]);
+    path.add_spline(p[1..4].to_vec());
+    path.add_line(p[3], p[4]);
+    let mut program = Program::new();
+    program.push(
+        "profile",
+        AddSketchArgs::on(on_origin(FrameAxis::X), profile),
+    );
+    program.push("path", AddSketchArgs::on(on_origin(FrameAxis::Z), path));
+    program.push("tube", swept("profile", "path"));
+    let part = program.build_model(registry).unwrap();
+    assert_valid(&part);
+    assert_eq!(part.topology().solids.len(), 1);
+    assert_eq!(part.topology().faces.len(), 8 * 3 + 2);
+}
+
+/// A line along `x` to `(2, 0)`, then a quarter arc to `(1, 1)` turning
+/// left: a corner at a right angle where they meet.
+fn kinked() -> Sketch {
+    let mut kinked = Sketch::new();
+    let p = [
+        kinked.add_point(n(0.0), n(0.0)),
+        kinked.add_point(n(2.0), n(0.0)),
+        kinked.add_point(n(1.0), n(1.0)),
+    ];
+    kinked.add_line(p[0], p[1]);
+    kinked.add_arc(p[1], p[2], n(PI / 2.0));
+    kinked
+}
+
 /// A round pipe through a bend: a line, an arc tangent to it, a line —
 /// every wall exact, the end cap square to the last line.
 #[test]
@@ -272,8 +367,8 @@ fn sweep_an_open_profile_as_faces() {
     assert_eq!(part.topology().faces.len(), 2 * 3);
 }
 
-/// The profile and the path must be two sketches; a path turning a corner
-/// into an arc cannot be mitred.
+/// The profile and the path must be two sketches; a round profile cannot
+/// be swept round a corner into an arc.
 #[test]
 fn sweep_refuses_what_it_cannot_sweep() {
     let mut program = Program::new();

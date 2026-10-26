@@ -478,6 +478,20 @@ pub fn skin(
     sections: &[Vec<SweepLoop>],
     solid: Option<&str>,
 ) -> GeopResult<BuiltBody> {
+    let (spec, names) = skinned(namer, path, sections, solid)?;
+    model.build_body(spec, names).with_context(with_context!(
+        "skin({}, solid={solid:?}): building it",
+        namer.root()
+    ))
+}
+
+/// What [`skin`] builds, described: the body and its names.
+pub(crate) fn skinned(
+    namer: &Namer,
+    path: &Path,
+    sections: &[Vec<SweepLoop>],
+    solid: Option<&str>,
+) -> GeopResult<(BodySpec, BodyNames)> {
     let ctx = with_context!(
         "skin({}, {} section(s) of {} loop(s), solid={solid:?})",
         namer.root(),
@@ -564,7 +578,23 @@ pub fn skin(
     };
     skin::skin(&mut spec, &mut names, &strips, &caps).with_context(ctx)?;
     spec.shells = connected_faces(&spec);
-    model.build_body(spec, names).with_context(ctx)
+    Ok((spec, names))
+}
+
+/// The wall the curve `i` of loop `l` of `loops` sweeps through span `j`
+/// of `path`, as [`sweep`] builds it.
+pub(crate) fn wall(
+    path: &Path,
+    loops: &[SweepLoop],
+    (l, j, i): (usize, usize, usize),
+) -> GeopResult<NurbSurface3D> {
+    let sections = vec![loops.to_vec(); path.stations.len()];
+    Placed {
+        path,
+        sections: &sections,
+        l,
+    }
+    .wall(j, i)
 }
 
 /// Loop `l` of `sections`, each placed by its station's frame of `path`:
