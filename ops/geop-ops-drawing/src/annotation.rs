@@ -26,8 +26,8 @@ use serde::{Deserialize, Serialize};
 
 use crate::{
     drawing::{
-        ARROW_LENGTH, ARROW_WIDTH, CENTER_OVERSHOOT, Layout, Placed, Placement, TEXT, length_label,
-        placed_edge, placed_vertex,
+        ARROW_LENGTH, ARROW_WIDTH, CENTER_OVERSHOOT, Layout, Placed, Placement, TEXT, arc_of,
+        length_label, placed_edge, placed_vertex,
     },
     layer,
     scene::Scene,
@@ -476,8 +476,7 @@ fn paper(part: &Reader, frame: &ViewFrame, target: &Target) -> GeopResult<P> {
     let point = match target {
         Target::Vertex { name } => placed_vertex(part, name)?,
         Target::Center { edge } => {
-            placed_edge(part, edge)?
-                .as_arc()?
+            arc_of(&placed_edge(part, edge)?)?
                 .ok_or_else(|| GeopError::new(format!("the edge {edge} is not circular")))?
                 .circle
                 .center
@@ -503,7 +502,7 @@ fn round(
     edge: &str,
     scale: f64,
 ) -> GeopResult<(P, f64)> {
-    let arc = placed_edge(part, edge)?.as_arc()?.ok_or_else(|| {
+    let arc = arc_of(&placed_edge(part, edge)?)?.ok_or_else(|| {
         GeopError::new(format!(
             "the edge {edge} is not circular: only a circle has a radius"
         ))
@@ -687,7 +686,7 @@ pub(crate) fn candidates(
                     [Some(start), Some(end)] => EdgeShape::Line { start, end },
                     _ => EdgeShape::Other,
                 }
-            } else if let Some(arc) = curve.as_arc()?
+            } else if let Some(arc) = arc_of(&curve)?
                 && seen_round(frame, &arc.circle.normal)
             {
                 let target = Target::Center { edge: name.clone() };

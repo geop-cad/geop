@@ -31,15 +31,13 @@ fn build(program: &Program) -> Part {
 /// sketched on the top face and extruded "through all" as a cut. Then its
 /// drawing, the bottom view with the hole's diameter dimensioned.
 ///
-/// The dimension is refused: "the edge combine(hole,...) is not circular:
-/// only a circle has a radius". The hole's rims are the cylinder's
-/// intersections with the plate's faces, which the boolean traced as
-/// fitted curves instead of keeping the tool's circles, so the drawing
-/// cannot see a circle to dimension (nor does the DXF write one). The
-/// same plate drilled by the hole operation, or cut by a disc that ends
-/// flush with the faces, has rims that are arcs and dimensions as "⌀6".
+/// The hole's rims are the cylinder's intersections with the plate's
+/// faces, which the boolean traces as fitted curves rather than keeping
+/// the tool's circles, as it does every curve two faces meet in. The
+/// drawing reconstructs the circle a rim lies on where it dimensions it
+/// (`drawing::arc_of`), and dimensions it "⌀6", as it does the rims of the
+/// hole operation's holes, which are arcs.
 #[test]
-#[ignore = "bug: the rims of a hole cut by extruding a circle through all are traced curves, not the cylinder's circles, so a diameter dimension of the hole in a drawing is refused (not circular); the hole operation's rims are arcs"]
 fn diameter_of_a_hole_extruded_through_all() {
     let mut program = Program::new();
     program.push(
