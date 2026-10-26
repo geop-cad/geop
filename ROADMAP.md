@@ -31,7 +31,8 @@ below is what was missing then, and where each item stands now.
 - Threads: cosmetic (drawn in the view and in drawings) and modelled.
 - Linear and circular patterns and mirrors of bodies and of features (cuts,
   bosses, holes with their threads, picked by a face they made), move/copy
-  body.
+  body, scale body (evenly or along each axis, exact on the NURBS: a circle
+  scaled unevenly is an exact ellipse).
 - Rib, lip and groove, draft on planar faces.
 - Direct edits of any solid, imported ones too: faces moved, pushed or
   pulled along their normals (taking along the faces they run smoothly

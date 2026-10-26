@@ -702,14 +702,16 @@ fn twist(step: &[Scalar]) -> GeopResult<(Vector3, Vector3)> {
     }
 }
 
-/// An isometry as it moves geometry: a [`Pose`]'s rigid motion (see
-/// [`Pose::motion`]), a plain translation, or a mirror in a plane — what a
-/// body is moved, patterned or mirrored by.
+/// An affine map as it moves geometry: a [`Pose`]'s rigid motion (see
+/// [`Pose::motion`]), a plain translation, a mirror in a plane, or a
+/// scaling ([`Motion::scaling`], the one that is no isometry) — what a
+/// body is moved, patterned, mirrored or scaled by.
 ///
 /// A point `p` goes to `A p + position`, with `A` the matrix whose columns
-/// are `axes`: a rotation's, or a mirror's reflection. Without axes `A` is
-/// the identity and nothing is multiplied: a translation moves every point
-/// by one addition per coordinate, as exactly as an interval addition can.
+/// are `axes`: a rotation's, a mirror's reflection or a scaling's diagonal.
+/// Without axes `A` is the identity and nothing is multiplied: a
+/// translation moves every point by one addition per coordinate, as
+/// exactly as an interval addition can.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Motion<T: Number = Scalar> {
     axes: Option<[Vector3<T>; 3]>,
@@ -782,6 +784,38 @@ impl<T: Number> Motion<T> {
 }
 
 impl Motion {
+    /// Scaling about `center` by `factors` along `x`, `y` and `z`: `p` goes
+    /// to `center + diag(factors) (p - center)`. No isometry — the one
+    /// motion that is not: lengths and angles change, directions it turns
+    /// are no longer unit, and only a body's geometry is moved by it, whose
+    /// NURBS map exactly (an affine map of their homogeneous control
+    /// points). An odd number of negative factors mirrors. Fails for a
+    /// factor that could be zero, which would flatten everything.
+    pub fn scaling(center: &Vector3, factors: [Scalar; 3]) -> GeopResult<Self> {
+        if let Some(zero) = factors.iter().find(|f| f.could_be_equal(Scalar::ZERO)) {
+            return Err(GeopError::new(format!(
+                "Motion::scaling: a factor of {zero:?} flattens everything"
+            )));
+        }
+        let column = |k: usize| {
+            let mut c = Vector3::zero();
+            c[k] = factors[k];
+            c
+        };
+        let negative = factors
+            .iter()
+            .filter(|f| f.definitely_less(Scalar::ZERO))
+            .count();
+        let position = Vector3::from_array(std::array::from_fn(|k| {
+            center[k].sub(factors[k].mul(center[k]))
+        }));
+        Ok(Motion {
+            axes: Some([column(0), column(1), column(2)]),
+            position,
+            mirrors: negative % 2 == 1,
+        })
+    }
+
     /// The frame `frame` moved. Fails for a mirror, which would leave it
     /// left-handed.
     pub fn apply_frame(&self, frame: &CoordinateSystem) -> GeopResult<CoordinateSystem> {

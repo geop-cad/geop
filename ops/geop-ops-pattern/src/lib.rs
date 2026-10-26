@@ -6,6 +6,7 @@
 //! - [`CircularPattern`]: copies turned around an axis.
 //! - [`Mirror`]: a mirror image in a plane.
 //! - [`MoveBody`]: bodies, or a copy of them, turned and shifted.
+//! - [`ScaleBody`]: bodies scaled about a point, evenly or along each axis.
 //!
 //! The first three repeat bodies or features.
 //!
@@ -50,6 +51,7 @@ mod move_body;
 #[cfg(test)]
 mod program_tests;
 mod references;
+mod scale_body;
 #[cfg(test)]
 mod tests;
 
@@ -60,6 +62,7 @@ pub use linear::{Direction, LinearPattern, LinearPatternArgs};
 pub use mirror::{Mirror, MirrorArgs};
 pub use move_body::{MoveBody, MoveBodyArgs};
 pub use references::{PatternDirection, TurnAxis};
+pub use scale_body::{ScaleBody, ScaleBodyArgs};
 
 use geop_core_editor::registry::Registry;
 use geop_core_math::geop_error::GeopResult;
@@ -71,7 +74,8 @@ pub fn register(r: Registry) -> GeopResult<Registry> {
         .operation(LinearPattern)?
         .operation(CircularPattern)?
         .operation(Mirror)?
-        .operation(MoveBody)?;
+        .operation(MoveBody)?
+        .operation(ScaleBody)?;
     #[cfg(any(test, feature = "examples"))]
     let r = r.examples(examples::set())?;
     Ok(r)
