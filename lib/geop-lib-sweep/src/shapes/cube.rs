@@ -52,8 +52,7 @@ pub fn cube_solid(
         &namer,
         Some(&namer.root()),
         &coordinate_system,
-        Scalar::ZERO,
-        Scalar::ONE,
+        &[Scalar::ZERO, Scalar::ONE],
         &[SweepLoop::plain(Profile::closed(polygon(&outer)?))],
     )?;
     Ok(built.solid.expect("extruded as a solid"))

@@ -921,13 +921,14 @@ pub fn surface_missed(
 }
 
 /// The pcurve on `surface` of a coedge that runs along `curve` — or sits at
-/// a vertex, without one — from `(u, v)` `start` to `end`. Straight where
-/// the coedge it is a copy of had a straight pcurve, `original`, and its
-/// inner copy is straight too: on a plane, whose `(u, v)` are affine, or
-/// along the same iso-line — the line keeps its `u` (or `v`) — as a
-/// cylinder's rim or seam does. Fitted otherwise: a sphere's meridian cut
-/// by a plane is straight, but its inner copy, where the offset plane cuts
-/// the offset sphere, is a small circle no straight pcurve follows.
+/// a vertex, without one — from `(u, v)` `start` to `end`. Exact where it
+/// can be: on a surface affine in `(u, v)`, a plane, the curve mapped
+/// ([`NurbSurface3D::affine_pcurve`]); and straight where the coedge it is
+/// a copy of ran along an iso-line, `original`, and its copy does too —
+/// the line keeps its `u` (or `v`) — as a cylinder's rim or seam does.
+/// Fitted otherwise: a sphere's meridian cut by a plane is straight, but
+/// its inner copy, where the offset plane cuts the offset sphere, is a
+/// small circle no straight pcurve follows.
 pub fn pcurve(
     surface: &NurbSurface3D,
     original: &Curve2,
@@ -938,10 +939,31 @@ pub fn pcurve(
     let Some(curve) = curve else {
         return NurbCurve2D::line(start, end);
     };
+    if let Some(mut mapped) = surface.affine_pcurve(curve)? {
+        // Its ends and the junctions' `(u, v)` both enclose the ends' foot
+        // points: so does what they share.
+        let (a, b) = mapped.ends()?;
+        if a.could_be_equal(&start) && b.could_be_equal(&end) {
+            let last = mapped.control_points.len() - 1;
+            for (k, at, given) in [(0, a, start), (last, b, end)] {
+                let w = mapped.control_points[k][2];
+                let pinned = |c: usize| {
+                    let x = at[c].intersect(given[c]);
+                    if w.is_exactly(Scalar::ONE) {
+                        x
+                    } else {
+                        x.mul(w)
+                    }
+                };
+                mapped.control_points[k] = Vector3::from_array([pinned(0), pinned(1), w]);
+            }
+            return Ok(mapped);
+        }
+    }
     let straight = original.degree == 1 && original.control_points.len() == 2 && {
         let (a, b) = original.ends()?;
         let keeps = |k: usize| a[k].could_be_equal(b[k]) && start[k].could_be_equal(end[k]);
-        surface.as_plane()?.is_some() || keeps(0) || keeps(1)
+        keeps(0) || keeps(1)
     };
     if straight {
         return NurbCurve2D::line(start, end);

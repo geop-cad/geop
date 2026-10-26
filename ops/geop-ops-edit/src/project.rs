@@ -127,7 +127,7 @@ impl ModelOperation for ProjectCurve {
             .collect();
         let (from, to) = reach_across(model, face, &placed.plane)?;
         let (from, to) = (Scalar::from_f64(from), Scalar::from_f64(to));
-        let swept = extrude(model, &namer, None, &placed.plane, from, to, &loops)?;
+        let swept = extrude(model, &namer, None, &placed.plane, &[from, to], &loops)?;
         let params = RemeshParams::default();
         imprint_on_face(model, &namer, face, &swept.shells, params)?;
         Ok(())

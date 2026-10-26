@@ -1954,11 +1954,12 @@ fn drafted_square_narrows_to_its_top() {
     // A frustum of a pyramid: h / 3 (A + a + sqrt(A a)).
     let a = (1.0 - 2.0 * inset).powi(2);
     let expected = (1.0 + a + a.sqrt()) / 3.0;
-    assert_exact_volume(&part, expected);
+    assert_exact_volume(&part, expected, 1e-9);
 }
 
 /// A rounded plate with a round hole, drafted: the outline shrinks, the
-/// arcs into cones about their own centres, and the hole grows.
+/// arcs into cones about their own centres, and the hole grows. Every edge
+/// is a row of a wall, as exact as the walls: so is the volume.
 #[test]
 fn drafted_rounded_plate_with_a_hole_is_valid() {
     let (mut s, _) = rounded_rectangle(0.5);
@@ -1974,19 +1975,17 @@ fn drafted_rounded_plate_with_a_hole_is_valid() {
         (4.0 - 2.0 * d) * (2.0 - 2.0 * d) - (4.0 - PI) * (0.5 - d).powi(2) - PI * (0.3 + d).powi(2)
     };
     let expected = (area(0.0) + 4.0 * area(0.5) + area(1.0)) / 6.0;
-    assert_exact_volume(&part, expected);
+    assert_exact_volume(&part, expected, 1e-9);
 }
 
 /// A half disc drafted inwards: its arc meets its diameter at sharp
 /// corners, which move along a curve as the height grows — the offset
-/// circle and line meet at `x = ±sqrt((1 - d)² - d²)` — so the ruled walls
-/// between the profile and its offset are near the drafted cone and plane,
-/// not on them: each runs from a point of the arc to the point the same
-/// fraction along its offset, a chord inside the cone where the two arcs
-/// span different angles. Valid, and within half a percent of the drafted
-/// volume (0.3 % under it).
+/// circle and line meet at `x = ±sqrt((1 - d)² - d²)`, the edge between
+/// the drafted cone and plane a hyperbola. Exactly the drafted volume, the
+/// integral of the area at each height: in the enclosure of its own, which
+/// the traced hyperbolas widen.
 #[test]
-fn drafted_half_disc_is_near_the_drafted_volume() {
+fn drafted_half_disc_is_exactly_the_drafted_volume() {
     let mut s = Sketch::new();
     let a = s.add_point(n(-1.0), n(0.0));
     let b = s.add_point(n(1.0), n(0.0));
@@ -1999,25 +1998,15 @@ fn drafted_half_disc_is_near_the_drafted_volume() {
         let (d, r) = (h * t, 1.0 - h * t);
         r * r * (d / r).acos() - d * (r * r - d * d).sqrt()
     };
-    // Simpson's rule, fine enough for the comparison below.
-    let k = 64;
+    // Simpson's rule, its error far below the comparison's.
+    let k = 4096;
     let expected = (0..k)
         .map(|i| {
             let (h0, h1) = (i as f64 / k as f64, (i + 1) as f64 / k as f64);
             (area(h0) + 4.0 * area((h0 + h1) / 2.0) + area(h1)) / (6.0 * k as f64)
         })
         .sum::<f64>();
-    let solid = part.solid_id("extrude(e)").unwrap();
-    let volume = part
-        .topology()
-        .mass_properties(solid)
-        .unwrap()
-        .volume
-        .to_f64();
-    assert!(
-        (volume - expected).abs() < 5e-3 * expected,
-        "{volume}, drafted {expected}"
-    );
+    assert_exact_volume(&part, expected, 1e-4);
 }
 
 /// Drafted both ways from the sketch's plane, the solid narrows away from
@@ -2033,27 +2022,31 @@ fn drafted_symmetric_extrude_has_a_ridge_on_the_plane() {
 }
 
 /// A rounded corner smaller than the draft's inset would shrink to a point
-/// and past it: refused, naming the arc.
+/// and past it: refused, naming an arc's wall.
 #[test]
 fn drafted_past_a_rounded_corner_is_refused_by_name() {
     let (s, curves) = rounded_rectangle(0.1);
     let Err(error) = drafted(s, Extents::blind(1.0), 30.0) else {
         panic!("drafted");
     };
+    let message = error.root_message();
     assert!(
-        error.root_message().contains(&format!("{}", curves[1])),
+        (curves.iter().skip(1).step_by(2))
+            .any(|arc| message.contains(&format!("extrude(e,profile,{arc})"))),
         "{error:?}"
     );
 }
 
 /// Checks the drafted solid `extrude(e)` of `part` encloses `expected`, by
-/// its mass properties (integrated from its faces, not its mesh).
+/// its mass properties (integrated from its faces, not its mesh), in an
+/// enclosure at most `width` of it wide.
 #[track_caller]
-fn assert_exact_volume(part: &NamedModel, expected: f64) {
+fn assert_exact_volume(part: &NamedModel, expected: f64, width: f64) {
     let solid = part.solid_id("extrude(e)").unwrap();
     let volume = part.topology().mass_properties(solid).unwrap().volume;
     assert!(
-        (volume.to_f64() - expected).abs() <= 1e-9 * expected,
+        volume.could_be_equal(Scalar::from_f64(expected))
+            && volume.width().to_f64() <= width * expected,
         "encloses {volume:?}, expected {expected}"
     );
 }

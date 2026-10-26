@@ -234,6 +234,63 @@ impl NurbSurface<4> {
         }
         NurbCurve2D::join(&pieces).with_context(&ctx)
     }
+
+    /// The pcurve of `curve`, which lies on this surface, where the
+    /// surface is affine in `(u, v)` — degree one both ways, its four
+    /// control points a parallelogram of one weight: then `(u, v)` are an
+    /// affine function of the point, and the pcurve is `curve` itself with
+    /// each control point mapped to them, of the same weights and knots.
+    /// Exact, where a fit only encloses. None for any other surface.
+    pub fn affine_pcurve(&self, curve: &NurbCurve<4>) -> GeopResult<Option<NurbCurve2D>> {
+        let cps = &self.control_points;
+        if self.degree_u != 1
+            || self.degree_v != 1
+            || self.num_u != 2
+            || self.num_v != 2
+            || cps.iter().any(|p| !p[3].is_exactly(cps[0][3]))
+        {
+            return Ok(None);
+        }
+        let point = |k: usize| cps[k].dehomogenized();
+        // `cps[i * 2 + j]` is the corner at the `i`-th end of `u` and the
+        // `j`-th of `v`.
+        let origin = point(0)?;
+        let along_u = point(2)?.sub(&origin);
+        let along_v = point(1)?.sub(&origin);
+        let skew = point(3)?.sub(&origin).sub(&along_u).sub(&along_v);
+        if (0..3).any(|k| !skew[k].could_be_equal(Scalar::ZERO)) {
+            return Ok(None);
+        }
+        let (uu, uv, vv) = (
+            along_u.prod_dot(&along_u),
+            along_u.prod_dot(&along_v),
+            along_v.prod_dot(&along_v),
+        );
+        let det = uu.mul(vv).sub(uv.mul(uv));
+        if !det.definitely_greater(Scalar::ZERO) {
+            return Ok(None);
+        }
+        let ((u0, u1), (v0, v1)) = (self.domain_u(), self.domain_v());
+        let control_points = curve
+            .control_points
+            .iter()
+            .map(|q| {
+                let weight = q[3];
+                let d = q.dehomogenized()?.sub(&origin);
+                let (du, dv) = (along_u.prod_dot(&d), along_v.prod_dot(&d));
+                let s = vv.mul(du).sub(uv.mul(dv)).div(det)?;
+                let t = uu.mul(dv).sub(uv.mul(du)).div(det)?;
+                let u = u0.add(s.mul(u1.sub(u0)));
+                let v = v0.add(t.mul(v1.sub(v0)));
+                Ok(geop_core_math::vector::Vector3::from_array([
+                    u.mul(weight),
+                    v.mul(weight),
+                    weight,
+                ]))
+            })
+            .collect::<GeopResult<Vec<_>>>()?;
+        NurbCurve::try_new(curve.degree, control_points, curve.knot_vector.clone()).map(Some)
+    }
 }
 
 /// Newton iteration count for each sample's foot-point projection. Unlike

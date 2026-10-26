@@ -271,8 +271,7 @@ mod tests {
             &namer,
             None,
             &plane,
-            Scalar::ZERO,
-            Scalar::from_f64(2.0),
+            &[Scalar::ZERO, Scalar::from_f64(2.0)],
             &[SweepLoop::plain(Profile::open(chain))],
         )
         .unwrap();
