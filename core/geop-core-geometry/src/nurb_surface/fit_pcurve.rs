@@ -309,7 +309,7 @@ mod tests {
     };
 
     use crate::{
-        nurb_curve::{Handedness, NurbCurve3D},
+        nurb_curve::{Handedness, Helix, NurbCurve3D},
         nurb_surface::NurbSurface,
         shape::Axis,
     };
@@ -328,9 +328,7 @@ mod tests {
         let helix = NurbCurve3D::helix(
             &CoordinateSystem::world_at(v(0.0, 0.0, 0.0)),
             Scalar::ONE,
-            Scalar::ONE,
-            0.9,
-            Handedness::Right,
+            &Helix::new(Scalar::ONE, 0.9, Handedness::Right),
         )
         .unwrap();
         let line = NurbCurve3D::try_new(
