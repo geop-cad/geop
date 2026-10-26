@@ -1469,11 +1469,16 @@ pub fn sweep_along(
             .map(|&k| &chain.joint_names[k])
             .collect::<Vec<_>>()
     );
-    let mut drawn: Vec<SweepLoop> = if path.along_normal {
+    let drawn: Vec<SweepLoop> = if path.along_normal {
         loops.iter().map(SweepLoop::reversed).collect()
     } else {
         loops.to_vec()
     };
+    // Cut at its corners, as [`crate::sweep::sweep`] cuts what it sweeps.
+    let mut drawn = (drawn.iter())
+        .map(SweepLoop::at_corners)
+        .collect::<GeopResult<Vec<_>>>()
+        .with_context(ctx)?;
     let n = chain.curves.len();
     let corner = |k: usize| -> GeopResult<Corner<'_>> {
         Ok(Corner {

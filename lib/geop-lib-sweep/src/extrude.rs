@@ -166,6 +166,30 @@ mod tests {
         assert_eq!(topology.edges.len(), 12);
     }
 
+    /// A curve kinked at a knot inside it is cut there: its wall is two
+    /// faces, `c0` and `c0#k1`, an edge where the kink is. A curve only
+    /// C1 in its parametrization at a knot, a circle's quarters as one
+    /// rational curve, turning on smoothly, is not cut.
+    #[test]
+    fn a_kinked_curve_is_swept_into_a_face_per_leg() {
+        let mut model = NamedModel::new();
+        let prism = crate::shapes::creased_prism(&mut model, "p");
+        assert_model_valid(model.topology());
+        let names: Vec<String> = (model.topology().solid_faces(prism).unwrap().iter())
+            .map(|&f| model.name(f).unwrap().to_string())
+            .collect();
+        assert_eq!(names.len(), 3 + 2, "{names:?}");
+        assert!(model.face_id("prism(p,c0)").is_ok() && model.face_id("prism(p,c0#k1)").is_ok());
+
+        let whole = NurbCurve2D::join(&crate::shapes::circle(1.0)).unwrap();
+        let (t0, t1) = whole.domain();
+        let (a, b) = whole.split(t0.add(t1).div(Scalar::TWO).unwrap()).unwrap();
+        let cut = SweepLoop::plain(Profile::closed(vec![a, b]))
+            .at_corners()
+            .unwrap();
+        assert_eq!(cut.profile.curves.len(), 2);
+    }
+
     #[test]
     fn extruded_square_with_hole_is_valid() {
         let hole = square_hole(0.25, 0.25, 0.5);

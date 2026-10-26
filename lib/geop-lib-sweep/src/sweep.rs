@@ -356,6 +356,75 @@ impl SweepLoop {
         }
     }
 
+    /// The same loop with every curve cut at its corners: the knots inside
+    /// it where the curve is only C0 and turns, its tangent coming in
+    /// definitely not along the one going out — a polyline given as one
+    /// curve, a curve a STEP file gives with a kink. Swept whole, such a
+    /// curve makes a wall creased inside one face, which every question
+    /// about a face's normal — an offset, a blend, a silhouette — takes
+    /// for one smooth surface. Cut, the crease is an edge. The pieces of a
+    /// curve `X` are `X`, `X#k1`, `X#k2`, ..., the joints between them
+    /// `X@k1`, `X@k2`, ...; each piece is an exact piece of the curve, on
+    /// `[0, 1]`. A joint inside a curve on the axis is a pole.
+    pub fn at_corners(&self) -> GeopResult<Self> {
+        let mut out = self.clone();
+        // From the last curve back, so the indices still to come stay.
+        for i in (0..self.profile.curves.len()).rev() {
+            let curve = &self.profile.curves[i];
+            let mut corners = Vec::new();
+            let mut knots = curve.knot_vector
+                [curve.degree + 1..curve.knot_vector.len() - curve.degree - 1]
+                .iter()
+                .peekable();
+            while let Some(&k) = knots.next() {
+                let mut multiplicity = 1;
+                while knots.next_if(|&&n| n.is_exactly(k)).is_some() {
+                    multiplicity += 1;
+                }
+                if multiplicity < curve.degree {
+                    continue;
+                }
+                let (before, after) = curve.split(k)?;
+                let (incoming, outgoing) = (
+                    before.tangent(before.domain().1)?,
+                    after.tangent(after.domain().0)?,
+                );
+                let turns = !incoming.prod_cross(&outgoing).could_be_equal(Scalar::ZERO)
+                    || incoming.prod_dot(&outgoing).definitely_less(Scalar::ZERO);
+                if turns {
+                    corners.push(k);
+                }
+            }
+            if corners.is_empty() {
+                continue;
+            }
+            let (t0, t1) = curve.domain();
+            let bounds: Vec<Scalar> = std::iter::once(t0).chain(corners).chain([t1]).collect();
+            let pieces = bounds
+                .windows(2)
+                .map(|w| {
+                    curve
+                        .sub_curve(w[0], w[1])?
+                        .with_unit_domain()?
+                        .with_unit_end_weights()
+                })
+                .collect::<GeopResult<Vec<_>>>()?;
+            let name = self.profile.curve_names[i].clone();
+            let cuts = pieces.len() - 1;
+            out.profile.curves.splice(i..=i, pieces);
+            out.profile
+                .curve_names
+                .splice(i + 1..i + 1, (1..=cuts).map(|k| format!("{name}#k{k}")));
+            out.profile
+                .joint_names
+                .splice(i + 1..i + 1, (1..=cuts).map(|k| format!("{name}@k{k}")));
+            let on_axis = self.on_axis[i];
+            out.on_axis.splice(i..=i, vec![on_axis; cuts + 1]);
+            out.poles.splice(i + 1..i + 1, vec![on_axis; cuts]);
+        }
+        Ok(out)
+    }
+
     fn joints(&self) -> usize {
         self.profile.joint_names.len()
     }
@@ -437,7 +506,10 @@ pub fn sweep(
     loops: &[SweepLoop],
     solid: Option<&str>,
 ) -> GeopResult<BuiltBody> {
-    let sections = vec![loops.to_vec(); path.stations.len()];
+    let loops = (loops.iter())
+        .map(SweepLoop::at_corners)
+        .collect::<GeopResult<Vec<_>>>()?;
+    let sections = vec![loops; path.stations.len()];
     skin(model, namer, path, &sections, solid)
 }
 
