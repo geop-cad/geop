@@ -127,7 +127,7 @@ Verdicts:
 | Capability | SMLib | geop | Verdict |
 |---|---|---|---|
 | Parallel projection of a curve onto faces | `SmBrep::CreateParallelProjectionCurves` `SmBrep.cpp:4928`, `SmSurface::CreateParallelProjectionCurves` | `ops/geop-ops-edit/src/project.rs`: sketch curves along the sketch normal only (extrude, then imprint) | worse |
-| **Normal (closest-point) projection of a 3-D curve onto faces** | `SmBrep::CreateNormalProjectionCurves` `SmBrep.cpp:5033`, `SmSurfaceDropCurve` (`DropAndTrimCurve`) | none | **missing** |
+| **Normal (closest-point) projection of a 3-D curve onto faces** | `SmBrep::CreateNormalProjectionCurves` `SmBrep.cpp:5033`, `SmSurfaceDropCurve` (`DropAndTrimCurve`) | `ops/geop-ops-edit/src/project.rs` `Along::FaceNormal`: a sheet through the normal lines at the curve's nearest points (`closest_point`), imprinted; planar sketches only | worse (3-D curves) |
 | Perspective and rotational projection of curves | `SmProjectedCurve` (`SM_PT_PERSPECTIVE`, `SM_PT_ROTATION`) | none (`view.rs` is parallel only) | missing (low priority) |
 | Planar section curves of a body, without a boolean | `SmBrep::CreatePlanarSectionCurves` `SmBrep.cpp:5169`, `SmSLC` | `ops/geop-ops-drawing/src/section.rs` subtracts a box (a full boolean) | worse (cost, solids only) |
 | Silhouette curves, parallel view | `SmSurfaceSilhouette`, global solver plus tracer | `ops/geop-ops-drawing/src/silhouette.rs` (exact zero set, Newton tracing) | worse at seeding (see §2) |
