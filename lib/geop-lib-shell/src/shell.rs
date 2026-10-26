@@ -93,6 +93,7 @@ use crate::rebuild::{along, rebuilt, room, smooth_along};
 const SEED: u64 = 0x5E11_0000_0000_0001;
 
 /// Hollows the solid `solid` of `part` out to walls `thickness` thick —
+/// measured inward from its faces, or outward for a negative thickness —
 /// those of the faces in `thicker` as thick as it says instead — open where
 /// its faces `open` were — see the module docs — and returns the hollowed
 /// solid, which replaces it and is named `namer`'s root.
@@ -117,10 +118,14 @@ pub fn shell(
         "shell({}, {solid}, open={open:?}, {thickness:?}, thicker={thicker:?})",
         namer.root()
     );
-    for t in std::iter::once(&thickness).chain(thicker.iter().map(|(_, t)| t)) {
-        if !t.definitely_greater(Scalar::ZERO) {
+    // Outward, the walls grow from the faces out: the solid turned inside
+    // out and shelled inward, then turned back.
+    let outward = thickness.definitely_less(Scalar::ZERO);
+    let sign = |t: Scalar| if outward { t.neg() } else { t };
+    for &t in std::iter::once(&thickness).chain(thicker.iter().map(|(_, t)| t)) {
+        if !sign(t).definitely_greater(Scalar::ZERO) {
             return Err(GeopError::new(format!(
-                "a shell's walls need a thickness greater than zero, not {t:?}"
+                "a shell's walls need a thickness other than zero, all inward or all outward, not {t:?}"
             )))
             .with_context(ctx);
         }
@@ -139,7 +144,12 @@ pub fn shell(
         )))
         .with_context(ctx);
     }
-    let (spec, sources) = model.body_spec(&faces, true).with_context(ctx)?;
+    let (mut spec, sources) = model.body_spec(&faces, true).with_context(ctx)?;
+    if outward {
+        for face in &mut spec.faces {
+            *face = face.reversed();
+        }
+    }
     let names = part.source_names(&sources).with_context(ctx)?;
     let removed: Vec<bool> = sources.faces.iter().map(|f| open.contains(f)).collect();
     if let Some((f, g, e)) = inward_corner(&spec, &removed).with_context(ctx)? {
@@ -160,13 +170,21 @@ pub fn shell(
     // neighbour of another still meet where their offsets do.
     let thickness: Vec<Scalar> = (sources.faces.iter())
         .map(|f| {
-            (thicker.iter())
-                .find(|(g, _)| g == f)
-                .map_or(thickness, |&(_, t)| t)
+            sign(
+                (thicker.iter())
+                    .find(|(g, _)| g == f)
+                    .map_or(thickness, |&(_, t)| t),
+            )
         })
         .collect();
     let hollow = Hollow::new(&spec, &names, removed, &thickness).with_context(ctx)?;
-    let (result, result_names) = hollow.result(namer).with_context(ctx)?;
+    let (mut result, result_names) = hollow.result(namer).with_context(ctx)?;
+    if outward {
+        // The faces turned inside out face the void they bound now, and
+        // their offsets, turned around as inner copies are, face out: the
+        // offsets are the outside, listed first.
+        result.shells.reverse();
+    }
     refuse_crossing(&result, &result_names).with_context(ctx)?;
     part.replace_with_solid(&[solid.into()], result, result_names)
         .with_context(ctx)

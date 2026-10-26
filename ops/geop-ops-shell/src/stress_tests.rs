@@ -61,6 +61,7 @@ fn stress(program: Program, size: f64) {
             thickness: size.into(),
             other_faces: Vec::new(),
             other_thickness: 0.2.into(),
+            outward: false,
         };
         let open: Vec<&str> = args.faces.iter().map(|f| f.name()).collect();
         let case = format!("shell open at {open:?}");

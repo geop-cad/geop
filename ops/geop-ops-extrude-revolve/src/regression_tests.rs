@@ -899,6 +899,7 @@ fn mug(extent: Extents) -> Program {
             thickness: 4.0.into(),
             other_faces: Vec::new(),
             other_thickness: 0.2.into(),
+            outward: false,
         },
     );
     // As drawn in the editor, ids and all: the annulus, and the sketch's

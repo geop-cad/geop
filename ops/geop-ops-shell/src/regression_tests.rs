@@ -80,6 +80,7 @@ fn shell_of_a_block_with_a_rounded_upright_edge() {
             thickness: 0.3.into(),
             other_faces: Vec::new(),
             other_thickness: 0.2.into(),
+            outward: false,
         },
     );
     let part = program.build_model(registry).unwrap();
@@ -131,6 +132,7 @@ fn shell_thicker_than_a_rounded_edge() {
                 thickness: 1.0.into(),
                 other_faces: Vec::new(),
                 other_thickness: 0.2.into(),
+                outward: false,
             },
         );
         let part = program.build_model(registry).unwrap();
@@ -175,6 +177,7 @@ fn shell_thicker_than_every_rounded_edge() {
         thickness: 0.5.into(),
         other_faces: Vec::new(),
         other_thickness: 0.2.into(),
+        outward: false,
     };
     let part = apply_to_model::<Shell>(rounded, "s", &args).unwrap();
     assert_valid(&part);
@@ -214,6 +217,7 @@ fn shell_opened_at_a_top_its_blends_are_tangent_to() {
         thickness: 0.3.into(),
         other_faces: Vec::new(),
         other_thickness: 0.2.into(),
+        outward: false,
     };
     let part = apply_to_model::<Shell>(rounded, "s", &args).unwrap();
     assert_valid(&part);

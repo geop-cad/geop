@@ -51,6 +51,7 @@ pub fn enclosure() -> Program {
             thickness: 0.2.into(),
             other_faces: Vec::new(),
             other_thickness: 0.2.into(),
+            outward: false,
         },
     );
     program

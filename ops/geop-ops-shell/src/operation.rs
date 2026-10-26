@@ -45,6 +45,10 @@ pub struct ShellArgs {
     /// How thick the walls of `other_faces` are.
     #[serde(default = "default_other_thickness")]
     pub other_thickness: NumericInput,
+    /// Whether the walls grow outward from the faces instead: the solid
+    /// becomes the hollow.
+    #[serde(default)]
+    pub outward: bool,
 }
 
 fn default_other_thickness() -> NumericInput {
@@ -76,6 +80,7 @@ impl PartOperation for Shell {
             thickness: NumericInput::Plain(0.1),
             other_faces: Vec::new(),
             other_thickness: default_other_thickness(),
+            outward: false,
         }
     }
 
@@ -118,6 +123,9 @@ impl PartOperation for Shell {
         let thickness = Number::numeric(&args.thickness, "thickness", before, Unit::Length);
         f.numeric("thickness", thickness.range(0.0, 1.0), |edit, thickness| {
             edit.args.thickness = thickness
+        });
+        f.checkbox("outward", "walls outward", args.outward, |edit, b| {
+            edit.args.outward = b
         });
         f.pick(
             "other_faces",
@@ -165,17 +173,12 @@ impl ModelOperation for Shell {
         if !other.is_finite() {
             return Err(GeopError::new("the other thickness is not a number"));
         }
+        // Outward is a negative thickness to the shell.
+        let way = |t: f64| Scalar::from_f64(if args.outward { -t } else { t });
         let thicker = (args.other_faces.iter())
-            .map(|face| Ok((model.face_id(face.name())?, Scalar::from_f64(other))))
+            .map(|face| Ok((model.face_id(face.name())?, way(other))))
             .collect::<GeopResult<Vec<_>>>()?;
-        shell(
-            model,
-            &namer,
-            solid,
-            &faces,
-            Scalar::from_f64(thickness),
-            &thicker,
-        )?;
+        shell(model, &namer, solid, &faces, way(thickness), &thicker)?;
         Ok(())
     }
 }

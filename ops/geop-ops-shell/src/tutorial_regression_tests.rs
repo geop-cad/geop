@@ -81,6 +81,7 @@ fn shell_of_a_box_with_rounded_vertical_edges() {
             thickness: 5.0.into(),
             other_faces: Vec::new(),
             other_thickness: 0.2.into(),
+            outward: false,
         },
     );
     let part = program.build_model(registry).unwrap();

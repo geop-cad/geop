@@ -276,3 +276,44 @@ fn a_box_with_a_thicker_floor() {
     assert!(corners.contains(&[250, 250, 500]), "{corners:?}");
     assert!(corners.contains(&[1750, 1750, 1000]), "{corners:?}");
 }
+
+/// Walls grown outward: the box's faces are the inside, their offsets the
+/// outside, a quarter out, the box itself a void of its own.
+#[test]
+fn a_box_shelled_outward() {
+    let (part, solid) = unit_box();
+    let (closed, closed_solid) = shelled(part, solid, &[], -0.25);
+    assert_valid(&closed);
+    let shells = &closed.topology().get_solid(closed_solid).unwrap().shells;
+    assert_eq!(shells.len(), 2);
+    let volume = closed
+        .topology()
+        .mass_properties(closed_solid)
+        .unwrap()
+        .volume;
+    let walls = 2.5 * 2.5 * 1.5 - 2.0 * 2.0 * 1.0;
+    assert!(
+        volume.could_be_equal(Scalar::from_f64(walls)),
+        "{volume:?} vs {walls}"
+    );
+}
+
+/// Opened, walls grown outward stand past the face taken away: every edge
+/// of it is an inward corner of the box turned inside out, and that is
+/// refused as such openings are (see `inward_corner`).
+#[test]
+fn a_box_shelled_outward_and_opened_is_refused() {
+    let (mut part, solid) = unit_box();
+    let open = [part.face_id("cube(b,start)").unwrap()];
+    let namer = Namer::new("shell", "s").unwrap();
+    let error = shell(
+        &mut part,
+        &namer,
+        solid,
+        &open,
+        Scalar::from_f64(-0.25),
+        &[],
+    )
+    .unwrap_err();
+    assert!(error.root_message().contains("inward corner"), "{error:?}");
+}

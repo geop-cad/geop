@@ -37,6 +37,7 @@ fn shell(name: &str, faces: &[&str], thickness: f64) -> ShellArgs {
         thickness: thickness.into(),
         other_faces: Vec::new(),
         other_thickness: 0.2.into(),
+        outward: false,
     }
 }
 
