@@ -400,3 +400,35 @@ The case: a box with filleted top edges, top removed; or a cup whose rim fillet 
   dimension is changed (ignored `a_trimmed_offset_follows_its_dimension`);
   collinear overlaps (`Corners::Extend` over a narrow notch) are refused;
   several chains at once, decisions in intervals and splines are not done.
+
+## 6. Status after round 3
+
+- **2.3/2.7 for a face whose copy inverts.** The rebuild places vertices
+  first (`Placed`) and says which edges' moved ends swapped (`turned`). The
+  shell lets such an edge vanish, and a face left with two edges or fewer
+  by it vanish too, its two remaining edges sharing one copy as a collapsed
+  blend's do; then places again until none turns. A chamfer narrower than
+  the walls, round a can's rim or along a block's edge, shells to a sharp
+  inner corner. An edge that turns between two faces that stay vanishes
+  the same way (its ends one vertex of four faces, 2.8 if they do not
+  meet).
+- **2.11 inside a face.** `NurbSurface3D::offset` closes the offset where
+  its rows close inside the domain too (`closes_inside`, the row's turning
+  `S_t·S_t − d N·S_tt` changing sign), cut back there and closed as short
+  of an apex. An edge whose pcurve runs along the resulting pole vanishes,
+  and the cap beyond it with it. `room` no longer carries a straight
+  direction through an apex: its linear extension is one of its tries.
+- **2.15 voids.** Each shell is offset into the material on its own; the
+  wall round a void is a solid of its own. Opening it is refused.
+- **2.12.** The least-squares step's constraint part is a Householder
+  least squares, not normal equations: the trimmed offset follows its
+  dimension. Splines are offset by a fitted cubic held to the true offset
+  point by point (`Constraint::OffsetAt`), its miss proven
+  (`NurbCurve2D::offset_miss`). Several chains are offset at once, an
+  outline in and its holes out, cut and joined where they cross.
+- **Left:** decisions of the sketch offset in intervals (it still plans in
+  `f64`); collinear overlaps (`Corners::Extend` over a narrow notch);
+  extending a spline's offset past its end for `Corners::Extend`; a circle's
+  offset that another crosses; opening the wall round a void; rounded
+  (rolling-ball) offset mode (2.9), which does not fall out of the fillet's
+  rolling machinery in a few lines.

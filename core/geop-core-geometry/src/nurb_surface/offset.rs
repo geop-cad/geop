@@ -60,21 +60,75 @@ impl NurbSurface3D {
             |e: GeopError| e.with_context(format!("NurbSurface::offset(distance={distance:?})"));
         match self.closed(distance).map_err(ctx)? {
             Some((surface, closing)) => surface.fitted_offset(distance, Some(&closing)),
-            None => self.fitted_offset(distance, None),
+            None => self.fitted_offset(distance, None).map_err(|e| {
+                // How its rows turn at its sides, which said it closes
+                // nowhere inside.
+                let turning: Vec<_> = (Side::ALL.iter())
+                    .map(|side| {
+                        let ((lo, hi), (a, b)) = if side.u_fixed {
+                            (self.domain_u(), self.domain_v())
+                        } else {
+                            (self.domain_v(), self.domain_u())
+                        };
+                        let x = if side.at_end { hi } else { lo };
+                        let middle = a.add(b).div(Scalar::TWO)?.sharpen();
+                        self.row_turning(side.u_fixed, middle, x, distance, false)
+                    })
+                    .collect();
+                e.with_context(format!(
+                    "closing nowhere inside over u={:?}, v={:?}: its rows turn by {turning:?} at its sides",
+                    self.domain_u(),
+                    self.domain_v()
+                ))
+            }),
         }
     }
 
-    /// At an apex, this surface cut back to, or carried on through the
-    /// apex to, where its offset by `distance` closes in a point, over its
-    /// own domain again (see the module docs). `None` without an apex.
+    /// The offset by `distance` of the row through `x` across the side
+    /// (`across_u`: `x` is a `u`), on the parameter line through `middle`:
+    /// `O_t·S_t = S_t·S_t − d N·S_tt`, `t` along the row, the normal
+    /// turned round if `flipped`. Positive where the offset's row runs the
+    /// way the surface's does, zero where it closes to a point, negative
+    /// where it has turned over.
+    fn row_turning(
+        &self,
+        across_u: bool,
+        middle: Scalar,
+        x: Scalar,
+        distance: Scalar,
+        flipped: bool,
+    ) -> GeopResult<Scalar> {
+        let (u, v) = if across_u { (x, middle) } else { (middle, x) };
+        let s = self.partials(u, v, 2)?;
+        let (along, bend) = if across_u {
+            (s[0][1], s[0][2])
+        } else {
+            (s[1][0], s[2][0])
+        };
+        let normal = self.normal(u, v)?;
+        let normal = if flipped { normal.neg() } else { normal };
+        Ok(along
+            .prod_dot(&along)
+            .sub(distance.mul(normal.prod_dot(&bend))))
+    }
+
+    /// This surface cut back to, or carried on through an apex to, where
+    /// its offset by `distance` closes in a point, over its own domain
+    /// again (see the module docs). `None` where it closes nowhere.
     fn closed(&self, distance: Scalar) -> GeopResult<Option<(Self, Closing)>> {
         let apexes: Vec<Side> = Side::ALL
             .into_iter()
             .filter(|s| self.is_apex(s.u_fixed, !s.at_end))
             .collect();
-        let side = match apexes.as_slice() {
-            [] => return Ok(None),
-            [side] => *side,
+        let (side, cut, longer) = match apexes.as_slice() {
+            [] => match self.closes_inside(distance)? {
+                Some((side, cut)) => (side, cut, None),
+                None => return Ok(None),
+            },
+            [side] => {
+                let (cut, longer) = self.closes_at_apex(*side, distance)?;
+                (*side, cut, longer)
+            }
             _ => {
                 return Err(GeopError::new(format!(
                     "the surface has apexes at {apexes:?}: offsetting more than one is not supported"
@@ -82,94 +136,17 @@ impl NurbSurface3D {
             }
         };
         let across_u = side.u_fixed;
-        let ((lo, hi), (other_lo, other_hi), breaks) = if across_u {
-            (self.domain_u(), self.domain_v(), self.breakpoints_u())
+        let ((lo, hi), (other_lo, other_hi)) = if across_u {
+            (self.domain_u(), self.domain_v())
         } else {
-            (self.domain_v(), self.domain_u(), self.breakpoints_v())
+            (self.domain_v(), self.domain_u())
         };
-        let (apex, far) = if side.at_end { (hi, lo) } else { (lo, hi) };
-        // Room through the apex: as far as the span next to it is long, a
-        // free choice.
-        let n = breaks.len();
-        let room = if side.at_end {
-            breaks[n - 1].sub(breaks[n - 2])
-        } else {
-            breaks[1].sub(breaks[0])
-        }
-        .sharpen();
-        let longer = self.extended(across_u, side.at_end, room)?;
-        // Where the offset's row closes: `O_t = S_t + d N_t = 0`, `t` along
-        // the side, so `S_t·S_t − d N·S_tt = 0` on the parameter line
-        // through the middle of the side — a free choice of line; that the
-        // whole row closes there is checked on the offset. That vanishes at
-        // the apex too, once: divided by the distance from it, what is left
-        // runs nearly straight through the root, which secant steps find.
-        let middle = other_lo.add(other_hi).div(Scalar::TWO)?.sharpen();
-        let closes = |x: Scalar| -> GeopResult<Scalar> {
-            let (u, v) = if across_u { (x, middle) } else { (middle, x) };
-            let s = longer.partials(u, v, 2)?;
-            let (along, bend) = if across_u {
-                (s[0][1], s[0][2])
-            } else {
-                (s[1][0], s[2][0])
-            };
-            // Past the apex the carried-on patch faces the other way.
-            let past = if side.at_end {
-                x.definitely_greater(apex)
-            } else {
-                x.definitely_less(apex)
-            };
-            let normal = longer.normal(u, v)?;
-            let normal = if past { normal.neg() } else { normal };
-            along
-                .prod_dot(&along)
-                .sub(distance.mul(normal.prod_dot(&bend)))
-                .div(x.sub(apex))
+        let far = if side.at_end { lo } else { hi };
+        let (surface, apex_inside) = match &longer {
+            Some((longer, apex)) => (longer, Some(*apex)),
+            None => (self, None),
         };
-        let inward = if side.at_end { room.neg() } else { room };
-        let mut a = apex.add(inward.div(Scalar::from_i64(4))?).sharpen();
-        let mut b = apex.add(inward.div(Scalar::TWO)?).sharpen();
-        let (mut ka, mut kb) = (closes(a)?, closes(b)?);
-        let (reach_lo, reach_hi) = if side.at_end {
-            (far, apex.add(room))
-        } else {
-            (apex.sub(room), far)
-        };
-        for _ in 0..CLOSING_STEPS {
-            if kb.could_be_equal(Scalar::ZERO) {
-                break;
-            }
-            let slope = kb.sub(ka).div(b.sub(a))?;
-            let next = b.sub(kb.div(slope)?).sharpen();
-            if next.could_be_equal(b) {
-                break;
-            }
-            if !next.definitely_greater(reach_lo) || !next.definitely_less(reach_hi) {
-                return Err(GeopError::new(format!(
-                    "the offset by {distance:?} closes past the apex at {apex:?} farther than {room:?}, or not before the far side {far:?}: at {next:?}"
-                )));
-            }
-            if next.could_be_equal(apex) {
-                return Err(GeopError::new(format!(
-                    "the offset by {distance:?} closes at the apex itself, {apex:?}"
-                )));
-            }
-            (a, ka) = (b, kb);
-            b = next;
-            kb = closes(b)?;
-        }
-        // Cut back short of the apex, or carried on through it.
-        let inside = if side.at_end {
-            b.definitely_less(apex)
-        } else {
-            b.definitely_greater(apex)
-        };
-        let (surface, apex_inside) = if inside {
-            (self, None)
-        } else {
-            (&longer, Some(apex))
-        };
-        let (c0, c1) = if side.at_end { (far, b) } else { (b, far) };
+        let (c0, c1) = if side.at_end { (far, cut) } else { (cut, far) };
         let whole = (other_lo, other_hi);
         let piece = if across_u {
             surface.sub_surface((c0, c1), whole)?
@@ -240,6 +217,177 @@ impl NurbSurface3D {
                 apex: apex_inside,
             },
         )))
+    }
+
+    /// Where the offset by `distance` of this surface, which has no apex,
+    /// closes inside its domain: the side whose rows have turned over, and
+    /// the parameter across it where the row closes. Asked of the row's
+    /// turning ([`Self::row_turning`]) at the two sides, on the parameter
+    /// line through the middle — a free choice of line; that the whole row
+    /// closes there is checked on the offset. `None` where it does not
+    /// change sign definitely between them: the offset closes nowhere, or
+    /// everywhere (it collapses), or folds, which the fit finds.
+    fn closes_inside(&self, distance: Scalar) -> GeopResult<Option<(Side, Scalar)>> {
+        let mut found: Option<(Side, Scalar)> = None;
+        for across_u in [true, false] {
+            let ((lo, hi), (other_lo, other_hi)) = if across_u {
+                (self.domain_u(), self.domain_v())
+            } else {
+                (self.domain_v(), self.domain_u())
+            };
+            let middle = other_lo.add(other_hi).div(Scalar::TWO)?.sharpen();
+            let turning = |x: Scalar| self.row_turning(across_u, middle, x, distance, false);
+            let (at_lo, at_hi) = (turning(lo)?, turning(hi)?);
+            let positive = |k: Scalar| k.definitely_greater(Scalar::ZERO);
+            let negative = |k: Scalar| k.definitely_less(Scalar::ZERO);
+            let at_end = if positive(at_lo) && negative(at_hi) {
+                true
+            } else if positive(at_hi) && negative(at_lo) {
+                false
+            } else {
+                continue;
+            };
+            // A bracket from where the row runs on to where it has turned
+            // over, narrowed by false position (Illinois): where to split
+            // it is a free choice.
+            let (mut good, mut bad, mut k_good, mut k_bad) = if at_end {
+                (lo, hi, at_lo, at_hi)
+            } else {
+                (hi, lo, at_hi, at_lo)
+            };
+            let mut kept: Option<bool> = None;
+            for _ in 0..CLOSING_STEPS {
+                let step = k_good.mul(bad.sub(good)).div(k_good.sub(k_bad))?;
+                let mut next = good.add(step).sharpen();
+                let between = |x: Scalar| {
+                    let (a, b) = if good.definitely_less(bad) {
+                        (good, bad)
+                    } else {
+                        (bad, good)
+                    };
+                    x.definitely_greater(a) && x.definitely_less(b)
+                };
+                if !between(next) {
+                    next = good.add(bad).div(Scalar::TWO)?.sharpen();
+                    if !between(next) {
+                        break;
+                    }
+                }
+                let k = turning(next)?;
+                if k.could_be_equal(Scalar::ZERO) {
+                    good = next;
+                    break;
+                }
+                if positive(k) {
+                    (good, k_good) = (next, k);
+                    if kept == Some(false) {
+                        k_bad = k_bad.div(Scalar::TWO)?;
+                    }
+                    kept = Some(false);
+                } else {
+                    (bad, k_bad) = (next, k);
+                    if kept == Some(true) {
+                        k_good = k_good.div(Scalar::TWO)?;
+                    }
+                    kept = Some(true);
+                }
+            }
+            // The row kept is the last one known to run on: the offset's
+            // row there is a point to the bracket's width, which the fit
+            // encloses and checks.
+            let side = Side {
+                u_fixed: across_u,
+                at_end,
+            };
+            if let Some((first, _)) = found {
+                return Err(GeopError::new(format!(
+                    "the offset by {distance:?} closes inside the surface along {first:?} and along {side:?}: not supported"
+                )));
+            }
+            found = Some((side, good));
+        }
+        Ok(found)
+    }
+
+    /// Where the offset by `distance` of this surface, with an apex along
+    /// `side`, closes: cut back short of the apex, or — the second value —
+    /// carried on through it, the surface carried on and the apex's
+    /// parameter. `S_t·S_t − d N·S_tt` vanishes at the apex too, once:
+    /// divided by the distance from it, what is left runs nearly straight
+    /// through the root, which secant steps find.
+    fn closes_at_apex(
+        &self,
+        side: Side,
+        distance: Scalar,
+    ) -> GeopResult<(Scalar, Option<(Self, Scalar)>)> {
+        let across_u = side.u_fixed;
+        let ((lo, hi), (other_lo, other_hi), breaks) = if across_u {
+            (self.domain_u(), self.domain_v(), self.breakpoints_u())
+        } else {
+            (self.domain_v(), self.domain_u(), self.breakpoints_v())
+        };
+        let (apex, far) = if side.at_end { (hi, lo) } else { (lo, hi) };
+        // Room through the apex: as far as the span next to it is long, a
+        // free choice.
+        let n = breaks.len();
+        let room = if side.at_end {
+            breaks[n - 1].sub(breaks[n - 2])
+        } else {
+            breaks[1].sub(breaks[0])
+        }
+        .sharpen();
+        let longer = self.extended(across_u, side.at_end, room)?;
+        let middle = other_lo.add(other_hi).div(Scalar::TWO)?.sharpen();
+        let closes = |x: Scalar| -> GeopResult<Scalar> {
+            // Past the apex the carried-on patch faces the other way.
+            let past = if side.at_end {
+                x.definitely_greater(apex)
+            } else {
+                x.definitely_less(apex)
+            };
+            longer
+                .row_turning(across_u, middle, x, distance, past)?
+                .div(x.sub(apex))
+        };
+        let inward = if side.at_end { room.neg() } else { room };
+        let mut a = apex.add(inward.div(Scalar::from_i64(4))?).sharpen();
+        let mut b = apex.add(inward.div(Scalar::TWO)?).sharpen();
+        let (mut ka, mut kb) = (closes(a)?, closes(b)?);
+        let (reach_lo, reach_hi) = if side.at_end {
+            (far, apex.add(room))
+        } else {
+            (apex.sub(room), far)
+        };
+        for _ in 0..CLOSING_STEPS {
+            if kb.could_be_equal(Scalar::ZERO) {
+                break;
+            }
+            let slope = kb.sub(ka).div(b.sub(a))?;
+            let next = b.sub(kb.div(slope)?).sharpen();
+            if next.could_be_equal(b) {
+                break;
+            }
+            if !next.definitely_greater(reach_lo) || !next.definitely_less(reach_hi) {
+                return Err(GeopError::new(format!(
+                    "the offset by {distance:?} closes past the apex at {apex:?} farther than {room:?}, or not before the far side {far:?}: at {next:?}"
+                )));
+            }
+            if next.could_be_equal(apex) {
+                return Err(GeopError::new(format!(
+                    "the offset by {distance:?} closes at the apex itself, {apex:?}"
+                )));
+            }
+            (a, ka) = (b, kb);
+            b = next;
+            kb = closes(b)?;
+        }
+        // Cut back short of the apex, or carried on through it.
+        let inside = if side.at_end {
+            b.definitely_less(apex)
+        } else {
+            b.definitely_greater(apex)
+        };
+        Ok((b, (!inside).then_some((longer, apex))))
     }
 }
 
@@ -483,6 +631,42 @@ mod tests {
                 );
             }
         }
+    }
+
+    /// A quarter of a cone cut off short of its tip, from radius 1 at
+    /// z = 0 to radius 0.1 at z = 2 (`v` up it), offset 0.2 inward: the
+    /// offset cone's apex, `0.2 / sin α` below the cone's at `z = 2 + 0.1 /
+    /// 0.45`, lies inside the patch, and the offset is closed there, its
+    /// `v = 1` side the apex; outward it is the plain offset.
+    #[test]
+    fn a_cone_cut_off_short_of_its_tip_closes_inside() {
+        let ring = [(1., 0., 1.), (1., 1., R2), (0., 1., 1.)];
+        let cps = ring
+            .iter()
+            .flat_map(|&(x, y, w)| [h(x, y, 0., w), h(0.1 * x, 0.1 * y, 2., w)])
+            .collect();
+        let cone = NurbSurface3D::try_new(
+            2,
+            1,
+            cps,
+            knots(&[0., 0., 0., 1., 1., 1.]),
+            knots(&[0., 0., 1., 1.]),
+        )
+        .unwrap();
+        let sin = 0.45 / (1f64 + 0.45 * 0.45).sqrt();
+        let apex = Vector3::from_array([0., 0., 2. + 0.1 / 0.45 - 0.2 / sin].map(Scalar::from_f64));
+        let mut closed = 0;
+        for d in [0.2, -0.2] {
+            let offset = cone.offset(Scalar::from_f64(d)).unwrap().unwrap();
+            match offset.pole_at(Scalar::ZERO, Scalar::ONE) {
+                Some(pole) => {
+                    assert!(pole.could_be_equal(&apex), "{d}: {pole:?} vs {apex:?}");
+                    closed += 1;
+                }
+                None => assert_exact(&cone, &offset, d),
+            }
+        }
+        assert_eq!(closed, 1);
     }
 
     /// A quarter cylinder bent out of round: no revolution any more, so

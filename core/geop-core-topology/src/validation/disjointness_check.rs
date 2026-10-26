@@ -225,16 +225,19 @@ pub fn edge_crosses_face(
     Ok(None)
 }
 
-/// An edge of `body` that crosses the trimmed region of one of its faces
-/// away from every vertex, with where: a body running into itself. `None`
-/// if no edge does — which does not rule out two faces crossing along a
-/// curve no edge of either reaches.
+/// An edge of the bodies `bodies` that crosses the trimmed region of one
+/// of their faces away from every vertex, with where: a body running into
+/// itself or into another. `None` if no edge does — which does not rule
+/// out two faces crossing along a curve no edge of either reaches.
 pub fn body_crossing(
     params: &ValidationParameters,
     model: &Model,
-    body: Body,
+    bodies: &[Body],
 ) -> GeopResult<Option<(EdgeId, FaceId, Vector3)>> {
-    let mut faces = model.body_faces(body)?;
+    let mut faces = Vec::new();
+    for &body in bodies {
+        faces.extend(model.body_faces(body)?);
+    }
     faces.sort_by_key(|f| f.0);
     let mut edges: Vec<EdgeId> = faces.iter().flat_map(|&f| model.face_edges(f)).collect();
     edges.sort_by_key(|e| e.0);

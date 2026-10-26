@@ -568,6 +568,42 @@ mod tools {
         );
     }
 
+    /// An arch — a line along its foot, a spline over it — offset
+    /// outwards into a ring round it: the spline's offset a spline fitted
+    /// to it, the ring a solid wall.
+    #[test]
+    fn an_arch_of_a_spline_offset_into_a_ring_extrudes() {
+        let mut sketch = Sketch::new();
+        let p = [[0.0, 0.0], [2.0, 0.0], [2.5, 1.0], [1.0, 2.0], [-0.5, 1.0]]
+            .map(|q| sketch.add_point(n(q[0]), n(q[1])));
+        let foot = sketch.add_line(p[0], p[1]);
+        let arch = sketch.add_spline(vec![p[1], p[2], p[3], p[4], p[0]]);
+        for (point, q) in
+            p.iter()
+                .zip([[0.0, 0.0], [2.0, 0.0], [2.5, 1.0], [1.0, 2.0], [-0.5, 1.0]])
+        {
+            sketch.constrain(Constraint::Fix {
+                point: *point,
+                x: n(q[0]),
+                y: n(q[1]),
+            });
+        }
+        // The outline runs counter-clockwise: outwards is to its right.
+        let ring = sketch
+            .offset(&[foot, arch], Scalar::from_f64(-0.1), Corners::Round)
+            .unwrap();
+        assert!(
+            ring.curves
+                .iter()
+                .any(|c| matches!(sketch.curves[c].kind, CurveKind::Spline { .. })),
+            "{ring:?}"
+        );
+        let report = sketch.solve().unwrap();
+        assert!(report.converged && report.dof == 0, "{report:?}");
+        assert_eq!(sketch.regions().unwrap().len(), 1);
+        extruded(sketch, 0.3);
+    }
+
     /// The box's top projected into a sketch on it, and its outline offset
     /// 0.1 in: the offset is the sketch's one region — the projection is
     /// construction — fully constrained by the part, and it follows the

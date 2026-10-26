@@ -9,7 +9,7 @@ use geop_core_math::{
 use geop_core_topology::{Body, FaceId, ShellId, SolidId, build::BodySpec};
 use geop_lib_booleans::{RemeshParams, boolean};
 use geop_lib_sweep::{
-    Apex, Ends, Section, loft, polygon, polyline, revolve_at_oriented,
+    Apex, Ends, Section, SweepLoop, extrude, loft, polygon, polyline, revolve_at_oriented,
     shapes::{Axis, revolved_cylinder, revolved_cylinder_along_axis, v3},
 };
 use geop_ops_model::{
@@ -622,27 +622,181 @@ fn a_step_opened_at_its_lower_top() {
 
 /// A can whose top edge is chamfered 0.05, shelled 0.2 thick: the
 /// chamfer is narrower than the walls, so its inner copy turns inside out,
-/// as a blend narrower than the walls collapses.
+/// as a blend narrower than the walls collapses. The seams across the
+/// chamfer's quarters turn around, the quarters vanish, and the inner top
+/// and side meet in a sharp corner: the hollow is the plain cylinder 0.8
+/// round and 1.6 high.
 #[test]
-#[ignore = "bug: refused, 'its moved ends ... lie the other way round along it: a face it bounds has vanished' on the seam revolved(r,c1,a0) between two quarters of the chamfer cone. The chamfer's offset is a cone that does not collapse (unlike a blend's), but its inner copy turns inside out: the offsets of the top and the side meet beyond it. The collapse machinery (collapse_edges/contract) keys collapse on the offset returning None and merges only edges tangent to the faces kept; a face whose copy inverts needs to be found (the rebuild knows: the seams across it turn around) and its two edges to the faces kept made one copy, tangent or not."]
 fn a_chamfer_narrower_than_the_walls() {
     let (mut part, solid) = revolved(&[[0., 2.], [0.95, 2.], [1., 1.95], [1., 0.], [0., 0.]]);
     let namer = Namer::new("shell", "s").unwrap();
-    let result = shell(&mut part, &namer, solid, &[], Scalar::from_f64(0.2), &[]);
-    assert!(result.is_ok(), "{result:?}");
+    let shelled = shell(&mut part, &namer, solid, &[], Scalar::from_f64(0.2), &[])
+        .unwrap_or_else(|e| panic!("{e:?}"));
     assert_valid(&part);
+    let volume = part.topology().mass_properties(shelled).unwrap().volume;
+    // The chamfer's ring: a triangle of legs 0.05 round its centroid.
+    let pi = std::f64::consts::PI;
+    let ring = 2. * pi * (1. - 0.05 / 3.) * 0.05 * 0.05 / 2.;
+    let walls = pi * 2. - ring - pi * 0.8 * 0.8 * 1.6;
+    assert!(
+        volume.could_be_equal(Scalar::from_f64(walls)),
+        "{volume:?} vs {walls}"
+    );
+}
+
+/// A 2 x 1 x 1 block whose top edge along `y` at `x = 2` is chamfered
+/// 0.05, shelled 0.2 thick: the chamfer's edges to the end faces turn
+/// around, and its inner copy vanishes between the top's and the side's,
+/// which meet in a sharp corner. The hollow is the block shrunk by 0.2.
+#[test]
+fn a_straight_chamfer_narrower_than_the_walls() {
+    let mut part = NamedModel::new();
+    let corners: Vec<Vector2> = [[0., 0.], [2., 0.], [2., 0.95], [1.95, 1.], [0., 1.]]
+        .iter()
+        .map(|&c| Vector2::from_array(c.map(Scalar::from_f64)))
+        .collect();
+    let [x, y, z] = [0, 1, 2].map(Vector3::axis);
+    let plane = CoordinateSystem::try_new(v3(0., 0., 0.), x, z, y).unwrap();
+    let namer = Namer::new("prism", "p").unwrap();
+    let solid = extrude(
+        &mut part,
+        &namer,
+        Some(&namer.root()),
+        &plane,
+        &[Scalar::ZERO, Scalar::ONE],
+        &[SweepLoop::plain(Profile::closed(
+            polygon(&corners).unwrap(),
+        ))],
+    )
+    .unwrap()
+    .solid
+    .unwrap();
+    assert_valid(&part);
+    let namer = Namer::new("shell", "s").unwrap();
+    let shelled = shell(&mut part, &namer, solid, &[], Scalar::from_f64(0.2), &[])
+        .unwrap_or_else(|e| panic!("{e:?}"));
+    assert_valid(&part);
+    let volume = part.topology().mass_properties(shelled).unwrap().volume;
+    let walls = 2. - 0.05 * 0.05 / 2. - 1.6 * 0.6 * 0.6;
+    assert!(
+        volume.could_be_equal(Scalar::from_f64(walls)),
+        "{volume:?} vs {walls}"
+    );
 }
 
 /// A cone cut off near its tip, 0.1 across there, shelled 0.2 thick: the
-/// cone's offset passes the axis before the small end.
+/// cone's offset passes the axis before the small end. It is closed in
+/// its own apex, `0.2 / sin α` below the cone's, inside the face; the
+/// small cap's inner copy lies beyond it and vanishes, its rim on the
+/// apex. The hollow is the inner cone from the inner base up to its apex.
 #[test]
-#[ignore = "bug: refused, 'the offset ... could fold over itself' near the small end: the cone's offset rows close to a point inside the face, not at a pole. NurbSurface3D::offset closes only at an apex side (closed); here the cut would be at the row where S_t.S_t - d N.S_tt vanishes inside the domain, the small cap's copy then vanishing (its face collapsing, as 2.3 of docs/smlib-comparison/offsets.md), which the shell's collapse machinery does not do for a plane."]
 fn a_cone_cut_off_short_of_its_tip_shelled_past_it() {
     let (mut part, solid) = revolved(&[[0., 2.], [0.1, 2.], [1., 0.], [0., 0.]]);
     let namer = Namer::new("shell", "s").unwrap();
-    let result = shell(&mut part, &namer, solid, &[], Scalar::from_f64(0.2), &[]);
-    assert!(result.is_ok(), "{result:?}");
+    let shelled = shell(&mut part, &namer, solid, &[], Scalar::from_f64(0.2), &[])
+        .unwrap_or_else(|e| panic!("{e:?}"));
     assert_valid(&part);
+    // The side runs in by 0.45 a unit up, `tan α`.
+    let secant = (1f64 + 0.45 * 0.45).sqrt();
+    let apex = 2. + 0.1 / 0.45 - 0.2 * secant / 0.45;
+    assert!(has_vertex_at(&part, [0., 0., apex]));
+    let pi = std::f64::consts::PI;
+    let base = 1. - 0.2 * secant - 0.45 * 0.2;
+    let walls = pi * 2. / 3. * (1. + 0.1 + 0.01) - pi / 3. * base * base * (apex - 0.2);
+    let volume = part.topology().mass_properties(shelled).unwrap().volume;
+    assert!(
+        volume.could_be_equal(Scalar::from_f64(walls)),
+        "{volume:?} vs {walls}"
+    );
+}
+
+/// A 4 x 4 x 4 block with a 2 x 2 x 2 void in its middle: the block less
+/// a block inside it.
+fn block_with_a_void() -> (NamedModel, SolidId) {
+    let mut part = NamedModel::new();
+    let outside = geop_lib_sweep::shapes::block(&mut part, "o", [0., 0., 0.], [4., 4., 4.]);
+    let inside = geop_lib_sweep::shapes::block(&mut part, "i", [1., 1., 1.], [3., 3., 3.]);
+    let namer = Namer::new("hollow", "h").unwrap();
+    let solid = boolean(
+        &mut part,
+        &namer,
+        outside,
+        inside,
+        BooleanOp::Difference,
+        RemeshParams::default(),
+    )
+    .unwrap()
+    .expect("a block with a void");
+    assert_valid(&part);
+    assert_eq!(part.topology().get_solid(solid).unwrap().shells.len(), 2);
+    (part, solid)
+}
+
+/// A block with a void, shelled 0.2 thick closed all round: each of its
+/// shells is offset into the material, and the wall round the void stands
+/// free in the hollow, a solid of its own. Opened at the top, the same,
+/// the outside's walls open.
+#[test]
+fn a_block_with_a_void_shelled() {
+    for open_top in [false, true] {
+        let (mut part, solid) = block_with_a_void();
+        let open = if open_top {
+            faces_at_height(&part, solid, 4.)
+        } else {
+            Vec::new()
+        };
+        let namer = Namer::new("shell", "s").unwrap();
+        let shelled = shell(&mut part, &namer, solid, &open, Scalar::from_f64(0.2), &[])
+            .unwrap_or_else(|e| panic!("{e:?}"));
+        assert_valid(&part);
+        let solids = part.solid_names();
+        assert_eq!(solids.len(), 2, "{solids:?}");
+        let volume = |s: SolidId| part.topology().mass_properties(s).unwrap().volume;
+        let outside = if open_top {
+            64. - 3.6 * 3.6 * 3.8
+        } else {
+            64. - 3.6 * 3.6 * 3.6
+        };
+        assert!(
+            volume(shelled).could_be_equal(Scalar::from_f64(outside)),
+            "{:?} vs {outside}",
+            volume(shelled)
+        );
+        let wall = part
+            .solid_id(&namer.name(&["void", "1"]))
+            .expect("the void's wall");
+        let around = 2.4 * 2.4 * 2.4 - 8.;
+        assert!(
+            volume(wall).could_be_equal(Scalar::from_f64(around)),
+            "{:?} vs {around}",
+            volume(wall)
+        );
+    }
+}
+
+/// A block with a void, shelled 0.2 thick outward: the walls grow out of
+/// the block, and into the void.
+#[test]
+fn a_block_with_a_void_shelled_outward() {
+    let (mut part, solid) = block_with_a_void();
+    let namer = Namer::new("shell", "s").unwrap();
+    let shelled = shell(&mut part, &namer, solid, &[], Scalar::from_f64(-0.2), &[])
+        .unwrap_or_else(|e| panic!("{e:?}"));
+    assert_valid(&part);
+    let volume = |s: SolidId| part.topology().mass_properties(s).unwrap().volume;
+    let outside = 4.4 * 4.4 * 4.4 - 64.;
+    assert!(
+        volume(shelled).could_be_equal(Scalar::from_f64(outside)),
+        "{:?} vs {outside}",
+        volume(shelled)
+    );
+    let wall = part.solid_id(&namer.name(&["void", "1"])).unwrap();
+    let inside = 8. - 1.6 * 1.6 * 1.6;
+    assert!(
+        volume(wall).could_be_equal(Scalar::from_f64(inside)),
+        "{:?} vs {inside}",
+        volume(wall)
+    );
 }
 
 /// A pyramid on a 2 x 2 square, its tip 2 up over `(tip_x, 0)`: four
