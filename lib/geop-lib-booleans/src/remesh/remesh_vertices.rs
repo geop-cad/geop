@@ -14,14 +14,25 @@ use geop_ops_model::NamedModel;
 /// iterators from this function are still live), so the search has to run
 /// to completion and hand back plain `VertexId`s before the caller is free
 /// to mutate.
+///
+/// `settled` are the `solid_a` vertices already found to coincide with
+/// none, which are not asked again, and every vertex found so is added to
+/// it. That stays true while merging goes on: a merge deletes a `solid_b`
+/// vertex and grows only the `solid_a` vertex it merges into, which was
+/// found coinciding — so the search does not start over from every pair
+/// after every merge.
 fn find_coincident_vertex_pair(
     model: &Model,
+    settled: &mut std::collections::HashSet<VertexId>,
     solid_a: Body,
     solid_b: Body,
 ) -> GeopResult<Option<(VertexId, VertexId)>> {
     let ctx = with_context!("find_coincident_vertex_pair(solid_a={solid_a}, solid_b={solid_b})");
 
     for vertex_a in model.iter_body_vertices(solid_a).with_context(&ctx)? {
+        if settled.contains(&vertex_a) {
+            continue;
+        }
         for vertex_b in model.iter_body_vertices(solid_b).with_context(&ctx)? {
             if vertex_b == vertex_a {
                 continue;
@@ -35,6 +46,7 @@ fn find_coincident_vertex_pair(
                 return Ok(Some((vertex_a, vertex_b)));
             }
         }
+        settled.insert(vertex_a);
     }
     Ok(None)
 }
@@ -44,11 +56,9 @@ fn find_coincident_vertex_pair(
 pub fn remesh_vertices(model: &mut NamedModel, solid_a: Body, solid_b: Body) -> GeopResult<()> {
     let ctx = with_context!("remesh_vertices(solid_a={solid_a}, solid_b={solid_b})");
 
-    // Every merge changes which vertices exist and which coincide with which
-    // (a vertex not yet visited this pass may now already be welded to one
-    // visited earlier), so each one invalidates the search that found it —
-    // the search always starts over afterwards rather than pressing on with
-    // anything from before the merge. Every merge removes one of the
+    // Every merge changes which vertices exist, so the search runs again
+    // after each, skipping the vertices it settled (see
+    // `find_coincident_vertex_pair`). Every merge removes one of the
     // vertices, so the searches are as many as there are vertices, and one
     // more that finds nothing.
     let vertices = model
@@ -61,10 +71,11 @@ pub fn remesh_vertices(model: &mut NamedModel, solid_a: Body, solid_b: Body) -> 
             .iter_body_vertices(solid_b)
             .with_context(&ctx)?
             .count();
+    let mut settled = std::collections::HashSet::new();
     rewrite(
         model,
         vertices + 1,
-        |model| find_coincident_vertex_pair(model.topology(), solid_a, solid_b),
+        |model| find_coincident_vertex_pair(model.topology(), &mut settled, solid_a, solid_b),
         |model, (vertex_a, vertex_b)| {
             model
                 .merge_vertex(vertex_a, vertex_b)

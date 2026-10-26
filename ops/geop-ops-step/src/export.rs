@@ -23,7 +23,7 @@ use geop_core_program::reader::Reader;
 use std::collections::HashMap;
 
 use geop_core_editor::output::{Content, Export, Exporter, ExporterInfo, NoOptions, Output};
-use geop_core_geometry::{nurb_curve::NurbCurve3D, nurb_surface::NurbSurface3D};
+use geop_core_geometry::{nurb_curve::NurbCurve3D, nurb_surface::NurbSurface3D, search};
 use geop_core_math::{
     geop_error::{GeopError, GeopResult},
     primitives::Pose,
@@ -32,12 +32,17 @@ use geop_core_math::{
 };
 use geop_core_topology::{
     CoedgeGeometry, EdgeId, FaceId, Model, Sense, ShellId, VertexId, boundary::BoundaryType,
+    contains::shell::solid_lumps,
 };
 use geop_ops_model::parameters::{read_properties, stem};
 use geop_ops_model::placed::placed_parts;
 use geop_ops_model::{NamedModel, RefId, read_model};
 
 use crate::part21::{Exchange, Instance, Record, Value};
+
+/// Fixed seed for the rays telling a solid's lumps from its voids: the
+/// answer does not depend on it, and a constant keeps exports alike.
+const LUMPS_SEED: u64 = 0x05EE_D0F1_A3B5;
 
 /// The uncertainty the file declares for its lengths, in millimetres: how
 /// far apart two points may be and still be read as one. Far looser than
@@ -482,42 +487,47 @@ impl Writer {
         };
         // The arenas are ordered by id, so these come oldest first.
         for &solid_id in model.solids.keys() {
-            let solid = model.get_solid(solid_id)?;
             let name = (body.name)(solid_id.into());
-            let [outer, voids @ ..] = solid.shells.as_slice() else {
-                return Err(GeopError::new(format!(
-                    "write_step: solid {name} has no shell"
-                )));
-            };
-            let outer = body.shell(*outer, "CLOSED_SHELL", false)?;
-            let id = if voids.is_empty() {
-                body.writer.add(
-                    "MANIFOLD_SOLID_BREP",
-                    vec![string(&name), Value::Ref(outer)],
-                )
-            } else {
-                // A void's faces point into it, out of the material: the
-                // closed shell around the void is them turned around, and
-                // the void is that shell, oriented back.
-                let mut oriented = Vec::new();
-                for &void in voids {
-                    let shell = body.shell(void, "CLOSED_SHELL", true)?;
-                    oriented.push(body.writer.add(
-                        "ORIENTED_CLOSED_SHELL",
-                        vec![
-                            string(""),
-                            Value::Derived,
-                            Value::Ref(shell),
-                            logical(false),
-                        ],
-                    ));
-                }
-                body.writer.add(
-                    "BREP_WITH_VOIDS",
-                    vec![string(&name), Value::Ref(outer), refs(oriented)],
-                )
-            };
-            solids.push(id);
+            // A solid of several lumps — a boolean that cut a bar in two —
+            // is a brep for each, each with the voids in it.
+            let lumps = solid_lumps(
+                model,
+                solid_id,
+                search::MAX_NODES,
+                search::min_subdivision_size(),
+                LUMPS_SEED,
+            )?;
+            for (outer, voids) in lumps {
+                let outer = body.shell(outer, "CLOSED_SHELL", false)?;
+                let id = if voids.is_empty() {
+                    body.writer.add(
+                        "MANIFOLD_SOLID_BREP",
+                        vec![string(&name), Value::Ref(outer)],
+                    )
+                } else {
+                    // A void's faces point into it, out of the material: the
+                    // closed shell around the void is them turned around, and
+                    // the void is that shell, oriented back.
+                    let mut oriented = Vec::new();
+                    for void in voids {
+                        let shell = body.shell(void, "CLOSED_SHELL", true)?;
+                        oriented.push(body.writer.add(
+                            "ORIENTED_CLOSED_SHELL",
+                            vec![
+                                string(""),
+                                Value::Derived,
+                                Value::Ref(shell),
+                                logical(false),
+                            ],
+                        ));
+                    }
+                    body.writer.add(
+                        "BREP_WITH_VOIDS",
+                        vec![string(&name), Value::Ref(outer), refs(oriented)],
+                    )
+                };
+                solids.push(id);
+            }
         }
         let sheet_ids = model
             .shells

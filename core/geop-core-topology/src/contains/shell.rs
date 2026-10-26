@@ -14,7 +14,7 @@
 
 use std::collections::HashSet;
 
-use crate::{CoedgeGeometry, EdgeId, FaceId, Model, ShellId, SolidId, VertexId};
+use crate::{Body, CoedgeGeometry, EdgeId, FaceId, Model, ShellId, SolidId, VertexId};
 use geop_core_geometry::{
     contains::{curve::curve_could_contain, surface::surface_could_contain},
     intersection::{
@@ -732,6 +732,82 @@ impl Classified {
             .min_by(|a, b| distance(&a.1).total_cmp(&distance(&b.1)))
             .map(|&(_, p, inside)| (p, inside))
     }
+}
+
+/// The lumps of the solid `solid_id`: each shell bounding material from
+/// outside, with the voids in it. A shell is a void when inside an odd
+/// number of the solid's other shells, and a void belongs to the
+/// innermost shell around it. Asked of each shell at one of its vertices
+/// off the other shell: shells of one solid never cross, so where one
+/// vertex is, all of it is. A solid of one shell is one lump without
+/// voids. Lumps are in the order of their shells in the solid. Other
+/// arguments as for [`shell_contains`].
+pub fn solid_lumps(
+    model: &Model,
+    solid_id: SolidId,
+    max_nodes: usize,
+    epsilon: Scalar,
+    seed: u64,
+) -> GeopResult<Vec<(ShellId, Vec<ShellId>)>> {
+    let shells = model.get_solid(solid_id)?.shells.clone();
+    if shells.len() == 1 {
+        return Ok(vec![(shells[0], Vec::new())]);
+    }
+    // Which other shells hold each shell.
+    let mut around: Vec<Vec<usize>> = vec![Vec::new(); shells.len()];
+    for (i, &shell) in shells.iter().enumerate() {
+        let vertices: Vec<VertexId> = model.iter_body_vertices(Body::Sheet(shell))?.collect();
+        for (j, &other) in shells.iter().enumerate() {
+            if i == j {
+                continue;
+            }
+            let mut decided = None;
+            for &vertex in &vertices {
+                let point = model.get_vertex(vertex)?.point;
+                match shell_contains(model, other, point, max_nodes, epsilon, seed)? {
+                    PointClassification::Inside => decided = Some(true),
+                    PointClassification::Outside => decided = Some(false),
+                    _ => continue,
+                }
+                break;
+            }
+            match decided {
+                Some(true) => around[i].push(j),
+                Some(false) => {}
+                None => {
+                    return Err(GeopError::new(format!(
+                        "solid_lumps: every vertex of shell {shell} of solid {solid_id} lies on shell {other}: the two touch everywhere, and neither is inside the other"
+                    )));
+                }
+            }
+        }
+    }
+    let depth: Vec<usize> = around.iter().map(Vec::len).collect();
+    let mut lumps: Vec<(ShellId, Vec<ShellId>)> = Vec::new();
+    let mut lump_of: Vec<Option<usize>> = vec![None; shells.len()];
+    for i in 0..shells.len() {
+        if depth[i].is_multiple_of(2) {
+            lump_of[i] = Some(lumps.len());
+            lumps.push((shells[i], Vec::new()));
+        }
+    }
+    for i in 0..shells.len() {
+        if !depth[i].is_multiple_of(2) {
+            let parent = around[i]
+                .iter()
+                .copied()
+                .find(|&j| depth[j] + 1 == depth[i])
+                .and_then(|j| lump_of[j])
+                .ok_or_else(|| {
+                    GeopError::new(format!(
+                        "solid_lumps: shell {} of solid {solid_id} is a void inside no lump",
+                        shells[i]
+                    ))
+                })?;
+            lumps[parent].1.push(shells[i]);
+        }
+    }
+    Ok(lumps)
 }
 
 /// Classify `point` against the solid `solid_id`: on its boundary if on any

@@ -832,15 +832,12 @@ fn loft_of_two_d_sections_keeps_the_bottom_flat() {
 /// refuse it, since the result's boundary touches itself along the line of
 /// tangency and is no solid.
 ///
-/// The cut builds without complaint, and `assert_valid` then fails with
-/// "edge .. has 4 coedge(s) (expected exactly 2 for a manifold shell)" on
-/// the edge where the hole's wall meets the side. Expected: a refusal
-/// naming the tangent faces (the cylinder's wall and the block's side), or
-/// a solid that is valid. Ruled out: the hole's ends (the tool stands out
-/// of both caps by 1) and the sketch (the disc is the sketch's own circle).
+/// The cut leaves the side touching the hole along that line, an edge of
+/// four faces. Full validation once refused that ("edge .. has 4
+/// coedge(s)") while the boolean built it; a solid may touch itself along
+/// an edge, its faces paired around it, and validation now says so too.
 #[test]
-#[ignore = "bug: a cut tangent to a side face builds a non-manifold solid (an edge with 4 coedges where the hole's wall touches the side) instead of being refused by name"]
-fn cut_tangent_to_a_side_face_is_not_refused() {
+fn cut_tangent_to_a_side_face_builds_a_solid_touching_itself() {
     let mut program = Program::new();
     program.push(
         "outline",

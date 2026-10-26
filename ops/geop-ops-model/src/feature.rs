@@ -37,6 +37,8 @@ pub enum BooleanOp {
     Intersection,
     /// `solid_a` with `solid_b` removed.
     Difference,
+    /// What is in either solid but not in both.
+    SymmetricDifference,
 }
 
 /// What one step did by combining tools with a solid: each tool, in the

@@ -106,21 +106,13 @@ fn cylinder_cut_from_a_block_at(o: [f64; 3]) {
 /// A screw boss standing against the inner wall of an enclosure (Fusion
 /// 360 "Electronics enclosure" tutorial: bosses are placed touching the
 /// walls so they can be filleted into them): a cylinder of radius 3 whose
-/// side is tangent to a block's side face, united with it. The union
-/// builds a non-manifold solid:
-///
-/// > edge 70 has 4 coedge(s) (expected exactly 2 for a manifold shell)
-/// > where EdgeId(70) = cylinder(boss,p3)
-///
-/// `cylinder(boss,p3)` is the cylinder's own seam between its quarters
-/// `c2` and `c3`, at 270°, which is exactly the line along which the
-/// block's face touches it. The same union with the tangent line away
-/// from a seam (a prism whose side touches the cylinder at 45°) builds
-/// valid, and so does the same cylinder cut from the block instead of
-/// united. Inside a pocket (the boss against the pocket's wall) both seams
-/// `p1` and `p3` touch and both come out with four coedges.
+/// side is tangent to a block's side face, united with it. The two touch
+/// along the cylinder's seam `cylinder(boss,p3)` alone, so the union's
+/// boundary touches itself there: an edge of four faces, which the boolean
+/// built and full validation once refused ("edge 70 has 4 coedge(s)"). A
+/// solid may touch itself along an edge, its faces paired around it, and
+/// validation now says so too.
 #[test]
-#[ignore = "bug: uniting a cylinder with a block whose face is tangent to it along the cylinder's seam cylinder(boss,p3) leaves that seam with four coedges; tangent at 45° (no seam) and the cut build valid"]
 fn union_of_a_cylinder_tangent_to_a_block_along_its_seam() {
     let mut program = Program::new();
     program.push(
