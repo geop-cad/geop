@@ -18,10 +18,13 @@ use geop_core_math::{
 };
 
 use super::NurbSurface3D;
+use std::sync::Arc;
+
 use crate::{
     nurb_curve::{NurbCurve, NurbCurve3D, basis_funs, bezier_knots},
+    search::{MAX_NODES, min_subdivision_size},
     shape::Plane,
-    spline::find_span,
+    spline::{breakpoints, find_span},
 };
 
 /// The Greville abscissae of a B-spline of `degree` with `n` control points
@@ -52,7 +55,7 @@ fn compatible_pair(a: &NurbCurve3D, b: &NurbCurve3D) -> GeopResult<(NurbCurve3D,
 /// One side of a patch, as [`NurbSurface3D::coons`] numbers its curves:
 /// `v` at its lowest, `u` at its highest, `v` at its highest and `u` at its
 /// lowest, running round the patch.
-const SIDES: usize = 4;
+pub(super) const SIDES: usize = 4;
 
 impl NurbSurface3D {
     /// The ruled surface between `a`, at `v = 0`, and `b`, at `v = 1`: the
@@ -340,9 +343,9 @@ impl NurbSurface3D {
     /// the patch leaves the face at [`TILT`] towards the face's normal at
     /// each of those abscissae — where an approximate tangency would dip
     /// through the face as often as not, a crease of a millionth of a
-    /// radian keeps the patch on one side of it — and checked between them
-    /// to stay within twice that, on that side, the patch refined along the
-    /// side while it does not.
+    /// radian keeps the patch on one side of it — and proven over the whole
+    /// side to stay within twice that, on that side ([`NurbSurface3D::strays`]),
+    /// the patch refined along the side while it does not.
     ///
     /// The ends of that row are the second control points of the sides
     /// meeting this one: they are curves the patch must keep, so they are
@@ -351,14 +354,14 @@ impl NurbSurface3D {
     /// row that does not head away from the face: the patch would fold back
     /// over the face it is to continue.
     pub fn tangent_to(&self, sides: &[Option<Neighbour<'_>>; SIDES]) -> GeopResult<Self> {
-        let curved = |k: usize| sides[k].as_ref().is_some_and(|s| !s.flat);
+        let curved = |k: usize| sides[k].as_ref().is_some_and(|s| !s.flat());
         let mut base = self.clone();
         let mut strays = String::new();
         for _ in 0..=MOST_REFINEMENTS {
-            let patch = base.tangent_rows(sides)?;
-            match patch.strays(sides)? {
+            let patch = base.tangent_rows(sides, &|_, _| false)?;
+            match patch.misses(sides)?.into_iter().next() {
                 None => return Ok(patch),
-                Some(at) => strays = at,
+                Some(stray) => strays = stray.what,
             }
             let along = |even: bool| (0..SIDES).any(|k| curved(k) && (k % 2 == 0) == even);
             base = base.refined([1 + usize::from(along(true)), 1 + usize::from(along(false))])?;
@@ -369,8 +372,15 @@ impl NurbSurface3D {
     }
 
     /// The patch's rows next to the sides of `sides` set as
-    /// [`NurbSurface3D::tangent_to`] says, once, at its knots.
-    fn tangent_rows(&self, sides: &[Option<Neighbour<'_>>; SIDES]) -> GeopResult<Self> {
+    /// [`NurbSurface3D::tangent_to`] says, once, at its knots — but for the
+    /// control points `kept` names by `(i, j)`, which something else has
+    /// set (see [`NurbSurface3D::fill`]): they stay where they are, and the
+    /// rest of their row leans around them.
+    pub(super) fn tangent_rows(
+        &self,
+        sides: &[Option<Neighbour<'_>>; SIDES],
+        kept: &dyn Fn(usize, usize) -> bool,
+    ) -> GeopResult<Self> {
         // Four rows across, wherever a side is made tangent: the row moved
         // is then next to that side alone, and the patch leaves the
         // opposite side as it did — a face made tangent to it later sees
@@ -411,9 +421,10 @@ impl NurbSurface3D {
             let Some(side) = side else { continue };
             let rows = SideRows::of(&surface, k);
             for s in rows.abscissae(&surface)? {
-                planes[k].push((side.at)(rows.fraction(&surface, s)?)?);
+                let (point, along) = rows.point_along(&surface, s)?;
+                planes[k].push(side.at(&point, &along)?);
             }
-            if side.flat {
+            if side.flat() {
                 let plane = Plane::try_new(surface.evaluate_corner(&rows)?, planes[k][0].0)?;
                 for i in 0..rows.len() {
                     let p = surface.control_points[rows.index(i).0].dehomogenized()?;
@@ -437,16 +448,14 @@ impl NurbSurface3D {
             }
         };
         let original = surface.control_points.clone();
-        // Per side, the positions along it whose next row point two sides
-        // decide.
+        // Per side, the positions along it whose next row point is not the
+        // side's own to lean: two sides decide it, or it is kept.
         let mut shared: [Vec<bool>; SIDES] = Default::default();
         for k in 0..SIDES {
             shared[k] = vec![false; planes[k].len()];
         }
         for i in 0..nu {
             for j in 0..nv {
-                // The side, its tangent plane through the point on the
-                // side, the way away from it, and that point.
                 // The side, the position along it, the tangent plane
                 // through the point on the side, the plane the point goes
                 // into — that plane leant by [`TILT`] along a curved face —
@@ -460,7 +469,7 @@ impl NurbSurface3D {
                     let Some(side) = &sides[k] else { continue };
                     let (normal, away) = planes[k][position];
                     let base = original[at(bi, bj)].dehomogenized()?;
-                    let leant = match side.flat {
+                    let leant = match side.flat() {
                         true => normal,
                         false => normal.sub(&away.normalize()?.prod_scalar(Scalar::from_f64(TILT))),
                     };
@@ -476,9 +485,11 @@ impl NurbSurface3D {
                 if constraints.is_empty() {
                     continue;
                 }
-                if let [(a, pa, ..), (b, pb, ..)] = constraints.as_slice() {
-                    shared[*a][*pa] = true;
-                    shared[*b][*pb] = true;
+                let keep = kept(i, j);
+                if constraints.len() == 2 || keep {
+                    for (k, position, ..) in &constraints {
+                        shared[*k][*position] = true;
+                    }
                 }
                 let on_border = i == 0 || j == 0 || i == nu - 1 || j == nv - 1;
                 let cp = original[at(i, j)];
@@ -493,6 +504,8 @@ impl NurbSurface3D {
                             )));
                         }
                     }
+                    p
+                } else if keep {
                     p
                 } else {
                     match constraints.as_slice() {
@@ -528,13 +541,13 @@ impl NurbSurface3D {
                         )));
                     }
                 }
-                if !on_border {
+                if !on_border && !keep {
                     surface.control_points[at(i, j)] = moved.homogeneous(cp[3]);
                 }
             }
         }
         for (k, side) in sides.iter().enumerate() {
-            if side.as_ref().is_some_and(|s| !s.flat) {
+            if side.as_ref().is_some_and(|s| !s.flat()) {
                 surface.lean(k, &planes[k], &shared[k])?;
             }
         }
@@ -630,52 +643,242 @@ impl NurbSurface3D {
 
     /// Where the patch strays, along a side of `sides` whose face is
     /// curved, from leaving that face as [`NurbSurface3D::lean`] has it:
-    /// away from the face, towards its normal at no more than twice
-    /// [`TILT`]. Checked at each Greville abscissa and halfway between.
-    fn strays(&self, sides: &[Option<Neighbour<'_>>; SIDES]) -> GeopResult<Option<String>> {
-        let tilt = Scalar::from_f64(2.0 * TILT);
+    /// away from the face, towards its normal at more than nothing and less
+    /// than twice [`TILT`] — or where that cannot be shown. Proven over the
+    /// whole side, not sampled (see `AGENTS.md`, "Do not decide from
+    /// samples").
+    ///
+    /// The patch leaves the face at `f(s) = into(s)·n(s)`, `into` its
+    /// derivative across the side and `n` the face's normal where the side
+    /// is at `s`. Over a stretch `I` of the side, by the mean value
+    /// theorem, `f(I) ⊆ f(c) + f'(I) (I − c)` with `f' = into'·n +
+    /// into·n'`: `into` and `into'` are the patch's partials over `I`, and
+    /// `n` and `n'` the face's normal and its turn over the box of `(u, v)`
+    /// its foot points over `I` are proven to lie in
+    /// ([`NurbSurface3D::enclose_foot`]). The bound's width goes as `|I|`
+    /// times `f'`, which is small where the patch follows the face, so a
+    /// tilt of a millionth of a radian is shown over stretches a thousandth
+    /// long; a stretch not shown either way is halved, within each knot
+    /// span, [`MOST_HALVINGS`] times at most.
+    ///
+    /// At a corner where the side meets another lying in the face's
+    /// tangent plane, `f` is zero: the patch touches the face there, and
+    /// leaves it on the right side next to it where `f'` has the right
+    /// sign over the stretch from the corner — rising from the start,
+    /// falling to the end.
+    pub(super) fn strays(&self, sides: &[Option<Neighbour<'_>>; SIDES]) -> GeopResult<Vec<Stray>> {
+        let mut strays = Vec::new();
         for (k, side) in sides.iter().enumerate() {
-            let Some(side) = side.as_ref().filter(|s| !s.flat) else {
+            let Some(side) = side.as_ref().filter(|s| !s.flat()) else {
+                continue;
+            };
+            let rows = SideRows::of(self, k);
+            let (degree, knots) = rows.knots(self);
+            let breaks = breakpoints(knots, degree, rows.len());
+            let ends = (breaks[0], breaks[breaks.len() - 1]);
+            let mut seed = None;
+            for pair in breaks.windows(2) {
+                let mut stack = vec![(pair[0], pair[1], 0usize)];
+                while let Some((lo, hi, depth)) = stack.pop() {
+                    let why = match self.leaves(&rows, side, (lo, hi), ends, &mut seed)? {
+                        Leaving::Proven => continue,
+                        Leaving::Unsure(_) if depth < MOST_HALVINGS => {
+                            let mid = lo.add(hi).div(Scalar::TWO)?.sharpen();
+                            stack.push((mid, hi, depth + 1));
+                            stack.push((lo, mid, depth + 1));
+                            continue;
+                        }
+                        Leaving::Unsure(why) => {
+                            format!("cannot be shown to leave it as it should: {why}")
+                        }
+                        Leaving::Strays(why) => why,
+                    };
+                    strays.push(Stray {
+                        at: lo.add(hi).div(Scalar::TWO)?,
+                        what: format!("along side {k} over [{lo:?}, {hi:?}] {why}"),
+                    });
+                    break;
+                }
+            }
+        }
+        Ok(strays)
+    }
+
+    /// Where the patch strays from a curved face along a side of `sides`
+    /// (see [`NurbSurface3D::strays`]): first where it is seen to at one of
+    /// its Greville abscissae along the side or halfway between, a cheap
+    /// look that says where to split the patch while it does, and decides
+    /// nothing — once it sees nothing, where the proof finds it does, or
+    /// cannot show it does not.
+    pub(super) fn misses(&self, sides: &[Option<Neighbour<'_>>; SIDES]) -> GeopResult<Vec<Stray>> {
+        let tilt = Scalar::from_f64(2.0 * TILT);
+        let mut seen = Vec::new();
+        for (k, side) in sides.iter().enumerate() {
+            let Some(side) = side.as_ref().filter(|s| !s.flat()) else {
                 continue;
             };
             let rows = SideRows::of(self, k);
             let abscissae = rows.abscissae(self)?;
-            let mut checked = Vec::with_capacity(2 * abscissae.len());
             for pair in abscissae.windows(2) {
-                checked.push(pair[0]);
-                checked.push(pair[0].add(pair[1]).div(Scalar::TWO)?.sharpen());
-            }
-            // How steeply it leaves the face at `s`, in radians, and
-            // whether away from it.
-            let leaving = |s: Scalar| -> GeopResult<(Scalar, bool)> {
-                let (normal, away) = (side.at)(rows.fraction(self, s)?)?;
-                let into = rows.across(self, s)?;
-                Ok((
-                    into.prod_dot(&normal).div(into.norm())?,
-                    into.prod_dot(&away).definitely_greater(Scalar::ZERO),
-                ))
-            };
-            for (c, s) in checked.iter().enumerate().skip(1) {
-                let (angle, away) = leaving(*s)?;
-                if !(away && angle.definitely_greater(Scalar::ZERO) && angle.definitely_less(tilt))
-                {
-                    let (u, v) = rows.uv(self, *s);
-                    let point = self.evaluate(u, v)?;
-                    let around = (checked[c.saturating_sub(4)..(c + 5).min(checked.len())].iter())
-                        .map(|&s| Ok((s.to_f64(), leaving(s)?.0.to_f64())))
-                        .collect::<GeopResult<Vec<_>>>()?;
-                    return Ok(Some(format!(
-                        "along side {k} at {s:?}, at {point:?}, it leaves the face at {angle:?} radians towards its normal{}, between abscissae {} and {} of {}; around it, at (s, angle): {around:?}",
-                        if away { "" } else { ", not away from it" },
-                        c / 2,
-                        c / 2 + 1,
-                        abscissae.len(),
-                    )));
+                for s in [pair[0], pair[0].add(pair[1]).div(Scalar::TWO)?.sharpen()] {
+                    let (u, v) = rows.uv(self, s);
+                    let at = rows.jet(&self.partials(u, v, 2)?)?;
+                    let (normal, away) = side.at(&at.point, &rows.round(&at.along))?;
+                    let angle = at.into.prod_dot(&normal).div(at.into.norm())?;
+                    let away = at.into.prod_dot(&away).definitely_greater(Scalar::ZERO);
+                    let corner = s.is_exactly(abscissae[0]);
+                    if !corner
+                        && !(away
+                            && angle.definitely_greater(Scalar::ZERO)
+                            && angle.definitely_less(tilt))
+                    {
+                        seen.push(Stray {
+                            at: s,
+                            what: format!(
+                                "along side {k} at {s:?}, at {:?}, it leaves the face at {angle:?} radians towards its normal{}",
+                                at.point,
+                                if away { "" } else { ", not away from it" },
+                            ),
+                        });
+                    }
                 }
             }
         }
-        Ok(None)
+        if seen.is_empty() {
+            return self.strays(sides);
+        }
+        Ok(seen)
     }
+
+    /// Whether the patch leaves the face `side` as it should (see
+    /// [`NurbSurface3D::strays`]) over the stretch `lo..hi` of the side
+    /// `rows`, which runs between `ends`; `seed`, where the foot of the
+    /// stretch before was, is moved on to this one's.
+    fn leaves(
+        &self,
+        rows: &SideRows,
+        side: &Neighbour<'_>,
+        (lo, hi): (Scalar, Scalar),
+        ends: (Scalar, Scalar),
+        seed: &mut Option<(Scalar, Scalar)>,
+    ) -> GeopResult<Leaving> {
+        let stretch = lo.union(hi);
+        let jet = |s: Scalar| -> GeopResult<Jet> {
+            let (u, v) = rows.uv(self, s);
+            rows.jet(&self.partials(u, v, 2)?)
+        };
+        let over = jet(stretch)?;
+        let near = match *seed {
+            Some(near) => near,
+            None => side.foot(&jet(lo.add(hi).div(Scalar::TWO)?.sharpen())?.point)?,
+        };
+        let unsure = |point: &Vector3| {
+            Leaving::Unsure(format!(
+                "no foot point on the face proven for the side at {point:?}"
+            ))
+        };
+        let Some(feet) = side.carried.enclose_foot(&over.point, near)? else {
+            return Ok(unsure(&over.point));
+        };
+        let middle = (feet.0.midpoint(), feet.1.midpoint());
+        *seed = Some(middle);
+        let (n, turn) = side.carried.normal_turning(feet.0, feet.1, &over.along)?;
+        // Taken about the corner the stretch starts or ends at, if any:
+        // there the patch touches the face.
+        let (centre, rising) = if lo.is_exactly(ends.0) {
+            (lo, Some(true))
+        } else if hi.is_exactly(ends.1) {
+            (hi, Some(false))
+        } else {
+            (lo.add(hi).div(Scalar::TWO)?.sharpen(), None)
+        };
+        let at = jet(centre)?;
+        let Some(foot) = side.carried.enclose_foot(&at.point, middle)? else {
+            return Ok(unsure(&at.point));
+        };
+        let (n_at, _) = side.carried.normal_turning(foot.0, foot.1, &at.along)?;
+        let f_at = at.into.prod_dot(&n_at);
+        let slope = over.turn.prod_dot(&n).add(over.into.prod_dot(&turn));
+        let f = f_at.add(slope.mul(stretch.sub(centre)));
+        let tilt = Scalar::from_f64(2.0 * TILT);
+        // Within the tilt, and away from the face, over the whole stretch.
+        let within = tilt.mul(over.into.norm()).sub(f);
+        let away = over.into.prod_dot(&side.away(&n, &rows.round(&over.along)));
+        let away_at = at.into.prod_dot(&side.away(&n_at, &rows.round(&at.along)));
+        if f_at.definitely_less(Scalar::ZERO)
+            || tilt
+                .mul(at.into.norm())
+                .sub(f_at)
+                .definitely_less(Scalar::ZERO)
+            || away_at.definitely_less(Scalar::ZERO)
+        {
+            return Ok(Leaving::Strays(format!(
+                "at {centre:?}, at {:?}, it leaves the face at {:?} radians towards its normal, where it should at more than nothing and less than {tilt:?}{}",
+                at.point,
+                f_at.div(at.into.norm())?,
+                if away_at.definitely_less(Scalar::ZERO) {
+                    ", and not away from it"
+                } else {
+                    ""
+                }
+            )));
+        }
+        let positive = match rising {
+            Some(rising) if !f_at.definitely_greater(Scalar::ZERO) => {
+                if rising {
+                    slope.definitely_greater(Scalar::ZERO)
+                } else {
+                    slope.definitely_less(Scalar::ZERO)
+                }
+            }
+            _ => f.definitely_greater(Scalar::ZERO),
+        };
+        if positive
+            && within.definitely_greater(Scalar::ZERO)
+            && away.definitely_greater(Scalar::ZERO)
+        {
+            Ok(Leaving::Proven)
+        } else {
+            Ok(Leaving::Unsure(format!(
+                "over it the patch leaves the face at {:?} radians towards its normal, turning at {slope:?}",
+                f.div(over.into.norm())?
+            )))
+        }
+    }
+}
+
+/// What [`NurbSurface3D::leaves`] shows over a stretch of a side.
+enum Leaving {
+    /// The patch leaves the face as it should all over it.
+    Proven,
+    /// It does not, somewhere: how.
+    Strays(String),
+    /// Neither could be shown: what is known.
+    Unsure(String),
+}
+
+/// The patch along a side, at a parameter or over a stretch of them: the
+/// point, its derivative along the side by the side's parameter, the
+/// derivative across it into the patch, and how that turns along the side.
+struct Jet {
+    point: Vector3,
+    along: Vector3,
+    into: Vector3,
+    turn: Vector3,
+}
+
+/// How often [`NurbSurface3D::strays`] halves a stretch of a side that it
+/// can neither show the patch leaves the face as it should over, nor that
+/// it does not: how hard it tries, not what a stretch shown means.
+const MOST_HALVINGS: usize = 14;
+
+/// Where a patch made tangent to a curved face strays from leaving it as it
+/// should (see [`NurbSurface3D::strays`]).
+pub(super) struct Stray {
+    /// The patch's parameter along that side where.
+    pub at: Scalar,
+    /// How, for an error.
+    pub what: String,
 }
 
 /// The angle, in radians, at which a patch made tangent to a curved face
@@ -685,18 +888,109 @@ pub const TILT: f64 = 1e-6;
 /// How often [`NurbSurface3D::tangent_to`] halves the patch's knot spans
 /// along a curved neighbour, at most: how hard it tries to follow the
 /// face's turning tangent plane, not what following it means.
-const MOST_REFINEMENTS: usize = 6;
+pub(super) const MOST_REFINEMENTS: usize = 6;
 
 /// A face a patch is made tangent to along one of its sides (see
-/// [`NurbSurface3D::tangent_to`]).
+/// [`NurbSurface3D::tangent_to`], [`NurbSurface3D::fill`]): the surface the
+/// side lies on, and which side of it the face is on.
+#[derive(Clone, Debug)]
 pub struct Neighbour<'a> {
-    /// At the fraction `t` of the way along the side, as it runs round the
-    /// patch: the face's unit normal there, and the way in its tangent
-    /// plane away from it, across the side.
-    pub at: &'a dyn Fn(Scalar) -> GeopResult<(Vector3, Vector3)>,
-    /// Whether its tangent plane is one plane all along the side: a flat
-    /// face.
-    pub flat: bool,
+    surface: &'a NurbSurface3D,
+    /// The surface carried on past every side by a quarter of its domain,
+    /// so that a box of `(u, v)` round a foot on its edge is still on it
+    /// (see [`NurbSurface3D::enclose_foot`]).
+    carried: Arc<NurbSurface3D>,
+    along: bool,
+    plane: Option<Plane>,
+}
+
+impl<'a> Neighbour<'a> {
+    /// The face on `surface` along a side of a patch, the side lying on the
+    /// surface: running the side the way the patch runs round it (`along`)
+    /// — the face then lies to the right of the side, seen from its normal
+    /// — or the other way.
+    pub fn new(surface: &'a NurbSurface3D, along: bool) -> GeopResult<Self> {
+        // By a power of two, a free choice: the knots shifted by it stay
+        // what they were.
+        let quarter = |(lo, hi): (Scalar, Scalar)| {
+            Scalar::from_f64(2f64.powi((hi.sub(lo).to_f64() / 4.0).log2().floor() as i32))
+        };
+        let mut carried = surface.clone();
+        for along_u in [true, false] {
+            let by = quarter(if along_u {
+                surface.domain_u()
+            } else {
+                surface.domain_v()
+            });
+            for at_end in [false, true] {
+                carried = carried.extended(along_u, at_end, by)?;
+            }
+        }
+        Ok(Self {
+            surface,
+            carried: Arc::new(carried),
+            along,
+            plane: surface.as_plane()?,
+        })
+    }
+
+    /// Whether the face is flat: its tangent plane one plane all along the
+    /// side, which a patch can be tangent to exactly.
+    pub(super) fn flat(&self) -> bool {
+        self.plane.is_some()
+    }
+
+    /// Where the side, running round the patch at `along`, is at `point`:
+    /// the face's unit normal there, and the way in its tangent plane away
+    /// from the face, across the side.
+    pub(super) fn at(&self, point: &Vector3, along: &Vector3) -> GeopResult<(Vector3, Vector3)> {
+        let normal = match &self.plane {
+            Some(plane) => plane.normal,
+            None => {
+                let (u, v) = self.foot(point)?;
+                self.surface.normal(u, v)?
+            }
+        };
+        Ok((normal, self.away(&normal, along)))
+    }
+
+    /// The face's unit normal at `point` of the side, and how fast it turns
+    /// as the side runs on at `along` (see [`NurbSurface3D::normal_turning`]).
+    pub(super) fn turning(
+        &self,
+        point: &Vector3,
+        along: &Vector3,
+    ) -> GeopResult<(Vector3, Vector3)> {
+        match &self.plane {
+            Some(plane) => Ok((plane.normal, Vector3::zero())),
+            None => {
+                let (u, v) = self.foot(point)?;
+                self.surface.normal_turning(u, v, along)
+            }
+        }
+    }
+
+    /// The way away from the face across the side running at `along`,
+    /// where its normal is `normal`: the face lies to the left of the way
+    /// it runs the side, seen from its normal.
+    pub(super) fn away(&self, normal: &Vector3, along: &Vector3) -> Vector3 {
+        if self.along {
+            along.prod_cross(normal)
+        } else {
+            normal.prod_cross(along)
+        }
+    }
+
+    /// Where `point`, on the side, lies on the face's surface.
+    fn foot(&self, point: &Vector3) -> GeopResult<(Scalar, Scalar)> {
+        self.surface
+            .locate(point, MAX_NODES, min_subdivision_size())?
+            .ok_or_else(|| {
+                GeopError::new(format!(
+                    "Neighbour: the side does not lie on the face's surface at {point:?}"
+                ))
+            })
+    }
 }
 
 /// Side `k` of a patch's control net, as [`NurbSurface3D::coons`] numbers
@@ -754,6 +1048,44 @@ impl SideRows {
         greville(knots, degree, self.len())
     }
 
+    /// The patch along the side from its partials `d` (see
+    /// [`NurbSurface3D::partials`]) where the side is.
+    fn jet(&self, d: &[Vec<Vector3>]) -> GeopResult<Jet> {
+        let (su, sv, suv) = (d[1][0], d[0][1], d[1][1]);
+        let (along, into, turn) = match self.k {
+            0 => (su, sv, suv),
+            1 => (sv, su.neg(), suv.neg()),
+            2 => (su, sv.neg(), suv.neg()),
+            _ => (sv, su, suv),
+        };
+        Ok(Jet {
+            point: d[0][0],
+            along,
+            into,
+            turn,
+        })
+    }
+
+    /// `along`, the derivative along the side by its parameter, the way
+    /// the side runs round the patch.
+    fn round(&self, along: &Vector3) -> Vector3 {
+        if self.k < 2 { *along } else { along.neg() }
+    }
+
+    /// The point at `s` along the side, and the side's derivative there as
+    /// it runs round the patch.
+    fn point_along(&self, surface: &NurbSurface3D, s: Scalar) -> GeopResult<(Vector3, Vector3)> {
+        let (u, v) = self.uv(surface, s);
+        let (du, dv) = surface.derivatives(u, v)?;
+        let along = match self.k {
+            0 => du,
+            1 => dv,
+            2 => du.neg(),
+            _ => dv.neg(),
+        };
+        Ok((surface.evaluate(u, v)?, along))
+    }
+
     /// The patch's `(u, v)` at `s` along the side.
     fn uv(&self, surface: &NurbSurface3D, s: Scalar) -> (Scalar, Scalar) {
         let ((u0, u1), (v0, v1)) = (surface.domain_u(), surface.domain_v());
@@ -764,31 +1096,6 @@ impl SideRows {
             _ => (u0, s),
         }
     }
-
-    /// How far `s` is along the side, as a fraction, the way the side runs
-    /// round the patch: with its parameter for the sides 0 and 1, against
-    /// it for 2 and 3.
-    fn fraction(&self, surface: &NurbSurface3D, s: Scalar) -> GeopResult<Scalar> {
-        let (lo, hi) = if self.along_u() {
-            surface.domain_u()
-        } else {
-            surface.domain_v()
-        };
-        let from = if self.k < 2 { s.sub(lo) } else { hi.sub(s) };
-        from.div(hi.sub(lo))
-    }
-
-    /// The patch's derivative across the side at `s`, into the patch.
-    fn across(&self, surface: &NurbSurface3D, s: Scalar) -> GeopResult<Vector3> {
-        let (u, v) = self.uv(surface, s);
-        let (du, dv) = surface.derivatives(u, v)?;
-        Ok(match self.k {
-            0 => dv,
-            1 => du.neg(),
-            2 => dv.neg(),
-            _ => du,
-        })
-    }
 }
 
 #[cfg(test)]
@@ -798,8 +1105,7 @@ mod tests {
 
     use crate::{
         nurb_curve::{NurbCurve, NurbCurve3D},
-        nurb_surface::{Neighbour, NurbSurface3D},
-        shape::Plane,
+        nurb_surface::{Neighbour, NurbSurface3D, TILT},
     };
 
     fn v(x: f64, y: f64, z: f64) -> Vector3 {
@@ -966,8 +1272,6 @@ mod tests {
         };
         let sides = [wavy(0.0), rising_arc(1.), top, rising_arc(0.).reverse()];
         let coons = NurbSurface3D::coons([&sides[0], &sides[1], &sides[2], &sides[3]]).unwrap();
-        let plane = Plane::try_new(v(0., 0., 0.), v(0., 0., 1.)).unwrap();
-        let away = v(0., 1., 0.);
         let bends = (0..=8).any(|k| {
             let u = Scalar::from_ratio(k, 8).unwrap();
             let n = coons.normal(u, Scalar::ZERO).unwrap();
@@ -976,14 +1280,16 @@ mod tests {
                 .could_be_equal(Scalar::ZERO)
         });
         assert!(bends, "the Coons patch alone is not tangent to the plane");
-        let normal = plane.normal;
-        let at = |_: Scalar| Ok((normal, away));
-        let flat = || {
-            Some(Neighbour {
-                at: &at,
-                flat: true,
-            })
-        };
+        let floor = NurbSurface3D::bilinear(
+            v(-1., -1., 0.),
+            v(2., -1., 0.),
+            v(2., 2., 0.),
+            v(-1., 2., 0.),
+        )
+        .unwrap();
+        // The floor runs the bottom side the other way: it lies on the
+        // other side of it.
+        let flat = || Some(Neighbour::new(&floor, false).unwrap());
         let surface = coons.tangent_to(&[flat(), None, None, None]).unwrap();
         for (k, side) in sides.iter().enumerate() {
             assert_on(&surface, side, k);
@@ -1026,6 +1332,56 @@ mod tests {
                 .evaluate(Scalar::from_i64(u), Scalar::from_i64(w))
                 .unwrap();
             assert!(at.could_be_equal(p), "at ({u}, {w}): {at:?}, not {p:?}");
+        }
+    }
+
+    /// A quarter cylinder about the line `y = 0, z = 1`, from `x = 0` to
+    /// `x = 1`, and a patch running on from its side at `x = 1` to `x = 2`.
+    /// Its Coons patch leaves the cylinder at an angle, which the proof
+    /// finds; made tangent, it is proven to leave it as it should all
+    /// along the side, and the tilt seen there agrees.
+    #[test]
+    fn leaving_a_cylinder_is_proven() {
+        let cylinder = NurbSurface3D::coons([
+            &line([0., 0., 0.], [1., 0., 0.]),
+            &rising_arc(1.),
+            &line([1., 1., 1.], [0., 1., 1.]),
+            &rising_arc(0.).reverse(),
+        ])
+        .unwrap();
+        let sides = [
+            rising_arc(1.),
+            line([1., 1., 1.], [2., 1., 1.]),
+            line([2., 1., 1.], [2., 0., 0.]),
+            line([2., 0., 0.], [1., 0., 0.]),
+        ];
+        let plain = NurbSurface3D::coons([&sides[0], &sides[1], &sides[2], &sides[3]]).unwrap();
+        // The cylinder runs its side at `x = 1` as the patch does.
+        let neighbours = [
+            Some(Neighbour::new(&cylinder, true).unwrap()),
+            None,
+            None,
+            None,
+        ];
+        let strays = plain.strays(&neighbours).unwrap();
+        assert!(!strays.is_empty(), "the Coons patch is not tangent");
+        let tangent = plain.tangent_to(&neighbours).unwrap();
+        let strays = tangent.strays(&neighbours).unwrap();
+        assert!(
+            strays.is_empty(),
+            "{:?}",
+            strays.iter().map(|s| &s.what).collect::<Vec<_>>()
+        );
+        // Seen at points along the side, as the proof says.
+        for i in 1..64 {
+            let u = Scalar::from_ratio(i, 64).unwrap();
+            let p = tangent.evaluate(u, Scalar::ZERO).unwrap();
+            let out = v(0., p[1].to_f64(), p[2].to_f64() - 1.)
+                .normalize()
+                .unwrap();
+            let (_, into) = tangent.derivatives(u, Scalar::ZERO).unwrap();
+            let angle = into.prod_dot(&out).neg().div(into.norm()).unwrap().to_f64();
+            assert!(angle > 0. && angle < 2. * TILT, "at {u:?}: {angle:e}");
         }
     }
 }

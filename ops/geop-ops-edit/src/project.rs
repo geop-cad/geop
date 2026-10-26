@@ -8,7 +8,9 @@ use geop_core_editor::{
     part_operation,
     part_operation::PartOperation,
 };
-use geop_core_geometry::{nurb_curve::NurbCurve3D, nurb_surface::NurbSurface3D};
+use geop_core_geometry::{
+    nurb_curve::NurbCurve3D, nurb_surface::NurbSurface3D, search::PROJECT_ITERATIONS,
+};
 use geop_core_math::{
     geop_error::{GeopError, GeopResult},
     plain,
@@ -200,9 +202,24 @@ impl ModelOperation for ProjectCurve {
     }
 }
 
-/// Points of a curve, per knot span of it, at which [`normal_sheets`] finds
-/// where the curve is nearest the face.
+/// Points of a curve, per knot span of it, at which [`normal_sheets`] first
+/// finds where the curve is nearest the face.
 const FEET_PER_KNOT_SPAN: usize = 8;
+
+/// How far a rail of [`normal_sheets`] may be from the line along the
+/// normal it stands for, as a fraction of the face's extent, before the
+/// curve's feet are found twice as densely: how hard the fit tries, not
+/// what the sheet encloses — whatever the rail misses is padded on.
+const RAIL_DRIFT: f64 = 1e-7;
+
+/// How often [`normal_sheets`] doubles the feet it fits a rail through
+/// while the rail is seen to miss by more than [`RAIL_DRIFT`].
+const MOST_DOUBLINGS: usize = 5;
+
+/// How often [`rail_miss`] halves a stretch of the curve over which the
+/// bound on what the rails miss is wider than wanted: effort, not what the
+/// bound means.
+const MOST_HALVINGS: usize = 10;
 
 /// The sheets whose crossing with `face` is the projection of `chains`
 /// onto it, each point to the point of the face's surface nearest it: per
@@ -214,15 +231,26 @@ const FEET_PER_KNOT_SPAN: usize = 8;
 /// No NURBS is the projection of a curve onto a curved surface: the rails
 /// of each face are cubics through the ends of those lines, at the curve's
 /// own parameters of the points they were found for — `FEET_PER_KNOT_SPAN`
-/// per knot span, free choices — and the projection is where the sheet
-/// crosses the face, exactly. The feet at a joint of a chain are found once,
-/// so the faces either side share the line there.
+/// per knot span at first, free choices. What a rail misses of the end of
+/// the line along the normal at every point of the curve is then bounded
+/// by [`rail_miss`], proven, and each rail padded by it, so that the sheet
+/// encloses every one of those lines and where it crosses the face
+/// encloses the projection. While a rail is seen to miss by more than
+/// [`RAIL_DRIFT`] of the face's extent halfway between the feet — a look
+/// that decides only how densely to find them — the feet are found twice
+/// as densely. The feet at
+/// a joint of a chain are found once, so the faces either side share the
+/// line there.
+///
+/// Each point goes to its nearest point at the curve's feet found first;
+/// between them, the foot followed is the one those continue into, proven
+/// to be the only one near.
 ///
 /// Named after `namer`, each face after the curve `X` it is projected from,
 /// `N(X)`, as an extrude names its walls; its rails `N(X,near)` and
 /// `N(X,far)`, the line at joint `P` `N(P)` and its ends `N(P,near)` and
 /// `N(P,far)`.
-fn normal_sheets(
+pub(crate) fn normal_sheets(
     model: &mut NamedModel,
     namer: &Namer,
     face: FaceId,
@@ -232,12 +260,15 @@ fn normal_sheets(
     let hull = face_hull(model.topology(), &[face])?;
     let (lo, hi) = plain::bounds(hull.iter().map(|p| p.to_f64_array()))
         .ok_or_else(|| GeopError::new(format!("face {face:?} has no control points")))?;
-    let reach = Scalar::from_f64(plain::diagonal(lo, hi) / 16.0);
-    // Either end of the line along the normal at the point nearest `p`.
-    let ends = |p: &Vector3| -> GeopResult<[Vector3; 2]> {
+    let extent = plain::diagonal(lo, hi);
+    let reach = Scalar::from_f64(extent / 16.0);
+    let drift = extent * RAIL_DRIFT;
+    // The point nearest `p`, where on the surface it is, and either end of
+    // the line along the normal there.
+    let ends = |p: &Vector3| -> GeopResult<((Scalar, Scalar), [Vector3; 2])> {
         let (u, v, foot) = surface.closest_point(p)?;
         let normal = surface.normal(u, v)?.prod_scalar(reach);
-        Ok([foot.add(&normal), foot.sub(&normal)])
+        Ok(((u, v), [foot.add(&normal), foot.sub(&normal)]))
     };
     let mut shells = Vec::with_capacity(chains.len());
     for chain in chains {
@@ -246,8 +277,10 @@ fn normal_sheets(
         let joints = chain.joints()?;
         let mut spec = BodySpec::new(false);
         let mut names = BodyNames::default();
+        let mut joint_feet = Vec::with_capacity(joints.len());
         for (p, name) in joints.iter().zip(&chain.joint_names) {
-            let [near, far] = ends(p)?;
+            let (at, [near, far]) = ends(p)?;
+            joint_feet.push(at);
             spec.vertices.extend([near, far]);
             names
                 .vertices
@@ -263,27 +296,64 @@ fn normal_sheets(
         for (k, (curve, name)) in chain.curves.iter().zip(&chain.curve_names).enumerate() {
             let (a, b) = (joint(k), joint(k + 1));
             let (t0, t1) = curve.domain();
-            let count = FEET_PER_KNOT_SPAN * curve.breakpoints().len().saturating_sub(1).max(1);
-            let mut rails: [Vec<Vector4>; 2] = Default::default();
-            let mut params = Vec::with_capacity(count + 1);
-            for i in 0..=count {
-                // Where along the curve is a free choice: sharp.
-                let f = Scalar::from_f64(i as f64 / count as f64);
-                let at = if i == 0 {
-                    [spec.vertices[2 * a], spec.vertices[2 * a + 1]]
-                } else if i == count {
-                    [spec.vertices[2 * b], spec.vertices[2 * b + 1]]
-                } else {
-                    ends(&curve.evaluate(Scalar::interpolate(t0, t1, f).sharpen())?)?
-                };
-                for (rail, p) in rails.iter_mut().zip(at) {
-                    rail.push(p.homogeneous(Scalar::ONE));
+            let mut count = FEET_PER_KNOT_SPAN * curve.breakpoints().len().saturating_sub(1).max(1);
+            let mut doublings = 0;
+            let (near, far) = loop {
+                let mut rails: [Vec<Vector4>; 2] = Default::default();
+                let mut params = Vec::with_capacity(count + 1);
+                let mut feet = Vec::with_capacity(count + 1);
+                for i in 0..=count {
+                    // Where along the curve is a free choice: sharp.
+                    let f = Scalar::from_f64(i as f64 / count as f64);
+                    let (foot, at) = if i == 0 {
+                        (
+                            joint_feet[a],
+                            [spec.vertices[2 * a], spec.vertices[2 * a + 1]],
+                        )
+                    } else if i == count {
+                        (
+                            joint_feet[b],
+                            [spec.vertices[2 * b], spec.vertices[2 * b + 1]],
+                        )
+                    } else {
+                        ends(&curve.evaluate(Scalar::interpolate(t0, t1, f).sharpen())?)?
+                    };
+                    for (rail, p) in rails.iter_mut().zip(at) {
+                        rail.push(p.homogeneous(Scalar::ONE));
+                    }
+                    params.push(f);
+                    feet.push(foot);
                 }
-                params.push(f);
-            }
-            let [near, far] =
-                rails.map(|rail| NurbCurve3D::interpolate_homogeneous(&rail, &params, 3));
-            let (near, far) = (near?, far?);
+                let [near, far] =
+                    rails.map(|rail| NurbCurve3D::interpolate_homogeneous(&rail, &params, 3));
+                let (mut near, mut far) = (near?, far?);
+                // A cheap look halfway between the feet says whether to
+                // find them more densely; the proof decides what to pad.
+                let mut seen = 0.0f64;
+                for (pair, &(u, v)) in params.windows(2).zip(&feet) {
+                    let f = pair[0].add(pair[1]).div(Scalar::TWO)?.sharpen();
+                    let p = curve.evaluate(Scalar::interpolate(t0, t1, f))?;
+                    let (u, v) = surface.project(p, u, v, PROJECT_ITERATIONS)?;
+                    let (foot, normal) = (surface.evaluate(u, v)?, surface.normal(u, v)?);
+                    let normal = normal.prod_scalar(reach);
+                    for (rail, end) in [(&near, foot.add(&normal)), (&far, foot.sub(&normal))] {
+                        seen = seen.max(rail.evaluate(f)?.sub(&end).norm().to_f64());
+                    }
+                }
+                if seen > drift / 4.0 && doublings < MOST_DOUBLINGS {
+                    count *= 2;
+                    doublings += 1;
+                    continue;
+                }
+                let miss = rail_miss(&surface, curve, [&near, &far], &params, &feet, reach, drift)
+                    .map_err(|e| {
+                        e.with_context(format!("projecting curve {name} along the face's normal"))
+                    })?;
+                let pad = [Scalar::from_f64(miss); 3];
+                near.widen(&pad);
+                far.widen(&pad);
+                break (near, far);
+            };
             let surface = NurbSurface3D::ruled(&near, &far)?;
             for (rail, (from, to), end) in [
                 (near, (2 * a, 2 * b), "near"),
@@ -312,6 +382,80 @@ fn normal_sheets(
         shells.extend(model.build_body(spec, names)?.shells);
     }
     Ok(shells)
+}
+
+/// How far, at most, either rail of `rails` — fitted at the fractions
+/// `params` of `curve`'s domain, where the curve's feet on `surface` are
+/// at `feet` — misses the end of the line along the surface's normal,
+/// `reach` either side of the foot, at every point of the curve: proven,
+/// in every coordinate.
+///
+/// Over a stretch `I` of fractions, a rail `r` misses the line's end `R =
+/// f ± reach n` by `e = r − R`, and by the mean value theorem `e(I) ⊆
+/// e(c) + (r'(I) − R'(I)) (I − c)` about its middle `c`: `R' = f' ±
+/// reach n'`, how the foot and the normal there move as the curve's point
+/// does (see [`NurbSurface3D::foot_moving`], over the box its feet over
+/// `I` are proven to lie in). Between each two fractions fitted at, a
+/// stretch whose bound is wider than `drift` is halved, [`MOST_HALVINGS`]
+/// times at most; the bound is what is left, however wide.
+fn rail_miss(
+    surface: &NurbSurface3D,
+    curve: &NurbCurve3D,
+    rails: [&NurbCurve3D; 2],
+    params: &[Scalar],
+    feet: &[(Scalar, Scalar)],
+    reach: Scalar,
+    drift: f64,
+) -> GeopResult<f64> {
+    let (t0, t1) = curve.domain();
+    let span = t1.sub(t0);
+    let mut worst = 0.0f64;
+    for (pair, &seed) in params.windows(2).zip(feet) {
+        let mut seed = seed;
+        let mut stack = vec![(pair[0], pair[1], 0usize)];
+        while let Some((lo, hi, depth)) = stack.pop() {
+            let stretch = lo.union(hi);
+            let middle = lo.add(hi).div(Scalar::TWO)?.sharpen();
+            let at = |f: Scalar| curve.evaluate(Scalar::interpolate(t0, t1, f));
+            let moving = curve
+                .tangent(Scalar::interpolate(t0, t1, stretch))?
+                .prod_scalar(span);
+            let over = surface.foot_moving(&at(stretch)?, &moving, seed)?;
+            let here = surface.foot_moving(&at(middle)?, &Vector3::zero(), seed)?;
+            let (Some(over), Some(here)) = (over, here) else {
+                if depth < MOST_HALVINGS {
+                    stack.push((middle, hi, depth + 1));
+                    stack.push((lo, middle, depth + 1));
+                    continue;
+                }
+                return Err(GeopError::new(format!(
+                    "no foot point on the face proven for the curve's points at {:?} of its domain",
+                    stretch
+                )));
+            };
+            seed = (here.at.0.midpoint(), here.at.1.midpoint());
+            let mut miss = 0.0f64;
+            for (rail, side) in rails.iter().zip([Scalar::ONE, Scalar::ONE.neg()]) {
+                let end = here.point.add(&here.normal.prod_scalar(reach.mul(side)));
+                let ends_move = over
+                    .velocity
+                    .add(&over.turning.prod_scalar(reach.mul(side)));
+                let off = rail.evaluate(middle)?.sub(&end);
+                let turn = rail.tangent(stretch)?.sub(&ends_move);
+                let e = off.add(&turn.prod_scalar(stretch.sub(middle)));
+                for k in 0..3 {
+                    miss = miss.max(e[k].abs().upper().to_f64());
+                }
+            }
+            if miss > drift / 2.0 && depth < MOST_HALVINGS {
+                stack.push((middle, hi, depth + 1));
+                stack.push((lo, middle, depth + 1));
+                continue;
+            }
+            worst = worst.max(miss);
+        }
+    }
+    Ok(worst)
 }
 
 /// How far along `plane`'s normal, back and forth from the plane, a sweep

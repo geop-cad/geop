@@ -74,9 +74,9 @@ Verdicts:
 | Ruled surface | `N_CreateRuledSrf` `NL_SrfCommon.cpp:846` | `patch.rs:58` `ruled` | par |
 | **Ruled surface between a curve and a point (cone to an apex)** | `N_CreateRuledSrfBetweenCrvAndPt` `NL_SrfCommon.cpp:2171` | refused (`boundary.rs`: "two edges sharing an end — the ruled face would come to a point") | **missing** |
 | Coons patch | `N_CreateCoonsSrf`, `N_CreateCoonsSrfTwist` | `patch.rs:127` `coons` | par |
-| **Coons with cross-boundary derivatives (G1 to curved neighbours)** | `N_CreateCoonsSrfCrossBoundaryDerivs` `NL_SrfAdv.cpp:22012`, `SmTangentField` | `patch.rs` `tangent_to`: exact to flat neighbours; to curved ones leaving them at `TILT` (1e-6 rad) towards their normal, collocated at the Greville abscissae and checked between, refined while it strays | par |
+| **Coons with cross-boundary derivatives (G1 to curved neighbours)** | `N_CreateCoonsSrfCrossBoundaryDerivs` `NL_SrfAdv.cpp:22012`, `SmTangentField` | `patch.rs` `tangent_to`: exact to flat neighbours; to curved ones leaving them at `TILT` (1e-6 rad) towards their normal, collocated at the Greville abscissae, and *proven* over the whole side (`strays`: mean value form of `into·n` over stretches, the face's feet enclosed by Krawczyk, `enclose_foot`), refined while it strays | better (SMLib's tangency is to an angle, unchecked between) |
 | Gordon surface | `N_CreateGordonSrf` | `gordon.rs:172` | par |
-| **N-sided G1 hole fill** | `N_FillNSidedHole` `NL_SrfAdv.cpp:18585` (k+1 patches, cross-derivative curves, central tangent plane) | `boundary.rs`: a C0 "honest patchwork" of Coons quads about a flat inner polygon; G1 across the spokes is an ignored reproducer (`five_sided_hole_filled_smoothly`: the inner corners must be flat points) | **worse** |
+| **N-sided G1 hole fill** | `N_FillNSidedHole` `NL_SrfAdv.cpp:18585` (k+1 patches, cross-derivative curves, central tangent plane) | `nurb_surface/fill.rs` `NurbSurface3D::fill(sides, neighbours)`: a quad per side about a flat inner polygon, every edge whole. G1 across the spokes *exactly* (each side's cross derivative `α V + β T` in one polynomial plane field), tangent to the polygon with flat inner corners (degree-5 spokes osculating it), tangent to the faces along the sides (exact to flat ones, `TILT` to curved, the corner twist set from how the face's normal turns, spans halved where it strays) | better (exact G1 inside; SMLib's is to an angle) |
 | Skinning (loft surface): degree, closed C1, approximation tolerance, given params/knots | `N_CreateSkinSrf` `NL_SrfAdv.cpp:7899` (flags `cld`, `deg`, `knotTol`), `...Approx`, `...ApproxTol`, `...Params`, `...Interp` | `lib/geop-lib-sweep/src/loft.rs` (`through` is a cubic Bessel spline), `skin.rs` | worse (see §2) |
 | **Skin with boundary continuity (G1 to adjacent surfaces at the first and last section)** | `N_CreateSkinSrfBoundaryContinuity` `NL_SrfAdv.cpp:13262`, `N_CreateSkinSrfBoundaryDerivs` | none | **missing** |
 | Skin along a spine | `N_CreateSkinSpine` `NL_SrfAdv.cpp:10401` | none (guides at most 3, affine) | missing |
@@ -127,7 +127,7 @@ Verdicts:
 | Capability | SMLib | geop | Verdict |
 |---|---|---|---|
 | Parallel projection of a curve onto faces | `SmBrep::CreateParallelProjectionCurves` `SmBrep.cpp:4928`, `SmSurface::CreateParallelProjectionCurves` | `ops/geop-ops-edit/src/project.rs`: sketch curves along the sketch normal only (extrude, then imprint) | worse |
-| **Normal (closest-point) projection of a 3-D curve onto faces** | `SmBrep::CreateNormalProjectionCurves` `SmBrep.cpp:5033`, `SmSurfaceDropCurve` (`DropAndTrimCurve`) | `ops/geop-ops-edit/src/project.rs` `Along::FaceNormal`: a sheet through the normal lines at the curve's nearest points (`closest_point`), imprinted; planar sketches only | worse (3-D curves) |
+| **Normal (closest-point) projection of a 3-D curve onto faces** | `SmBrep::CreateNormalProjectionCurves` `SmBrep.cpp:5033`, `SmSurfaceDropCurve` (`DropAndTrimCurve`) | `ops/geop-ops-edit/src/project.rs` `Along::FaceNormal`: a sheet through the normal lines at the curve's nearest points (`closest_point`), its rails padded by a *proven* bound on what they miss of the normal lines all along (`rail_miss`, by `foot_moving`), imprinted: the projection is an enclosure. The sheet takes any 3-D chain; the operation's argument still only a planar sketch | par (3-D sketch curves not yet pickable) |
 | Perspective and rotational projection of curves | `SmProjectedCurve` (`SM_PT_PERSPECTIVE`, `SM_PT_ROTATION`) | none (`view.rs` is parallel only) | missing (low priority) |
 | Planar section curves of a body, without a boolean | `SmBrep::CreatePlanarSectionCurves` `SmBrep.cpp:5169`, `SmSLC` | `ops/geop-ops-drawing/src/section.rs` subtracts a box (a full boolean) | worse (cost, solids only) |
 | Silhouette curves, parallel view | `SmSurfaceSilhouette`, global solver plus tracer | `ops/geop-ops-drawing/src/silhouette.rs` (exact zero set, Newton tracing) | worse at seeding (see §2) |
@@ -365,7 +365,18 @@ a circle whose walls touch inside a station edge (`sweep_a_pipe_round_a_corner_o
 
 ### Tier B: common surfacing and construction
 
-**11. Coons / loft G1 to *curved* neighbouring faces.**
+**11. Coons / loft G1 to *curved* neighbouring faces.** *Done*, and the tangency is proven, not
+sampled: over a stretch `I` of the side, `f(I) ⊆ f(c) + f'(I)(I − c)` for `f = into·n`, with `n`
+and `n'` (`normal_turning`) over the box of `(u, v)` Krawczyk proves the face's foot points lie in
+(`enclose_foot`, on the face carried past its edges). The bound's width goes as `|I|²`, so a
+millionth of a radian is shown over stretches of about `1e-4`: some thousands of stretches per
+side, a second or so. A second-order form (needing the face's third partials) would cut that by
+a few. At a corner where the side meets another in the tangent plane, `f` is zero, and the proof
+takes `f'` from the corner instead. Two things it needed first: `partials` over a box reaching
+over a knot carried one span's polynomial over the next, which encloses nothing there (it now
+unites the spans, as curves do); and the corner's twist had to take in how the face's normal
+turns along the side (`twist` in `fill.rs`), or the tilt dipped and bulged just off the corner,
+shrinking only as `h²` with the spans there. Original plan, for reference:
 - **SMLib:** `N_CreateCoonsSrfCrossBoundaryDerivs` `NL_SrfAdv.cpp:22012` and `SmTangentField`
   (`inc/SmTangentField.h`): the cross-boundary tangent along an edge is interpolated between its end
   tangents and projected into the neighbour's tangent plane at `uvcurve(t)`.
@@ -398,7 +409,14 @@ a circle whose walls touch inside a station edge (`sweep_a_pipe_round_a_corner_o
   - Surfaces: row by row with a shared decision.
 
 **13. Normal projection of 3-D curves onto faces (wrap / project curve), and parallel projection of
-any curve along a vector.**
+any curve along a vector.** *Normal, done as an enclosure:* the sheet through the normal lines at
+the curve's feet, rails fitted through them, is padded by what the rails miss of the lines' ends,
+proven over every stretch of the curve by the mean value form (the foot's and the normal's motion
+over the box Krawczyk proves the feet in, `NurbSurface3D::foot_moving`); the feet are found more
+densely while a cheap look between them sees the rails miss by more than `RAIL_DRIFT`. Left: the
+foot followed between the feet found first is the one they continue into, proven unique near, not
+proven the nearest (a jump to another branch is not looked for); picking 3-D sketch curves in the
+operation. Original plan, for reference:
 - **SMLib:** `SmBrep::CreateNormalProjectionCurves` `SmBrep.cpp:5033`, `SmSurfaceDropCurve` (tracer,
   C0 surfaces and curves), `CreateParallelProjectionCurves` `:4928` (any vector, optional distance and
   angle tolerance), `SmProjectedCurve`.
@@ -465,7 +483,15 @@ as "a cone". A flat spiral is not done.
   a step-size tunable. That is allowed: it is "how hard the search tries", not correctness. Record the
   section count in context, as `trace_one_side` does.
 
-**17. N-sided G1 hole fill.**
+**17. N-sided G1 hole fill.** *Done* (`NurbSurface3D::fill`, used by `boundary.rs`): the inner
+polygon kept, which keeps every edge of the loop whole, unlike SMLib's split at the edges'
+midpoints. What made it converge, for the next one: the corner where two quads and the polygon
+meet is a flat point (degree-5 spokes, field constant to first order), and the cross derivatives
+either side of a spoke are made in one plane field rather than each made tangent to it. Along a
+curved neighbour the tilt has to start from nothing at the corner with a slope that takes in how
+the face's normal turns (`Neighbour::turning`); collocation alone left a bump there that uniform
+refinement shrank only as `h²`, and halving only the spans that stray fixes it in a few rounds.
+Original plan, for reference:
 - **SMLib:** `N_FillNSidedHole` `NL_SrfAdv.cpp:18585`: k+1 patches meeting at a centre point `CI`
   with a tangent plane `NI` (computed or given), interpolating the boundary curves and the
   cross-derivative curves `der` to within `eps` degrees.
