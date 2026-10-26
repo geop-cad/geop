@@ -127,7 +127,7 @@ Verdicts:
 | Capability | SMLib | geop | Verdict |
 |---|---|---|---|
 | Parallel projection of a curve onto faces | `SmBrep::CreateParallelProjectionCurves` `SmBrep.cpp:4928`, `SmSurface::CreateParallelProjectionCurves` | `ops/geop-ops-edit/src/project.rs`: sketch curves along the sketch normal only (extrude, then imprint) | worse |
-| **Normal (closest-point) projection of a 3-D curve onto faces** | `SmBrep::CreateNormalProjectionCurves` `SmBrep.cpp:5033`, `SmSurfaceDropCurve` (`DropAndTrimCurve`) | `ops/geop-ops-edit/src/project.rs` `Along::FaceNormal`: a sheet through the normal lines at the curve's nearest points (`closest_point`), imprinted; planar sketches only | worse (3-D curves) |
+| **Normal (closest-point) projection of a 3-D curve onto faces** | `SmBrep::CreateNormalProjectionCurves` `SmBrep.cpp:5033`, `SmSurfaceDropCurve` (`DropAndTrimCurve`) | `ops/geop-ops-edit/src/project.rs` `Along::FaceNormal`: a sheet through the normal lines at the curve's nearest points (`closest_point`), its rails padded by a *proven* bound on what they miss of the normal lines all along (`rail_miss`, by `foot_moving`), imprinted: the projection is an enclosure. The sheet takes any 3-D chain; the operation's argument still only a planar sketch | par (3-D sketch curves not yet pickable) |
 | Perspective and rotational projection of curves | `SmProjectedCurve` (`SM_PT_PERSPECTIVE`, `SM_PT_ROTATION`) | none (`view.rs` is parallel only) | missing (low priority) |
 | Planar section curves of a body, without a boolean | `SmBrep::CreatePlanarSectionCurves` `SmBrep.cpp:5169`, `SmSLC` | `ops/geop-ops-drawing/src/section.rs` subtracts a box (a full boolean) | worse (cost, solids only) |
 | Silhouette curves, parallel view | `SmSurfaceSilhouette`, global solver plus tracer | `ops/geop-ops-drawing/src/silhouette.rs` (exact zero set, Newton tracing) | worse at seeding (see §2) |
@@ -409,7 +409,14 @@ shrinking only as `h²` with the spans there. Original plan, for reference:
   - Surfaces: row by row with a shared decision.
 
 **13. Normal projection of 3-D curves onto faces (wrap / project curve), and parallel projection of
-any curve along a vector.**
+any curve along a vector.** *Normal, done as an enclosure:* the sheet through the normal lines at
+the curve's feet, rails fitted through them, is padded by what the rails miss of the lines' ends,
+proven over every stretch of the curve by the mean value form (the foot's and the normal's motion
+over the box Krawczyk proves the feet in, `NurbSurface3D::foot_moving`); the feet are found more
+densely while a cheap look between them sees the rails miss by more than `RAIL_DRIFT`. Left: the
+foot followed between the feet found first is the one they continue into, proven unique near, not
+proven the nearest (a jump to another branch is not looked for); picking 3-D sketch curves in the
+operation. Original plan, for reference:
 - **SMLib:** `SmBrep::CreateNormalProjectionCurves` `SmBrep.cpp:5033`, `SmSurfaceDropCurve` (tracer,
   C0 surfaces and curves), `CreateParallelProjectionCurves` `:4928` (any vector, optional distance and
   angle tolerance), `SmProjectedCurve`.

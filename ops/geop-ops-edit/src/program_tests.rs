@@ -152,6 +152,147 @@ fn project_a_circle_onto_a_cylinder_along_its_normal() {
     }
 }
 
+/// The circle of [`project_a_circle_onto_a_cylinder_along_its_normal`]
+/// projected each point to its nearest: the edges cut along enclose the
+/// true projection — each point of the circle's nearest on the cylinder,
+/// on the ray to it from the axis — not merely come near it.
+#[test]
+fn a_projection_along_the_face_normal_encloses_the_true_one() {
+    use geop_core_geometry::{
+        contains::curve::curve_could_contain,
+        search::{MAX_NODES, min_subdivision_size},
+    };
+    let mut cylinder = NamedModel::new();
+    let f = Scalar::from_f64;
+    revolved_cylinder(&mut cylinder, "c", v3(-2.0, 0.0, 0.0), f(1.0), f(2.0)).unwrap();
+    let facing = v3(-2.0 + 0.894, 0.447, 1.0);
+    let side = (cylinder.topology().faces.iter())
+        .find(|(_, face)| {
+            let (_, _, p) = face.surface.closest_point(&facing).unwrap();
+            p.sub(&facing).norm().to_f64() < 1e-3
+        })
+        .map(|(&id, _)| cylinder.name_of(id).unwrap().to_string())
+        .expect("a face facing the circle");
+    let mut part = given_part(&cylinder).unwrap();
+    let mut mark = Sketch::new();
+    let c = mark.add_point(n(1.0), n(1.0));
+    mark.add_circle(c, n(0.2));
+    let on_yz = AddSketchArgs::on(on_origin(FrameAxis::X), mark);
+    run_step::<AddSketch>(&mut part, "mark", &on_yz).unwrap();
+    let project = ProjectCurveArgs {
+        sketch: whole_sketch("mark"),
+        face: ElementReference::new(model(), side),
+        along: Along::FaceNormal,
+    };
+    run_step::<ProjectCurve>(&mut part, "p", &project).unwrap();
+    let part = model_of(&part);
+    let model = part.topology();
+    let cuts: Vec<_> = (model.edges.iter())
+        .filter(|(id, _)| part.name_of(**id).unwrap().starts_with("project(p"))
+        .map(|(_, e)| &e.curve)
+        .collect();
+    assert!(!cuts.is_empty());
+    for i in 0..48 {
+        let a = std::f64::consts::TAU * (i as f64 + 0.5) / 48.0;
+        let (y, z) = (1.0 + 0.2 * a.cos(), 1.0 + 0.2 * a.sin());
+        // The circle's point `(0, y, z)`, seen from the axis.
+        let r = (4.0 + y * y).sqrt();
+        let foot = v3(-2.0 + 2.0 / r, y / r, z);
+        let on = cuts.iter().any(|curve| {
+            curve_could_contain(*curve, &foot, MAX_NODES, min_subdivision_size())
+                .unwrap()
+                .is_some()
+        });
+        assert!(
+            on,
+            "the true projection's point {foot:?} is on no edge cut along"
+        );
+    }
+}
+
+/// The sheet a circle is projected onto a cylinder along the face's normal
+/// with: its rails enclose the ends of the line along the normal at the
+/// foot of every point of the circle, not only at the feet they were fitted
+/// through — what makes where the sheet crosses the face enclose the
+/// projection.
+#[test]
+fn normal_sheets_enclose_the_lines_along_the_normal() {
+    use geop_core_geometry::{
+        contains::curve::curve_could_contain,
+        nurb_curve::{NurbCurve3D, sqrt2_over_2},
+        search::{MAX_NODES, min_subdivision_size},
+    };
+    use geop_ops_model::{Chain, Namer};
+    let mut cylinder = NamedModel::new();
+    let f = Scalar::from_f64;
+    revolved_cylinder(&mut cylinder, "c", v3(-2.0, 0.0, 0.0), f(1.0), f(2.0)).unwrap();
+    let facing = v3(-2.0 + 0.894, 0.447, 1.0);
+    let side = (cylinder.topology().faces.iter())
+        .find(|(_, face)| {
+            let (_, _, p) = face.surface.closest_point(&facing).unwrap();
+            p.sub(&facing).norm().to_f64() < 1e-3
+        })
+        .map(|(&id, _)| id)
+        .expect("a face facing the circle");
+    // The circle round `(0, 1, 1)` of radius `0.2` in the plane `x = 0`,
+    // in four quarters.
+    let centre = v3(0.0, 1.0, 1.0);
+    let at = |k: usize| {
+        let a = std::f64::consts::FRAC_PI_2 * k as f64;
+        v3(0.0, 1.0 + 0.2 * a.cos(), 1.0 + 0.2 * a.sin())
+    };
+    let quarters: Vec<NurbCurve3D> = (0..4)
+        .map(|k| {
+            let (p, q) = (at(k), at(k + 1));
+            NurbCurve3D::arc(p, p.add(&q).sub(&centre), q, sqrt2_over_2()).unwrap()
+        })
+        .collect();
+    let chain = Chain {
+        name: "circle".into(),
+        curves: quarters.clone(),
+        curve_names: (0..4).map(|k| format!("c{k}")).collect(),
+        joint_names: (0..4).map(|k| format!("p{k}")).collect(),
+    };
+    let namer = Namer::new("project", "p").unwrap();
+    crate::project::normal_sheets(&mut cylinder, &namer, side, &[chain]).unwrap();
+    let model = cylinder.topology();
+    let rail = |curve: usize, end: &str| {
+        let name = format!("project(p,c{curve},{end})");
+        let id = cylinder.edge_id(&name).unwrap();
+        model.get_edge(id).unwrap().curve.clone()
+    };
+    let reach = {
+        let hull = geop_ops_model::face_hull(model, &[side]).unwrap();
+        let (lo, hi) =
+            geop_core_math::plain::bounds(hull.iter().map(|p| p.to_f64_array())).unwrap();
+        geop_core_math::plain::diagonal(lo, hi) / 16.0
+    };
+    for (k, quarter) in quarters.iter().enumerate() {
+        let (near, far) = (rail(k, "near"), rail(k, "far"));
+        for i in 0..=40 {
+            let p = quarter
+                .evaluate(Scalar::from_ratio(i, 40).unwrap())
+                .unwrap();
+            let [_, y, z] = p.to_f64_array();
+            // Its nearest point on the cylinder, seen from the axis, and
+            // the ends of the line along the normal there.
+            let r = (4.0 + y * y).sqrt();
+            let (ox, oy) = (2.0 / r, y / r);
+            let end = |s: f64| v3(-2.0 + ox * (1.0 + s * reach), oy * (1.0 + s * reach), z);
+            let on = |curve: &NurbCurve3D, q: &geop_core_math::vector::Vector3| {
+                curve_could_contain(curve, q, MAX_NODES, min_subdivision_size())
+                    .unwrap()
+                    .is_some()
+            };
+            let (out, inward) = (end(1.0), end(-1.0));
+            assert!(
+                (on(&near, &out) && on(&far, &inward)) || (on(&near, &inward) && on(&far, &out)),
+                "quarter {k} at {i}/40: the rails miss {out:?} and {inward:?}"
+            );
+        }
+    }
+}
+
 // ── Direct edits ────────────────────────────────────────────────────────────
 
 mod direct {

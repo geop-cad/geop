@@ -15,6 +15,18 @@ use crate::{contains::surface::surface_could_contain, search::PROJECT_ITERATIONS
 /// up: how hard it tries, not what a box it proves means.
 const TRIES: usize = 6;
 
+/// The foot point of a moving point (see [`NurbSurface::foot_moving`]):
+/// its `(u, v)`, the point, its velocity, the surface's unit normal there
+/// and how fast that turns — each over the box the foot was proven in.
+#[derive(Clone, Debug)]
+pub struct MovingFoot {
+    pub at: (Scalar, Scalar),
+    pub point: Vector3,
+    pub velocity: Vector3,
+    pub normal: Vector3,
+    pub turning: Vector3,
+}
+
 impl NurbSurface<4> {
     /// Fixed-iteration-count Newton foot-point projection of `target` onto
     /// this surface, starting from `(u0, v0)`.
@@ -228,6 +240,48 @@ impl NurbSurface<4> {
             PROJECT_ITERATIONS,
         )?;
         self.krawczyk_foot((u, v), &at)
+    }
+
+    /// The foot point of a point moving through the box `target` at
+    /// `velocity`, near `near`, proven as [`Self::enclose_foot`] proves it,
+    /// and how it moves: `None` where that cannot be shown.
+    ///
+    /// The foot keeps the gradient `g` of half the squared distance zero,
+    /// so `H (u', v') = (Su·P', Sv·P')` for the Hessian `H` of that
+    /// distance: the foot moves at `Su u' + Sv v'`, and the normal there
+    /// turns as [`Self::normal_turning`] says for that motion. Over the box
+    /// of feet, every one an enclosure over the whole box of targets.
+    pub fn foot_moving(
+        &self,
+        target: &Vector3,
+        velocity: &Vector3,
+        near: (Scalar, Scalar),
+    ) -> GeopResult<Option<MovingFoot>> {
+        let Some((u, v)) = self.enclose_foot(target, near)? else {
+            return Ok(None);
+        };
+        let s = self.partials(u, v, 2)?;
+        let r = s[0][0].sub(target);
+        let (su, sv) = (s[1][0], s[0][1]);
+        let hessian = (
+            su.prod_dot(&su).add(s[2][0].prod_dot(&r)),
+            su.prod_dot(&sv).add(s[1][1].prod_dot(&r)),
+            sv.prod_dot(&sv).add(s[0][2].prod_dot(&r)),
+        );
+        let Ok((du, dv)) =
+            solve_symmetric2(hessian, (su.prod_dot(velocity), sv.prod_dot(velocity)))
+        else {
+            return Ok(None);
+        };
+        let moving = su.prod_scalar(du).add(&sv.prod_scalar(dv));
+        let (normal, turning) = self.normal_turning(u, v, &moving)?;
+        Ok(Some(MovingFoot {
+            at: (u, v),
+            point: s[0][0],
+            velocity: moving,
+            normal,
+            turning,
+        }))
     }
 
     /// [`Self::enclose_foot`]'s operator, about `near`, the gradient and its

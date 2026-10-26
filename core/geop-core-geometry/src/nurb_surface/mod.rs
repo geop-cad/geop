@@ -16,6 +16,7 @@ mod offset_fit;
 mod patch;
 pub use patch::{Neighbour, TILT};
 mod project;
+pub use project::MovingFoot;
 mod reverse;
 mod revolve;
 mod sphere;
