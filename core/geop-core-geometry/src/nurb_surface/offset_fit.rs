@@ -514,7 +514,7 @@ mod tests {
     fn a_free_form_bump_is_offset_both_ways() {
         let surface = bump(0.1);
         for d in [0.05, -0.05] {
-            let offset = surface.offset(Scalar::from_f64(d)).unwrap();
+            let offset = surface.offset(Scalar::from_f64(d)).unwrap().unwrap();
             assert_encloses(&surface, &offset, d, 5e-5);
         }
     }
@@ -526,7 +526,7 @@ mod tests {
     fn a_steep_free_form_bump_is_offset_both_ways() {
         let surface = bump(0.5);
         for d in [0.1, -0.1] {
-            let offset = surface.offset(Scalar::from_f64(d)).unwrap();
+            let offset = surface.offset(Scalar::from_f64(d)).unwrap().unwrap();
             assert_encloses(&surface, &offset, d, 5e-5);
         }
     }
