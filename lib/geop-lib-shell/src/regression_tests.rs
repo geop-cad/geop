@@ -497,3 +497,56 @@ fn a_free_form_sheet_thickened() {
         .unwrap_or_else(|e| panic!("{e:?}"));
     assert_valid_sheets(&part);
 }
+
+/// A 2 x 2 x 1 block with a notch cut from a bottom corner, 1 x 0.5 x 0.5,
+/// opened at the notch's ceiling and shelled 0.1 thick. The ceiling meets
+/// the notch's two walls at inward corners: their walls, 0.1 thick, stand
+/// past it, on the ceiling's plane. What is left there is the ceiling less
+/// the opening — an L along the block's sides — and, past the ceiling's
+/// edges, the walls' ends — an L facing the other way, into the hollow. The
+/// hollow is the block shrunk by 0.1 less the notch grown by 0.1 along its
+/// walls, so the walls hold 3.75 − (1.8 · 1.8 · 0.8 − 1 · 0.5 · 0.4).
+#[test]
+#[ignore = "inward-corner openings are not supported: `inward_corner` refuses (face \
+cube(n,start) taken away where it meets face cube(n,c0) at an inward corner). The fix: the \
+removed face F's inner copy F' reaches past F under the kept walls, so F's surface keeps \
+F minus F' (the rim, facing as F) and F' minus F (the walls' ends, facing the other way). \
+Needs crossings of F's result edges with its copy's (curve_curve_intersect, refined), those \
+edges split in every face of the result, the pieces classified by pcurves_contain at their \
+pcurve's middle, and both loop sets built on F's surface. Not started in code."]
+fn a_notch_opened_at_its_ceiling() {
+    let mut part = NamedModel::new();
+    let body = geop_lib_sweep::shapes::block(&mut part, "b", [0., 0., 0.], [2., 2., 1.]);
+    let notch = geop_lib_sweep::shapes::block(&mut part, "n", [-0.5, 1.5, -0.5], [1., 2.5, 0.5]);
+    let namer = Namer::new("notched", "n").unwrap();
+    let solid = boolean(
+        &mut part,
+        &namer,
+        body,
+        notch,
+        BooleanOp::Difference,
+        RemeshParams::default(),
+    )
+    .unwrap()
+    .expect("a notched block");
+    assert_valid(&part);
+    let ceiling: Vec<FaceId> = faces_at_height(&part, solid, 0.5);
+    assert_eq!(ceiling.len(), 1, "{ceiling:?}");
+    let namer = Namer::new("shell", "s").unwrap();
+    let shelled = shell(
+        &mut part,
+        &namer,
+        solid,
+        &ceiling,
+        Scalar::from_f64(0.1),
+        &[],
+    )
+    .unwrap_or_else(|e| panic!("{e:?}"));
+    assert_valid(&part);
+    let volume = part.topology().mass_properties(shelled).unwrap().volume;
+    let walls = 3.75 - (1.8 * 1.8 * 0.8 - 1.0 * 0.5 * 0.4);
+    assert!(
+        volume.could_be_equal(Scalar::from_f64(walls)),
+        "{volume:?} vs {walls}"
+    );
+}
