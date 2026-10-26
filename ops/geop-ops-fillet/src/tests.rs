@@ -341,6 +341,40 @@ fn pocketed_block_fillet_every_edge_is_refused() {
     assert!(why.contains("bend the same way"), "{why}");
 }
 
+/// The three edges at a corner of the pocket's rim rounded: the rim's two,
+/// convex, cut away; the upright one, concave, filled in. No ball touches
+/// the three faces there on one side of them all, so the corner would be
+/// bevelled: each tool ending on its own — the rim's mitred with each
+/// other, the fill flush with the top — and the cuts meeting the fill
+/// where the boolean finds them.
+///
+/// Tried by planning no corner there: it builds, but the fill's cap, flush
+/// with the top, is left a face of its own beside the top
+/// (`[0.4, 0.6]^2` at `z = 1`), and validation cannot decide whether the
+/// rim's contact edge `ta`, lying in the cap's plane along its side,
+/// crosses it (`curve_curve_crossings` exhausted). Needs the union to merge
+/// a fill's flush cap into the face it is flush with, or a corner patch
+/// (a G1 three-sided patch between the three blends' end sections).
+#[test]
+#[ignore = "missing: a corner of mixed convexity (pocket rim + upright edge); bevelled by planning no corner, the fill's flush cap stays a face of its own and validation exhausts on the rim's contact edge in its plane"]
+fn pocket_rim_corner_with_its_upright_edge_rounded() {
+    let model = pocketed();
+    let corner = v3(0.5, 0.5, 1.0);
+    let edges = edges_where(&model, |e| {
+        let at = |v| model.topology().get_vertex(v).unwrap().point;
+        at(e.start_vertex).could_be_equal(&corner) || at(e.end_vertex).could_be_equal(&corner)
+    });
+    assert_eq!(edges.len(), 3, "{edges:?}");
+    let model = blended(model, &edges, BlendShape::round(0.1));
+    let at = |p: [f64; 3]| geop_ops_model::testing::classify(&model, "fillet(F)", p);
+    use geop_core_topology::contains::shell::PointClassification as P;
+    // The upright edge filled in, below the rim's rounds.
+    assert_eq!(at([0.51, 0.51, 0.75]), P::Inside);
+    // The rim rounded, along both edges.
+    assert_eq!(at([0.49, 0.9, 0.99]), P::Outside);
+    assert_eq!(at([0.9, 0.49, 0.99]), P::Outside);
+}
+
 /// Every edge of the pocketed block but the pocket's upright ones rounded:
 /// the block's corners by a ball's piece, the pocket's rim by mitred
 /// fillets, its floor by fillets filling in up to the walls.
