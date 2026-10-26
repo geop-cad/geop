@@ -64,6 +64,7 @@ use geop_core_math::{
 use geop_core_topology::{
     Sense,
     build::{BodySpec, CoedgeOn, CoedgeSpec, EdgeSpec, FaceSpec},
+    contains::face::{PointClassification, pcurves_contain},
 };
 
 use super::{
@@ -1981,38 +1982,33 @@ impl Builder<'_> {
                         .map_err(&ctx)?,
                 );
             }
-            // The outer loop runs counter-clockwise in the patch.
-            let outer = match face.outer {
-                Some(k) => k,
-                None => {
-                    // The signed area each loop encloses in the patch:
-                    // positive counter-clockwise.
-                    let areas: Vec<Scalar> = loops
-                        .iter()
-                        .map(|lp| loop_signed_area(lp.iter().map(|(_, pcurve)| pcurve)))
-                        .collect::<GeopResult<_>>()
-                        .map_err(&ctx)?;
-                    let ccw: Vec<usize> = (0..areas.len())
-                        .filter(|&k| areas[k].definitely_greater(Scalar::ZERO))
-                        .collect();
-                    match ccw.as_slice() {
-                        [k] => *k,
-                        _ => {
-                            return Err(ctx(GeopError::new(format!(
-                                "its loops do not bound one region: {} of {} run counter-clockwise about its normal (signed areas {areas:?}; its outward normal the surface's natural one: {natural}; built over the angles and profile parameters {:?})",
-                                ccw.len(),
-                                areas.len(),
-                                patch.extent
-                            ))));
-                        }
-                    }
+            // The outer loop runs counter-clockwise in the patch, a hole
+            // clockwise. A face of several outer loops — as some systems
+            // write a face their own kernel splits later — is a face for
+            // each, its holes in the one around them.
+            let pieces = match face.outer {
+                Some(k) => {
+                    let outer = loops.remove(k);
+                    vec![(outer, loops)]
                 }
+                None => split_by_outer_loops(&surface, loops).map_err(|e| {
+                    ctx(e.with_context(format!(
+                        "its outward normal the surface's natural one: {natural}; built over the angles and profile parameters {:?}",
+                        patch.extent
+                    )))
+                })?,
             };
-            let outer_loop = loops.remove(outer);
-            face_shells[face.shell].push(face_specs.len());
-            face_specs.push((surface, outer_loop, loops));
-            extents.push(patch.extent);
-            face_names.push(face.name.clone());
+            let several = pieces.len() > 1;
+            for (k, (outer_loop, holes)) in pieces.into_iter().enumerate() {
+                face_shells[face.shell].push(face_specs.len());
+                face_specs.push((surface.clone(), outer_loop, holes));
+                extents.push(patch.extent.clone());
+                let mut name = face.name.clone();
+                if several {
+                    name.push(format!("o{k}"));
+                }
+                face_names.push(name);
+            }
         }
 
         // Every place the file says each edge is, united: its curve, and
@@ -3237,6 +3233,75 @@ fn heal(
         uncertainty: scope.uncertainty,
     };
     Ok((rebuild, healing))
+}
+
+/// Seed of the ray casting that tells which outer loop a hole lies in: any
+/// gives the same answer (see `pcurves_contain`).
+const SEED: u64 = 0x57E9_0000_0000_0001;
+
+/// The loops `loops` of a face on `surface`, each a list of its coedges'
+/// edges and pcurves, as faces: each loop running counter-clockwise in the
+/// patch an outer one, each running clockwise a hole of the smallest outer
+/// loop around it — asked of a point of its first pcurve by ray casting.
+/// Refused where a loop runs neither way, or a hole lies in none.
+fn split_by_outer_loops<T: Clone>(
+    surface: &NurbSurface3D,
+    loops: Vec<Vec<(T, NurbCurve2D)>>,
+) -> GeopResult<Vec<(Vec<(T, NurbCurve2D)>, Vec<Vec<(T, NurbCurve2D)>>)>> {
+    let areas: Vec<Scalar> = (loops.iter())
+        .map(|lp| loop_signed_area(lp.iter().map(|(_, pcurve)| pcurve)))
+        .collect::<GeopResult<_>>()?;
+    if let Some(k) = areas
+        .iter()
+        .position(|a| !a.definitely_greater(Scalar::ZERO) && !a.definitely_less(Scalar::ZERO))
+    {
+        return Err(GeopError::new(format!(
+            "its loop {k} runs neither way round about its normal (signed areas {areas:?})"
+        )));
+    }
+    let mut outers = Vec::new();
+    let mut holes = Vec::new();
+    for (lp, area) in loops.into_iter().zip(&areas) {
+        if area.definitely_greater(Scalar::ZERO) {
+            outers.push((lp, Vec::new(), *area));
+        } else {
+            holes.push(lp);
+        }
+    }
+    if outers.is_empty() {
+        return Err(GeopError::new(format!(
+            "none of its loops runs counter-clockwise about its normal: it has no outer loop (signed areas {areas:?})"
+        )));
+    }
+    for hole in holes {
+        let first = &hole[0].1;
+        let point = first.evaluate(first.mid_parameter()?)?;
+        let mut owner: Option<usize> = None;
+        for (i, (outer, _, area)) in outers.iter().enumerate() {
+            let pcurves: Vec<&NurbCurve2D> = outer.iter().map(|(_, pcurve)| pcurve).collect();
+            let inside = pcurves_contain(
+                surface,
+                &pcurves,
+                point,
+                MAX_NODES,
+                Scalar::from_f64(MIN_SUBDIVISION_SIZE),
+                SEED,
+            )? == PointClassification::Inside;
+            if inside && owner.is_none_or(|o| area.definitely_less(outers[o].2)) {
+                owner = Some(i);
+            }
+        }
+        let owner = owner.ok_or_else(|| {
+            GeopError::new(format!(
+                "a hole of it lies in none of its outer loops (signed areas {areas:?})"
+            ))
+        })?;
+        outers[owner].1.push(hole);
+    }
+    Ok(outers
+        .into_iter()
+        .map(|(outer, holes, _)| (outer, holes))
+        .collect())
 }
 
 /// The most faces at one vertex or edge among which [`heal`] chooses which to
