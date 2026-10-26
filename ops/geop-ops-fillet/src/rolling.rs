@@ -414,7 +414,10 @@ fn roll(
     let (n0, n1) = (normal(0, seeds[0])?, normal(1, seeds[1])?);
     // Exact for two planes through `p`: `r` from both.
     let spread = Scalar::ONE.add(n0.prod_dot(&n1));
-    let center = p.add(&n0.add(&n1).prod_scalar(sr.div(spread)?)).sharpen();
+    let ctx = with_context!(
+        "the faces' normals at the seeds {seeds:?}, {n0:?} and {n1:?}, could be opposite"
+    );
+    let center = (p.add(&n0.add(&n1).prod_scalar(sr.div(spread).with_context(ctx)?))).sharpen();
     let mut offsets = [0, 1].map(|k| Offset::new(surfaces[k], seeds[k], sr));
     let center = meet(center, &mut offsets, &[(*tangent, *p)])?.sharpen();
     Ok((center, offsets.map(|o| o.pieces[0].1)))

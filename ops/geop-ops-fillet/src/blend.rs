@@ -226,7 +226,9 @@ pub(crate) fn bend(bend: Scalar) -> GeopResult<Bend> {
 /// it a plane square to the edge.
 /// Anything else, and a tool along the edge would cut or fill what it
 /// should not: it is said `unless`, for a rolled tool to run on through the
-/// face and be cut off by it. The end, and that third face.
+/// face and be cut off by it. The end, and that third face. Where more
+/// faces meet, only a cut leaving the solid through all of them runs out
+/// past them; anything else is refused.
 ///
 /// Where `faces` meet tangentially at the vertex, the blend vanishes there
 /// ([`End::Vanish`]), whatever else meets there: it has no third face.
@@ -285,8 +287,38 @@ pub(crate) fn tool_end(
             "the edge ends at vertex {vertex}, where {why}: a blend ends only at a corner of exactly three faces — or a plane in two flush faces — run out through the third face where the edge leaves the solid through it, flush with it where it runs into it, and filled up to it only where it is a plane square to the edge"
         )))
     };
+    // Out of the solid through every other face there — a pyramid's apex
+    // — a cut runs on past them into the air, however many: what it cuts
+    // there cuts nothing. Measured against the face it leaves least
+    // squarely, which it runs out the farthest past.
+    if others.len() > 1 && bend == Bend::Convex {
+        let at = model.get_vertex(vertex)?.point;
+        let mut least: Option<(f64, FaceId)> = None;
+        for &face in &others {
+            let normal =
+                model
+                    .get_face(face)?
+                    .surface
+                    .normal_at(&at, MAX_NODES, min_subdivision_size())?;
+            let squareness = leaving.prod_dot(&normal);
+            if !squareness.definitely_greater(Scalar::ZERO) {
+                least = None;
+                break;
+            }
+            let lower = squareness.lower().to_f64();
+            if least.is_none_or(|(l, _)| lower < l) {
+                least = Some((lower, face));
+            }
+        }
+        if let Some((_, face)) = least {
+            return Ok((End::RunOut, Some(face)));
+        }
+    }
     let [other] = others.as_slice() else {
-        return unsupported(&format!("{} more faces meet", others.len()));
+        return unsupported(&format!(
+            "{} more faces meet, and the edge does not leave the solid through every one of them, a cut",
+            others.len()
+        ));
     };
     let plane = model.get_face(*other)?.surface.as_plane()?;
     let normal = match &plane {

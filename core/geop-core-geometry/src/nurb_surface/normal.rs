@@ -217,7 +217,7 @@ impl NurbSurface<4> {
     /// `u` (`u_fixed`) or `v` domain collapses to, and the row next to it.
     /// `None` if that row is no pole. Every point of the row encloses the
     /// pole, so the pole is what they share: no wider than the narrowest.
-    fn pole(&self, u_fixed: bool, first: bool) -> Option<(Vector3, Vec<Vector<4>>)> {
+    pub(crate) fn pole(&self, u_fixed: bool, first: bool) -> Option<(Vector3, Vec<Vector<4>>)> {
         let [edge, next] = self.boundary_rows(u_fixed, first)?;
         let edge = dehomogenize::<4, 3>(&edge);
         let shared = edge.iter().fold(edge[0], |shared, p| {
@@ -229,7 +229,7 @@ impl NurbSurface<4> {
     }
 
     /// The boundary rows `(u, v)` touches, as `(u_fixed, first)`.
-    fn rows_touching(&self, u: Scalar, v: Scalar) -> Vec<(bool, bool)> {
+    pub(crate) fn rows_touching(&self, u: Scalar, v: Scalar) -> Vec<(bool, bool)> {
         let ((u0, u1), (v0, v1)) = (self.domain_u(), self.domain_v());
         [
             (false, v, v0, true),
