@@ -49,6 +49,8 @@ pub fn enclosure() -> Program {
             solid: solid("extrude(box)"),
             faces: vec![ElementReference::new(model(), "extrude(box,end)")],
             thickness: 0.2.into(),
+            other_faces: Vec::new(),
+            other_thickness: 0.2.into(),
         },
     );
     program

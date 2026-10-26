@@ -29,7 +29,15 @@ fn shelled(
         .map(|name| part.face_id(name).unwrap())
         .collect();
     let namer = Namer::new("shell", "s").unwrap();
-    let solid = shell(&mut part, &namer, solid, &open, Scalar::from_f64(thickness)).unwrap();
+    let solid = shell(
+        &mut part,
+        &namer,
+        solid,
+        &open,
+        Scalar::from_f64(thickness),
+        &[],
+    )
+    .unwrap();
     (part, solid)
 }
 
@@ -195,7 +203,7 @@ fn a_closed_revolved_cylinder() {
 fn walls_too_thick_are_refused() {
     let (mut part, solid) = unit_box();
     let namer = Namer::new("shell", "s").unwrap();
-    let error = shell(&mut part, &namer, solid, &[], Scalar::from_f64(0.6)).unwrap_err();
+    let error = shell(&mut part, &namer, solid, &[], Scalar::from_f64(0.6), &[]).unwrap_err();
     // An inner edge turns around, or shrinks to nothing.
     let message = error.root_message();
     assert!(
@@ -238,6 +246,33 @@ fn a_sphere_does_not_open_along_a_smooth_seam() {
         .map(|k| part.face_id(&format!("sphere(s,north,q{k})")).unwrap())
         .collect();
     let namer = Namer::new("shell", "s").unwrap();
-    let error = shell(&mut part, &namer, solid, &north, Scalar::from_f64(0.1)).unwrap_err();
+    let error = shell(&mut part, &namer, solid, &north, Scalar::from_f64(0.1), &[]).unwrap_err();
     assert!(error.root_message().contains("tangent"), "{error:?}");
+}
+
+/// A box opened at its top, its floor twice as thick as its sides: each
+/// face's wall its own thickness, the inner floor half up, the inner sides
+/// a quarter in. Faces of different thicknesses still meet where their
+/// offsets do.
+#[test]
+fn a_box_with_a_thicker_floor() {
+    let (mut part, solid) = unit_box();
+    let (top, floor) = ("cube(b,start)", "cube(b,end)");
+    let open = [part.face_id(top).unwrap()];
+    let thicker = [(part.face_id(floor).unwrap(), Scalar::from_f64(0.5))];
+    let namer = Namer::new("shell", "s").unwrap();
+    let solid = shell(
+        &mut part,
+        &namer,
+        solid,
+        &open,
+        Scalar::from_f64(0.25),
+        &thicker,
+    )
+    .unwrap();
+    assert_valid(&part);
+    assert_eq!(faces(&part, solid), 11);
+    let corners = corners(&part);
+    assert!(corners.contains(&[250, 250, 500]), "{corners:?}");
+    assert!(corners.contains(&[1750, 1750, 1000]), "{corners:?}");
 }

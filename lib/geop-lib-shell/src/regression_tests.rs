@@ -114,7 +114,7 @@ fn outer_side(part: &NamedModel, solid: SolidId, x: f64) -> Vec<FaceId> {
 /// `part`'s `solid` shelled 0.1 thick, open at `open`, which must be valid.
 fn shelled_valid(mut part: NamedModel, solid: SolidId, open: &[FaceId]) -> (NamedModel, SolidId) {
     let namer = Namer::new("shell", "s").unwrap();
-    let solid = shell(&mut part, &namer, solid, open, Scalar::from_f64(0.1))
+    let solid = shell(&mut part, &namer, solid, open, Scalar::from_f64(0.1), &[])
         .unwrap_or_else(|e| panic!("{e:?}"));
     assert_valid(&part);
     (part, solid)
@@ -184,7 +184,7 @@ fn hole_wall_moved_onto_the_axis_of_a_revolved_cap_is_refused() {
             Vec::new()
         };
         let namer = Namer::new("shell", "s").unwrap();
-        let error = shell(&mut part, &namer, solid, &open, Scalar::from_f64(0.1)).unwrap_err();
+        let error = shell(&mut part, &namer, solid, &open, Scalar::from_f64(0.1), &[]).unwrap_err();
         let message = error.root_message();
         assert!(
             (message.contains("turns around") || message.contains("shrinks"))
@@ -278,7 +278,7 @@ fn a_can_with_a_sunk_lid_and_a_cone_pushed_into_its_base() {
         [0., 0.3],
     ]);
     let namer = Namer::new("shell", "s").unwrap();
-    shell(&mut part, &namer, solid, &[], Scalar::from_f64(0.02)).unwrap();
+    shell(&mut part, &namer, solid, &[], Scalar::from_f64(0.02), &[]).unwrap();
     assert_valid(&part);
     // The inner apex is the offset cone's: `0.02 √(1 + 0.3²)` above the
     // outer one.
@@ -291,7 +291,7 @@ fn a_can_with_a_sunk_lid_and_a_cone_pushed_into_its_base() {
 fn a_cone_closed_all_round() {
     let (mut part, solid) = revolved(&[[0., 2.], [1., 0.], [0., 0.]]);
     let namer = Namer::new("shell", "s").unwrap();
-    shell(&mut part, &namer, solid, &[], Scalar::from_f64(0.1)).unwrap();
+    shell(&mut part, &namer, solid, &[], Scalar::from_f64(0.1), &[]).unwrap();
     assert_valid(&part);
     assert!(has_vertex_at(&part, [0., 0., 2. - 0.1 * 5f64.sqrt()]));
 }
@@ -427,7 +427,7 @@ fn walls_running_into_each_other_are_refused() {
     .expect("a drilled block");
     assert_valid(&part);
     let namer = Namer::new("shell", "s").unwrap();
-    let error = shell(&mut part, &namer, solid, &[], Scalar::from_f64(0.2)).unwrap_err();
+    let error = shell(&mut part, &namer, solid, &[], Scalar::from_f64(0.2), &[]).unwrap_err();
     let message = error.root_message();
     // Refused where the rebuild finds a wall's sides crossing, or after it
     // where an edge of the result crosses a face.

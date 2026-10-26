@@ -79,6 +79,8 @@ fn shell_of_a_box_with_rounded_vertical_edges() {
             solid: solid("fillet(round)"),
             faces: vec![ElementReference::new(model(), top)],
             thickness: 5.0.into(),
+            other_faces: Vec::new(),
+            other_thickness: 0.2.into(),
         },
     );
     let part = program.build_model(registry).unwrap();

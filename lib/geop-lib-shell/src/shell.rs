@@ -1,5 +1,5 @@
-//! [`shell`]: a solid hollowed out to walls of one thickness, open where
-//! faces are taken away.
+//! [`shell`]: a solid hollowed out to walls of one thickness — or of one
+//! per face — open where faces are taken away.
 //!
 //! The hollow is built directly, not cut out by a boolean: the walls'
 //! inner side is the solid's own boundary moved inward, face for face, so
@@ -92,9 +92,10 @@ use crate::rebuild::{along, rebuilt, room, smooth_along};
 /// reproducible.
 const SEED: u64 = 0x5E11_0000_0000_0001;
 
-/// Hollows the solid `solid` of `part` out to walls `thickness` thick,
-/// open where its faces `open` were — see the module docs — and returns
-/// the hollowed solid, which replaces it and is named `namer`'s root.
+/// Hollows the solid `solid` of `part` out to walls `thickness` thick —
+/// those of the faces in `thicker` as thick as it says instead — open where
+/// its faces `open` were — see the module docs — and returns the hollowed
+/// solid, which replaces it and is named `namer`'s root.
 ///
 /// What stays of the solid keeps its names. What is new is named after
 /// what it was made from, with `Scalar` the operation:
@@ -110,16 +111,19 @@ pub fn shell(
     solid: SolidId,
     open: &[FaceId],
     thickness: Scalar,
+    thicker: &[(FaceId, Scalar)],
 ) -> GeopResult<SolidId> {
     let ctx = with_context!(
-        "shell({}, {solid}, open={open:?}, {thickness:?})",
+        "shell({}, {solid}, open={open:?}, {thickness:?}, thicker={thicker:?})",
         namer.root()
     );
-    if !thickness.definitely_greater(Scalar::ZERO) {
-        return Err(GeopError::new(format!(
-            "a shell's walls need a thickness greater than zero, not {thickness:?}"
-        )))
-        .with_context(ctx);
+    for t in std::iter::once(&thickness).chain(thicker.iter().map(|(_, t)| t)) {
+        if !t.definitely_greater(Scalar::ZERO) {
+            return Err(GeopError::new(format!(
+                "a shell's walls need a thickness greater than zero, not {t:?}"
+            )))
+            .with_context(ctx);
+        }
     }
     let model = part.topology();
     if model.get_solid(solid).with_context(ctx)?.shells.len() != 1 {
@@ -146,7 +150,22 @@ pub fn shell(
         .with_context(ctx);
     }
 
-    let hollow = Hollow::new(&spec, &names, removed, thickness).with_context(ctx)?;
+    if let Some((f, _)) = thicker.iter().find(|(f, _)| !faces.contains(f)) {
+        return Err(GeopError::new(format!(
+            "face {f} is not a face of the solid being shelled"
+        )))
+        .with_context(ctx);
+    }
+    // Per face, how thick its wall is: a face of one thickness and its
+    // neighbour of another still meet where their offsets do.
+    let thickness: Vec<Scalar> = (sources.faces.iter())
+        .map(|f| {
+            (thicker.iter())
+                .find(|(g, _)| g == f)
+                .map_or(thickness, |&(_, t)| t)
+        })
+        .collect();
+    let hollow = Hollow::new(&spec, &names, removed, &thickness).with_context(ctx)?;
     let (result, result_names) = hollow.result(namer).with_context(ctx)?;
     refuse_crossing(&result, &result_names).with_context(ctx)?;
     part.replace_with_solid(&[solid.into()], result, result_names)
@@ -190,7 +209,8 @@ pub fn thicken(
     }
     let names = part.source_names(&sources).with_context(ctx)?;
     let removed = vec![false; spec.faces.len()];
-    let hollow = Hollow::new(&spec, &names, removed, thickness).with_context(ctx)?;
+    let thickness = vec![thickness; spec.faces.len()];
+    let hollow = Hollow::new(&spec, &names, removed, &thickness).with_context(ctx)?;
     let (result, result_names) = hollow.result(namer).with_context(ctx)?;
     refuse_crossing(&result, &result_names).with_context(ctx)?;
     part.replace_with_solid(&[Body::Sheet(sheet)], result, result_names)
@@ -220,7 +240,8 @@ pub fn offset_faces(
     let (spec, sources) = part.topology().body_spec(faces, false).with_context(ctx)?;
     let names = part.source_names(&sources).with_context(ctx)?;
     let removed = vec![false; spec.faces.len()];
-    let hollow = Hollow::new(&spec, &names, removed, distance.neg()).with_context(ctx)?;
+    let thickness = vec![distance.neg(); spec.faces.len()];
+    let hollow = Hollow::new(&spec, &names, removed, &thickness).with_context(ctx)?;
     let (result, result_names) = hollow.inner_side(namer).with_context(ctx)?;
     refuse_crossing(&result, &result_names).with_context(ctx)?;
     part.build_body(result, result_names).with_context(ctx)
@@ -645,7 +666,7 @@ impl<'a> Hollow<'a> {
         spec: &'a BodySpec,
         names: &'a BodyNames,
         removed: Vec<bool>,
-        thickness: Scalar,
+        thickness: &[Scalar],
     ) -> GeopResult<Self> {
         let mut walled = vec![false; spec.vertices.len()];
         let mut open_edge = vec![true; spec.edges.len()];
@@ -676,7 +697,7 @@ impl<'a> Hollow<'a> {
                 // room afterwards: a fitted offset's end span carried on is
                 // a polynomial extrapolated, and its width with it.
                 match room(face.surface.clone())?
-                    .offset(thickness.neg())
+                    .offset(thickness[f].neg())
                     .map_err(|e| e.with_context(format!("offsetting face {}", names.faces[f])))?
                 {
                     Some(surface) => face.surface = surface,

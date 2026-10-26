@@ -54,3 +54,44 @@ fn new_shell_picks_its_faces_on_the_solid() {
     let args: crate::ShellArgs = args(editor.program().steps.last().unwrap());
     assert_eq!(saved(&args.faces), saved(["block(box,end)"]), "{args:?}");
 }
+
+/// Faces of another thickness are picked as the open ones are, and their
+/// thickness is asked only once there are some: the box's top, clicked,
+/// gets walls 0.3 thick.
+#[test]
+fn faces_of_another_thickness_are_picked_on_the_solid() {
+    let mut editor = editor_with(registry(), drilled_box());
+    editor.handle(Command::New {
+        kind: "shell".into(),
+    });
+    let click = |pointer| Command::Event {
+        event: StepEditEvent::Click {
+            pointer,
+            button: Button::Primary,
+            double: false,
+            shift: false,
+        },
+    };
+    let update = editor.handle(click(from_above(0.3, 0.3)));
+    assert!(update.error.is_none(), "{:?}", update.error);
+    let step = update.step.expect("the shell is edited");
+    assert!(
+        !format!("{:?}", step.presentation).contains("other_thickness"),
+        "{:?}",
+        step.presentation
+    );
+    editor.handle(dialog("other_faces", Value::Press));
+    let update = editor.handle(click(from_above(0.3, 0.3)));
+    assert!(update.error.is_none(), "{:?}", update.error);
+    let update = editor.handle(dialog("other_thickness", Value::Number(0.3)));
+    assert!(update.error.is_none(), "{:?}", update.error);
+    let update = editor.handle(Command::Commit);
+    assert!(update.error.is_none(), "{:?}", update.error);
+    let args: crate::ShellArgs = args(editor.program().steps.last().unwrap());
+    assert_eq!(
+        saved(&args.other_faces),
+        saved(["block(box,end)"]),
+        "{args:?}"
+    );
+    assert_eq!(saved(&args.other_thickness), saved(0.3), "{args:?}");
+}
