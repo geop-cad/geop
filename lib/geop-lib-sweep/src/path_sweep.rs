@@ -1619,6 +1619,41 @@ mod tests {
         assert_eq!(model.topology().faces.len(), 4);
     }
 
+    /// A line meeting an arc at an angle, a square swept round it: the two
+    /// walls of each side of the square meet where they cross, a valid
+    /// solid.
+    #[test]
+    #[ignore = "bug: a corner at an arc or a spline is refused (`along_chain`). \
+        Projecting the profile onto the bisecting plane, the line-line mitre, \
+        puts the corner's section on neither swept wall when one side is an \
+        arc. Tried in thought, not built: (1) cut each piece, run on past the \
+        corner, by the bisecting plane and unite them, as SMLib's \
+        CreateSweepAlongPlanarPath does — the pieces' sections on that plane \
+        differ for an arc, so the union touches itself in a plane, the overlap \
+        the booleans do not resolve, and leaves steps; (2) build the mitred \
+        topology and rebuild it on the true walls (geop_lib_shell::rebuilt, as \
+        the extrude's draft does) — right for a polygonal profile, whose \
+        corner trajectories cross, but where the profile is smooth (a circle \
+        in pieces) the seams of the two sides end at different points of the \
+        crossing curve, which needs a vertex per seam, not one shared station; \
+        and lib-sweep cannot use lib-shell (lib-shell's tests use lib-sweep)."]
+    fn corner_at_an_arc_is_mitred() {
+        let path = chain(
+            vec![
+                NurbCurve3D::line(v3(0., 0., 0.), v3(2., 0., 0.)).unwrap(),
+                NurbCurve3D::arc(
+                    v3(2., 0., 0.),
+                    v3(2., 1., 0.),
+                    v3(1., 1., 0.),
+                    sqrt2_over_2(),
+                )
+                .unwrap(),
+            ],
+            false,
+        );
+        swept(square(0.2), &yz(Vector3::zero()), &path);
+    }
+
     /// A line meeting an arc at an angle has no mitre: refused.
     #[test]
     fn corner_at_an_arc_is_refused() {
