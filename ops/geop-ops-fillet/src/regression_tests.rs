@@ -129,26 +129,9 @@ fn fillet_of_an_upright_edge_between_faces_at_160_degrees() {
 
 /// A drawer handle (Fusion 360 tutorial "Drawer pull": two round posts, a
 /// bar across their tops, the joints rounded): a post of radius 3 standing
-/// under a bar 8 wide, the circle where they meet rounded by 1.5. The
-/// fillet's contact on the bar's underside is a circle of radius 4.5, which
-/// runs off the bar (half-width 4) on both sides.
-///
-/// The bracket case of the same shape is refused up front ("the blend is
-/// too large for face ...: it would run past the face's boundary"); this
-/// one is not, and the fillet builds an invalid solid:
-///
-/// > coedge 247's pcurve sample 1 (t=0.244) maps through its face's
-/// > surface to a point that is not on edge 243's curve at all (point
-/// > (-1.83, 4.11, 20.0))
-///
-/// at `y = 4.11`, outside the bar, on the edges between the blend faces
-/// `fillet(round,cylinder(post,c0,end),fillet,q3)` and the bar's sides.
-/// With a radius of 1 (contact exactly on the bar's edge) or 0.5 the
-/// fillet builds valid. Either a refusal naming the bar's side, or a blend
-/// that runs out through the bar's side, is expected; not an invalid model.
-#[test]
-#[ignore = "bug: a fillet whose contact circle runs past the face it lies on (post r=3 under a bar 8 wide, r=1.5) builds an invalid solid instead of refusing; r=1 and r=0.5 build valid"]
-fn fillet_of_a_post_joint_whose_contact_runs_off_the_bar() {
+/// under a bar 8 wide, the circle where they meet. The program, and that
+/// circle's arcs.
+fn post_under_bar() -> (Program, Vec<String>) {
     let mut program = Program::new();
     program.push(
         "post",
@@ -163,6 +146,38 @@ fn fillet_of_a_post_joint_whose_contact_runs_off_the_bar() {
         near(m[2], 20.0) && (m[0].powi(2) + m[1].powi(2)).sqrt() < 3.5
     });
     assert_eq!(arcs.len(), 4, "{arcs:?}");
+    (program, arcs)
+}
+
+/// The drawer handle's joint rounded by 1.5: the fillet's contact on the
+/// bar's underside is a circle of radius 4.5, which runs off the bar
+/// (half-width 4) on both sides. Its contact checked only halfway along
+/// each arc, it built an invalid solid (edges at `y = 4.11`, outside the
+/// bar, between the blend faces and the bar's sides). Checked whole, the
+/// contact circle crosses the bar's side edges: refused.
+/// With a radius of 1 (contact exactly on the bar's edge) or 0.5 the
+/// fillet builds valid.
+#[test]
+fn fillet_of_a_post_joint_whose_contact_runs_off_the_bar_is_refused() {
+    let (mut program, arcs) = post_under_bar();
+    program.push("round", FilletArgs::constant(arcs, 1.5));
+    let Err(error) = program.build_model(registry) else {
+        panic!("a fillet running off the bar is not refused");
+    };
+    let error = format!("{error:?}");
+    assert!(error.contains("the blend is too large for its faces"), "{error}");
+}
+
+/// What a designer expects of
+/// [`fillet_of_a_post_joint_whose_contact_runs_off_the_bar_is_refused`]:
+/// the ball rolled off the bar's underside over its convex side edges — a
+/// "cliff" rollover — the tool running on past the underside into the air
+/// and cut off by the bar's sides carried on, so that it cuts nothing of
+/// them.
+#[test]
+#[ignore = "missing: rolling over a crease of the opposite bend (a cliff); the fillet is refused (see fillet_of_a_post_joint_whose_contact_runs_off_the_bar_is_refused)"]
+fn fillet_of_a_post_joint_whose_contact_runs_off_the_bar() {
+    let (mut program, arcs) = post_under_bar();
     program.push("round", FilletArgs::constant(arcs, 1.5));
     assert_builds_valid(&program);
 }

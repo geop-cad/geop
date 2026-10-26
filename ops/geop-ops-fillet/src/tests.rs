@@ -216,7 +216,7 @@ fn refuses_what_it_cannot_blend() {
     let past = refusal(unit_cube(), &["cube(b,p0)"], round(1.5));
     assert!(past.contains("too large"), "{past}");
     let on_edge = refusal(unit_cube(), &["cube(b,p0)"], bevel(1.0));
-    assert!(on_edge.contains("exactly on another edge"), "{on_edge}");
+    assert!(on_edge.contains("runs exactly along edge"), "{on_edge}");
     let wide = refusal(cylinder(), &["cylinder(c,p1,q0)"], round(0.6));
     assert!(wide.contains("too large"), "{wide}");
 }

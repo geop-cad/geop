@@ -50,9 +50,9 @@
 //!   skinned through the ball's sections (see [`crate::rolling`]); bevelled
 //!   alike, its sections the chords.
 //!
-//! A blend has to meet both faces inside them — checked halfway along the
-//! edge — so one too large for its faces, or ending exactly on another of
-//! their edges, is refused.
+//! A blend has to meet both faces inside them — checked along the whole of
+//! where it touches them (see [`check_contacts`]) — so one too large for
+//! its faces, or running exactly along another of their edges, is refused.
 //!
 //! Several edges are blended one after the other, every tool built from the
 //! solid as it was before the first. Where two blended edges meet at a
@@ -79,6 +79,7 @@
 
 use geop_core_geometry::{
     contains::surface::surface_could_contain,
+    intersection::{Intersections, curve_curve::curve_curve_intersect},
     nurb_curve::{NurbCurve2D, NurbCurve3D, bezier_knots},
     nurb_surface::NurbSurface3D,
     search::{MAX_NODES, min_subdivision_size},
@@ -235,27 +236,6 @@ pub(crate) struct Section {
     corner: Vector2,
     into: [Vector2; 2],
     out: [Vector2; 2],
-}
-
-impl Section {
-    /// The section's point `p` in space, in the section halfway along the
-    /// edge — where a round section is taken.
-    fn point(&self, p: &Vector2) -> GeopResult<Vector3> {
-        Ok(match &self.sweep {
-            Sweep::Straight {
-                start, end, e1, e2, ..
-            } => Vector3::interpolate(start, end, Scalar::ONE.div(Scalar::TWO)?)
-                .add(&e1.prod_scalar(p[0]))
-                .add(&e2.prod_scalar(p[1])),
-            Sweep::Round {
-                center,
-                radial,
-                axis,
-            } => center
-                .add(&radial.prod_scalar(p[0]))
-                .add(&axis.prod_scalar(p[1])),
-        })
-    }
 }
 
 /// The 3-D vector `v`, in the section plane spanned by the unit vectors
@@ -737,15 +717,183 @@ fn tool_profile(section: &Section, shape: &BlendShape) -> GeopResult<ToolProfile
 /// not depend on it — a constant only keeps runs reproducible.
 const SEED: u64 = 0xB1E2_D000_0000_0001;
 
-/// Checks the blend of `section` by `tool` meets each face where the face
-/// is: inside it, halfway along the edge (see [`check_touch`]).
-fn check_touches(model: &Model, section: &Section, tool: &ToolProfile) -> GeopResult<()> {
-    for (face, touch) in section.faces.iter().zip(&tool.touches) {
-        let p = section.point(touch)?;
-        let ctx = with_context!("where the blend meets face {face}, at {p:?}");
-        check_touch(model, *face, &p).with_context(ctx)?;
+/// Checks the swept blend of `section` by `tool`, blending the edges
+/// `blended`, meets its faces where they are, along the whole of where it
+/// touches them (see [`check_contacts`]): a line along a straight edge, a
+/// circle round a circular one.
+fn check_touches(
+    model: &Model,
+    section: &Section,
+    tool: &ToolProfile,
+    blended: &[EdgeId],
+) -> GeopResult<()> {
+    let mut contacts = Vec::new();
+    let mut middles = Vec::new();
+    let (sides, ends) = match &section.sweep {
+        Sweep::Straight {
+            start,
+            end,
+            e1,
+            e2,
+            vertices,
+            ..
+        } => {
+            let at = |base: &Vector3, p: &Vector2| {
+                base.add(&e1.prod_scalar(p[0])).add(&e2.prod_scalar(p[1]))
+            };
+            let mut row = Vec::new();
+            for touch in &tool.touches {
+                row.push(NurbCurve3D::line(at(start, touch), at(end, touch))?);
+            }
+            contacts.push([row[0].clone(), row[1].clone()]);
+            let half = Scalar::ONE.div(Scalar::TWO)?;
+            middles.push([0, 1].map(|k| {
+                Vector3::interpolate(
+                    &at(start, &tool.touches[k]),
+                    &at(end, &tool.touches[k]),
+                    half,
+                )
+            }));
+            (section.faces.map(|f| vec![f]), vertices.to_vec())
+        }
+        Sweep::Round {
+            center,
+            radial,
+            axis,
+        } => {
+            // The quarter arcs of each contact's circle, of weight the
+            // cosine of an eighth of a turn.
+            let across = axis.prod_cross(radial);
+            let w = Scalar::TWO.sqrt()?.div(Scalar::TWO)?;
+            let mut around: Vec<FaceId> = Vec::new();
+            for &edge in blended {
+                for face in faces(model, edge)? {
+                    if !around.contains(&face) {
+                        around.push(face);
+                    }
+                }
+            }
+            let turns = [*radial, across, radial.neg(), across.neg(), *radial];
+            for q in 0..4 {
+                let mut row = Vec::new();
+                for touch in &tool.touches {
+                    let c = center.add(&axis.prod_scalar(touch[1]));
+                    let (a, b) = (
+                        turns[q].prod_scalar(touch[0]),
+                        turns[q + 1].prod_scalar(touch[0]),
+                    );
+                    row.push(NurbCurve3D::arc(
+                        c.add(&a),
+                        c.add(&a).add(&b),
+                        c.add(&b),
+                        w,
+                    )?);
+                }
+                let half = turns[q].add(&turns[q + 1]).normalize()?;
+                middles.push([0, 1].map(|k| {
+                    let c = center.add(&axis.prod_scalar(tool.touches[k][1]));
+                    c.add(&half.prod_scalar(tool.touches[k][0]))
+                }));
+                contacts.push([row[0].clone(), row[1].clone()]);
+            }
+            ([around.clone(), around], Vec::new())
+        }
+    };
+    check_contacts(model, &sides, &contacts, &middles, &ends, blended)
+}
+
+/// Checks a blend touching the faces `sides` — those on the left of its
+/// edges and those on their right — along the curves `contacts`, per
+/// piece of the blend its contacts on either side, meets them where they
+/// are: that each contact, the whole of it, crosses no edge of the faces
+/// on its side but those it is meant to — an edge between two of them,
+/// which it rolls across, the blend's own edges `own`, and an edge at one
+/// of its ends `ends`, past which it runs on or out. A blend too large for
+/// a face runs off it across another of its edges, and one running
+/// exactly along an edge asks the boolean to cut along it: both refused,
+/// naming the edge. (The question is about the curve, not a point of it: a
+/// contact circle running off a bar on both sides of the point halfway
+/// along it was let through when only that point was asked, and built an
+/// invalid solid.)
+///
+/// A contact that crosses none of those edges lies on one side of them
+/// all, which one point of it decides: each of `middles`, per link of the
+/// blend a point of its contact on either side within it, has to lie on a
+/// face of its side — inside it, or on an edge it may meet. One wholly
+/// beyond its faces, too large for them, is refused.
+pub(crate) fn check_contacts(
+    model: &Model,
+    sides: &[Vec<FaceId>; 2],
+    contacts: &[[NurbCurve3D; 2]],
+    middles: &[[Vector3; 2]],
+    ends: &[VertexId],
+    own: &[EdgeId],
+) -> GeopResult<()> {
+    for points in middles {
+        for (k, p) in points.iter().enumerate() {
+            let mut on = false;
+            for &face in &sides[k] {
+                on |= on_face(model, face, p)?;
+            }
+            if !on {
+                return Err(GeopError::new(format!(
+                    "the blend is too large for its faces: where it touches faces {:?}, at {p:?}, it lies beyond them",
+                    sides[k]
+                )));
+            }
+        }
+    }
+    let size = RemeshParams::default().curve_curve_min_subdivision_size;
+    for (k, faces) in sides.iter().enumerate() {
+        // The edges the contact on this side must not cross.
+        let mut fences: Vec<EdgeId> = Vec::new();
+        for &face in faces {
+            for edge in model.face_edges(face) {
+                let e = model.get_edge(edge)?;
+                let across = model
+                    .faces_of_edge(edge)
+                    .is_some_and(|pair| pair.iter().all(|f| faces.contains(f)));
+                let at_end = ends.contains(&e.start_vertex) || ends.contains(&e.end_vertex);
+                if !across && !at_end && !own.contains(&edge) && !fences.contains(&edge) {
+                    fences.push(edge);
+                }
+            }
+        }
+        fences.sort_by_key(|e| e.0);
+        for (piece, contact) in contacts.iter().enumerate() {
+            for &edge in &fences {
+                let curve = &model.get_edge(edge)?.curve;
+                let ctx = with_context!(
+                    "the blend's contact with the faces {faces:?} on side {k}, piece {piece}, against edge {edge}"
+                );
+                let hits = curve_curve_intersect(&contact[k], curve, 1, MAX_NODES, size)
+                    .with_context(ctx)?;
+                let what = match &hits {
+                    Intersections::Found(found) if found.is_empty() => continue,
+                    Intersections::Found(_) => "runs off the faces it touches across",
+                    Intersections::Coincident(_) => "runs exactly along",
+                };
+                let at = (hits.into_vec().first())
+                    .map(|&(t, _)| contact[k].evaluate(t))
+                    .transpose()?;
+                return Err(GeopError::new(format!(
+                    "the blend is too large for its faces: where it touches faces {faces:?} it {what} edge {edge}, at {at:?}"
+                )));
+            }
+        }
     }
     Ok(())
+}
+
+/// Whether the point `p` lies on `face`: on its surface, inside its
+/// boundary or on it.
+fn on_face(model: &Model, face: FaceId, p: &Vector3) -> GeopResult<bool> {
+    let surface = &model.get_face(face)?.surface;
+    let Some((u, v)) = surface_could_contain(surface, p, MAX_NODES, min_subdivision_size())? else {
+        return Ok(false);
+    };
+    let at = face_contains(model, face, u, v, MAX_NODES, min_subdivision_size(), SEED)?;
+    Ok(at != PointClassification::Outside)
 }
 
 /// Checks a blend touching `face` at `p` touches it where the face is:
@@ -1387,7 +1535,10 @@ pub fn blend(
     for name in edges {
         let ctx = with_context!("edge {name:?}");
         let edge = model.edge_id(name).with_context(ctx)?;
-        for link in tangent_chain(model.topology(), edge).with_context(ctx)?.links {
+        for link in tangent_chain(model.topology(), edge)
+            .with_context(ctx)?
+            .links
+        {
             picked.push(link.edge);
         }
     }
@@ -1421,7 +1572,8 @@ pub fn blend(
         match planned {
             Planned::Swept(plan, blended) => {
                 let profile = tool_profile(&plan.section, shape).with_context(ctx)?;
-                check_touches(model.topology(), &plan.section, &profile).with_context(ctx)?;
+                check_touches(model.topology(), &plan.section, &profile, &blended)
+                    .with_context(ctx)?;
                 covered.extend(blended);
                 plans.push((plan, profile));
             }

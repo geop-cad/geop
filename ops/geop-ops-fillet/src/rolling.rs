@@ -123,7 +123,7 @@ use geop_core_topology::{EdgeId, FaceId, Model, VertexId};
 use geop_lib_booleans::RemeshParams;
 use geop_ops_model::NamedModel;
 
-use crate::blend::{Bend, End, bend, check_touch_at, run_out_length, tool_end};
+use crate::blend::{Bend, End, bend, check_contacts, run_out_length, tool_end};
 use crate::tool::{Cap, Tool, ToolSpan, ToolStation, embed, flatten, flatten_point, wall_surface};
 use geop_ops_model::tangent::{Link, TangentChain as Chain};
 
@@ -1876,9 +1876,12 @@ pub(crate) struct Rolled {
     pub chain: Chain,
     pub bend: Bend,
     pub tool: Tool,
-    /// Per link, the ball at its middle: where it must touch its faces
-    /// inside them.
-    middles: Vec<Station>,
+    /// Per span of the tool, the curves enclosing where it touches the
+    /// faces on the chain's left and right (see [`check_touches`]).
+    contacts: Vec<[NurbCurve3D; 2]>,
+    /// Per link, where the ball nearest its middle touches the faces: a
+    /// point of each contact within the chain (see [`check_touches`]).
+    middles: Vec<[Vector3; 2]>,
 }
 
 impl Rolled {
@@ -2756,6 +2759,10 @@ fn assemble(
         c[0].widen(&pad);
         c[2].widen(&pad);
     }
+    let contacts = curves
+        .iter()
+        .map(|c| [c[0].clone(), c[2].clone()])
+        .collect();
 
     // Which way round the section runs: the blend's normal — along the
     // chain, crossed with the way from the first contact to the second —
@@ -2939,7 +2946,7 @@ fn assemble(
                     d(a).total_cmp(&d(b))
                 })
                 .expect("positions");
-            rolling.stations[nearest].clone()
+            rolling.stations[nearest].contact
         })
         .collect();
     let closed = chain.closed;
@@ -2955,6 +2962,7 @@ fn assemble(
             sides: if swap { ["b", "a"] } else { ["a", "b"] },
             blend: if chord { "chamfer" } else { "fillet" },
         },
+        contacts,
         middles,
     })
 }
@@ -3003,21 +3011,22 @@ fn run_on(span: &mut ToolSpan, to: [Vector4; 4], at_end: bool) -> GeopResult<()>
     Ok(())
 }
 
-/// Checks the blend meets each face where the face is: the ball halfway
-/// along each edge of the chain touches its faces inside them. A blend too
-/// large for a face runs past its boundary, and one ending exactly on
-/// another of its edges asks the boolean to cut along that edge.
+/// Checks the blend meets the faces where they are, along the whole of
+/// where it touches them (see [`check_contacts`]): the faces either side of
+/// its chain, rolled across at the edges between them, run on past at the
+/// chain's ends.
 pub(crate) fn check_touches(model: &Model, rolled: &Rolled) -> GeopResult<()> {
-    for station in &rolled.middles {
-        for k in 0..2 {
-            let face = station.faces[k];
-            let (u, v) = station.uv[k];
-            let ctx = with_context!(
-                "where the blend meets face {face}, at {:?}",
-                station.contact[k]
-            );
-            check_touch_at(model, face, u, v).with_context(ctx)?;
-        }
-    }
-    Ok(())
+    let chain = &rolled.chain;
+    let ends: Vec<VertexId> = match chain.closed {
+        true => Vec::new(),
+        false => chain.ends(model)?.map(|(v, _, _)| v).to_vec(),
+    };
+    check_contacts(
+        model,
+        &sides(chain),
+        &rolled.contacts,
+        &rolled.middles,
+        &ends,
+        &chain.edges(),
+    )
 }
