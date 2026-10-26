@@ -185,3 +185,206 @@ mod direct {
         assert!(format!("{error}").contains("turns around"), "{error}");
     }
 }
+
+// ── Deleting faces ──────────────────────────────────────────────────────────
+
+mod delete_face {
+    use geop_core_program::{operation_registry::OperationRegistry, program::Program};
+    use geop_lib_fixtures::{
+        PrimitiveArgs,
+        bodies::{block, block_drilled, block_with_boss},
+        drilled_box,
+    };
+    use geop_ops_fillet::{ChamferArgs, Fillet, FilletArgs};
+    use geop_ops_model::{
+        NamedModel, element,
+        testing::{Built, assert_valid, assert_valid_sheets, assert_volume, edge_at},
+    };
+
+    use crate::{DeleteFace, DeleteFaceArgs, direct::HealGap};
+
+    fn registry() -> geop_core_math::geop_error::GeopResult<OperationRegistry> {
+        geop_lib_fixtures::registry()?
+            .with(DeleteFace)?
+            .with(Fillet)?
+            .with(geop_ops_fillet::Chamfer)
+    }
+
+    /// The names of the faces of `part` whose names start with `prefix`.
+    fn faces_named(part: &NamedModel, prefix: &str) -> Vec<String> {
+        let mut names: Vec<String> = (part.topology().faces.keys())
+            .map(|&f| part.name_of(f).unwrap().to_string())
+            .filter(|n| n.starts_with(prefix))
+            .collect();
+        names.sort();
+        names
+    }
+
+    /// `program` with the faces `faces` deleted, healed or not, as the step
+    /// `d`.
+    fn deleted(mut program: Program, faces: Vec<String>, heal: HealGap) -> NamedModel {
+        program.push(
+            "d",
+            DeleteFaceArgs {
+                faces: faces.into_iter().map(element).collect(),
+                heal,
+            },
+        );
+        program.build_model(registry).unwrap()
+    }
+
+    /// The blind hole of a box deleted, wall and bottom: the box whole.
+    #[test]
+    fn blind_hole_filled() {
+        let program = drilled_box();
+        let part = program.build_model(registry).unwrap();
+        let hole = faces_named(&part, "cylinder(hole");
+        let part = deleted(program, hole, HealGap::Heal);
+        assert_valid(&part);
+        assert_volume(&part, "delete_face(d)", 4.0, 1e-5);
+        assert_eq!(part.topology().faces.len(), 6);
+    }
+
+    /// A hole through a box deleted: its wall alone closes two holes.
+    #[test]
+    fn through_hole_filled() {
+        let program = block_drilled();
+        let part = program.build_model(registry).unwrap();
+        let hole = faces_named(&part, "cylinder(hole");
+        let part = deleted(program, hole, HealGap::Heal);
+        assert_valid(&part);
+        assert_volume(&part, "delete_face(d)", 4.0, 1e-5);
+    }
+
+    /// A boss on a box deleted, its wall and its top.
+    #[test]
+    fn boss_removed() {
+        let program = block_with_boss();
+        let part = program.build_model(registry).unwrap();
+        let boss = faces_named(&part, "cylinder(boss");
+        let part = deleted(program, boss, HealGap::Heal);
+        assert_valid(&part);
+        assert_volume(&part, "delete_face(d)", 4.0, 1e-5);
+    }
+
+    /// A cut-off vertical edge of a box: its cut face deleted, the two
+    /// sides grown back to their edge.
+    #[test]
+    fn cut_off_edge_restored() {
+        let mut program = block();
+        program.push(
+            "corner",
+            PrimitiveArgs::prism(&[[1.0, 2.5], [2.5, 1.0], [2.5, 2.5]], -0.5, 1.5)
+                .cut("block(body)"),
+        );
+        let part = program.build_model(registry).unwrap();
+        assert_volume(&part, &part.solid_names()[0], 4.0 - 0.125, 1e-5);
+        let cut: Vec<String> = faces_named(&part, "")
+            .into_iter()
+            .filter(|n| n.starts_with("combine(corner,prism("))
+            .collect();
+        assert_eq!(cut.len(), 1, "{cut:?}");
+        let part = deleted(program, cut, HealGap::Heal);
+        assert_valid(&part);
+        assert_volume(&part, "delete_face(d)", 4.0, 1e-5);
+        assert_eq!(part.topology().faces.len(), 6);
+        assert_eq!(part.topology().edges.len(), 12);
+    }
+
+    /// A chamfer along a box's top edge deleted: the sharp edge back.
+    #[test]
+    fn chamfer_removed() {
+        let mut program = block();
+        let part = program.build_model(registry).unwrap();
+        let edge = edge_at(&part, [1.0, 0.0, 1.0]);
+        program.push("c", ChamferArgs::even(vec![edge], 0.2));
+        let part = program.build_model(registry).unwrap();
+        let chamfer: Vec<String> = faces_named(&part, "chamfer(c")
+            .into_iter()
+            .filter(|n| n.ends_with(",chamfer)"))
+            .collect();
+        assert_eq!(chamfer.len(), 1, "{chamfer:?}");
+        let part = deleted(program, chamfer, HealGap::Heal);
+        assert_valid(&part);
+        assert_volume(&part, "delete_face(d)", 4.0, 1e-5);
+    }
+
+    /// A ball cut out of a box's corner leaves a spherical triangle;
+    /// deleted, the three sides grow back to the corner.
+    #[test]
+    fn corner_scoop_closed() {
+        let mut program = block();
+        program.push(
+            "scoop",
+            PrimitiveArgs::sphere([2.0, 2.0, 1.0], 0.5).cut("block(body)"),
+        );
+        let part = program.build_model(registry).unwrap();
+        let scoop: Vec<String> = faces_named(&part, "")
+            .into_iter()
+            .filter(|n| {
+                let face = part.face_id(n).unwrap();
+                (part.topology().get_face(face).unwrap().surface)
+                    .as_plane()
+                    .unwrap()
+                    .is_none()
+            })
+            .collect();
+        assert_eq!(scoop.len(), 1, "{scoop:?}");
+        let part = deleted(program, scoop, HealGap::Heal);
+        assert_valid(&part);
+        assert_volume(&part, "delete_face(d)", 4.0, 1e-5);
+        assert_eq!(part.topology().vertices.len(), 8);
+    }
+
+    /// A fillet along a box's top edge deleted: the sharp edge back.
+    #[test]
+    fn fillet_removed() {
+        let mut program = block();
+        let part = program.build_model(registry).unwrap();
+        let edge = edge_at(&part, [1.0, 0.0, 1.0]);
+        program.push("f", FilletArgs::constant(vec![edge], 0.2));
+        let part = program.build_model(registry).unwrap();
+        let fillet: Vec<String> = faces_named(&part, "fillet(f")
+            .into_iter()
+            .filter(|n| {
+                let face = part.face_id(n).unwrap();
+                (part.topology().get_face(face).unwrap().surface)
+                    .as_plane()
+                    .unwrap()
+                    .is_none()
+            })
+            .collect();
+        assert_eq!(fillet.len(), 1, "{fillet:?}");
+        let part = deleted(program, fillet, HealGap::Heal);
+        assert_valid(&part);
+        assert_volume(&part, "delete_face(d)", 4.0, 1e-5);
+    }
+
+    /// A box's top deleted and left open: a sheet of the other five.
+    #[test]
+    fn top_left_open() {
+        let mut program = Program::new();
+        program.push("a", PrimitiveArgs::block([0.0; 3], [1.0, 1.0, 1.0]));
+        let part = deleted(program, vec!["block(a,end)".into()], HealGap::Open);
+        assert_valid_sheets(&part);
+        assert!(part.solid_names().is_empty());
+        assert_eq!(part.sheet_face_names().len(), 5);
+    }
+
+    /// A box's top healed over cannot be: its sides are parallel and never
+    /// meet. Refused, saying so.
+    #[test]
+    fn top_of_a_box_cannot_heal() {
+        let mut program = Program::new();
+        program.push("a", PrimitiveArgs::block([0.0; 3], [1.0, 1.0, 1.0]));
+        program.push(
+            "d",
+            DeleteFaceArgs {
+                faces: vec![element("block(a,end)")],
+                heal: HealGap::Heal,
+            },
+        );
+        let error = program.build_model(registry).unwrap_err();
+        assert!(format!("{error}").contains("meet"), "{error}");
+    }
+}

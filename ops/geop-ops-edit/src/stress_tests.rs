@@ -1,6 +1,7 @@
 //! Every face of boxes, cylinders and spheres — whole, drilled, pocketed,
 //! stepped, cut off, with a boss (see `geop_lib_fixtures::bodies`) —
-//! pushed in and pulled out ([`OffsetFace`]) and shifted ([`MoveFace`]).
+//! pushed in and pulled out ([`OffsetFace`]), shifted ([`MoveFace`]) and
+//! deleted, healed over and left open ([`DeleteFace`]).
 //! An edit may refuse what it does not support, saying so; what it builds
 //! has to be a valid solid.
 //!
@@ -17,7 +18,9 @@ use geop_ops_model::{
     testing::{Cases, outcome},
 };
 
-use crate::{MoveFace, MoveFaceArgs, OffsetFace, OffsetFaceArgs};
+use crate::{
+    DeleteFace, DeleteFaceArgs, HealGap, MoveFace, MoveFaceArgs, OffsetFace, OffsetFaceArgs,
+};
 
 /// Whether an error's root message is an edit refusing what it does not
 /// support, or a face moved so far that the solid would change its
@@ -33,6 +36,7 @@ fn is_refusal(message: &str) -> bool {
         "the other way round",
         "passes through itself",
         "past its",
+        "neither pair of its opposite sides meet",
     ]
     .iter()
     .any(|refusal| message.contains(refusal))
@@ -56,6 +60,14 @@ fn stress(program: Program, distance: f64) {
             };
             let case = format!("{face} offset by {d}");
             cases.record(case, outcome::<OffsetFace>(&part, &args, is_refusal));
+        }
+        for heal in [HealGap::Heal, HealGap::Open] {
+            let args = DeleteFaceArgs {
+                faces: vec![element(&face)],
+                heal,
+            };
+            let case = format!("{face} deleted, {heal:?}");
+            cases.record(case, outcome::<DeleteFace>(&part, &args, is_refusal));
         }
         for k in 0..3 {
             let mut translation = [0.0; 3];

@@ -101,3 +101,31 @@ fn offset_face_picks_a_face_and_pulls_it() {
     assert_eq!(args.faces.len(), 1, "{args:?}");
     assert_eq!(args.distance, 0.25);
 }
+
+/// A new delete picks the box's top by a click, is told to leave it open,
+/// and leaves a sheet: no solid in the scene.
+#[test]
+fn delete_face_picks_a_face_and_leaves_it_open() {
+    let mut editor = on_a_box();
+    editor.handle(Command::New {
+        kind: "delete_face".into(),
+    });
+    let update = editor.handle(click([1.0, 1.0, 10.0], [0.0, 0.0, -1.0]));
+    assert!(update.error.is_none(), "{:?}", update.error);
+    editor.handle(dialog("heal", Value::Choice("open".into())));
+    let update = editor.handle(Command::Commit);
+    let program = update.program.expect("the program changed");
+    assert!(
+        program.steps.iter().all(|s| s.error.is_none()),
+        "{:?}",
+        program.steps
+    );
+    let args: crate::DeleteFaceArgs = args(editor.program().steps.last().unwrap());
+    assert_eq!(args.faces, [element("block(body,end)")], "{args:?}");
+    assert_eq!(args.heal, crate::HealGap::Open);
+    let scene = editor
+        .handle(Command::Show)
+        .scene
+        .expect("the scene is sent");
+    assert!(scene.part.solids.is_empty(), "{:?}", scene.part.solids);
+}

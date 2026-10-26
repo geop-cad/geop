@@ -27,3 +27,5 @@ geop-ops-sketch.workspace = true
 geop-lib-fixtures.workspace = true
 geop-core-program = { workspace = true, features = ["testing"] }
 geop-core-editor = { workspace = true, features = ["testing"] }
+# Deleting a fillet or a chamfer: the steps making them.
+geop-ops-fillet.workspace = true

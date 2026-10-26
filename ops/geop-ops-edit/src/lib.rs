@@ -6,9 +6,10 @@
 //!   its own — what a solid can be split with.
 //! - [`ProjectCurve`]: project a sketch's curves along its plane's normal
 //!   onto a face, dividing the face along them.
-//! - [`MoveFace`], [`OffsetFace`], [`ReplaceFace`]: direct edits of a
-//!   solid's faces — shifted, pushed or pulled along their normals, put on
-//!   another face's surface — the solid rebuilt around them.
+//! - [`MoveFace`], [`OffsetFace`], [`ReplaceFace`], [`DeleteFace`]: direct
+//!   edits of a solid's faces — shifted, pushed or pulled along their
+//!   normals, put on another face's surface, taken out and healed over or
+//!   left open — the solid rebuilt around them.
 
 pub mod delete;
 pub mod direct;
@@ -24,7 +25,8 @@ mod stress_tests;
 
 pub use delete::{DeleteBody, DeleteBodyArgs};
 pub use direct::{
-    MoveFace, MoveFaceArgs, OffsetFace, OffsetFaceArgs, ReplaceFace, ReplaceFaceArgs,
+    DeleteFace, DeleteFaceArgs, HealGap, MoveFace, MoveFaceArgs, OffsetFace, OffsetFaceArgs,
+    ReplaceFace, ReplaceFaceArgs,
 };
 pub use extract::{ExtractFace, ExtractFaceArgs};
 pub use project::{ProjectCurve, ProjectCurveArgs};
@@ -41,5 +43,6 @@ pub fn register(r: Registry) -> GeopResult<Registry> {
         .operation(ProjectCurve)?
         .operation(MoveFace)?
         .operation(OffsetFace)?
-        .operation(ReplaceFace)
+        .operation(ReplaceFace)?
+        .operation(DeleteFace)
 }

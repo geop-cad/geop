@@ -6,7 +6,7 @@
 //! moves to where the surfaces now meet, and every name is kept.
 
 use geop_core_editor::{
-    edit_form::{Edit, EditForm, FormState},
+    edit_form::{Edit, EditForm, FormState, choices, chosen},
     editable::{Context, OperationGroup, OperationInfo, OperationTier},
     editing::{CanvasEvent, Change, Gizmo, Number, Unit},
     part_operation,
@@ -21,7 +21,7 @@ use geop_core_math::{
 };
 use geop_core_program::{element::ElementReference, part::StepContext, reader::Reader};
 use geop_core_topology::FaceId;
-use geop_lib_shell::{Smooth, replace_faces};
+use geop_lib_shell::{Heal, Smooth, delete_faces, replace_faces};
 use geop_ops_model::{Face, ModelOperation, NamedModel, Namer, build_model, model, read_model};
 use serde::{Deserialize, Serialize};
 
@@ -115,10 +115,48 @@ pub struct ReplaceFaceArgs {
     pub with: FaceRef,
 }
 
+/// Takes the faces `faces` out of their solid, and leaves the gap as
+/// `heal` says: healed over by the faces around it — a hole, a boss or a
+/// pocket filled in, a chamfer or a fillet taken back to its sharp edge, a
+/// cut-off corner restored — or open, the rest of the solid a sheet. The
+/// solid is consumed; what is left is named `delete_face(D)` for the
+/// operation `D`, a sheet not at all, and every face, edge and vertex that
+/// stays keeps its name.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Serialize, Deserialize)]
+pub struct DeleteFace;
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct DeleteFaceArgs {
+    /// The faces to take out, all of one solid.
+    pub faces: Vec<FaceRef>,
+    /// What to leave where they were.
+    #[serde(default)]
+    pub heal: HealGap,
+}
+
+/// What [`DeleteFace`] leaves where the faces were.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum HealGap {
+    /// The faces around the gap grown until they meet.
+    #[default]
+    Heal,
+    /// Nothing: the solid left open.
+    Open,
+}
+
+impl HealGap {
+    const ALL: [(HealGap, &'static str, &'static str); 2] = [
+        (HealGap::Heal, "heal", "Heal the gap"),
+        (HealGap::Open, "open", "Leave it open"),
+    ];
+}
+
 part_operation!(
     MoveFace(MoveFaceArgs),
     OffsetFace(OffsetFaceArgs),
-    ReplaceFace(ReplaceFaceArgs)
+    ReplaceFace(ReplaceFaceArgs),
+    DeleteFace(DeleteFaceArgs)
 );
 
 /// How the direct edits are offered: features that change a solid.
@@ -351,6 +389,72 @@ impl ModelOperation for ReplaceFace {
             facing_as(&target, old, anchor)
                 .map_err(|e| e.with_context(format!("putting face {name} on another surface")))
         })?;
+        Ok(())
+    }
+}
+
+impl PartOperation for DeleteFace {
+    const KIND: &'static str = "delete_face";
+    const INFO: OperationInfo = info(
+        "Delete face",
+        "Take faces out of a solid: holes, bosses, chamfers and fillets healed over by the faces around them, or the solid left open.",
+    )
+    .icon(crate::icons::DELETE_FACE);
+    type Args = DeleteFaceArgs;
+    type Session = ();
+
+    /// Nothing picked yet, healed over.
+    fn new_args(_: &Context) -> DeleteFaceArgs {
+        DeleteFaceArgs {
+            faces: Vec::new(),
+            heal: HealGap::Heal,
+        }
+    }
+
+    fn run(ctx: &mut StepContext, args: &DeleteFaceArgs) -> GeopResult<()> {
+        let _step = ctx.step();
+        build_model::<Self>(ctx, args)
+    }
+
+    /// The faces, picked, and what to leave.
+    fn form<'a>(
+        context: &'a Context<'a>,
+        args: &DeleteFaceArgs,
+        _: &FormState<()>,
+    ) -> EditForm<'a, DeleteFaceArgs> {
+        let mut f = EditForm::<DeleteFaceArgs>::default();
+        f.pick(
+            "faces",
+            "faces",
+            &context.before,
+            &args.faces,
+            true,
+            |edit, faces| edit.args.faces = faces,
+        );
+        let (heal, heals) = choices(&HealGap::ALL, &args.heal);
+        f.select("heal", "leave", heal, heals, false, |edit, value| {
+            if let Some(heal) = chosen(&HealGap::ALL, value) {
+                edit.args.heal = heal;
+            }
+        });
+        f
+    }
+}
+
+impl ModelOperation for DeleteFace {
+    fn build(
+        model: &mut NamedModel,
+        _: &Reader,
+        step: &str,
+        args: &DeleteFaceArgs,
+    ) -> GeopResult<()> {
+        let namer = Namer::new("delete_face", step)?;
+        let faces = face_ids(model, &args.faces)?;
+        let heal = match args.heal {
+            HealGap::Heal => Heal::Extend,
+            HealGap::Open => Heal::Open,
+        };
+        delete_faces(model, &namer, &faces, heal)?;
         Ok(())
     }
 }
