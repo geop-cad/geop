@@ -25,6 +25,26 @@ fn continued<const D: usize>(points: &[Vector<D>], s: Scalar) -> Vec<Vector<D>> 
     out
 }
 
+/// The control points of the Bézier piece over local parameters `[1, s]`,
+/// for `points` its control points over `[0, 1]`: the piece the curve is
+/// carried on by, past where it ended. Over `[0, s]` first ([`continued`]),
+/// then the right half of that split at `1 / s` — the last point of each
+/// level of de Casteljau's scheme.
+fn beyond<const D: usize>(points: &[Vector<D>], s: Scalar) -> GeopResult<Vec<Vector<D>>> {
+    let mut level = continued(points, s);
+    let t = Scalar::ONE.div(s)?;
+    let n = level.len();
+    let mut out = vec![level[n - 1]];
+    for r in 1..n {
+        for i in 0..n - r {
+            level[i] = Vector::interpolate(&level[i], &level[i + 1], t);
+        }
+        out.push(level[n - r - 1]);
+    }
+    out.reverse();
+    Ok(out)
+}
+
 impl<const D: usize> NurbCurve<D> {
     /// The same curve carried on by `by` of its parameter past its end
     /// (`at_end`) or before its start: its end piece continued as the
@@ -36,7 +56,10 @@ impl<const D: usize> NurbCurve<D> {
     /// subdivided at a parameter past its end — de Casteljau extrapolates
     /// as exactly as it interpolates, on the homogeneous control points, so
     /// a rational curve continues as itself: an arc continues round its
-    /// circle. Fails for a knot vector not clamped at that end, and where
+    /// circle. The curve as it was is kept as it was, control point for
+    /// control point, and the continuation joined on as a piece of its own
+    /// at a knot of full multiplicity: where it used to run, the carried-on
+    /// curve is exactly as narrow as before. Fails for a knot vector not clamped at that end, and where
     /// the continued weights stop being positive — an arc carried round
     /// too far.
     pub fn extended(&self, at_end: bool, by: Scalar) -> GeopResult<Self> {
@@ -84,15 +107,24 @@ impl<const D: usize> NurbCurve<D> {
         for _ in multiplicity.min(p)..p {
             insert(&mut knots, &mut rows, p, start);
         }
-        let [mut points] = rows;
-        let m = points.len();
+        let [isolated] = rows;
+        let m = isolated.len();
         let s = end.add(by).sub(start).div(end.sub(start))?;
-        let piece = continued(&points[m - p - 1..], s);
-        points.splice(m - p - 1.., piece);
-        let len = knots.len();
-        for k in &mut knots[len - p - 1..] {
-            *k = end.add(by);
+        let tail = beyond(&isolated[m - p - 1..], s)?;
+        // The curve's last control point and the continuation's first are
+        // both its end point, two enclosures of it: what they share.
+        let mut points = self.control_points.clone();
+        let last = points.last_mut().expect("a curve has control points");
+        if !last.could_be_equal(&tail[0]) {
+            return Err(GeopError::new(format!(
+                "NurbCurve::extended: the continuation starts at {:?}, not at the end {last:?}",
+                tail[0]
+            )));
         }
+        *last = Vector::from_array(std::array::from_fn(|k| last[k].intersect(tail[0][k])));
+        points.extend_from_slice(&tail[1..]);
+        let mut knots = self.knot_vector[..self.knot_vector.len() - 1].to_vec();
+        knots.extend(std::iter::repeat_n(end.add(by), p + 1));
         NurbCurve::try_new(p, points, knots)
     }
 }
