@@ -2,7 +2,10 @@ use crate::{
     Coedge, CoedgeGeometry, CoedgeId, Edge, EdgeId, Face, FaceId, Sense, Shell, ShellId, Solid,
     SolidId, Vertex, VertexId, WireId,
 };
-use geop_core_math::geop_error::{GeopError, GeopResult};
+use geop_core_math::{
+    geop_error::{GeopError, GeopResult},
+    vector::Vector3,
+};
 
 use super::Model;
 
@@ -125,5 +128,27 @@ impl Model {
     pub fn coedge_end_vertex(&self, coedge: CoedgeId) -> GeopResult<&Vertex> {
         let vertex_id = self.coedge_end_vertex_id(coedge)?;
         self.get_vertex(vertex_id)
+    }
+
+    /// The unit normal of `face`'s surface at its own vertex `vertex`: at
+    /// the `(u, v)` its loop gives the vertex — where a coedge of it
+    /// starting there starts — not at one searched for by the vertex's
+    /// point. Where the patch's parametrization degenerates at the vertex —
+    /// a SubD patch whose two sides leave its corner along one line — a
+    /// whole valley of `(u, v)` lies within a search's reach of the point,
+    /// and the search runs out of nodes; the loop knows which `(u, v)` it
+    /// is. An error if no coedge of the face starts there.
+    pub fn normal_at_vertex(&self, face: FaceId, vertex: VertexId) -> GeopResult<Vector3> {
+        for coedge in self.iterate_face_coedges(face) {
+            if self.coedge_start_vertex_id(coedge)? != vertex {
+                continue;
+            }
+            let pcurve = &self.get_coedge(coedge)?.pcurve;
+            let uv = pcurve.evaluate(pcurve.domain().0)?;
+            return self.get_face(face)?.surface.normal(uv[0], uv[1]);
+        }
+        Err(GeopError::new(format!(
+            "no coedge of face {face} starts at vertex {vertex}: it is no vertex of the face"
+        )))
     }
 }

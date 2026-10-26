@@ -4,12 +4,12 @@
 //! made of: each edge the way the chain runs along it, with the faces
 //! either side.
 
-use geop_core_geometry::search::{MAX_NODES, min_subdivision_size};
 use geop_core_math::{
-    geop_error::{GeopError, GeopResult},
+    geop_error::{GeopError, GeopResult, WithContext},
     scalars::Scalar,
     solvers::walk::{Walked, walk_by},
     vector::Vector3,
+    with_context,
 };
 use geop_core_topology::{EdgeId, FaceId, Model, VertexId};
 
@@ -174,12 +174,10 @@ impl TangentChain {
 /// between the faces opening out flat — two equal pipes joined, where
 /// they touch. Its chain ends there, and a blend of it narrows to nothing.
 pub fn vanishes_at(model: &Model, vertex: VertexId, faces: [FaceId; 2]) -> GeopResult<bool> {
-    let at = model.get_vertex(vertex)?.point;
-    let normal = |face| {
-        let surface = &model.get_face(face)?.surface;
-        surface.normal_at(&at, MAX_NODES, min_subdivision_size())
-    };
-    let (a, b) = (normal(faces[0])?, normal(faces[1])?);
+    let (a, b) = (
+        model.normal_at_vertex(faces[0], vertex)?,
+        model.normal_at_vertex(faces[1], vertex)?,
+    );
     Ok(a.could_be_parallel(&b) && !a.prod_dot(&b).definitely_less(Scalar::ZERO))
 }
 
@@ -207,12 +205,11 @@ fn same_direction(a: &Vector3, b: &Vector3) -> bool {
 /// between faces folding back onto each other is no chain's to go on.
 fn next_link(model: &Model, link: &Link) -> GeopResult<Option<Link>> {
     let vertex = link.vertices(model)?[1];
-    let at = model.get_vertex(vertex)?.point;
     let (_, arriving) = link.at(model, Scalar::ONE)?;
     let normals_at = |faces: [FaceId; 2]| -> GeopResult<[Vector3; 2]> {
         let normal = |face| {
-            let surface = &model.get_face(face)?.surface;
-            surface.normal_at(&at, MAX_NODES, min_subdivision_size())
+            let ctx = with_context!("the normal of face {face} at vertex {vertex}");
+            model.normal_at_vertex(face, vertex).with_context(ctx)
         };
         Ok([normal(faces[0])?, normal(faces[1])?])
     };

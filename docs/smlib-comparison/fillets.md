@@ -182,8 +182,8 @@ Each: SMLib location, the case and SMLib's handling, geop today, geop-style sket
 - `regression_tests.rs:87` 169° dihedral: `predictor_corrector_step` leaves the leaning face (fillet; chamfer builds).
 - `regression_tests.rs:150` post under bar: invalid solid instead of refusal (P2/P3).
 - `regression_tests.rs:468` lofted blade trailing edge: boolean misses an intersection curve (classify_face straddles).
-- `subd_regression_tests.rs:88` singular sole patch: normal at a degenerate corner (use `off_pole`-style normals at singular points).
-- `subd_regression_tests.rs:114` deviation enclosure diverges to infinity on a flat-sliced SubD rim.
+- `subd_mouse_sole_rim_filleted` (round 3): the sole's patch corners where the crease runs on smoothly have `S_u` collinear with `S_v`. The normal there is now the corner's (`NurbSurface::corner_normal`), and the tangent chain takes a face's normal at its vertex where its loop puts it (`Model::normal_at_vertex`; locating the vertex ran into a valley of `(u, v)` some 1500 boxes long). Next failure: `fits` reads the sole's curvature at that corner through its singular metric (`EG - F^2` could be zero). Needs curvature without the metric's inverse, or no patch corner where the boundary runs on smoothly.
+- `sliced_subd_mouse_rim_filleted` (round 3): no diverged enclosure. The blend leaves `subd(mouse,f9)` at `-1.16e-5` rad, where it should at `+1e-6`, `0.0037` before the face's inner triple-knot line `u = 1`, across which the normal turns by `1.2e-6` rad (Loop–Schaefer patches next to extraordinary corners meet only nearly tangentially). That is a crease inside a face, bigger than `TILT`. P13 (a station on the knot line) would not be enough on its own.
 
 ## 3. Missing whole features
 

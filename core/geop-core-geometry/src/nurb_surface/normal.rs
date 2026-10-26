@@ -319,8 +319,9 @@ impl NurbSurface<4> {
     /// **At a pole** — `(u, v)` touching a boundary row that collapses to a
     /// point — `S_u × S_v` vanishes, and the normal is that of the pole
     /// itself ([`Self::pole_normal`]), the same for every `u` (`v`) along
-    /// the row. Anything else where the cross product vanishes has no
-    /// normal and is an error.
+    /// the row. **At a corner** whose boundary curves leave it along one
+    /// line, it is the corner's ([`Self::corner_normal`]). Anything else
+    /// where the cross product vanishes has no normal and is an error.
     pub fn normal(&self, u: Scalar, v: Scalar) -> GeopResult<Vector3> {
         let (du, dv) = self.derivatives(u, v)?;
         let regular = du
@@ -335,12 +336,79 @@ impl NurbSurface<4> {
         if regular.is_ok() {
             return regular;
         }
-        for (u_fixed, first) in self.rows_touching(u, v) {
+        let rows = self.rows_touching(u, v);
+        for &(u_fixed, first) in &rows {
             if let Some(normal) = self.pole_normal(u_fixed, first) {
                 return normal;
             }
         }
+        // A corner of the domain both `(u, v)` touches.
+        for &(u_fixed, u_first) in rows.iter().filter(|(u_fixed, _)| *u_fixed) {
+            for &(_, v_first) in rows.iter().filter(|(v_fixed, _)| !*v_fixed) {
+                debug_assert!(u_fixed);
+                if let Some(normal) = self.corner_normal(u_first, v_first) {
+                    return normal;
+                }
+            }
+        }
         regular
+    }
+
+    /// The normal at a corner of the domain — at the start (`u_first`) or
+    /// end of `u`, and of `v` — where `S_u` and `S_v` could be parallel:
+    /// where the two boundary curves leave the corner along one line, its
+    /// angle opened out flat (a SubD patch at a crease vertex, where the
+    /// crease runs on smoothly). `None` where they are not, and the regular
+    /// normal holds.
+    ///
+    /// The surface may well be smooth there; its coordinates are not. With
+    /// `S_v = μ S_u` at the corner, next to it `S_u × S_v` is to first order
+    /// `du S_u × (S_uv − μ S_uu) + dv S_u × (S_vv − μ S_uv)`, `du` and `dv`
+    /// the steps into the domain, signed by which end the corner is at. The
+    /// corner has a normal exactly when those two agree in direction, and
+    /// it is theirs; where they do not, no single one — an error, not an
+    /// arbitrary pick between them.
+    fn corner_normal(&self, u_first: bool, v_first: bool) -> Option<GeopResult<Vector3>> {
+        let ((u0, u1), (v0, v1)) = (self.domain_u(), self.domain_v());
+        let (u, v) = (if u_first { u0 } else { u1 }, if v_first { v0 } else { v1 });
+        let (su, sv) = self.derivatives(u, v).ok()?;
+        if !su.could_be_parallel(&sv) {
+            return None;
+        }
+        let corner = || -> GeopResult<Vector3> {
+            let mu = su.prod_dot(&sv).div(su.prod_dot(&su))?;
+            let [suu, suv, svv] = self.second_derivatives(u, v)?;
+            let into = |first: bool| {
+                if first {
+                    Scalar::ONE
+                } else {
+                    Scalar::ONE.neg()
+                }
+            };
+            let along_u = su
+                .prod_cross(&suv.sub(&suu.prod_scalar(mu)))
+                .prod_scalar(into(u_first));
+            let along_v = su
+                .prod_cross(&svv.sub(&suv.prod_scalar(mu)))
+                .prod_scalar(into(v_first));
+            let normal = along_u.add(&along_v).normalize()?;
+            for w in [along_u, along_v] {
+                if !w.could_be_parallel(&normal)
+                    || w.prod_dot(&normal).definitely_less(Scalar::ZERO)
+                {
+                    return Err(GeopError::new(format!(
+                        "the surface's normals next to the corner turn from {along_u:?} to {along_v:?}: a corner with no single normal"
+                    )));
+                }
+            }
+            Ok(normal)
+        };
+        Some(corner().with_context(&|e: GeopError| {
+            e.with_context(format!(
+                "NurbSurface::corner_normal(corner at {:?}, S_u = {su:?}, S_v = {sv:?})",
+                (u, v)
+            ))
+        }))
     }
 
     /// The unit normal of this surface at `point`, which lies on it: at
