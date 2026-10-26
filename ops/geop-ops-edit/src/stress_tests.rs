@@ -39,6 +39,7 @@ fn is_refusal(message: &str) -> bool {
         "passes through itself",
         "past its",
         "neither pair of its opposite sides meet",
+        "part of no feature",
     ]
     .iter()
     .any(|refusal| message.contains(refusal))
@@ -70,12 +71,17 @@ fn stress(program: Program, distance: f64) {
             let case = format!("{face} offset by {d}");
             cases.record(case, outcome::<OffsetFace>(&part, &args, is_refusal));
         }
-        for heal in [HealGap::Heal, HealGap::Open] {
+        for (heal, whole_feature) in [
+            (HealGap::Heal, false),
+            (HealGap::Open, false),
+            (HealGap::Heal, true),
+        ] {
             let args = DeleteFaceArgs {
                 faces: vec![element(&face)],
                 heal,
+                whole_feature,
             };
-            let case = format!("{face} deleted, {heal:?}");
+            let case = format!("{face} deleted, {heal:?}, whole feature: {whole_feature}");
             cases.record(case, outcome::<DeleteFace>(&part, &args, is_refusal));
         }
         for k in 0..3 {

@@ -37,7 +37,8 @@ below is what was missing then, and where each item stands now.
 - Direct edits of any solid, imported ones too: faces moved, pushed or
   pulled along their normals (taking along the faces they run smoothly
   into), put on another face's surface, and deleted — holes, bosses,
-  pockets, chamfers, fillets and cut corners healed over by the faces
+  pockets — picked whole by one face of them (defeaturing) — chamfers,
+  fillets and cut corners healed over by the faces
   around them, or the solid left open; the solid rebuilt face by face
   around them, for any NURBS faces, every name kept. Faces that lie on
   one surface (blocks united flush, a pattern of overlapping blocks) merged

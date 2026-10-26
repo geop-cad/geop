@@ -228,6 +228,7 @@ mod delete_face {
             DeleteFaceArgs {
                 faces: faces.into_iter().map(element).collect(),
                 heal,
+                whole_feature: false,
             },
         );
         program.build_model(registry).unwrap()
@@ -382,6 +383,7 @@ mod delete_face {
             DeleteFaceArgs {
                 faces: vec![element("block(a,end)")],
                 heal: HealGap::Heal,
+                whole_feature: false,
             },
         );
         let error = program.build_model(registry).unwrap_err();
@@ -483,5 +485,79 @@ mod merge_faces {
         let part = merged(program, &solid);
         assert_valid(&part);
         assert_eq!(part.topology().faces.len(), joined.topology().faces.len());
+    }
+}
+
+// ── Taking out whole features ───────────────────────────────────────────────
+
+mod whole_feature {
+    use geop_core_program::{operation_registry::OperationRegistry, program::Program};
+    use geop_lib_fixtures::{bodies::block_with_boss, drilled_box};
+    use geop_ops_model::{
+        NamedModel, element,
+        testing::{Built, assert_valid, assert_volume},
+    };
+
+    use crate::{DeleteFace, DeleteFaceArgs, direct::HealGap};
+
+    fn registry() -> geop_core_math::geop_error::GeopResult<OperationRegistry> {
+        geop_lib_fixtures::registry()?.with(DeleteFace)
+    }
+
+    /// `program` with the whole feature `face` is part of taken out, healed
+    /// over.
+    fn defeatured(
+        mut program: Program,
+        face: &str,
+    ) -> geop_core_math::geop_error::GeopResult<NamedModel> {
+        program.push(
+            "d",
+            DeleteFaceArgs {
+                faces: vec![element(face)],
+                heal: HealGap::Heal,
+                whole_feature: true,
+            },
+        );
+        program.build_model(registry)
+    }
+
+    /// One piece of a blind hole's wall picked: the whole hole, its other
+    /// pieces and its bottom, taken out — the box whole again.
+    #[test]
+    fn a_hole_from_one_face_of_it() {
+        let program = drilled_box();
+        let part = program.build_model(registry).unwrap();
+        let mut walls: Vec<String> = (part.topology().faces.keys())
+            .map(|&f| part.name_of(f).unwrap().to_string())
+            .filter(|n| n.starts_with("cylinder(hole"))
+            .collect();
+        walls.sort();
+        let part = defeatured(program, &walls[0]).unwrap();
+        assert_valid(&part);
+        assert_volume(&part, "delete_face(d)", 4.0, 1e-5);
+        assert_eq!(part.topology().faces.len(), 6);
+    }
+
+    /// A boss's top picked: the boss, wall and top, taken out.
+    #[test]
+    fn a_boss_from_its_top() {
+        let program = block_with_boss();
+        let part = program.build_model(registry).unwrap();
+        let top = (part.topology().faces.keys())
+            .map(|&f| part.name_of(f).unwrap().to_string())
+            .find(|n| n.starts_with("cylinder(boss") && n.contains("end"))
+            .expect("the boss's top");
+        let part = defeatured(program, &top).unwrap();
+        assert_valid(&part);
+        assert_volume(&part, "delete_face(d)", 4.0, 1e-5);
+    }
+
+    /// The face a feature stands on is part of no feature: refused, naming
+    /// it.
+    #[test]
+    fn the_face_a_hole_is_in_is_no_feature() {
+        let error = defeatured(drilled_box(), "block(box,end)").unwrap_err();
+        let message = format!("{error}");
+        assert!(message.contains("part of no feature"), "{message}");
     }
 }

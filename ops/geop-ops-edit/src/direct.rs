@@ -134,6 +134,11 @@ pub struct DeleteFaceArgs {
     /// What to leave where they were.
     #[serde(default)]
     pub heal: HealGap,
+    /// Take out the whole feature each face picked is part of — a hole, a
+    /// boss, a pocket: every face that fills one hole of the faces around
+    /// it — not only the faces picked.
+    #[serde(default)]
+    pub whole_feature: bool,
 }
 
 /// What [`DeleteFace`] leaves where the faces were.
@@ -486,6 +491,7 @@ impl PartOperation for DeleteFace {
         DeleteFaceArgs {
             faces: Vec::new(),
             heal: HealGap::Heal,
+            whole_feature: false,
         }
     }
 
@@ -515,6 +521,12 @@ impl PartOperation for DeleteFace {
                 edit.args.heal = heal;
             }
         });
+        f.checkbox(
+            "whole_feature",
+            "whole feature",
+            args.whole_feature,
+            |edit, b| edit.args.whole_feature = b,
+        );
         f
     }
 }
@@ -532,7 +544,7 @@ impl ModelOperation for DeleteFace {
             HealGap::Heal => Heal::Extend,
             HealGap::Open => Heal::Open,
         };
-        delete_faces(model, &namer, &faces, heal)?;
+        delete_faces(model, &namer, &faces, args.whole_feature, heal)?;
         Ok(())
     }
 }

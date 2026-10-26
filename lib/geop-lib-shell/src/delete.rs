@@ -54,6 +54,7 @@ pub fn delete_faces(
     part: &mut NamedModel,
     namer: &Namer,
     faces: &[FaceId],
+    whole_feature: bool,
     heal: Heal,
 ) -> GeopResult<Body> {
     let ctx = with_context!(
@@ -87,7 +88,10 @@ pub fn delete_faces(
         solid: Some(namer.root()),
         ..part.source_names(&sources)?
     };
-    let deleted: Vec<bool> = sources.faces.iter().map(|f| faces.contains(f)).collect();
+    let mut deleted: Vec<bool> = sources.faces.iter().map(|f| faces.contains(f)).collect();
+    if whole_feature {
+        deleted = feature_of(&spec, &names, &deleted).with_context(ctx)?;
+    }
     if deleted.iter().all(|&d| d) {
         return Err(GeopError::new(
             "every face of the solid is picked: delete the body instead",
@@ -112,6 +116,68 @@ pub fn delete_faces(
                 .with_context(ctx)
         }
     }
+}
+
+/// The faces of the features the faces marked `picked` are part of: every
+/// face reached from one of them across an edge that lies on no face's hole
+/// — a hole's wall and its bottom, a boss's wall and top — for a feature
+/// that fills holes of the faces around it, and so can be taken out with
+/// them (see the module docs). Refused, naming the face, where what is
+/// reached so is no such feature: a face of the body the features stand
+/// on, whose own holes stop the search.
+fn feature_of(spec: &BodySpec, names: &BodyNames, picked: &[bool]) -> GeopResult<Vec<bool>> {
+    let mut on_hole = vec![false; spec.edges.len()];
+    for face in &spec.faces {
+        for c in face.holes.iter().flatten() {
+            if let CoedgeOn::Edge(e, _) = c.on {
+                on_hole[e] = true;
+            }
+        }
+    }
+    let uses = spec.edge_uses();
+    let mut feature = picked.to_vec();
+    let mut todo: Vec<usize> = (0..picked.len()).filter(|&f| picked[f]).collect();
+    while let Some(f) = todo.pop() {
+        for c in spec.faces[f].loops().into_iter().flatten() {
+            let CoedgeOn::Edge(e, _) = c.on else { continue };
+            if on_hole[e] {
+                continue;
+            }
+            for &(g, ..) in &uses[e] {
+                if !feature[g] {
+                    feature[g] = true;
+                    todo.push(g);
+                }
+            }
+        }
+    }
+    if let Some(f) = (0..picked.len()).find(|&f| picked[f])
+        && feature.iter().all(|&inside| inside)
+    {
+        return Err(GeopError::new(format!(
+            "face {} is part of no feature filling a hole of the faces around it: every face of the solid is reached from it",
+            names.faces[f]
+        )));
+    }
+    // Its boundary has to be holes of the faces around it.
+    for (e, at) in uses.iter().enumerate() {
+        let [(f, ..), (g, ..)] = at.as_slice() else {
+            continue;
+        };
+        if feature[*f] == feature[*g] {
+            continue;
+        }
+        let (inside, outside) = if feature[*f] { (*f, *g) } else { (*g, *f) };
+        let on_outside_hole = (spec.faces[outside].holes.iter().flatten())
+            .any(|c| matches!(c.on, CoedgeOn::Edge(x, _) if x == e));
+        if !on_outside_hole {
+            return Err(GeopError::new(format!(
+                "face {} is part of no feature filling a hole of the faces around it: edge {} between it and face {} lies on no hole of that face",
+                names.faces[inside], names.edges[e], names.faces[outside]
+            )));
+        }
+    }
+    Ok(feature)
 }
 
 /// The solid `spec`, named `names`, with the faces marked `deleted` taken
