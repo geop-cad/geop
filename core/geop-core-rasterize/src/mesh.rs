@@ -40,6 +40,9 @@ const PROJECTION_ITERATIONS: usize = 24;
 const ON_SIDE: f64 = 1e-9;
 /// Two positions along an edge's polyline this close, in samples, are one.
 const SAME_POSITION: f64 = 1e-9;
+/// Passes splitting the mesh's open sides, at most: each settles the sides
+/// the one before split, so a few do; the bound is how hard it tries.
+const MAX_PASSES: usize = 16;
 
 /// Where a mesh point lies: inside its face, at a position along an edge's
 /// polyline (`k + f`, between its samples `k` and `k + 1`), or at a vertex
@@ -388,7 +391,11 @@ impl Mesh {
     /// a T where a clipped cell meets a whole one, or where two cells
     /// clipped the trim each on its own.
     fn conform(&mut self, tolerance: f64) {
-        while self.conform_once(tolerance) {}
+        for _ in 0..MAX_PASSES {
+            if !self.conform_once(tolerance) {
+                break;
+            }
+        }
     }
 
     /// One pass of [`Mesh::conform`], each triangle split once at most:
@@ -408,7 +415,7 @@ impl Mesh {
             let end = us.partition_point(|&u| u <= hi);
             let mut on: Vec<(f64, usize)> = by_u[start..end]
                 .iter()
-                .filter(|&&p| p != a && p != b)
+                .filter(|&&p| !self.triangles[i].contains(&p))
                 .filter_map(|&p| {
                     let (t, d) = along(self.uv[p], pa, pb)?;
                     (d <= tolerance).then_some((t, p))
@@ -429,7 +436,11 @@ impl Mesh {
     /// in `positions` strictly between its ends: what other faces put
     /// there (see [`zip`]).
     fn zip(&mut self, trim: &Trim, positions: &BTreeMap<EdgeId, Vec<f64>>) {
-        while self.zip_once(trim, positions) {}
+        for _ in 0..MAX_PASSES {
+            if !self.zip_once(trim, positions) {
+                break;
+            }
+        }
     }
 
     /// One pass of [`Mesh::zip`], each triangle split once at most:
