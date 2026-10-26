@@ -93,7 +93,7 @@ use geop_core_math::{
     geop_error::{GeopError, GeopResult, WithContext},
     scalars::Scalar,
     solvers::walk::{Walked, walk},
-    vector::{Vector, Vector2, Vector3},
+    vector::{Vector2, Vector3},
     with_context,
 };
 use geop_core_topology::{
@@ -475,7 +475,8 @@ fn collapse_edges(
 /// Per face of `spec`, whether its copy turns inside out: a face kept,
 /// some of whose edges' copies `shrunk` to nothing, left with two edges or
 /// fewer by them — a chamfer narrower than the walls, between the two
-/// faces it cuts, its edges across it turned around. What is left of it
+/// faces it cuts, its edges across it turned around; a cap beyond where a
+/// cone's offset closes, its rim on the offset's apex. What is left of it
 /// has no area: the faces either side of it meet, or it shrinks to a
 /// point. A face with holes is not decided so.
 fn inverted(spec: &BodySpec, kept: &[bool], shrunk: &[bool]) -> Vec<bool> {
@@ -493,6 +494,20 @@ fn inverted(spec: &BodySpec, kept: &[bool], shrunk: &[bool]) -> Vec<bool> {
                 && edges.iter().filter(|&&e| !shrunk[e]).count() <= 2
         })
         .collect()
+}
+
+/// Whether `pcurve` runs along a pole of `surface`, every control point of
+/// it at one — so all of it, which lies in their hull, and the row is
+/// straight in `(u, v)`: a curve whose copy there is a point. The rim of a
+/// cone cut off short of its tip, on the offset closed in its apex.
+fn along_pole(surface: &NurbSurface3D, pcurve: &Curve2) -> GeopResult<bool> {
+    for p in &pcurve.control_points {
+        let p = p.dehomogenized()?;
+        if surface.pole_at(p[0], p[1]).is_none() {
+            return Ok(false);
+        }
+    }
+    Ok(true)
 }
 
 /// `spec` — the faces on their inner surfaces — contracted where faces
@@ -576,8 +591,12 @@ fn contract(
             let mut copied = Vec::new();
             for c in lp {
                 let on = match c.on {
+                    // An edge that vanishes leaves its loop passing its
+                    // one vertex there: along the row of a pole, where the
+                    // face's surface has one (the rebuild keeps such a
+                    // coedge only there).
                     CoedgeOn::Edge(e, sense) => match edge[e] {
-                        None => continue,
+                        None => CoedgeOn::Vertex(vertex[spec.ends(c.on)?.0]),
                         Some((i, along)) => CoedgeOn::Edge(
                             i,
                             if along == Sense::Forward {
@@ -594,7 +613,7 @@ fn contract(
                     pcurve: c.pcurve.clone(),
                 });
             }
-            if copied.is_empty() {
+            if !copied.iter().any(|c| matches!(c.on, CoedgeOn::Edge(..))) {
                 return Err(GeopError::new(format!(
                     "the walls are too thick: every edge of a loop of face {} vanishes, and its inner copy with it",
                     names.faces[f]
@@ -781,10 +800,18 @@ impl<'a> Hollow<'a> {
                 }
             }
         }
-        // The edges whose copies shrink to nothing: those that turn
-        // around, found by placing the inner side's vertices. Each time some do, they vanish, and
+        // The edges whose copies shrink to nothing: along where an offset
+        // closes in a point, and those that turn around, found by placing
+        // the inner side's vertices. Each time some do, they vanish, and
         // the faces they leave with no area with them, until none does.
         let mut shrunk = vec![false; spec.edges.len()];
+        for (e, at) in offsets.edge_uses().iter().enumerate() {
+            for &(f, _, pcurve) in at {
+                if kept[f] && !collapsed[f] && along_pole(&offsets.faces[f].surface, pcurve)? {
+                    shrunk[e] = true;
+                }
+            }
+        }
         let (copies, inner) = loop {
             let inverted = inverted(spec, &kept, &shrunk);
             let copy = collapse_edges(spec, names, &collapsed, &inverted, &shrunk)?;
@@ -1512,94 +1539,6 @@ pub fn pcurve(
         MAX_NODES,
         min_subdivision_size(),
     )
-}
-
-/// `surface` over three times its domain in each direction it is straight
-/// in — degree 1, two rows of control points of equal weights — extended
-/// linearly: the same points at the same `(u, v)`, and more around them.
-/// It is not extended past a row that is a single point, a pole like a
-/// disc's center: the pole would end up inside the patch, where it has no
-/// normal, and the inner copy of a vertex there is that pole.
-///
-/// A face's inner copy can reach past the face where they meet at an
-/// inward corner — or, for a plane cut off by the box around the profile,
-/// past where the patch ends — so its surface needs room around the face.
-/// How much is a free choice; the face's own size is room enough unless
-/// the walls are as thick as the face is wide.
-pub fn extended(mut surface: NurbSurface3D) -> GeopResult<NurbSurface3D> {
-    for along_u in [true, false] {
-        let (degree, num, other) = if along_u {
-            (surface.degree_u, surface.num_u, surface.num_v)
-        } else {
-            (surface.degree_v, surface.num_v, surface.num_u)
-        };
-        if degree != 1 || num != 2 {
-            continue;
-        }
-        let index = |row: usize, j: usize| {
-            if along_u {
-                row * surface.num_v + j
-            } else {
-                j * surface.num_v + row
-            }
-        };
-        let cps = &surface.control_points;
-        if !(0..other).all(|j| cps[index(0, j)][3].could_be_equal(cps[index(1, j)][3])) {
-            continue;
-        }
-        let pole = |row: usize| -> GeopResult<bool> {
-            let first = cps[index(row, 0)].dehomogenized()?;
-            for j in 1..other {
-                if !cps[index(row, j)].dehomogenized()?.could_be_equal(&first) {
-                    return Ok(false);
-                }
-            }
-            Ok(true)
-        };
-        let (start, end) = (!pole(0)?, !pole(1)?);
-        if !start && !end {
-            continue;
-        }
-        let mut control_points = cps.clone();
-        for j in 0..other {
-            let (a, b) = (cps[index(0, j)], cps[index(1, j)]);
-            let two = |p: &Vector<4>| p.prod_scalar(Scalar::TWO);
-            if start {
-                control_points[index(0, j)] = two(&a).sub(&b);
-            }
-            if end {
-                control_points[index(1, j)] = two(&b).sub(&a);
-            }
-        }
-        let knots = if along_u {
-            &surface.knot_vector_u
-        } else {
-            &surface.knot_vector_v
-        };
-        let (lo, hi) = (knots[1], knots[2]);
-        let width = hi.sub(lo);
-        let lo = if start { lo.sub(width) } else { lo };
-        let hi = if end { hi.add(width) } else { hi };
-        let knots = vec![lo, lo, hi, hi];
-        surface = if along_u {
-            NurbSurface3D::try_new(
-                1,
-                surface.degree_v,
-                control_points,
-                knots,
-                surface.knot_vector_v.clone(),
-            )?
-        } else {
-            NurbSurface3D::try_new(
-                surface.degree_u,
-                1,
-                control_points,
-                surface.knot_vector_u.clone(),
-                knots,
-            )?
-        };
-    }
-    Ok(surface)
 }
 
 #[cfg(test)]

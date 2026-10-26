@@ -685,15 +685,29 @@ fn a_straight_chamfer_narrower_than_the_walls() {
 }
 
 /// A cone cut off near its tip, 0.1 across there, shelled 0.2 thick: the
-/// cone's offset passes the axis before the small end.
+/// cone's offset passes the axis before the small end. It is closed in
+/// its own apex, `0.2 / sin α` below the cone's, inside the face; the
+/// small cap's inner copy lies beyond it and vanishes, its rim on the
+/// apex. The hollow is the inner cone from the inner base up to its apex.
 #[test]
-#[ignore = "bug: refused, 'the offset ... could fold over itself' near the small end: the cone's offset rows close to a point inside the face, not at a pole. NurbSurface3D::offset closes only at an apex side (closed); here the cut would be at the row where S_t.S_t - d N.S_tt vanishes inside the domain, the small cap's copy then vanishing (its face collapsing, as 2.3 of docs/smlib-comparison/offsets.md), which the shell's collapse machinery does not do for a plane."]
 fn a_cone_cut_off_short_of_its_tip_shelled_past_it() {
     let (mut part, solid) = revolved(&[[0., 2.], [0.1, 2.], [1., 0.], [0., 0.]]);
     let namer = Namer::new("shell", "s").unwrap();
-    let result = shell(&mut part, &namer, solid, &[], Scalar::from_f64(0.2), &[]);
-    assert!(result.is_ok(), "{result:?}");
+    let shelled = shell(&mut part, &namer, solid, &[], Scalar::from_f64(0.2), &[])
+        .unwrap_or_else(|e| panic!("{e:?}"));
     assert_valid(&part);
+    // The side runs in by 0.45 a unit up, `tan α`.
+    let secant = (1f64 + 0.45 * 0.45).sqrt();
+    let apex = 2. + 0.1 / 0.45 - 0.2 * secant / 0.45;
+    assert!(has_vertex_at(&part, [0., 0., apex]));
+    let pi = std::f64::consts::PI;
+    let base = 1. - 0.2 * secant - 0.45 * 0.2;
+    let walls = pi * 2. / 3. * (1. + 0.1 + 0.01) - pi / 3. * base * base * (apex - 0.2);
+    let volume = part.topology().mass_properties(shelled).unwrap().volume;
+    assert!(
+        volume.could_be_equal(Scalar::from_f64(walls)),
+        "{volume:?} vs {walls}"
+    );
 }
 
 /// A pyramid on a 2 x 2 square, its tip 2 up over `(tip_x, 0)`: four

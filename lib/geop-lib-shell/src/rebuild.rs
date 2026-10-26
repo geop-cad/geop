@@ -56,7 +56,7 @@ use geop_core_topology::{
 use geop_core_topology::{FaceId, SolidId};
 use geop_ops_model::{BodyNames, NamedModel, Namer};
 
-use crate::shell::{extended, pcurve, surface_missed};
+use crate::shell::{pcurve, surface_missed};
 
 /// The legs a traced edge is fitted over at first, and at most: doubled
 /// while the fit's enclosure is wider than [`TRACE_DRIFT`].
@@ -971,24 +971,52 @@ fn turns_around(guide: &Curve3, points: &[Vector3]) -> GeopResult<()> {
     Ok(())
 }
 
-/// `surface` with room around it: [`extended`] where it is straight, and
-/// carried on past each side where it is not ([`NurbSurface3D::extended`])
-/// by as much of its parameter as its end span is long that way — or by a
-/// half, a quarter or an eighth of that where more would carry it too far:
-/// an arc round past where its weights stay positive, a free-form patch
-/// past where it folds back on itself and has no normal. Not past a side
-/// that is a single point, a pole: the pole would end up inside the patch,
-/// where it has no normal. How much room is a free choice; the patch's own
-/// size is room enough unless a face moves as far as it is wide.
+/// `surface` with room around it: carried on past each side
+/// ([`NurbSurface3D::extended`]) by as much of its parameter as its end
+/// span is long that way — or by a half, a quarter or an eighth of that
+/// where more would carry it too far: an arc round past where its weights
+/// stay positive, a cone through its apex, a free-form patch past where it
+/// folds back on itself and has no normal. Not past a side that is a single
+/// point, a pole: the pole would end up inside the patch, where it has no
+/// normal. How much room is a free choice; the patch's own size is room
+/// enough unless a face moves as far as it is wide.
+///
+/// A face's copy can reach past the face where they meet at an inward
+/// corner — or, for a plane cut off by the box around the profile, past
+/// where the patch ends — so its surface needs room around the face.
 pub fn room(surface: NurbSurface3D) -> GeopResult<NurbSurface3D> {
-    let mut surface = extended(surface)?;
+    let mut surface = surface;
+    // The straight directions first, then the others: a straight
+    // direction is carried on at both sides at once, from the rows it had,
+    // each side by the width, halved as often as it has to be.
+    let straight = |s: &NurbSurface3D, along_u| -> GeopResult<bool> {
+        Ok(straight_extended(s, along_u, [None, None])?.is_some())
+    };
     for along_u in [true, false] {
-        let (degree, num) = if along_u {
-            (surface.degree_u, surface.num_u)
-        } else {
-            (surface.degree_v, surface.num_v)
-        };
-        if degree == 1 && num == 2 {
+        if straight(&surface, along_u)? {
+            let mut halved = [None, None];
+            for (side, at_end) in [false, true].into_iter().enumerate() {
+                if side_is_pole(&surface, along_u, at_end)? {
+                    continue;
+                }
+                for k in 0..4 {
+                    let mut one = [None, None];
+                    one[side] = Some(k);
+                    if let Some(longer) = straight_extended(&surface, along_u, one)?
+                        && longer.has_normal_everywhere()?
+                    {
+                        halved[side] = Some(k);
+                        break;
+                    }
+                }
+            }
+            if let Some(longer) = straight_extended(&surface, along_u, halved)? {
+                surface = longer;
+            }
+        }
+    }
+    for along_u in [true, false] {
+        if straight(&surface, along_u)? {
             continue;
         }
         for at_end in [false, true] {
@@ -1021,6 +1049,86 @@ pub fn room(surface: NurbSurface3D) -> GeopResult<NurbSurface3D> {
         }
     }
     Ok(surface)
+}
+
+/// `surface` carried on past its sides at the start and the end of `u`
+/// (`along_u`) or `v`, if it is straight that way — degree 1, two rows of
+/// control points of equal weights — at each by its width halved as often
+/// as `halved` says, or not where it says `None`: its end rows moved on
+/// along the straight lines, so the same points stay at the same `(u, v)`
+/// and the patch is still one span. `None` where it is not straight that
+/// way.
+fn straight_extended(
+    surface: &NurbSurface3D,
+    along_u: bool,
+    halved: [Option<u32>; 2],
+) -> GeopResult<Option<NurbSurface3D>> {
+    let (degree, num, other) = if along_u {
+        (surface.degree_u, surface.num_u, surface.num_v)
+    } else {
+        (surface.degree_v, surface.num_v, surface.num_u)
+    };
+    if degree != 1 || num != 2 {
+        return Ok(None);
+    }
+    let index = |row: usize, j: usize| {
+        if along_u {
+            row * surface.num_v + j
+        } else {
+            j * surface.num_v + row
+        }
+    };
+    let cps = &surface.control_points;
+    if !(0..other).all(|j| cps[index(0, j)][3].could_be_equal(cps[index(1, j)][3])) {
+        return Ok(None);
+    }
+    let knots = if along_u {
+        &surface.knot_vector_u
+    } else {
+        &surface.knot_vector_v
+    };
+    let (mut lo, mut hi) = (knots[1], knots[2]);
+    let width = hi.sub(lo);
+    let mut control_points = cps.clone();
+    for (end, k) in halved.into_iter().enumerate() {
+        let Some(k) = k else {
+            continue;
+        };
+        let fraction = Scalar::from_ratio(1, 1 << k)?;
+        for j in 0..other {
+            let (a, b) = (cps[index(1 - end, j)], cps[index(end, j)]);
+            // Carried on by the whole width, the end row is `2 b - a`.
+            control_points[index(end, j)] = if k == 0 {
+                b.prod_scalar(Scalar::TWO).sub(&a)
+            } else {
+                b.add(&b.sub(&a).prod_scalar(fraction))
+            };
+        }
+        let by = if k == 0 { width } else { width.mul(fraction) };
+        if end == 1 {
+            hi = hi.add(by);
+        } else {
+            lo = lo.sub(by);
+        }
+    }
+    let knots = vec![lo, lo, hi, hi];
+    Ok(Some(if along_u {
+        NurbSurface3D::try_new(
+            1,
+            surface.degree_v,
+            control_points,
+            knots,
+            surface.knot_vector_v.clone(),
+        )?
+    } else {
+        NurbSurface3D::try_new(
+            surface.degree_u,
+            1,
+            control_points,
+            surface.knot_vector_u.clone(),
+            knots,
+        )?
+    }))
 }
 
 /// Whether the side of `surface` at the end (`at_end`) or the start of its
