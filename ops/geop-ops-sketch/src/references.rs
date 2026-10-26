@@ -34,7 +34,6 @@ use geop_core_topology::CoedgeGeometry;
 use geop_ops_model::{Chain, Curve, Face, NamedModel, RefId, Vertex};
 use serde::{Deserialize, Serialize};
 
-use crate::geometry::of;
 use geop_ops_model::sketch::{CurveKind, PlacedSketch, Sketch};
 
 one_of! {
@@ -99,7 +98,9 @@ enum Shape {
 /// its curves, all by key.
 #[derive(Clone, Debug, Default, PartialEq)]
 struct Geometry {
-    points: BTreeMap<String, [f64; 2]>,
+    /// Each point as the projection encloses it: what it is projected from
+    /// is an enclosure, and so is where it lands.
+    points: BTreeMap<String, Vector2>,
     curves: BTreeMap<String, Shape>,
 }
 
@@ -162,8 +163,8 @@ impl Reference {
     /// fixed, and construction geometry: something to measure against and
     /// snap to, never part of a profile.
     fn sync(&mut self, sketch: &mut Sketch, geometry: &Geometry) {
-        for (key, &[x, y]) in &geometry.points {
-            let at = (Scalar::from_f64(x), Scalar::from_f64(y));
+        for (key, p) in &geometry.points {
+            let at = (p[0], p[1]);
             match self.points.get(key).and_then(|p| sketch.points.get_mut(p)) {
                 Some(point) => {
                     (point.x, point.y) = at;
@@ -250,9 +251,18 @@ fn frame_geometry() -> Geometry {
     };
     Geometry {
         points: BTreeMap::from([
-            (ORIGIN.into(), [0.0, 0.0]),
-            (X_AXIS.into(), [1.0, 0.0]),
-            (Y_AXIS.into(), [0.0, 1.0]),
+            (
+                ORIGIN.into(),
+                Vector2::from_array([Scalar::ZERO, Scalar::ZERO]),
+            ),
+            (
+                X_AXIS.into(),
+                Vector2::from_array([Scalar::ONE, Scalar::ZERO]),
+            ),
+            (
+                Y_AXIS.into(),
+                Vector2::from_array([Scalar::ZERO, Scalar::ONE]),
+            ),
         ]),
         curves: BTreeMap::from([(X_AXIS.into(), line(X_AXIS)), (Y_AXIS.into(), line(Y_AXIS))]),
     }
@@ -263,7 +273,7 @@ fn frame_geometry() -> Geometry {
 fn project(entity: &Projected, reader: &Reader, plane: &CoordinateSystem) -> GeopResult<Geometry> {
     let mut geometry = Geometry::default();
     let mut point = |name: &str, at: &Vector3| {
-        (geometry.points).insert(name.to_string(), of(&plane.to_uv(at)));
+        (geometry.points).insert(name.to_string(), plane.to_uv(at));
     };
     let mut curves = Vec::new();
     match entity {
@@ -319,7 +329,7 @@ fn project_chain(
         return Err(GeopError::new(format!("{key:?} has no names for its ends")));
     };
     for (name, at) in [(start_name, start), (end_name, end)] {
-        geometry.points.insert(name.clone(), of(&plane.to_uv(at)));
+        geometry.points.insert(name.clone(), plane.to_uv(at));
     }
     let ctx = with_context!("curve {key:?}");
     let shape = project_curve(
@@ -351,7 +361,7 @@ fn project_curve(
     key: &str,
     start: String,
     end: String,
-    points: &mut BTreeMap<String, [f64; 2]>,
+    points: &mut BTreeMap<String, Vector2>,
 ) -> GeopResult<Option<Shape>> {
     let (t0, t1) = curve.domain();
     let (a, b) = (
@@ -370,7 +380,7 @@ fn project_curve(
             .could_be_equal(&Vector3::zero())
         {
             let center = format!("{key}#center");
-            points.insert(center.clone(), of(&plane.to_uv(&arc.circle.center)));
+            points.insert(center.clone(), plane.to_uv(&arc.circle.center));
             let radius = arc.circle.radius.to_f64();
             if arc.could_be_closed() {
                 return Ok(Some(Shape::Circle { center, radius }));
@@ -465,8 +475,8 @@ fn project_curve(
         }
         if arc.is_some() {
             let (from, to) = (format!("{key}#lo"), format!("{key}#hi"));
-            points.insert(from.clone(), of(&lo));
-            points.insert(to.clone(), of(&hi));
+            points.insert(from.clone(), lo);
+            points.insert(to.clone(), hi);
             return Ok(Some(Shape::Line {
                 start: from,
                 end: to,
@@ -489,7 +499,7 @@ fn project_curve(
     let mut control_points = vec![start];
     for (i, cp) in curve.control_points.iter().enumerate().take(n - 1).skip(1) {
         let inner = format!("{key}#{i}");
-        points.insert(inner.clone(), of(&plane.to_uv(&cp.dehomogenized()?)));
+        points.insert(inner.clone(), plane.to_uv(&cp.dehomogenized()?));
         control_points.push(inner);
     }
     control_points.push(end);
@@ -531,7 +541,7 @@ mod tests {
         .unwrap()
     }
 
-    fn projected(normal: [f64; 3]) -> (Option<Shape>, BTreeMap<String, [f64; 2]>) {
+    fn projected(normal: [f64; 3]) -> (Option<Shape>, BTreeMap<String, Vector2>) {
         let n = Vector3::from_array(normal.map(Scalar::from_f64));
         let plane = geop_ops_model::frame_along(Vector3::zero(), &n).unwrap();
         let mut points = BTreeMap::new();
@@ -566,7 +576,7 @@ mod tests {
         // radius — not to the corner of its control polygon beyond.
         let (sideways, points) = projected([1.0, -1.0, 0.0]);
         assert!(matches!(sideways, Some(Shape::Line { .. })), "{sideways:?}");
-        let reach = |k: &str| points[k][0].hypot(points[k][1]);
+        let reach = |k: &str| points[k][0].to_f64().hypot(points[k][1].to_f64());
         let (lo, hi) = (reach("e#lo"), reach("e#hi"));
         assert!((lo.min(hi) - 0.5f64.sqrt()).abs() < 1e-12, "{points:?}");
         assert!((lo.max(hi) - 1.0).abs() < 1e-12, "{points:?}");

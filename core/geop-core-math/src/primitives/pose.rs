@@ -536,7 +536,9 @@ impl<T: Number> Pose<T> {
     /// Turning by `radians` about the line through `point` along the unit
     /// vector `direction` — counter-clockwise, looking against `direction`
     /// — as a pose: the rotation `(cos ½θ, sin ½θ d)`, and the position
-    /// that keeps `point` where it is.
+    /// that keeps `point` where it is. That quaternion is unit already,
+    /// within its enclosure, and kept as it is: normalized again, honestly,
+    /// it came out four times as wide, and so did everything the pose turned.
     pub fn rotation_about(
         point: &Vector3<T>,
         direction: &Vector3<T>,
@@ -544,15 +546,20 @@ impl<T: Number> Pose<T> {
     ) -> GeopResult<Self> {
         let half = radians.div(T::TWO)?;
         let (c, s) = (half.cos(), half.sin());
-        let turn = Pose::new(
-            Vector3::zero(),
-            Quaternion::new(
+        let turn = Pose {
+            rotation: Quaternion::new(
                 c,
                 s.mul(direction[0]),
                 s.mul(direction[1]),
                 s.mul(direction[2]),
             ),
-        )?;
+            position: Vector3::zero(),
+        };
+        if !turn.rotation.norm_sq().definitely_greater(T::ZERO) {
+            return Err(GeopError::new(format!(
+                "Pose::rotation_about: the direction {direction:?} is no unit vector"
+            )));
+        }
         Ok(turn.with_position(point.sub(&turn.apply(point))))
     }
 
@@ -566,7 +573,7 @@ impl<T: Number> Pose<T> {
             axes: turns.then(|| {
                 self.rotation
                     .rotation_columns()
-                    .expect("a pose's rotation is a unit quaternion")
+                    .expect("a pose's rotation is no zero quaternion")
             }),
             position: self.position,
             mirrors: false,

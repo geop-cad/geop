@@ -151,6 +151,12 @@ impl NurbSurface<4> {
     /// allows. Both enclose the same foot point, so the answer is their
     /// intersection. The refinement only tightens: where Newton fails or
     /// leaves the box, the box is the answer.
+    ///
+    /// A point that could be a pole lies on the row collapsing to it (see
+    /// AGENTS.md, "A pole is one vertex at many `(u, v)`"), whatever Newton
+    /// settled on beside it — where the Jacobian is singular, it stops
+    /// where it can step no further, a hair off the row: the row's
+    /// parameter is kept as one of the point's too.
     pub fn locate(
         &self,
         point: &Vector3,
@@ -161,14 +167,29 @@ impl NurbSurface<4> {
         else {
             return Ok(None);
         };
-        Ok(Some(
+        let (mut lu, mut lv) =
             match self.project(*point, u.sharpen(), v.sharpen(), PROJECT_ITERATIONS) {
                 Ok((ru, rv)) if ru.could_be_equal(u) && rv.could_be_equal(v) => {
                     (u.intersect(ru), v.intersect(rv))
                 }
                 _ => (u, v),
-            },
-        ))
+            };
+        let ((u0, u1), (v0, v1)) = (self.domain_u(), self.domain_v());
+        for (u_fixed, first) in self.rows_touching(u, v) {
+            let Some((pole, _)) = self.pole(u_fixed, first) else {
+                continue;
+            };
+            if !point.could_be_equal(&pole) {
+                continue;
+            }
+            match (u_fixed, first) {
+                (true, true) => lu = lu.union(u0),
+                (true, false) => lu = lu.union(u1),
+                (false, true) => lv = lv.union(v0),
+                (false, false) => lv = lv.union(v1),
+            }
+        }
+        Ok(Some((lu, lv)))
     }
 
     /// The foot point of `target` as [`Self::project`] finds it, within the

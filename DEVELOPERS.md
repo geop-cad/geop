@@ -39,18 +39,18 @@ apart (see Scripts).
 | `ops/geop-ops-sketch3d` | the 3-D sketch operation: wires in space, paths and rails |
 | `ops/geop-ops-reference-geometry` | the datum operation: points, axes, planes and frames from what is picked |
 | `ops/geop-ops-extrude-revolve` | extrude, revolve, sweep and loft; feature `testing`: the sketches and extrusions other crates' tests start from; feature `examples`: its examples |
-| `ops/geop-ops-hole` | holes from ISO tables, threads cosmetic or modelled |
+| `ops/geop-ops-hole` | holes from ISO and NPT tables, threads on straight or tapered walls, cosmetic or modelled |
 | `ops/geop-ops-fillet` | fillets and chamfers, rolling-ball blends of tangent chains |
 | `ops/geop-ops-shell` | the shell operation |
 | `ops/geop-ops-plastic` | ribs, lips and grooves, drafts |
 | `ops/geop-ops-boolean` | the boolean and split operations |
-| `ops/geop-ops-pattern` | patterns, mirrors and moves of bodies and features; bodies scaled, evenly or along each axis, and tapered, twisted or bent about an axis |
+| `ops/geop-ops-pattern` | patterns, mirrors and moves of bodies and features; bodies scaled, evenly or along each axis, and tapered, pinched, sheared, twisted or bent about an axis |
 | `ops/geop-ops-subd` | subdivision surfaces: a control cage, edited with the box modelling tools (extrude, inset, bevel, loop cut, slide, merge, dissolve, bridge, fill, sharp and soft creases, a mirror) and built as its Catmull–Clark limit surface |
 | `ops/geop-ops-surface` | boundary and UV surfaces, offset, thicken, knit, trim and extend |
 | `ops/geop-ops-edit` | delete a body, extract a face, project a sketch onto a face; direct edits: move, offset (push-pull), replace and delete faces (healed over or left open), the solid rebuilt around them; faces on one surface merged |
 | `ops/geop-ops-assembly` | placing parts, mates and joints, part patterns, the joints panel, the drag tool, the settler, STL and URDF export |
 | `ops/geop-ops-harness` | wire harnesses routed through connectors and clips |
-| `ops/geop-ops-step` | STEP import and export, assemblies as products and occurrences; STL meshes imported as B-reps |
+| `ops/geop-ops-step` | STEP import and export, assemblies as products and occurrences; STL meshes (ASCII or binary) imported as B-reps |
 | `ops/geop-ops-drawing` | 2-D drawings: views, hidden lines, sections, dimensions, title block, parts list |
 | `ops/geop-ops-sheetmetal` | flanges, bends, hems, cuts, the flat pattern and its DXF |
 | `ops/geop-ops-inspect` | mass properties, measurements, interference |

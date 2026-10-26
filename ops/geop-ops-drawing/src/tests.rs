@@ -155,6 +155,7 @@ fn a_threaded_shaft_draws_its_thread() {
                 face: "the shaft's side".into(),
                 axis: Axis::try_new(v3(0.0, 0.0, 10.0), v3(0.0, 0.0, -1.0)).unwrap(),
                 radius: Scalar::from_f64(3.0),
+                taper: Scalar::ZERO,
                 major_diameter: 6.0,
                 minor_diameter: minor,
                 pitch: 1.0,

@@ -87,7 +87,8 @@ impl NurbCurve<3> {
         Ok(self.cartesian_derivatives::<2>(t, 1)?[1])
     }
 
-    /// Cartesian second derivative `C''(t)` (not normalized).
+    /// Cartesian second derivative `C''(t)` (not normalized), for a 2-D
+    /// curve.
     pub fn second_derivative(&self, t: Scalar) -> GeopResult<Vector2> {
         Ok(self.cartesian_derivatives::<2>(t, 2)?[2])
     }

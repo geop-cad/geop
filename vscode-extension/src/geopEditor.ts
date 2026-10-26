@@ -13,6 +13,13 @@ type FromPage =
   | { type: "add"; id: number; name: string; text: string };
 
 /**
+ * What the content of a file of bytes that are not text starts with: a
+ * `data:` URL of them in base64, as the kernel and the page hold them
+ * (`geop_core_program::workspace::BYTES_PREFIX`).
+ */
+const BYTES_PREFIX = "data:application/octet-stream;base64,";
+
+/**
  * The files a program reads: other programs, and the data files of the
  * extensions `reads` the kernel's operations read (see
  * `geop_core_program::operation::OperationInfo::reads`: a STEP file a
@@ -107,11 +114,20 @@ export class GeopEditorProvider implements vscode.CustomTextEditorProvider {
     let files = filesOf([]);
     const isOther = (uri: vscode.Uri) =>
       files.matches(uri.path) && uri.toString() !== document.uri.toString() && !pathOf(uri).startsWith("..");
-    /** The text of the program file `uri`: as edited, if it is open. */
+    /**
+     * The text of the file `uri`: as edited, if it is open; bytes that are
+     * not UTF-8 throughout — a binary STL — as a `data:` URL of them, as
+     * the kernel holds them (`geop_core_program::workspace::content`).
+     */
     const textOf = async (uri: vscode.Uri): Promise<string> => {
       const open = vscode.workspace.textDocuments.find((d) => d.uri.toString() === uri.toString());
       if (open) return open.getText();
-      return new TextDecoder().decode(await vscode.workspace.fs.readFile(uri));
+      const bytes = await vscode.workspace.fs.readFile(uri);
+      try {
+        return new TextDecoder("utf-8", { fatal: true }).decode(bytes);
+      } catch {
+        return BYTES_PREFIX + Buffer.from(bytes).toString("base64");
+      }
     };
     const sendFiles = (files: Record<string, string | null>) => {
       if (Object.keys(files).length > 0) void panel.webview.postMessage({ type: "files", files });
@@ -257,7 +273,10 @@ export class GeopEditorProvider implements vscode.CustomTextEditorProvider {
             const name = path.posix.basename(message.name.replace(/\\/g, "/"));
             const dot = name.lastIndexOf(".");
             const [stem, extension] = dot > 0 ? [name.slice(0, dot), name.slice(dot)] : [name, ""];
-            const content = new TextEncoder().encode(message.text);
+            const text: string = message.text;
+            const content = text.startsWith(BYTES_PREFIX)
+              ? new Uint8Array(Buffer.from(text.slice(BYTES_PREFIX.length), "base64"))
+              : new TextEncoder().encode(text);
             try {
               let target = vscode.Uri.joinPath(dir, name);
               for (let n = 2; ; n++) {

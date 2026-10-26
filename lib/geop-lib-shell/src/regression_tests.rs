@@ -857,3 +857,28 @@ fn a_crooked_pyramid_shelled_is_refused() {
     let message = error.root_message();
     assert!(message.contains("do not meet in one point"), "{error:?}");
 }
+
+/// The creased prism (see `geop_lib_sweep::shapes::creased_prism`) shelled
+/// 0.1 thick, open at its top. Its legs are one curve kinked at a C0 knot.
+/// Extruded whole, the wall along them was one face creased at the knot,
+/// and the shell could not offset it: the fit of the offset could not be
+/// bounded over the crease, where the normal jumps. Cut at the kink, the
+/// crease is an edge, and the walls' inner copies meet there.
+#[test]
+fn creased_prism_shelled_open_at_its_top() {
+    let mut part = NamedModel::new();
+    let solid = geop_lib_sweep::shapes::creased_prism(&mut part, "p");
+    let top = faces_at_height(&part, solid, 1.0);
+    assert_eq!(top.len(), 1);
+    let (part, shelled) = shelled_valid(part, solid, &top);
+    // The triangle's area 2, less the inner triangle's: its legs 0.1 in
+    // from the legs and its hypotenuse 0.1 in from the hypotenuse, 0.9
+    // high above a floor 0.1 thick.
+    let inner_leg = 2.0 - 0.1 - 0.1 * (1.0 + 2f64.sqrt());
+    let expected = 2.0 - 0.9 * inner_leg * inner_leg / 2.0;
+    let volume = part.topology().mass_properties(shelled).unwrap().volume;
+    assert!(
+        (volume.to_f64() - expected).abs() < 1e-6,
+        "{volume:?} vs {expected}"
+    );
+}

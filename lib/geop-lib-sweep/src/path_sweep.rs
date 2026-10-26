@@ -45,7 +45,7 @@ use geop_core_geometry::{
     intersection::crossing_points,
     nurb_curve::{NurbCurve2D, NurbCurve3D},
     nurb_surface::NurbSurface3D,
-    search::PROJECT_ITERATIONS,
+    search::{MAX_NODES, PROJECT_ITERATIONS, min_subdivision_size},
 };
 use geop_core_math::{
     geop_error::{GeopError, GeopResult, WithContext},
@@ -64,7 +64,7 @@ use geop_ops_model::{BodyNames, Chain, NamedModel, Namer, Profile};
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    loft::centre,
+    loft::{centre, mark},
     plain::Plain,
     sweep::{Frame, Path, Span, SweepLoop, skinned, sweep_drawn, wall},
 };
@@ -1422,8 +1422,12 @@ pub struct Rebuild {
 /// either side cross the walls on the other side: for a planar path, one
 /// point, since both paths run at the joint's height above the path's
 /// plane; otherwise two, one each, joined by a piece of the crossing (see
-/// [`apart_at_corner`]). Refused, by name, for a path that twists, scales
-/// or follows rails round such a corner.
+/// [`apart_at_corner`]). Where the walls either side touch, the profile's
+/// normal along the axis the path turns about, they cross in an X: a point
+/// inside a curve of the profile is made a joint of it there, named
+/// `X@J` for the curve `X` and the corner `J`, and is one vertex. Refused,
+/// by name, for a path that twists, scales or follows rails round such a
+/// corner.
 ///
 /// Named after the profiles' curves `X` and joints `P` and the chain's
 /// curves `C` and joints `J` (see [`crate::sweep::sweep`]): the walls `N(X,C)`, their
@@ -1470,11 +1474,77 @@ pub fn sweep_along(
     } else {
         loops.to_vec()
     };
+    // Cut at its corners, as [`crate::sweep::sweep`] cuts what it sweeps.
+    let mut drawn = (drawn.iter())
+        .map(SweepLoop::at_corners)
+        .collect::<GeopResult<Vec<_>>>()
+        .with_context(ctx)?;
+    let n = chain.curves.len();
+    let corner = |k: usize| -> GeopResult<Corner<'_>> {
+        Ok(Corner {
+            station: k,
+            frame: &along.rigid[(k + n - 1) % n][1],
+            axis: (chain.curves[(k + n - 1) % n].tangent(Scalar::ONE)?)
+                .prod_cross(&chain.curves[k].tangent(Scalar::ZERO)?),
+        })
+    };
+    // Where a wall before a corner touches the wall of its curve after it
+    // — the profile's normal there along the axis the path turns about,
+    // which the turn leaves as it is — the two cross in an X, not along a
+    // curve. Inside a curve of the profile, that X would lie inside the
+    // edge the corner's station gives it, where nothing can trace the edge
+    // or tell whether its faces run on smoothly. A joint of the profile
+    // there makes it a vertex, which the turn leaves where it is (see
+    // [`apart_at_corner`]), and each edge of the curve ends at it.
+    for &k in &along.rebuilt {
+        let corner = corner(k)?;
+        let frame = corner.frame;
+        let across = Vector2::from_array([
+            corner.axis.prod_dot(&frame.e1),
+            corner.axis.prod_dot(&frame.e2),
+        ]);
+        for lp in &mut drawn {
+            let mut touches = Vec::new();
+            for (curve, name) in lp.profile.curves.iter().zip(&lp.profile.curve_names) {
+                let (t0, t1) = curve.domain();
+                let stationary = curve
+                    .stationary_parameters(&across, MAX_NODES, min_subdivision_size())
+                    .with_context(ctx)?;
+                for t in stationary {
+                    if t.could_be_equal(t0) || t.could_be_equal(t1) {
+                        continue;
+                    }
+                    // The search isolates it in a box; the walls touch at
+                    // one point of it, which Newton finds: a joint a hair
+                    // off it would have the joint's paths graze the walls
+                    // on the other side.
+                    let (t, _) = newton_1d(
+                        t.sharpen(),
+                        (t0, t1),
+                        PROJECT_ITERATIONS,
+                        Arrive::AtZero,
+                        |t| -> GeopResult<_> {
+                            Ok((
+                                curve.tangent(t)?.prod_dot(&across),
+                                curve.second_derivative(t)?.prod_dot(&across),
+                            ))
+                        },
+                    )
+                    .with_context(ctx)?;
+                    let joint = format!("{name}@{}", path.station_names[k]);
+                    touches.push((curve.evaluate(t)?, joint));
+                }
+            }
+            for (point, joint) in touches {
+                let (marked, _) = mark(&lp.profile, &point, &joint).with_context(ctx)?;
+                *lp = SweepLoop::plain(marked);
+            }
+        }
+    }
     let sections = vec![drawn.clone(); path.stations.len()];
     let (mut spec, names) = skinned(namer, path, &sections, solid).with_context(ctx)?;
     // The walls of the spans either side of each such corner, as the
     // profile carried rigidly along each sweeps them.
-    let n = chain.curves.len();
     let mut swept: HashMap<String, NurbSurface3D> = HashMap::new();
     for &k in &along.rebuilt {
         for j in [(k + n - 1) % n, k] {
@@ -1510,12 +1580,7 @@ pub fn sweep_along(
             let closed = lp.profile.is_closed();
             let joints = lp.profile.curves.len() + usize::from(closed) - 1;
             for i in (0..joints).map(|i| i + usize::from(!closed)) {
-                let corner = Corner {
-                    station: k,
-                    frame: &along.rigid[(k + n - 1) % n][1],
-                    axis: (chain.curves[(k + n - 1) % n].tangent(Scalar::ONE)?)
-                        .prod_cross(&chain.curves[k].tangent(Scalar::ZERO)?),
-                };
+                let corner = corner(k)?;
                 apart_at_corner(&mut spec, &mut names, namer, path, &lp.profile, &corner, i)
                     .with_context(ctx)?;
             }

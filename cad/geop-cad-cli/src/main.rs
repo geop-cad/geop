@@ -178,11 +178,12 @@ fn default_output(program: &Path) -> GeopResult<PathBuf> {
 struct Disk;
 
 impl FileStore for Disk {
-    /// A file that is not UTF-8 throughout — a STEP file with a Latin-1
-    /// name in it — is read with what is not replaced.
+    /// A file that is not UTF-8 throughout — a binary STL, a STEP file
+    /// with a Latin-1 name in it — is held as its bytes (see
+    /// [`geop_core_program::workspace::content`]).
     fn read(&self, path: &str) -> GeopResult<String> {
         std::fs::read(path)
-            .map(|bytes| String::from_utf8_lossy(&bytes).into_owned())
+            .map(geop_core_program::workspace::content)
             .map_err(|e| GeopError::new(format!("reading {path}: {e}")))
     }
 

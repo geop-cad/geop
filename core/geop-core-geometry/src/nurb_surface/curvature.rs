@@ -1,4 +1,8 @@
-use geop_core_math::{geop_error::GeopResult, scalars::Scalar, vector::Vector3};
+use geop_core_math::{
+    geop_error::{GeopError, GeopResult},
+    scalars::Scalar,
+    vector::Vector3,
+};
 
 use super::NurbSurface;
 
@@ -99,8 +103,14 @@ impl NurbSurface<4> {
         let (e, f, g) = (su.prod_dot(&su), su.prod_dot(&sv), sv.prod_dot(&sv));
         let det = e.mul(g).sub(f.mul(f));
         let (t_u, t_v) = (along.prod_dot(&su), along.prod_dot(&sv));
-        let a = g.mul(t_u).sub(f.mul(t_v)).div(det)?;
-        let b = e.mul(t_v).sub(f.mul(t_u)).div(det)?;
+        let ctx = |err: GeopError| {
+            err.with_context(format!(
+                "NurbSurface::normal_curvature({:?}): its first fundamental form E = {e:?}, F = {f:?}, G = {g:?} could be singular",
+                (u, v)
+            ))
+        };
+        let a = g.mul(t_u).sub(f.mul(t_v)).div(det).map_err(ctx)?;
+        let b = e.mul(t_v).sub(f.mul(t_u)).div(det).map_err(ctx)?;
         Ok(suu
             .prod_dot(&n)
             .mul(a)

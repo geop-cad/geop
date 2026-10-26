@@ -333,6 +333,10 @@ impl StepEditor {
         if let StepEditEvent::Dialog { key, value } = event {
             return self.dialog(e, &form, key, value.clone());
         }
+        // How the view is seen is the operation's, whatever a field waits for.
+        if let StepEditEvent::View { up } = event {
+            return self.pass(e, CanvasEvent::View { up: *up });
+        }
         // A click on the gizmo is no click on what is under it — unless a
         // field waits for a pick, which a click is for, as for a handle. A
         // double click is the operation's: the gizmo stands at the centre
@@ -375,7 +379,7 @@ impl StepEditor {
             self.armed = None;
         }
         match event {
-            StepEditEvent::Dialog { .. } => Ok(()),
+            StepEditEvent::Dialog { .. } | StepEditEvent::View { .. } => Ok(()),
             StepEditEvent::Hover { pointer, shift } => self.pass(
                 e,
                 CanvasEvent::Hover {

@@ -272,7 +272,10 @@ fn alone(reader: &Reader, picked: &PickedElement, out: &mut Measurement) -> Geop
         let (area, _) = topology.face_area(face.id).with_context(&ctx)?;
         out.values.push(measured("Area", area, "mm²"));
         let surface = &topology.get_face(face.id)?.surface;
-        if let Some(radius) = surface.as_cylinder().with_context(&ctx)?.map(|c| c.radius) {
+        if let Some(radius) = (surface.as_round_wall().with_context(&ctx)?)
+            .filter(|w| w.taper.could_be_equal(Scalar::ZERO))
+            .map(|w| w.radius)
+        {
             out.values.push(measured("Radius", radius, "mm"));
             out.values
                 .push(measured("Diameter", radius.mul(Scalar::TWO), "mm"));

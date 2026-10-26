@@ -349,7 +349,7 @@ impl ConstraintTool {
         }
         // A combination of the right kinds may still not be one the
         // constraint can hold: two lines meeting are no tangency.
-        if fit.complete && self.build(sketch, picks).is_none() {
+        if fit.complete && self.build_upright(sketch, picks).is_none() {
             fit.complete = false;
         }
         fit.extendable &= fit.complete;
@@ -358,8 +358,15 @@ impl ConstraintTool {
 
     /// The constraints the tool adds for `picks`, measured from the
     /// geometry as it is, so adding them moves nothing — `None` if the
-    /// picks are not all it needs, or not something it can constrain.
-    pub fn build(self, sketch: &Sketch, picks: &[Pick]) -> Option<Vec<Constraint>> {
+    /// picks are not all it needs, or not something it can constrain. The
+    /// tool names what it makes as seen (see [`as_seen`]), `turned` or not.
+    pub fn build(self, sketch: &Sketch, picks: &[Pick], turned: bool) -> Option<Vec<Constraint>> {
+        let built = self.build_upright(sketch, picks)?;
+        Some(built.into_iter().map(|c| as_seen(c, turned)).collect())
+    }
+
+    /// What [`Self::build`] makes of `picks` with the sketch seen upright.
+    fn build_upright(self, sketch: &Sketch, picks: &[Pick]) -> Option<Vec<Constraint>> {
         use ConstraintTool as T;
         use geop_core_sketch::Constraint::*;
         let points: Vec<PointId> = picks
@@ -620,11 +627,32 @@ pub fn format_value(v: f64) -> String {
     }
 }
 
+/// `c` as it is seen: the same constraint where the sketch is seen upright,
+/// and where it is seen turned a quarter (its `x` running up the screen)
+/// horizontal and vertical swapped, so that what is named and marked
+/// horizontal is horizontal on screen. Its own inverse: a tool builds what
+/// it names as seen, and this gives what that is in the sketch.
+pub fn as_seen(c: Constraint, turned: bool) -> Constraint {
+    use geop_core_sketch::Constraint::*;
+    if !turned {
+        return c;
+    }
+    match c {
+        Horizontal { line } => Vertical { line },
+        Vertical { line } => Horizontal { line },
+        DistanceX { a, b, value } => DistanceY { a, b, value },
+        DistanceY { a, b, value } => DistanceX { a, b, value },
+        other => other,
+    }
+}
+
 /// The glyph that marks `c` in the sketch, and where: `None` for a
 /// constraint the drawing shows by itself (coincident points are one).
-/// A dimension given by a formula is marked so.
-pub fn glyph(sketch: &Sketch, c: &Constraint, formula: bool) -> Option<(String, P2)> {
+/// A dimension given by a formula is marked so. It is marked as seen,
+/// `turned` or not (see [`as_seen`]).
+pub fn glyph(sketch: &Sketch, c: &Constraint, formula: bool, turned: bool) -> Option<(String, P2)> {
     use geop_core_sketch::Constraint::*;
+    let c = &as_seen(c.clone(), turned);
     let mid = |curve: CurveId| polyline_mid(&polyline(sketch, curve));
     let p = |point: PointId| xy(sketch, point);
     let between = |a: PointId, b: PointId| scale(add(p(a), p(b)), 0.5);
@@ -781,10 +809,11 @@ pub fn dimension_lines(sketch: &Sketch, c: &Constraint, label: P2) -> Vec<Vec<P2
     }
 }
 
-/// What `c` is called in the list of constraints.
-pub fn name(c: &Constraint) -> String {
+/// What `c` is called in the list of constraints, as seen, `turned` or not
+/// (see [`as_seen`]).
+pub fn name(c: &Constraint, turned: bool) -> String {
     use geop_core_sketch::Constraint::*;
-    match c {
+    match &as_seen(c.clone(), turned) {
         Coincident { a, b } => format!("Coincident {a}, {b}"),
         PointOnCurve { point, curve } => format!("{point} on {curve}"),
         Horizontal { line } => format!("Horizontal {line}"),
@@ -863,7 +892,7 @@ mod tests {
         assert!(fit(ConstraintTool::Tangent, &lc).complete);
         let pp = [Pick::Point(a), Pick::Point(b)];
         assert!(fit(ConstraintTool::Symmetric, &pp).partial);
-        let built = ConstraintTool::DistanceX.build(&s, &pp).unwrap();
+        let built = ConstraintTool::DistanceX.build(&s, &pp, false).unwrap();
         assert_eq!(built.len(), 1);
         assert!((value(&built[0]).unwrap() - 1.0).abs() < 1e-12);
     }
@@ -880,7 +909,7 @@ mod tests {
         let first = s.add_line(a, b);
         let second = s.add_line(c, a);
         let picks = [Pick::Curve(first), Pick::Curve(second)];
-        let built = ConstraintTool::Fix.build(&s, &picks).unwrap();
+        let built = ConstraintTool::Fix.build(&s, &picks, false).unwrap();
         let mut fixed: Vec<PointId> = (built.iter())
             .filter_map(|c| match c {
                 Constraint::Fix { point, .. } => Some(*point),

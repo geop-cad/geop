@@ -217,6 +217,11 @@ pub enum StepEditEvent {
     },
     /// A key, as the browser names it: `l`, `Escape`, `Enter`, `Delete`.
     Key { key: String },
+    /// The view settled: `up` is the direction in the world that points up
+    /// the screen. Sent when the camera comes to rest and when the pointer
+    /// enters the viewport, so a step can name what it shows as it is seen
+    /// (a sketch's horizontal is the screen's).
+    View { up: Vector3 },
 }
 
 impl StepEditEvent {
@@ -249,6 +254,9 @@ impl StepEditEvent {
                 to: to.moved(motion)?,
                 done: *done,
                 shift: *shift,
+            },
+            StepEditEvent::View { up } => StepEditEvent::View {
+                up: motion.rotate(up),
             },
             other => other.clone(),
         })
@@ -335,4 +343,7 @@ pub enum CanvasEvent {
     /// Any other key, as the browser names it, a letter lowercased: a
     /// tool's shortcut.
     Key { key: String },
+    /// The view settled, `up` pointing up the screen (see
+    /// [`StepEditEvent::View`]).
+    View { up: Vector3 },
 }

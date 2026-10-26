@@ -32,11 +32,14 @@
 //! faces at once: the corner is bevelled, each fillet ending on its own as
 //! where not every edge is filleted, and the boolean meeting them.
 //!
-//! A corner where every edge is filleted but more than three meet, or the
-//! edges bend different ways — a pocket's rim, its upright edge filled in
-//! where the rim is cut away — is refused by name rather than left with the
-//! fillets overlapping. A chamfered corner is left to its chamfers, which
-//! cross in a point.
+//! Where more than three edges meet — a pyramid's apex — no ball touches
+//! all the faces either: the corner is bevelled alike, which needs each
+//! fillet to end on its own there (see [`crate::blend::tool_end`]: a cut
+//! running out of the solid through all the other faces). A corner where
+//! every edge is filleted but the edges bend different ways — a pocket's
+//! rim, its upright edge filled in where the rim is cut away — is refused
+//! by name rather than left with the fillets overlapping. A chamfered
+//! corner is left to its chamfers, which cross in a point.
 
 use geop_core_geometry::{
     meet::{Offset, meet},
@@ -147,12 +150,10 @@ pub(crate) fn plan_corners(
             ))
             .with_context(ctx);
         }
+        // More than three faces have no one ball touching them all: the
+        // corner is bevelled, as for different radii below.
         if incident.len() != 3 {
-            return Err(GeopError::new(format!(
-                "every edge at the corner is filleted, but {} edges meet there: a corner is only rounded where three meet",
-                incident.len()
-            )))
-            .with_context(ctx);
+            continue;
         }
         // The fillets' radii at the corner: the ball's, where they agree.
         let mut at_corner = Vec::new();

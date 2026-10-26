@@ -270,7 +270,10 @@ export function SceneViewer({
       // Its keys switch what a drag does — and are the sketch's tools'.
       made.keys = ["", "", ""];
       made.target.copy(target);
-      made.addEventListener("end", () => onPoseRef.current?.(pose()));
+      made.addEventListener("end", () => {
+        onPoseRef.current?.(pose());
+        sendView();
+      });
       controlsRef.current = made;
       return made;
     };
@@ -409,6 +412,11 @@ export function SceneViewer({
       return { ray: { origin: arr(raycaster.ray.origin), dir: arr(raycaster.ray.direction) }, reach };
     };
     const send = (event: PointerEvent_) => onPointerRef.current?.(event) ?? Promise.resolve(false);
+    // Which way is up on screen, for a step to name what it shows as seen:
+    // sent whenever the view settles, and when the pointer comes in (a step
+    // opened since then has not been told).
+    const sendView = () =>
+      void send({ type: "view", up: arr(new THREE.Vector3(0, 1, 0).applyQuaternion(camera.quaternion)) });
     // For the end-to-end checks, which drive the view by the pointer: where
     // a point of the scene is on screen, in client coordinates, and how
     // long a reach is there — what the kernel lays a gizmo out in.
@@ -566,6 +574,7 @@ export function SceneViewer({
     container.addEventListener("pointerup", onPointerUp);
     container.addEventListener("pointercancel", onPointerCancel);
     container.addEventListener("pointerleave", onPointerLeave);
+    container.addEventListener("pointerenter", sendView);
     container.addEventListener("contextmenu", onContextMenu);
 
     let frame = requestAnimationFrame(function animate() {
@@ -587,6 +596,7 @@ export function SceneViewer({
           controls = makeControls(vec(move.to.target));
           onFocusReachedRef.current?.(pose());
           onPoseRef.current?.(pose());
+          sendView();
         }
       } else {
         // Working in a plane, the view stays head on to it: dragging pans.
@@ -672,6 +682,7 @@ export function SceneViewer({
       container.removeEventListener("pointerup", onPointerUp);
       container.removeEventListener("pointercancel", onPointerCancel);
       container.removeEventListener("pointerleave", onPointerLeave);
+      container.removeEventListener("pointerenter", sendView);
       container.removeEventListener("contextmenu", onContextMenu);
       window.removeEventListener("keydown", onShift);
       window.removeEventListener("keyup", onShift);

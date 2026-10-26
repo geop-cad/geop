@@ -944,6 +944,68 @@ mod tests {
         e.points[&end]
     }
 
+    /// A profile between two edges of a part projected into the sketch, both
+    /// on one straight side of it (the microduck's head): its closing line is
+    /// made vertical, which its ends on the two edges already say. The
+    /// edges' ends are given as the projection encloses them, and their
+    /// rounding (`-25.000000000000004` against `-24.999999999999993`) tilts
+    /// each a hair off vertical, so the vertical row is independent by a
+    /// pivot of `1e-15` at sharp ends: taken as independent, nothing could
+    /// be proven. Over the ends as enclosed, that pivot could be zero, and the
+    /// vertical is the redundant constraint it is.
+    #[test]
+    fn a_line_closing_on_two_projected_edges_of_one_side_is_proven() {
+        let given = |x: f64| Scalar::new(x - 1e-13, x + 1e-13);
+        let mut s = Sketch::new();
+        let fixed = |s: &mut Sketch, x: f64, y: f64| s.add_fixed_point(given(x), given(y));
+        let upper = {
+            let a = fixed(&mut s, -25.000000000000004, 14.52958965872012);
+            let b = fixed(&mut s, -24.999999999999993, -11.926666666666662);
+            s.add_line(a, b)
+        };
+        let lower = {
+            let a = fixed(&mut s, -24.999999999999993, -62.64416256853966);
+            let b = fixed(&mut s, -25.000000000000007, -11.926666666666666);
+            s.add_line(a, b)
+        };
+        for c in [upper, lower] {
+            let curve = s.curves.get_mut(&c).unwrap();
+            (curve.fixed, curve.construction) = (true, true);
+        }
+        let p24 = s.add_point(n(-24.999999999999993), n(-19.650020988468217));
+        let p26 = s.add_point(n(-13.56352402378605), n(-23.519644932457258));
+        let p28 = s.add_point(n(-13.56352402378605), n(-35.413048566902255));
+        let p36 = s.add_point(n(-24.999999999999996), n(-39.2826725108913));
+        let l27 = s.add_line(p24, p26);
+        let a29 = s.add_arc(p26, p28, n(-2.489060692764724));
+        let l38 = s.add_line(p28, p36);
+        let l40 = s.add_line(p36, p24);
+        for c in [
+            Constraint::PointOnCurve {
+                point: p24,
+                curve: upper,
+            },
+            Constraint::Tangent { a: l27, b: a29 },
+            Constraint::PointOnCurve {
+                point: p36,
+                curve: lower,
+            },
+            Constraint::Tangent { a: a29, b: l38 },
+            Constraint::Vertical { line: l40 },
+            Constraint::Tangent { a: l38, b: a29 },
+            Constraint::DistanceX {
+                a: p26,
+                b: p28,
+                value: n(0.0),
+            },
+        ] {
+            s.constrain(c);
+        }
+        let report = s.solve().unwrap();
+        assert!(report.converged, "{report:?}");
+        s.enclose().unwrap();
+    }
+
     /// Four right angles where three would do, and parallels besides: the
     /// redundant constraints hold wherever the others do, and the solution
     /// is proven — level, every coordinate determined; turned, the turn

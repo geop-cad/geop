@@ -89,6 +89,7 @@ fn session(kinds: &[&str]) -> Vec<Value> {
         event(json!({ "type": "click", "pointer": above, "button": "secondary", "double": true, "shift": true })),
         event(json!({ "type": "drag", "from": above, "to": pointer([1.5, 1.0, 5.0], [0.0, 0.0, -1.0]), "done": true, "shift": false })),
         event(json!({ "type": "leave" })),
+        event(json!({ "type": "view", "up": [0.0, 1.0, 0.0] })),
         event(json!({ "type": "key", "key": "Escape" })),
         dialog("distance", json!({ "type": "number", "value": 0.25 })),
         dialog("distance", json!({ "type": "text", "value": "0.5" })),
