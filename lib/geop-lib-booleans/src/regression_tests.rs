@@ -161,3 +161,66 @@ fn block_less_a_sphere_inside_it_has_a_void() {
         "{got:?} vs {expected:?}"
     );
 }
+
+/// Two cylinders of one radius with crossing axes meet in two ellipses,
+/// which cross each other where the walls touch, at `(0, ±r, 0)`. With
+/// both built as the kernel builds them, those nodes fall on the second
+/// cylinder's seams; turned 45 degrees about its own axis, the second
+/// cylinder has a node in the middle of a face, where the intersection
+/// branches cross with the two walls tangent, on a seam of the first; with
+/// the first turned 45 degrees about its axis too, inside a face of each.
+#[test]
+fn steinmetz_cylinders_with_a_node_inside_a_face() {
+    use geop_core_math::primitives::Pose;
+    use geop_lib_sweep::shapes::{Axis, revolved_cylinder_along_axis};
+    let ops = [BooleanOp::Union, BooleanOp::Intersection];
+    for (op, both_turned) in ops.into_iter().flat_map(|op| [(op, false), (op, true)]) {
+        let mut model = NamedModel::new();
+        let r = Scalar::from_f64(0.5);
+        let a = revolved_cylinder_along_axis(
+            &mut model,
+            "a",
+            v3(0.0, 0.0, -1.0),
+            r,
+            Scalar::TWO,
+            Axis::Z,
+        )
+        .unwrap();
+        let b = revolved_cylinder_along_axis(
+            &mut model,
+            "b",
+            v3(-1.0, 0.0, 0.0),
+            r,
+            Scalar::TWO,
+            Axis::X,
+        )
+        .unwrap();
+        let turn = Pose::rotation_about(
+            &v3(0.0, 0.0, 0.0),
+            &v3(1.0, 0.0, 0.0),
+            Scalar::PI.div(Scalar::from_f64(4.0)).unwrap(),
+        )
+        .unwrap();
+        model
+            .transform_body(Body::Solid(b), &turn.motion())
+            .unwrap();
+        if both_turned {
+            let turn = Pose::rotation_about(
+                &v3(0.0, 0.0, 0.0),
+                &v3(0.0, 0.0, 1.0),
+                Scalar::PI.div(Scalar::from_f64(4.0)).unwrap(),
+            )
+            .unwrap();
+            model
+                .transform_body(Body::Solid(a), &turn.motion())
+                .unwrap();
+        }
+        let result = combined(&mut model, a, b, op);
+        // Steinmetz: the intersection is 16/3 r^3.
+        if op == BooleanOp::Intersection {
+            let expected = 16.0 / 3.0 * 0.125;
+            let got = volume(&model, result).to_f64();
+            assert!((got - expected).abs() < 1e-4, "{got} vs {expected}");
+        }
+    }
+}

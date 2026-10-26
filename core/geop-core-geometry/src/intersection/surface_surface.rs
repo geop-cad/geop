@@ -30,15 +30,20 @@
 //!
 //! Where the two normals could be parallel the curve has no tangent to turn,
 //! and `g` vanishes for every `d`: tangent contact, a face flush with
-//! another. Those pairs are subdivided only down to a coarser handoff and
-//! then set aside ([`TurningPoints::tangent`] counts them): a loop shrinking
-//! into a tangency is the one case left to the caller to notice, as a face
-//! the boolean cannot classify.
+//! another, a node where two branches cross. Those pairs are subdivided only
+//! down to a coarser handoff and then set aside ([`TurningPoints::tangent`]),
+//! for [`refine_node`] to find the isolated nodes among them: a loop
+//! shrinking into a tangency is the one case left to the caller to notice,
+//! as a face the boolean cannot classify.
 
 use geop_core_math::{
     geop_error::{GeopError, GeopResult, WithContext},
     scalars::Scalar,
     vector::Vector3,
+};
+
+use geop_core_math::{
+    matrix::Matrix, solvers::linear::solve_linear_system, union_find::UnionFind, vector::Vector,
 };
 
 use crate::{nearest::SurfacePatch, nurb_surface::NurbSurface3D};
@@ -198,9 +203,11 @@ pub struct TurningPoints {
     /// Newton onto the curve, and the box of the whole cluster. Several
     /// turning points closer than the handoff come out as one candidate.
     pub candidates: Vec<Candidate>,
-    /// How many pairs of patches were set aside because the normals could
-    /// be parallel over them (see the module docs).
-    pub tangent: usize,
+    /// Clusters of the pairs of patches set aside because the normals could
+    /// be parallel over them (see the module docs): where the surfaces may
+    /// touch, along a curve, over an area or at isolated points, the nodes
+    /// where branches cross ([`refine_node`] tells those apart).
+    pub tangent: Vec<Candidate>,
 }
 
 /// A candidate turning point (see [`TurningPoints::candidates`]).
@@ -269,7 +276,7 @@ pub fn turning_points(
     let mut found = TurningPoints {
         direction: d,
         candidates: Vec::new(),
-        tangent: 0,
+        tangent: Vec::new(),
     };
     if !a.could_overlap(b) {
         return Ok(found);
@@ -291,8 +298,8 @@ pub fn turning_points(
             pending.push((pa.clone(), pb.clone()));
         }
     }
-    let mut leaves: Vec<[Scalar; 4]> = Vec::new();
-    let mut seeds: Vec<[Scalar; 4]> = Vec::new();
+    // Each leaf's seed and box, regular and tangent apart.
+    let mut leaves: [Vec<([Scalar; 4], [Scalar; 4])>; 2] = [Vec::new(), Vec::new()];
     let mut visited = 0usize;
     while let Some((pa, pb)) = pending.pop() {
         if !pa.patch.0.could_overlap(&pb.patch.0) {
@@ -306,7 +313,7 @@ pub fn turning_points(
             return Err(ctx(GeopError::new(format!(
                 "searched {max_nodes} pairs of patches with {} left, {} candidates so far: the search did not finish",
                 pending.len() + 1,
-                leaves.len()
+                leaves[0].len()
             ))));
         }
         visited += 1;
@@ -318,14 +325,10 @@ pub fn turning_points(
             size_b.definitely_greater(limit),
         );
         if !split_a && !split_b {
-            if !regular {
-                found.tangent += 1;
-                continue;
-            }
             let ([(ua, ua_box), (va, va_box)], [(ub, ub_box), (vb, vb_box)]) =
                 (pa.middle()?, pb.middle()?);
-            seeds.push([ua, va, ub, vb]);
-            leaves.push([ua_box, va_box, ub_box, vb_box]);
+            leaves[usize::from(!regular)]
+                .push(([ua, va, ub, vb], [ua_box, va_box, ub_box, vb_box]));
             continue;
         }
         let cut_a = split_a && (!split_b || size_a.to_f64() >= size_b.to_f64());
@@ -340,62 +343,179 @@ pub fn turning_points(
         }
     }
 
-    // Clusters of leaves whose boxes touch: one turning point found from
-    // several sides, or several closer than the handoff.
-    let mut cluster: Vec<usize> = (0..leaves.len()).collect();
-    fn root(cluster: &mut [usize], mut i: usize) -> usize {
-        while cluster[i] != i {
-            cluster[i] = cluster[cluster[i]];
-            i = cluster[i];
-        }
-        i
-    }
+    let [regular, tangent] = leaves;
+    found.candidates = clusters(&regular);
+    found.tangent = clusters(&tangent);
+    Ok(found)
+}
+
+/// Clusters of `leaves` (each a seed and a box) whose boxes touch: one
+/// point found from several sides, or several closer than the handoff. Each
+/// gets the seed of the member nearest the middle of the cluster: a free
+/// choice, taken where Newton has least far to go to any of it.
+fn clusters(leaves: &[([Scalar; 4], [Scalar; 4])]) -> Vec<Candidate> {
+    let mut sets = UnionFind::new(leaves.len());
     for i in 0..leaves.len() {
         for j in 0..i {
             let touch = (0..4).all(|k| {
-                !leaves[i][k].definitely_less(leaves[j][k].lower())
-                    && !leaves[i][k].definitely_greater(leaves[j][k].upper())
+                !leaves[i].1[k].definitely_less(leaves[j].1[k].lower())
+                    && !leaves[i].1[k].definitely_greater(leaves[j].1[k].upper())
             });
             if touch {
-                let (ri, rj) = (root(&mut cluster, i), root(&mut cluster, j));
-                cluster[ri] = rj;
+                sets.union(i, j);
             }
         }
     }
-    let mut groups: std::collections::BTreeMap<usize, Vec<usize>> = Default::default();
-    for i in 0..leaves.len() {
-        let r = root(&mut cluster, i);
-        groups.entry(r).or_default().push(i);
+    let mut groups = sets.groups();
+    for group in &mut groups {
+        group.sort();
     }
-    for members in groups.into_values() {
-        let whole: [Scalar; 4] = std::array::from_fn(|k| {
-            members
+    groups.sort_by_key(|g| g[0]);
+    groups
+        .into_iter()
+        .map(|members| {
+            let whole: [Scalar; 4] = std::array::from_fn(|k| {
+                members
+                    .iter()
+                    .map(|&i| leaves[i].1[k])
+                    .reduce(Scalar::union)
+                    .expect("a cluster has a member")
+            });
+            let middle = whole.map(|x| x.midpoint().to_f64());
+            let seed = members
                 .iter()
-                .map(|&i| leaves[i][k])
-                .reduce(Scalar::union)
-                .expect("a cluster has a member")
-        });
-        // The member nearest the middle of the cluster: a free choice of a
-        // seed, taken where Newton has least far to go to any of it.
-        let middle = whole.map(|x| x.midpoint().to_f64());
-        let seed = members
-            .iter()
-            .map(|&i| seeds[i])
-            .min_by(|x, y| {
-                let dist = |s: &[Scalar; 4]| {
-                    (0..4)
-                        .map(|k| (s[k].to_f64() - middle[k]).powi(2))
-                        .sum::<f64>()
-                };
-                dist(x).total_cmp(&dist(y))
-            })
-            .expect("a cluster has a member");
-        found.candidates.push(Candidate {
-            seed,
-            cluster: whole,
-        });
+                .map(|&i| leaves[i].0)
+                .min_by(|x, y| {
+                    let dist = |s: &[Scalar; 4]| {
+                        (0..4)
+                            .map(|k| (s[k].to_f64() - middle[k]).powi(2))
+                            .sum::<f64>()
+                    };
+                    dist(x).total_cmp(&dist(y))
+                })
+                .expect("a cluster has a member");
+            Candidate {
+                seed,
+                cluster: whole,
+            }
+        })
+        .collect()
+}
+
+/// Newton steps [`refine_node`] takes at most.
+const NODE_ITERATIONS: usize = 30;
+
+/// The residual of the node system at `x = (u_a, v_a, u_b, v_b)` and its
+/// Jacobian: `S_a - S_b`, and the cross product of the two (unnormalized)
+/// normals `N = S_u × S_v` along two tangents `t` of `a`, which vanish
+/// together where the surfaces touch.
+fn node_system(
+    a: &NurbSurface3D,
+    b: &NurbSurface3D,
+    [ua, va, ub, vb]: [Scalar; 4],
+    t: &[Vector3; 2],
+) -> GeopResult<([Scalar; 5], [[Scalar; 4]; 5])> {
+    let (pa, pb) = (a.evaluate(ua, va)?, b.evaluate(ub, vb)?);
+    let (sau, sav) = a.derivatives(ua, va)?;
+    let (sbu, sbv) = b.derivatives(ub, vb)?;
+    let [sauu, sauv, savv] = a.second_derivatives(ua, va)?;
+    let [sbuu, sbuv, sbvv] = b.second_derivatives(ub, vb)?;
+    let (na, nb) = (sau.prod_cross(&sav), sbu.prod_cross(&sbv));
+    let na_u = sauu.prod_cross(&sav).add(&sau.prod_cross(&sauv));
+    let na_v = sauv.prod_cross(&sav).add(&sau.prod_cross(&savv));
+    let nb_u = sbuu.prod_cross(&sbv).add(&sbu.prod_cross(&sbuv));
+    let nb_v = sbuv.prod_cross(&sbv).add(&sbu.prod_cross(&sbvv));
+    let c = na.prod_cross(&nb);
+    let dc = [
+        na_u.prod_cross(&nb),
+        na_v.prod_cross(&nb),
+        na.prod_cross(&nb_u),
+        na.prod_cross(&nb_v),
+    ];
+    let delta = pa.sub(&pb);
+    let mut f = [Scalar::ZERO; 5];
+    let mut j = [[Scalar::ZERO; 4]; 5];
+    for k in 0..3 {
+        f[k] = delta[k];
+        j[k] = [sau[k], sav[k], sbu[k].neg(), sbv[k].neg()];
     }
-    Ok(found)
+    for (row, tangent) in t.iter().enumerate() {
+        f[3 + row] = c.prod_dot(tangent);
+        j[3 + row] = dc.map(|d| d.prod_dot(tangent));
+    }
+    Ok((f, j))
+}
+
+/// The Gauss-Newton step `-(J^T J)^-1 J^T f`, with `J^T J` taken sharp when
+/// `sharp` (a preconditioner: the step's width is then the residual's) and
+/// over the box otherwise, where solving it at all proves `J` of full rank
+/// over the whole box.
+fn node_step(f: &[Scalar; 5], j: &[[Scalar; 4]; 5], sharp: bool) -> GeopResult<[Scalar; 4]> {
+    let mut jtj = [[Scalar::ZERO; 4]; 4];
+    let mut jtf = [Scalar::ZERO; 4];
+    for r in 0..4 {
+        for c in 0..4 {
+            let sum = (0..5).fold(Scalar::ZERO, |sum, k| sum.add(j[k][r].mul(j[k][c])));
+            jtj[r][c] = if sharp { sum.sharpen() } else { sum };
+        }
+        jtf[r] = (0..5)
+            .fold(Scalar::ZERO, |sum, k| sum.add(j[k][r].mul(f[k])))
+            .neg();
+    }
+    let step = solve_linear_system(&Matrix::from_rows(jtj), &Vector::from_array(jtf))?;
+    Ok(step.to_array())
+}
+
+/// The node near `seed` where `a` and `b` touch at an isolated point —
+/// branches of the curve they meet in cross there, or they touch at that
+/// point alone — as its parameters `(u_a, v_a, u_b, v_b)` and the point,
+/// or `None` where Newton finds no such point, or one not isolated: where
+/// the surfaces touch along a curve or over an area, the system is singular
+/// and no node is claimed.
+///
+/// Gauss-Newton on `S_a = S_b` with the normals parallel, five equations in
+/// four unknowns, each iterate sharpened as the seed of the next but the
+/// last, whose width says how well the data pins the node down (see
+/// `AGENTS.md`). The answer is then checked against every condition it was
+/// asked to meet, over its box: both surfaces could be there, the normals
+/// could be parallel, and the system is of full rank all over it.
+pub fn refine_node(
+    a: &NurbSurface3D,
+    b: &NurbSurface3D,
+    seed: [Scalar; 4],
+) -> Option<([Scalar; 4], Vector3)> {
+    let clamp = |x: [Scalar; 4]| -> [Scalar; 4] {
+        let domains = [a.domain_u(), a.domain_v(), b.domain_u(), b.domain_v()];
+        std::array::from_fn(|k| x[k].clamped(domains[k].0, domains[k].1))
+    };
+    let mut x = clamp(seed.map(Scalar::sharpen));
+    let tangents = |x: &[Scalar; 4]| -> Option<[Vector3; 2]> {
+        let (su, sv) = a.derivatives(x[0], x[1]).ok()?;
+        Some([su.sharpen(), sv.sharpen()])
+    };
+    let t = tangents(&x)?;
+    let mut answer = None;
+    for _ in 0..NODE_ITERATIONS {
+        let (f, j) = node_system(a, b, x, &t).ok()?;
+        let step = node_step(&f, &j, true).ok()?;
+        let honest = clamp(std::array::from_fn(|k| x[k].add(step[k])));
+        if f.iter().all(|r| r.could_be_equal(Scalar::ZERO)) {
+            answer = Some(honest);
+            break;
+        }
+        x = clamp(honest.map(Scalar::sharpen));
+    }
+    let x = answer?;
+    let (pa, pb) = (a.evaluate(x[0], x[1]).ok()?, b.evaluate(x[2], x[3]).ok()?);
+    if !pa.could_be_equal(&pb) {
+        return None;
+    }
+    let (f, j) = node_system(a, b, x, &t).ok()?;
+    if !f.iter().all(|r| r.could_be_equal(Scalar::ZERO)) {
+        return None;
+    }
+    node_step(&f, &j, false).ok()?;
+    Some((x, pa.union(&pb)))
 }
 
 #[cfg(test)]
@@ -459,7 +579,7 @@ mod tests {
         .unwrap();
         let found = turning_points(&tilted, &level(0.0), 20_000).unwrap();
         assert!(found.candidates.is_empty(), "{found:?}");
-        assert_eq!(found.tangent, 0);
+        assert!(found.tangent.is_empty(), "{found:?}");
     }
 
     /// A plane's normal over the whole of it is the one direction it has.
@@ -471,6 +591,45 @@ mod tests {
                 && piece.normal[2].definitely_greater(Scalar::ZERO),
             "{:?}",
             piece.normal
+        );
+    }
+
+    /// Two cylinders of radius one half, around `z` and around `x`, each
+    /// turned over a half turn with the point `(0, 0.5, 0)` in the middle of
+    /// it: their walls meet in two ellipses crossing there, the walls
+    /// tangent. The search sets the node aside with the tangent pairs, and
+    /// `refine_node` finds it there.
+    #[test]
+    fn crossing_cylinders_have_a_node() {
+        use crate::shape::Axis;
+        let v = |p: [f64; 3]| Vector3::from_array(p.map(Scalar::from_f64));
+        let pi = std::f64::consts::PI;
+        let around_z = NurbSurface3D::revolve(
+            &crate::test_fixtures::line([0.5, 0.0, -1.0], [0.5, 0.0, 1.0]),
+            &Axis::try_new(v([0.0, 0.0, 0.0]), v([0.0, 0.0, 1.0])).unwrap(),
+            pi / 4.0,
+            3.0 * pi / 4.0,
+        )
+        .unwrap();
+        let around_x = NurbSurface3D::revolve(
+            &crate::test_fixtures::line([-1.0, 0.5, 0.0], [1.0, 0.5, 0.0]),
+            &Axis::try_new(v([0.0, 0.0, 0.0]), v([1.0, 0.0, 0.0])).unwrap(),
+            -pi / 4.0,
+            pi / 4.0,
+        )
+        .unwrap();
+        let found = turning_points(&around_z, &around_x, 20_000).unwrap();
+        let nodes: Vec<Vector3> = found
+            .tangent
+            .iter()
+            .filter_map(|c| refine_node(&around_z, &around_x, c.seed))
+            .map(|(_, p)| p)
+            .collect();
+        assert_eq!(nodes.len(), 1, "{nodes:?} from {:?}", found.tangent);
+        assert!(nodes[0].could_be_equal(&v([0.0, 0.5, 0.0])), "{nodes:?}");
+        assert!(
+            (0..3).all(|k| nodes[0][k].width().to_f64() < 1e-9),
+            "{nodes:?}"
         );
     }
 }
