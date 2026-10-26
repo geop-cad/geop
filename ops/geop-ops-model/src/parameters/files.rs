@@ -2,16 +2,19 @@
 //! through the runner running the program (see
 //! [`geop_core_program::workspace`]).
 
+use geop_core_editor::editing::FileEntry;
 use geop_core_program::runner::Runner;
 
-/// What a field picking a file `runner`'s program reads offers: the files
-/// of it `kind` takes, sorted, and `current`, if a file is picked that is
-/// not among them. None, without files.
-pub fn file_choices(runner: &Runner, kind: impl Fn(&str) -> bool, current: &str) -> Vec<String> {
-    let mut choices: Vec<String> = (runner.files().into_iter()).filter(|f| kind(f)).collect();
-    choices.sort();
-    if !current.is_empty() && !choices.iter().any(|f| f == current) {
-        choices.push(current.to_string());
-    }
-    choices
+/// What a field picking a file `runner`'s program reads offers: every file
+/// it could name, sorted, those of the kind `kind` takes accepted. None,
+/// without files.
+pub fn file_choices(runner: &Runner, kind: impl Fn(&str) -> bool) -> Vec<FileEntry> {
+    let mut paths = runner.files();
+    paths.sort();
+    (paths.into_iter())
+        .map(|path| FileEntry {
+            accepted: kind(&path),
+            path,
+        })
+        .collect()
 }

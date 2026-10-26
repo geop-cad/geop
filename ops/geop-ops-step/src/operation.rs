@@ -204,8 +204,9 @@ impl PartOperation for ImportStep {
         build_model::<Self>(ctx, args)
     }
 
-    /// The file: one of the STEP files next to the program, or one the user
-    /// chooses from elsewhere, which the front end stores next to it — and
+    /// The file: a STEP file of the workspace, chosen in its explorer, or
+    /// one the user adds from elsewhere, which the front end stores next to
+    /// the program — and
     /// what the import rebuilt, body by body, as the step last read them.
     fn form<'a>(
         context: &'a Context<'a>,
@@ -213,7 +214,7 @@ impl PartOperation for ImportStep {
         _: &FormState<()>,
     ) -> EditForm<'a, ImportStepArgs> {
         let mut f = EditForm::<ImportStepArgs>::default();
-        let files = file_choices(context.runner, is_step_file, &args.file);
+        let files = file_choices(context.runner, is_step_file);
         f.file(
             "file",
             "file",
