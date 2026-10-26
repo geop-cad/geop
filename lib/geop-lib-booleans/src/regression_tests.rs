@@ -281,8 +281,7 @@ fn cubic_edge_crossing_a_plane_at_its_inflection() {
             &namer,
             Some(&namer.root()),
             &plane,
-            Scalar::ZERO,
-            Scalar::TWO,
+            &[Scalar::ZERO, Scalar::TWO],
             &[SweepLoop::plain(Profile::closed(profile))],
         )
         .unwrap()
