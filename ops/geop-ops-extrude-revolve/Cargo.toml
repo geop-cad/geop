@@ -14,6 +14,7 @@ geop-core-sketch.workspace = true
 geop-ops-model.workspace = true
 geop-lib-booleans.workspace = true
 geop-lib-sweep.workspace = true
+geop-lib-shell.workspace = true
 serde.workspace = true
 # Only for `testing`: reading and writing the arguments of steps.
 serde_json = { workspace = true, optional = true }

@@ -225,8 +225,7 @@ fn hole_is_not_triangulated() {
         &namer,
         Some(&namer.root()),
         &cs,
-        Scalar::ZERO,
-        Scalar::ONE,
+        &[Scalar::ZERO, Scalar::ONE],
         &[
             SweepLoop::plain(Profile::closed(outer)),
             SweepLoop::plain(Profile::closed(hole).with_prefix("h")),
@@ -467,8 +466,7 @@ fn meshes_of_solids_are_closed() {
         &namer,
         Some(&namer.root()),
         &geop_core_math::primitives::CoordinateSystem::world_at(Vector3::zero()),
-        Scalar::ZERO,
-        Scalar::ONE,
+        &[Scalar::ZERO, Scalar::ONE],
         &loops,
     )
     .unwrap();

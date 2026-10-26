@@ -64,8 +64,7 @@ pub fn section_part(
             &tool_namer,
             Some(&tool_namer.root()),
             &plane,
-            Scalar::ZERO,
-            reach,
+            &[Scalar::ZERO, reach],
             &[SweepLoop::plain(Profile::closed(
                 polygon(&square).with_context(&ctx)?,
             ))],

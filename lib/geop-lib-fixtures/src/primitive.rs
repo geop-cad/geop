@@ -253,8 +253,7 @@ fn build_shape(
                 namer,
                 Some(solid),
                 &plane,
-                Scalar::ZERO,
-                Scalar::ONE,
+                &[Scalar::ZERO, Scalar::ONE],
                 &loops,
             )?;
             built
@@ -296,8 +295,7 @@ fn prism(
         namer,
         Some(solid),
         &plane,
-        Scalar::ZERO,
-        Scalar::from_f64(z1 - z0),
+        &[Scalar::ZERO, Scalar::from_f64(z1 - z0)],
         &loops,
     )?;
     built

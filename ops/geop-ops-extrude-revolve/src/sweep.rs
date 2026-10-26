@@ -248,7 +248,16 @@ impl ModelOperation for Sweep {
         };
 
         (args.output).build_whole(model, &namer, step, |model, name| {
-            sweep_along(model, &namer, name, &chain, plane, &loops, &control)
+            sweep_along(
+                model,
+                &namer,
+                name,
+                &chain,
+                plane,
+                &loops,
+                &control,
+                Some(geop_lib_shell::rebuilt),
+            )
         })
     }
 }

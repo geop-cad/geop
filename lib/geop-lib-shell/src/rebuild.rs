@@ -589,24 +589,32 @@ impl<'a> Rebuild<'a> {
             )));
         };
         let faces = [*f, *g];
-        let curve = if let Some(seam) = &self.seams[e] {
-            restricted(seam, start, end)?
-        } else {
-            let straight = (edge.curve.degree == 1 && edge.curve.control_points.len() == 2)
-                .then(|| NurbCurve3D::line(start, end))
-                .transpose()?
-                .filter(|line| {
-                    matches!(surface_missed(line, faces, &self.surfaces), Ok(None))
-                        && turns_around(&edge.curve, &[start, end]).is_ok()
-                });
-            match straight {
-                Some(line) => line,
-                None => self.traced(
-                    &edge.curve,
-                    start,
-                    end,
-                    [(*f, f_sense, *f_pcurve), (*g, g_sense, *g_pcurve)],
-                )?,
+        // Straight where it was, and the line between its moved ends lies
+        // on both faces.
+        let straight = (edge.curve.degree == 1 && edge.curve.control_points.len() == 2)
+            .then(|| NurbCurve3D::line(start, end))
+            .transpose()?
+            .filter(|line| {
+                matches!(surface_missed(line, faces, &self.surfaces), Ok(None))
+                    && turns_around(&edge.curve, &[start, end]).is_ok()
+            });
+        let curve = match (&self.seams[e], straight) {
+            // A seam that stays: its moved ends on it. One whose ends left it
+            // — two coplanar faces, the vertices at its ends put where other
+            // faces now cross — is any curve between them in the surface,
+            // and a straight one was straight.
+            (Some(seam), straight) => match (restricted(seam, start, end), straight) {
+                (Ok(along), _) => along,
+                (Err(_), Some(line)) => line,
+                (Err(err), None) => return Err(err),
+            },
+            (None, Some(line)) => line,
+            (None, None) => {
+                let uses = [(*f, f_sense, *f_pcurve), (*g, g_sense, *g_pcurve)];
+                match self.on_iso_line(edge, start, end, uses)? {
+                    Some(iso) => iso,
+                    None => self.traced(&edge.curve, start, end, uses)?,
+                }
             }
         };
         if let Some((face, middle)) = surface_missed(&curve, faces, &self.surfaces)? {
@@ -616,6 +624,39 @@ impl<'a> Rebuild<'a> {
             )));
         }
         Ok(Some(curve))
+    }
+
+    /// The new curve of `edge`, from `start` to `end`, if it runs along an
+    /// iso-line of a face it bounds, as it did — a cylinder's rim, a wall's
+    /// edge on a cap — and that iso-line, on the face's new surface,
+    /// passes through both moved ends and lies on the other face's surface
+    /// too: then it is that iso-line, exactly ([`iso_line`]), not a trace.
+    fn on_iso_line(
+        &self,
+        edge: &EdgeSpec,
+        start: Vector3,
+        end: Vector3,
+        uses: [(usize, &Sense, &Curve2); 2],
+    ) -> GeopResult<Option<Curve3>> {
+        let faces = uses.map(|(f, ..)| f);
+        for (f, sense, pcurve) in uses {
+            let along = match sense {
+                Sense::Forward => pcurve.clone(),
+                Sense::Reversed => pcurve.reverse(),
+            };
+            let Some(line) = iso_line(&self.surfaces[f], &along)? else {
+                continue;
+            };
+            let Ok(curve) = restricted(&line, start, end) else {
+                continue;
+            };
+            if surface_missed(&curve, faces, &self.surfaces)?.is_none()
+                && turns_around(&edge.curve, &[start, end]).is_ok()
+            {
+                return Ok(Some(curve));
+            }
+        }
+        Ok(None)
     }
 
     /// The curve the edge `e`, used by the faces `uses`, lies on if it is a
@@ -651,6 +692,9 @@ impl<'a> Rebuild<'a> {
                     Sense::Reversed => f_pcurve.reverse(),
                 };
                 let surface = &self.surfaces[*f];
+                if let Some(line) = iso_line(surface, &along)? {
+                    return Ok(Some(line));
+                }
                 // Only as far as the surface goes: its ends in its domain.
                 let ((u0, u1), (v0, v1)) = (surface.domain_u(), surface.domain_v());
                 let pcurve = carried_on(&along, |longer| {
@@ -817,6 +861,50 @@ impl<'a> Rebuild<'a> {
         }
         Ok(out)
     }
+}
+
+/// The iso-line of `surface` that `along`, a pcurve on it, runs along —
+/// straight, its ends at one sharp `u` (or `v`) — over the whole of the
+/// surface's other parameter, running the way `along` does: the surface's
+/// row there, exactly, where a straight pcurve is only as good as the
+/// surface's parametrization is affine. None for any other pcurve.
+fn iso_line(surface: &NurbSurface3D, along: &Curve2) -> GeopResult<Option<Curve3>> {
+    if along.degree != 1 || along.control_points.len() != 2 {
+        return Ok(None);
+    }
+    // Read off the control points: at a weight of one, as the numbers they
+    // are, which a division would round outwards.
+    let end = |i: usize| -> GeopResult<Vector2> {
+        let p = along.control_points[i];
+        if p[2].is_exactly(Scalar::ONE) {
+            Ok(Vector2::from_array([p[0], p[1]]))
+        } else {
+            p.dehomogenized()
+        }
+    };
+    let (a, b) = (end(0)?, end(1)?);
+    let Some(k) = (0..2).find(|&k| a[k].is_exactly(b[k]) && a[k].is_sharp()) else {
+        return Ok(None);
+    };
+    let u_fixed = k == 0;
+    let at = a[k];
+    let (lo, hi) = if u_fixed {
+        surface.domain_u()
+    } else {
+        surface.domain_v()
+    };
+    let ends = at.is_exactly(lo) || at.is_exactly(hi);
+    if !ends && !(at.definitely_greater(lo) && at.definitely_less(hi)) {
+        return Ok(None);
+    }
+    let row = surface.iso_curve(u_fixed, at)?;
+    Ok(if b[1 - k].definitely_greater(a[1 - k]) {
+        Some(row)
+    } else if b[1 - k].definitely_less(a[1 - k]) {
+        Some(row.reverse())
+    } else {
+        None
+    })
 }
 
 /// Fails if the points `points`, in order along an edge rebuilt from
