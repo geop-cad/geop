@@ -15,7 +15,7 @@ use geop_ops_model::{
 
 use crate::blend::{BlendShape, blend};
 use crate::rolling::{DEVIATION, Radii};
-use crate::tests::{combined, refusal, unit_cube};
+use crate::tests::{combined, unit_cube};
 
 /// Blends `edges` of `model` into `shape` as the step `F`, and checks the
 /// result is valid — failing, with every entity the error mentions by name.
@@ -411,21 +411,25 @@ fn d_pocket() -> NamedModel {
 }
 
 /// The D-shaped pocket's rim rounded: the arc rolled, the flat side swept,
-/// meeting at two inward corners — refused, where only straight edges of
-/// constant radius are mitred. Mitring a rolled blend was tried, run on
-/// straight from its last station to the plane halving the corner, and
-/// fails in the boolean: where the walls stand square to the shared face,
-/// that station's section lies in the other wall's plane, its curves on
-/// that wall's face, and its contact on the wall already on the plane, so
-/// the run-on has a side of no length.
+/// meeting at two inward corners, each blend ending flush with the other's
+/// wall. Each corner is cut by the two run on past it, intersected: what
+/// both would cut there. (Mitring them in the plane halving the corner,
+/// exact only where the two sections mirror each other in it, was refused
+/// for a rolled blend.)
 #[test]
-fn d_pocket_rim_fillet_is_refused() {
-    let model = d_pocket();
+fn d_pocket_rim_fillet() {
+    let mut model = d_pocket();
     let rim = edges_with_middle_where(&model, |p| {
         (p[2] - 1.0).abs() < 1e-6 && (p[0] - 1.0).hypot(p[1] - 1.0) < 0.51
     });
-    let why = refusal(model, &rim, BlendShape::round(0.1));
-    assert!(why.contains("only mitred between straight edges"), "{why}");
+    blended(&mut model, &rim, &BlendShape::round(0.1));
+    // The rim's corner where the arc meets the flat at `(1.3, 1.4, 1)`:
+    // cut round on both sides of it, just below the top.
+    let at = |p: [f64; 3]| geop_ops_model::testing::classify(&model, "fillet(F)", p);
+    use geop_core_topology::contains::shell::PointClassification as P;
+    assert_eq!(at([1.31, 1.2, 0.995]), P::Outside);
+    assert_eq!(at([1.31, 1.2, 0.8]), P::Inside);
+    assert_eq!(at([0.49, 1.0, 0.995]), P::Outside);
 }
 
 /// A sphere of radius 1 around the origin, its half below `z = 0` cut off.

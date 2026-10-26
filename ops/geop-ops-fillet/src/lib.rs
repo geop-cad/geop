@@ -7,8 +7,8 @@
 //! a radius that varies, rolled along it (`rolling`) — and cuts it away
 //! with the boolean difference of `geop_lib_booleans`, or fills it in with
 //! their union. Where every edge of a corner is filleted, the corner is
-//! rounded by a ball's piece (`corner`); tools joined there, or mitred at an
-//! inward corner, are built whole as one solid (`tool`). `operation` makes
+//! rounded by a ball's piece (`corner`); tools joined there are built whole
+//! as one solid (`tool`). `operation` makes
 //! that the [`Fillet`] and [`Chamfer`] operations of a program.
 
 mod blend;
