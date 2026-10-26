@@ -144,7 +144,7 @@ pub fn shell(
     let model = part.topology();
     if model.get_solid(solid).with_context(ctx)?.shells.len() != 1 {
         return Err(GeopError::new(
-            "the solid already has a void; shelling it is not supported",
+            "the solid already has a void: the wall round it would float free in the hollow, a second solid, so shelling it is not supported",
         ))
         .with_context(ctx);
     }
@@ -389,8 +389,6 @@ struct Contracted {
     edge: Vec<Option<(usize, Sense)>>,
     /// Per face: its copy, `None` where it collapses.
     face: Vec<Option<usize>>,
-    /// Per coedge: where its copy is in its face's copy, loop and place.
-    coedge: HashMap<At, (usize, usize)>,
 }
 
 /// What the copy of each edge of `spec` is, given which faces collapse (see
@@ -519,16 +517,15 @@ fn contract(
         }
     }
     let mut face = vec![None; spec.faces.len()];
-    let mut coedge = HashMap::new();
     let mut out_kept = Vec::new();
     for (f, original) in spec.faces.iter().enumerate() {
         if gone[f] {
             continue;
         }
         let mut loops = Vec::new();
-        for (l, lp) in original.loops().into_iter().enumerate() {
+        for lp in original.loops() {
             let mut copied = Vec::new();
-            for (k, c) in lp.iter().enumerate() {
+            for c in lp {
                 let on = match c.on {
                     CoedgeOn::Edge(e, sense) => match edge[e] {
                         None => continue,
@@ -543,7 +540,6 @@ fn contract(
                     },
                     CoedgeOn::Vertex(v) => CoedgeOn::Vertex(vertex[v]),
                 };
-                coedge.insert(At { f, l, k }, (l, copied.len()));
                 copied.push(CoedgeSpec {
                     on,
                     pcurve: c.pcurve.clone(),
@@ -579,7 +575,6 @@ fn contract(
         vertex,
         edge,
         face,
-        coedge,
     })
 }
 
@@ -819,11 +814,25 @@ impl<'a> Hollow<'a> {
     }
 
     /// The inner copy of the coedge `at`, on its face's inner surface —
-    /// its edge and vertex numbered as in `inner` — if it has one.
+    /// its edge numbered as in `inner` — if it runs along an edge that has
+    /// one: the coedge of the copy's loop along the edge's copy, the same
+    /// way. Found by the edge, not by its place in the loop: the rebuild
+    /// drops a coedge along a pole that the inner side no longer reaches.
     fn inner_coedge(&self, at: At) -> Option<CoedgeSpec> {
         let face = self.copies.face[at.f]?;
-        let &(l, k) = self.copies.coedge.get(&at)?;
-        Some(self.inner.faces[face].loops()[l][k].clone())
+        let CoedgeOn::Edge(e, sense) = self.spec.faces[at.f].loops()[at.l][at.k].on else {
+            return None;
+        };
+        let (i, along) = self.copies.edge[e]?;
+        let sense = if along == Sense::Forward {
+            sense
+        } else {
+            sense.opposite()
+        };
+        self.inner.faces[face].loops()[at.l]
+            .iter()
+            .find(|c| c.on == CoedgeOn::Edge(i, sense))
+            .cloned()
     }
 
     /// Where the inner copy of the coedge `at` ends on its face's inner

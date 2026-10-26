@@ -9,7 +9,7 @@ use geop_core_math::{
 use geop_core_topology::{Body, FaceId, ShellId, SolidId, build::BodySpec};
 use geop_lib_booleans::{RemeshParams, boolean};
 use geop_lib_sweep::{
-    polyline, revolve_at_oriented,
+    Apex, Ends, Section, loft, polygon, polyline, revolve_at_oriented,
     shapes::{Axis, revolved_cylinder, revolved_cylinder_along_axis, v3},
 };
 use geop_ops_model::{
@@ -618,4 +618,88 @@ fn a_step_opened_at_its_lower_top() {
         volume.could_be_equal(Scalar::from_f64(walls)),
         "{volume:?} vs {walls}"
     );
+}
+
+/// A can whose top edge is chamfered 0.05, shelled 0.2 thick: the
+/// chamfer is narrower than the walls, so its inner copy turns inside out,
+/// as a blend narrower than the walls collapses.
+#[test]
+#[ignore = "bug: refused, 'its moved ends ... lie the other way round along it: a face it bounds has vanished' on the seam revolved(r,c1,a0) between two quarters of the chamfer cone. The chamfer's offset is a cone that does not collapse (unlike a blend's), but its inner copy turns inside out: the offsets of the top and the side meet beyond it. The collapse machinery (collapse_edges/contract) keys collapse on the offset returning None and merges only edges tangent to the faces kept; a face whose copy inverts needs to be found (the rebuild knows: the seams across it turn around) and its two edges to the faces kept made one copy, tangent or not."]
+fn a_chamfer_narrower_than_the_walls() {
+    let (mut part, solid) = revolved(&[[0., 2.], [0.95, 2.], [1., 1.95], [1., 0.], [0., 0.]]);
+    let namer = Namer::new("shell", "s").unwrap();
+    let result = shell(&mut part, &namer, solid, &[], Scalar::from_f64(0.2), &[]);
+    assert!(result.is_ok(), "{result:?}");
+    assert_valid(&part);
+}
+
+/// A cone cut off near its tip, 0.1 across there, shelled 0.2 thick: the
+/// cone's offset passes the axis before the small end.
+#[test]
+#[ignore = "bug: refused, 'the offset ... could fold over itself' near the small end: the cone's offset rows close to a point inside the face, not at a pole. NurbSurface3D::offset closes only at an apex side (closed); here the cut would be at the row where S_t.S_t - d N.S_tt vanishes inside the domain, the small cap's copy then vanishing (its face collapsing, as 2.3 of docs/smlib-comparison/offsets.md), which the shell's collapse machinery does not do for a plane."]
+fn a_cone_cut_off_short_of_its_tip_shelled_past_it() {
+    let (mut part, solid) = revolved(&[[0., 2.], [0.1, 2.], [1., 0.], [0., 0.]]);
+    let namer = Namer::new("shell", "s").unwrap();
+    let result = shell(&mut part, &namer, solid, &[], Scalar::from_f64(0.2), &[]);
+    assert!(result.is_ok(), "{result:?}");
+    assert_valid(&part);
+}
+
+/// A pyramid on a 2 x 2 square, its tip 2 up over `(tip_x, 0)`: four
+/// planar walls ruled into the tip, each a patch with its pole there.
+fn pyramid(tip_x: f64) -> (NamedModel, SolidId) {
+    let mut part = NamedModel::new();
+    let corners: Vec<Vector2> = [[-1., -1.], [1., -1.], [1., 1.], [-1., 1.]]
+        .iter()
+        .map(|&c| Vector2::from_array(c.map(Scalar::from_f64)))
+        .collect();
+    let [x, y, z] = [0, 1, 2].map(Vector3::axis);
+    let base = CoordinateSystem::try_new(v3(0., 0., 0.), x, y, z).unwrap();
+    let namer = Namer::new("pyramid", "p").unwrap();
+    let section = Section {
+        plane: base,
+        profile: Profile::closed(polygon(&corners).unwrap()).with_prefix("a,"),
+        name: "a".into(),
+        matched: Vec::new(),
+    };
+    let tip = Apex {
+        point: v3(tip_x, 0., 2.),
+        name: "tip".into(),
+    };
+    loft(
+        &mut part,
+        &namer,
+        Some(&namer.root()),
+        &[section],
+        &Ends::Open([None, Some(tip)]),
+        &[],
+    )
+    .unwrap();
+    assert_valid(&part);
+    let solid = part.solid_id("pyramid(p)").unwrap();
+    (part, solid)
+}
+
+/// A pyramid with its tip over its middle, shelled: the offsets of its
+/// four walls still meet in one point, above the inner base, where the
+/// inner tip goes, though each wall's patch has its own pole at the tip.
+#[test]
+fn a_pyramid_shelled_closed() {
+    let (mut part, solid) = pyramid(0.);
+    let namer = Namer::new("shell", "s").unwrap();
+    shell(&mut part, &namer, solid, &[], Scalar::from_f64(0.1), &[])
+        .unwrap_or_else(|e| panic!("{e:?}"));
+    assert_valid(&part);
+}
+
+/// A pyramid with its tip off its middle: its walls lean unequally, and
+/// their offsets do not meet in one point. The inner tip would be an edge,
+/// which the shell refuses, naming the vertex and its faces.
+#[test]
+fn a_crooked_pyramid_shelled_is_refused() {
+    let (mut part, solid) = pyramid(0.5);
+    let namer = Namer::new("shell", "s").unwrap();
+    let error = shell(&mut part, &namer, solid, &[], Scalar::from_f64(0.1), &[]).unwrap_err();
+    let message = error.root_message();
+    assert!(message.contains("do not meet in one point"), "{error:?}");
 }

@@ -325,25 +325,22 @@ impl<'a> Rebuild<'a> {
             pieces.push((surface, (u, w)));
         }
         // A vertex at a pole of its faces — on the axis of a revolved face —
-        // is the pole of their new surfaces: the topology puts it there. A
-        // face with a pole among faces without — a rounded box's corner
-        // patch at the blends' ends — is no such vertex: the faces without
-        // say where it goes, and the conditions below read the pole's
-        // normal as its limit.
+        // is the pole of their new surfaces, where those are one point: the
+        // topology puts it there. Poles apart are coordinates, not where
+        // the faces meet — the walls of a pyramid, each ruled into its tip,
+        // offset: their poles move each along its own normal. A face with a
+        // pole among faces without — a rounded box's corner patch at the
+        // blends' ends — is no such vertex either. Then the surfaces say
+        // where it goes, and the conditions below read a pole's normal as
+        // its limit.
         let poles: Vec<_> = (pieces.iter())
             .map(|(s, (u, w))| s.pole_at(*u, *w))
             .collect();
         if let Some(pole) = poles.iter().flatten().next()
-            && poles.iter().all(Option::is_some)
-        {
-            if !poles
+            && poles
                 .iter()
                 .all(|p| p.is_some_and(|p| p.could_be_equal(pole)))
-            {
-                return Err(GeopError::new(format!(
-                    "it is at poles apart of its faces ({poles:?}): moving it there is not supported"
-                )));
-            }
+        {
             return Ok(*pole);
         }
         let groups = tangent_groups(&pieces)
@@ -360,7 +357,16 @@ impl<'a> Rebuild<'a> {
         match groups.len() {
             0 | 1 => fewer(self.within(faces)),
             2 => fewer(self.on_seam(v, faces, &pieces, &groups)),
-            _ => nearest(seed, &pieces, &groups),
+            // Three surfaces meet in a point; four or more only where they
+            // happen to. Elsewhere the vertex would open into an edge,
+            // which the rebuild does not do: refused by its faces' names.
+            n => nearest(seed, &pieces, &groups).map_err(|e| {
+                let names: Vec<&str> = faces.iter().map(|&(f, _)| self.names.faces[f].as_str()).collect();
+                GeopError::new(format!(
+                    "the {n} smooth surfaces of faces {names:?} around it do not meet in one point: it would open into an edge, which is not supported ({})",
+                    e.root_message()
+                ))
+            }),
         }
         .map_err(|e| e.with_context(format!("where its {} smooth surfaces meet", groups.len())))
     }
@@ -815,6 +821,26 @@ impl<'a> Rebuild<'a> {
     fn face_loop(&self, f: usize, coedges: &[CoedgeSpec]) -> GeopResult<Vec<CoedgeSpec>> {
         let surface = &self.surfaces[f];
         let replaced = self.replaced[f];
+        // A coedge along a pole whose vertex no longer is the pole of the
+        // new surface has nothing left to run along: the loop passes the
+        // vertex inside the patch now, and the coedges either side of it
+        // meet there.
+        let at_pole = |c: &CoedgeSpec| -> GeopResult<bool> {
+            let CoedgeOn::Vertex(v) = c.on else {
+                return Ok(true);
+            };
+            let end = c.pcurve.ends()?.1;
+            Ok(surface
+                .pole_at(end[0], end[1])
+                .is_some_and(|pole| pole.could_be_equal(&self.points[v])))
+        };
+        let mut kept = Vec::with_capacity(coedges.len());
+        for c in coedges {
+            if at_pole(c)? {
+                kept.push(c.clone());
+            }
+        }
+        let coedges = &kept[..];
         let mut junctions = Vec::with_capacity(coedges.len());
         for c in coedges {
             let (_, end) = self.spec.ends(c.on)?;
