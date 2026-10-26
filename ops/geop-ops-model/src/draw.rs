@@ -5,7 +5,7 @@ use std::collections::HashMap;
 
 use geop_core_editor::{
     registry::{Drawer, StructureItem},
-    view::{PartView, RESOLUTION, ViewEdge, ViewFace, ViewVertex},
+    view::{FaceMesh, PartView, RESOLUTION, ViewEdge, ViewFace, ViewVertex},
 };
 use geop_core_math::geop_error::GeopResult;
 use geop_core_program::reader::Reader;
@@ -83,10 +83,12 @@ impl NamedModel {
                     feature: features.of(&face).map(str::to_string),
                     name: face,
                     solid: (model.solid_of_face(id).ok().flatten()).map(|s| name(s.into())),
-                    triangles: tris.iter().map(|t| [t.a, t.b, t.c]).collect(),
-                    normals: (tris.iter())
-                        .map(|t| t.vertex_normals.unwrap_or([t.normal; 3]))
-                        .collect(),
+                    mesh: FaceMesh::new(
+                        tris.iter().map(|t| [t.a, t.b, t.c]).collect(),
+                        (tris.iter())
+                            .map(|t| t.vertex_normals.unwrap_or([t.normal; 3]))
+                            .collect(),
+                    ),
                 }
             })
             .collect();
@@ -203,7 +205,7 @@ mod tests {
         use crate::Solid;
         let part: Part = given_part(&unit_cube()).unwrap();
         let registry = crate::register(Registry::default()).unwrap();
-        let view = registry.draw(&part.current()).unwrap();
+        let view = registry.draw(&part.current(), &Default::default()).unwrap();
         let faces = accepts(&[drawn::FACE]);
         let hit = view.pick(&from_above(0.5, 0.5), &faces).unwrap();
         assert_eq!(hit.element.kind, drawn::FACE);

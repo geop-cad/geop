@@ -54,7 +54,7 @@ use std::{
 use crate::{
     editing::{Extent, Presentation, StepEditEvent},
     output::{Content, Export, Inspection, Output},
-    registry::Registry,
+    registry::{Drawings, Registry},
     step_editor::{Editing, StepEditor},
     tools::Tool,
     view::{EMPTY_EXTENT, PartView, drawn},
@@ -78,10 +78,10 @@ type Drawing = (Seen, Rc<PartView>);
 /// [`SceneState::forgotten`]).
 const KEPT_COMPONENTS: usize = 8;
 
-/// How many drawings an editor keeps (see `Editor::drawings`): the part
-/// before the step edited, the part with it, and those of the last steps
-/// opened.
-const KEPT_DRAWINGS: usize = 4;
+/// How many parts drawn an editor keeps whole (see `Editor::views`): the
+/// part before the step edited, the part with it, and those of the last
+/// steps opened.
+const KEPT_VIEWS: usize = 4;
 
 /// The files an editor reads the programs it places parts from, and
 /// writes the files it is sent to: whatever its front end keeps, with
@@ -229,11 +229,14 @@ pub struct Editor {
     /// The part as last drawn: what a tool picks from.
     drawn: Option<Rc<PartView>>,
     /// The last parts drawn, by what they were made of (see
-    /// [`Reader::seen`]): a part drawn again is drawn as it was, not
-    /// tessellated again — opening a sketch on an assembly, or closing it,
-    /// draws the same assembly. At most [`KEPT_DRAWINGS`], the last drawn
-    /// last.
-    drawings: RefCell<Vec<Drawing>>,
+    /// [`Reader::seen`]): a part shown again is the view it was — opening
+    /// a step and cancelling it shows the same part. At most
+    /// [`KEPT_VIEWS`], the last drawn last.
+    views: RefCell<Vec<Drawing>>,
+    /// What each drawer drew of the parts drawn, by what it read: a part
+    /// drawn with other sketches than before — the part before a sketch
+    /// opened — draws its sketches again, not its faces.
+    drawings: Drawings,
     /// What the user chose to show or hide, by name, over what the editor
     /// would by itself (see [`Editor::hidden`]).
     visibility: BTreeMap<String, bool>,
@@ -281,7 +284,8 @@ impl Editor {
             tool: None,
             asked: None,
             drawn: None,
-            drawings: RefCell::default(),
+            views: RefCell::default(),
+            drawings: Drawings::default(),
             visibility: BTreeMap::new(),
         }
     }
@@ -1360,17 +1364,18 @@ impl Editor {
     }
 
     /// The part `reader` reads, as the registry draws it: as it was drawn
-    /// last, if it is made of the same (see [`Self::drawings`]).
+    /// last, if it is made of the same (see [`Self::views`]), else of what
+    /// each drawer drew of what reads the same (see [`Self::drawings`]).
     fn draw(&self, reader: &Reader) -> GeopResult<Rc<PartView>> {
         let seen = reader.seen();
-        let mut drawings = self.drawings.borrow_mut();
-        let view = match drawings.iter().position(|(drawn, _)| *drawn == seen) {
-            Some(k) => drawings.remove(k).1,
-            None => Rc::new(self.registry.draw(reader)?),
+        let mut views = self.views.borrow_mut();
+        let view = match views.iter().position(|(drawn, _)| *drawn == seen) {
+            Some(k) => views.remove(k).1,
+            None => Rc::new(self.registry.draw(reader, &self.drawings)?),
         };
-        drawings.push((seen, view.clone()));
-        if drawings.len() > KEPT_DRAWINGS {
-            drawings.remove(0);
+        views.push((seen, view.clone()));
+        if views.len() > KEPT_VIEWS {
+            views.remove(0);
         }
         Ok(view)
     }

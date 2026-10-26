@@ -1097,3 +1097,22 @@ fn renaming_a_parameter_renames_its_definition_alone() {
         "{failing:?}"
     );
 }
+
+/// Opening a sketch drawn after a solid, and leaving it, draws none of the
+/// solid's faces again: the solid is the same, only the sketches shown
+/// differ — and they are what is drawn again.
+#[test]
+fn entering_and_leaving_a_sketch_draws_no_face_again() {
+    use geop_core_editor::{testing::editor_with, view::faces_drawn};
+
+    let program = crate::testing::block_and_post(0.0, 1.0, Vec::new());
+    let mut editor = editor_with(registry(), program);
+    let drawn = faces_drawn();
+    for _ in 0..2 {
+        let update = handled(&mut editor, open("post_sketch"));
+        let scene = update.scene.expect("the part before it is shown");
+        assert_eq!(scene.part.faces.len(), 6);
+        handled(&mut editor, Command::Cancel);
+    }
+    assert_eq!(faces_drawn() - drawn, 0);
+}

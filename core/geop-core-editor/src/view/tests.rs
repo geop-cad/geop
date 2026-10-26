@@ -82,8 +82,7 @@ fn cube() -> PartView {
                 name: face(k, side),
                 solid: Some("cube".into()),
                 feature: None,
-                triangles: vec![[a, b, c], [a, c, d]],
-                normals: vec![[normal; 3]; 2],
+                mesh: FaceMesh::new(vec![[a, b, c], [a, c, d]], vec![[normal; 3]; 2]),
             });
         }
     }

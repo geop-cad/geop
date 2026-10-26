@@ -170,8 +170,7 @@ pub struct ViewEdge {
     pub ends: [String; 2],
 }
 
-/// A face of the part, as drawn: triangulated, with the surface's normal at
-/// each corner.
+/// A face of the part, as drawn: its name, and its triangles.
 #[derive(Clone, Debug, Serialize)]
 pub struct ViewFace {
     pub name: String,
@@ -180,8 +179,40 @@ pub struct ViewFace {
     /// The step whose feature made it, if one did.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub feature: Option<String>,
+    #[serde(flatten)]
+    pub mesh: Rc<FaceMesh>,
+}
+
+/// A face triangulated, with the surface's normal at each corner, and what
+/// it is known by: its key, a hash of what a viewer is sent of it — so a
+/// face drawn alike, in this part or another, is one mesh to a viewer.
+#[derive(Debug, Serialize)]
+pub struct FaceMesh {
+    #[serde(skip)]
+    pub key: String,
     pub triangles: Vec<[Vector3; 3]>,
     pub normals: Vec<[Vector3; 3]>,
+}
+
+impl FaceMesh {
+    /// The mesh of `triangles`, each with the normals `normals` at its
+    /// corners.
+    pub fn new(triangles: Vec<[Vector3; 3]>, normals: Vec<[Vector3; 3]>) -> Rc<Self> {
+        use std::hash::{Hash, Hasher};
+        FACES_DRAWN.set(FACES_DRAWN.get() + 1);
+        let mut key = std::hash::DefaultHasher::new();
+        for p in triangles.iter().chain(&normals).flatten() {
+            for x in p.to_array() {
+                x.to_f64().to_bits().hash(&mut key);
+            }
+        }
+        triangles.len().hash(&mut key);
+        Rc::new(Self {
+            key: format!("{:016x}", key.finish()),
+            triangles,
+            normals,
+        })
+    }
 }
 
 /// A curve of a sketch, as drawn, in the sketch's plane, by the name its
@@ -488,6 +519,29 @@ impl PartView {
         })
     }
 
+    /// What `drawn` drew added: what one drawer drew of a part, into what
+    /// the others drew of it (see [`crate::registry::Drawings`]). Drawers
+    /// draw what is theirs alone, so nothing is drawn twice.
+    pub fn add(&mut self, drawn: &PartView) {
+        if !drawn.model.is_empty() {
+            self.model.clone_from(&drawn.model);
+        }
+        if !drawn.datum_target.is_empty() {
+            self.datum_target.clone_from(&drawn.datum_target);
+        }
+        if drawn.color.is_some() {
+            self.color.clone_from(&drawn.color);
+        }
+        self.vertices.extend_from_slice(&drawn.vertices);
+        self.edges.extend_from_slice(&drawn.edges);
+        self.faces.extend_from_slice(&drawn.faces);
+        self.sketches.extend_from_slice(&drawn.sketches);
+        self.datums.extend_from_slice(&drawn.datums);
+        self.annotations.extend_from_slice(&drawn.annotations);
+        self.solids.extend_from_slice(&drawn.solids);
+        self.instances.extend_from_slice(&drawn.instances);
+    }
+
     /// Done drawing: measured.
     pub fn finish(mut self) -> Self {
         PARTS_DRAWN.set(PARTS_DRAWN.get() + 1);
@@ -599,7 +653,7 @@ impl PartView {
             .chain(
                 self.faces
                     .iter()
-                    .flat_map(|f| f.triangles.iter().flatten().copied()),
+                    .flat_map(|f| f.mesh.triangles.iter().flatten().copied()),
             )
             .chain(sketch_points)
             .collect::<Vec<_>>();
@@ -886,7 +940,7 @@ impl PartView {
     fn pick_face(&self, pointer: &Pointer) -> Option<(Scalar, &ViewFace)> {
         self.faces
             .iter()
-            .flat_map(|f| f.triangles.iter().map(move |tri| (f, tri)))
+            .flat_map(|f| f.mesh.triangles.iter().map(move |tri| (f, tri)))
             .filter_map(|(f, [a, b, c])| pointer.ray.intersect_triangle(a, b, c).map(|t| (t, f)))
             .min_by(|a, b| nearer(a.0, b.0))
     }
@@ -1021,6 +1075,14 @@ impl Default for PartView {
 
 thread_local! {
     static PARTS_DRAWN: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    static FACES_DRAWN: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
+/// How many faces this thread has drawn ([`FaceMesh::new`]) ever: what
+/// showing a part drawn before, with other sketches, must not do — so a
+/// test bounds it by counting these, not by timing it.
+pub fn faces_drawn() -> usize {
+    FACES_DRAWN.get()
 }
 
 /// How many parts this thread has drawn ([`PartView::finish`]) ever.
