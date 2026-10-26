@@ -565,12 +565,14 @@ fn bolted_plate_from_the_front_hides_the_screw_in_the_plate() {
 }
 
 /// The press's handle, a rod turned 2.6 degrees about `z`, its ends rounded
-/// by fillets on a quarter of each end circle. Seen from the front, each
-/// fillet face has one silhouette, traced once: at the far end it runs from
-/// the face's boundary on the rod, where the trace lands on the boundary
-/// a hair past the midpoint of its enclosure; at the near end it dips across
-/// a grid line and back between two steps of the trace. Either way, the
-/// seeds there were once left untraced and the silhouette traced again.
+/// by fillets of each end circle, each of four faces. Seen from the front,
+/// the rounded end shows one silhouette, over two of its faces, each traced
+/// once: at the far end it runs from the face's boundary on the rod, where
+/// the trace lands on the boundary a hair past the midpoint of its
+/// enclosure; at the near end it dips across a grid line and back between
+/// two steps of the trace. Either way, the seeds there were once left
+/// untraced and the silhouette traced again. A blend whose sections leave
+/// the faces tilted had silhouettes of its own along that crease.
 #[test]
 fn press_handle_fillets_have_one_silhouette_each_from_the_front() {
     use crate::scene::Scene;
@@ -579,16 +581,17 @@ fn press_handle_fillets_have_one_silhouette_each_from_the_front() {
     let body = scene.bodies.iter().find(|b| b.path == "part2").unwrap();
     let back = body.pose.unwrap().inverse().motion();
     let d = back.rotate(&ViewKind::Front.frame().unwrap().direction.vector());
-    for name in [
-        "fillet(fillet1,revolve(revolve1,sketch2,p5,q3),fillet,q2)",
-        "fillet(fillet1,revolve(revolve1,sketch2,p7,q3),fillet,q3)",
-    ] {
-        let Some(RefId::Face(face)) = body.named.id_of(name) else {
-            panic!("no face {name}");
-        };
-        let pieces = crate::silhouette::face_silhouettes(body.model(), face, &d).unwrap();
-        assert_eq!(pieces.len(), 1, "{name}: {pieces:?}");
+    let mut pieces = Vec::new();
+    for &face in body.model().faces.keys() {
+        let name = body.named.name_of(face).unwrap_or("?");
+        if !name.starts_with("fillet(fillet1,") || !name.contains(",fillet,") {
+            continue;
+        }
+        let found = crate::silhouette::face_silhouettes(body.model(), face, &d).unwrap();
+        assert!(found.len() <= 1, "{name}: {found:?}");
+        pieces.extend(found);
     }
+    assert_eq!(pieces.len(), 4, "{pieces:?}");
 }
 
 #[test]

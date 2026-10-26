@@ -2132,16 +2132,23 @@ fn press_handle_rim_fillet_is_narrow() {
         .unwrap();
     let built = build_file(&handle, "handle.geop", workspace(BTreeMap::new())).unwrap();
     let part = model_of(&built.part);
-    let face = part
-        .face_id("fillet(fillet1,revolve(revolve1,sketch2,p5,q3),fillet,q3)")
-        .unwrap();
-    let surface = &part.topology().get_face(face).unwrap().surface;
-    let widest = surface
-        .control_points
-        .iter()
-        .flat_map(|p| (0..4).map(move |k| p[k].width().to_f64()))
-        .fold(0.0, f64::max);
-    assert!(widest < 3e-9, "{widest:e}: {:?}", surface.control_points);
+    let mut faces = 0;
+    for (&face, f) in &part.topology().faces {
+        let name = part.name_of(face).unwrap_or("?");
+        if !name.starts_with("fillet(fillet1,revolve(revolve1,sketch2,p5,q3),fillet,") {
+            continue;
+        }
+        faces += 1;
+        let widest = (f.surface.control_points.iter())
+            .flat_map(|p| (0..4).map(move |k| p[k].width().to_f64()))
+            .fold(0.0, f64::max);
+        assert!(
+            widest < 3e-9,
+            "{name}: {widest:e}: {:?}",
+            f.surface.control_points
+        );
+    }
+    assert!(faces > 0, "no blend faces");
 }
 
 /// The value of the parameter `name` the part `view` shows was built with:

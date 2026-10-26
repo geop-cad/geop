@@ -69,9 +69,17 @@ fn assert_has_face(model: &NamedModel, name: &str) {
 /// the two sides `0.2` from the edge, which is gone.
 #[test]
 fn cube_fillet_one_edge() {
-    let model = blended(unit_cube(), &["cube(b,p0)"], BlendShape::round(0.2));
+    let cube = unit_cube();
+    let faces: Vec<String> = (cube.topology().faces.keys())
+        .filter_map(|&f| cube.name_of(f).map(String::from))
+        .collect();
+    let model = blended(cube, &["cube(b,p0)"], BlendShape::round(0.2));
     assert_eq!(model.topology().faces.len(), 7);
     assert_has_face(&model, "fillet(F,cube(b,p0),fillet)");
+    // Every face of the cube is trimmed, none split: each keeps its name.
+    for face in &faces {
+        assert_has_face(&model, face);
+    }
     for p in [
         [0.2, 0.0, 0.0],
         [0.0, 0.2, 0.0],
@@ -126,7 +134,7 @@ fn cylinder_rim_fillet() {
         vec!["cylinder(c,p1,q0)", "cylinder(c,p1,q2)"],
     ] {
         let model = blended(cylinder(), &edges, BlendShape::round(0.1));
-        assert_has_face(&model, "fillet(F,cylinder(c,p1,q0),fillet,q0)");
+        assert_has_face(&model, "fillet(F,cylinder(c,p1,q0),fillet,s0)");
         let on_circle = |r: f64, z: f64| {
             model.topology().vertices.values().any(|vertex| {
                 let p = vertex.point;

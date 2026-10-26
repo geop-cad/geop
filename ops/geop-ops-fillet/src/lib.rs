@@ -2,9 +2,8 @@
 //! ([`Chamfer`]).
 //!
 //! `blend` builds, for every edge, the tool that holds the material between
-//! the edge and its blend face — swept from the edge's cross-section, along
-//! a straight edge or around a circular one, or, for any other edge and for
-//! a radius that varies, rolled along it (`rolling`) — and cuts it away
+//! the edge and its blend face — a ball rolled along it (`rolling`), exact
+//! where its section is carried along the edge unchanged — and cuts it away
 //! with the boolean difference of `geop_lib_booleans`, or fills it in with
 //! their union. Where every edge of a corner is filleted, the corner is
 //! rounded by a ball's piece (`corner`); tools joined there are built whole

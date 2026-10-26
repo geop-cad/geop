@@ -1066,6 +1066,20 @@ the approximation's error is no tangency to the boolean. The blend in
 towards the ball, and checks between stations that it really leaves on
 that side, so that it meets the face in its contact curve alone.
 
+An exact tangency needs no tilt, and must not get one. The blend used to be
+extruded along a straight edge between planes and revolved round a circle,
+exact and tangent, and rolled everywhere else. One rolled path for all of
+them has to be as good: the stations' sections are interpolated multiplied
+by the edge's weight at their parameter (`along_weight`), so that a section
+carried along a line or round a circle unchanged is a polynomial in the
+edge's parameter the cubic reproduces exactly. Where the untilted skin
+then meets the ball between stations to its enclosures (`span_is_exact`),
+it is kept untilted. Tilted, a revolved handle's rim showed two
+silhouettes per face where the crease ran, and a draft no longer saw the
+fillet as tangent. The apex closing the section off is the untilted
+arc's either way, so that a tilted tool and an untilted one meet in their
+apex edges where they cross, not a tilt apart.
+
 Where the approximated data is only C1 — a face's curvature jumping across
 an edge, a radius changing its rate at a vertex — no number of stations
 makes a cubic follow it to that accuracy. Put a station exactly there and

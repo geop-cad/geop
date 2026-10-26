@@ -269,8 +269,8 @@ fn shaft_with_flat(radius: f64, height: f64, flat: f64) -> NamedModel {
 }
 
 /// The edges at the D-shaft's two top corners rounded: the flat's top
-/// edge, straight between planes, swept; the top's rim and the flat's
-/// sides, each between a plane and the cylinder, rolled. All end at the
+/// edge, straight between planes; the top's rim and the flat's sides, each
+/// between a plane and the cylinder. All end at the
 /// balls touching the top, the flat and the cylinder, whose pieces round
 /// the corners.
 #[test]
@@ -410,8 +410,8 @@ fn d_pocket() -> NamedModel {
     model
 }
 
-/// The D-shaped pocket's rim rounded: the arc rolled, the flat side swept,
-/// meeting at two inward corners, each blend ending flush with the other's
+/// The D-shaped pocket's rim rounded: the arc and the flat side meeting at
+/// two inward corners, each blend ending flush with the other's
 /// wall. Each corner is cut by the two run on past it, intersected: what
 /// both would cut there. (Mitring them in the plane halving the corner,
 /// exact only where the two sections mirror each other in it, was refused

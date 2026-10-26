@@ -83,8 +83,8 @@ fn prism_with_rounded_upright(corners: &[[f64; 2]], corner: [f64; 2], radius: f6
 /// same way), the radius (0.15 on the small one fails). A chamfer of the
 /// same edge builds. Up to 155° the fillet builds; at 160° it fails
 /// differently (see [`fillet_of_an_upright_edge_between_faces_at_160_degrees`]).
+/// That was the extruded tool; rolled, as every edge now is, it builds.
 #[test]
-#[ignore = "bug: the fillet of an edge whose faces meet at 169° fails in predictor_corrector_step (the corrector leaves the leaning face); 155° builds, a chamfer builds"]
 fn fillet_of_an_upright_edge_between_faces_at_169_degrees() {
     assert_builds_valid(&prism_with_rounded_upright(
         &[
@@ -659,7 +659,7 @@ fn rounding_a_turbine_blades_trailing_edge() {
     assert_turbine_rounds(
         &[
             "circular_pattern(circular_pattern1,1,loft(loft1,sketch1,p5,sketch2>sketch3))",
-            "combine(circular_pattern1,1,circular_pattern(circular_pattern1,1,loft(loft1,sketch1,p5,sketch1>sketch2)),combine(",
+            "circular_pattern(circular_pattern1,1,loft(loft1,sketch1,p5,sketch1>sketch2))",
         ],
         true,
     );
