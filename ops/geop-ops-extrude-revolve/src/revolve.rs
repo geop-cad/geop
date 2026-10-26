@@ -325,16 +325,41 @@ impl ModelOperation for Revolve {
             let last = pieces.len().saturating_sub(1);
             for (k, piece) in pieces.iter().enumerate() {
                 let (t0, t1) = piece.domain();
-                let mut extremes =
-                    piece.stationary_parameters(&dir.perp(), MAX_NODES, min_subdivision_size())?;
+                let side_at = |t: Scalar| -> GeopResult<Scalar> {
+                    Ok(dir.prod_cross(&piece.evaluate(t)?.sub(&a)))
+                };
+                let mut ends = Vec::new();
                 if !(k == 0 && start_on) {
-                    extremes.push(t0);
+                    ends.push(t0);
                 }
                 if !(k == last && end_on) {
-                    extremes.push(t1);
+                    ends.push(t1);
                 }
-                for t in extremes {
-                    let side = dir.prod_cross(&piece.evaluate(t)?.sub(&a));
+                // A stationary point inside the curve that could lie on the
+                // axis is a touch no joint stands for: revolved, the wall
+                // would come to a pole there that no vertex of the profile
+                // is. One at a constrained end is that end's own pole.
+                let at_constrained_end = |t: &Scalar| {
+                    (k == 0 && start_on && t.could_be_equal(t0))
+                        || (k == last && end_on && t.could_be_equal(t1))
+                };
+                let interior = piece
+                    .stationary_parameters(&dir.perp(), MAX_NODES, min_subdivision_size())?
+                    .into_iter()
+                    .filter(|t| !at_constrained_end(t));
+                for t in interior {
+                    let side = side_at(t)?;
+                    if side.could_be_equal(Scalar::ZERO) {
+                        return Err(GeopError::new(format!(
+                            "the curve {},{} touches the revolve axis inside it, at parameter {t:?}: split it there at a point constrained onto the axis, or keep it clear of the axis",
+                            placed.name, edge.curve
+                        )));
+                    }
+                    left |= side.definitely_greater(Scalar::ZERO);
+                    right |= side.definitely_less(Scalar::ZERO);
+                }
+                for t in ends {
+                    let side = side_at(t)?;
                     left |= side.definitely_greater(Scalar::ZERO);
                     right |= side.definitely_less(Scalar::ZERO);
                 }

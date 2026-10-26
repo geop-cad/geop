@@ -1288,6 +1288,36 @@ fn revolve_touching_an_outside_axis_fails() {
     assert!(error.root_message().contains("touches"), "{error:?}");
 }
 
+/// An arc tangent to its axis touches it at a point inside the curve, not
+/// at a joint: revolved, the wall would come to a pole no joint stands for.
+/// It is refused, naming the curve.
+#[test]
+fn revolve_arc_tangent_to_its_axis_is_refused_by_name() {
+    let mut s = Sketch::new();
+    let a0 = s.add_point(n(0.0), n(-2.0));
+    let a1 = s.add_point(n(0.0), n(2.0));
+    let axis = s.add_line(a0, a1);
+    s.set_construction(axis, true);
+    // From 100 degrees round to 230 on the unit circle about (1, 0), past
+    // 180, where it touches the axis, and back along the chord.
+    let at = |deg: f64| (1.0 + deg.to_radians().cos(), deg.to_radians().sin());
+    let (x0, y0) = at(100.0);
+    let (x1, y1) = at(230.0);
+    let start = s.add_point(n(x0), n(y0));
+    let end = s.add_point(n(x1), n(y1));
+    let circle = s.add_arc(start, end, n(130f64.to_radians()));
+    s.add_line(end, start);
+    let Err(error) = revolved_on_zx(s, RevolveAxis::Sketch(sketch_element("profile", axis))) else {
+        panic!("revolved");
+    };
+    let message = error.root_message();
+    assert!(
+        message.contains("touches the revolve axis inside"),
+        "{error:?}"
+    );
+    assert!(message.contains(&format!("profile,{circle}")), "{error:?}");
+}
+
 /// An axis out of the sketch's plane is refused.
 #[test]
 fn revolve_around_an_axis_off_the_plane_fails() {

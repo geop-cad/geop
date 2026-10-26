@@ -126,11 +126,16 @@ impl NurbSurface<4> {
     /// The boundary rows `(u, v)` touches, as `(u_fixed, first)`.
     fn rows_touching(&self, u: Scalar, v: Scalar) -> Vec<(bool, bool)> {
         let ((u0, u1), (v0, v1)) = (self.domain_u(), self.domain_v());
-        [(false, v, v0, true), (false, v, v1, false), (true, u, u0, true), (true, u, u1, false)]
-            .into_iter()
-            .filter(|&(_, t, end, _)| t.could_be_equal(end))
-            .map(|(u_fixed, _, _, first)| (u_fixed, first))
-            .collect()
+        [
+            (false, v, v0, true),
+            (false, v, v1, false),
+            (true, u, u0, true),
+            (true, u, u1, false),
+        ]
+        .into_iter()
+        .filter(|&(_, t, end, _)| t.could_be_equal(end))
+        .map(|(u_fixed, _, _, first)| (u_fixed, first))
+        .collect()
     }
 
     /// The pole `(u, v)` lies on: the point a boundary row it touches
