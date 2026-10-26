@@ -576,7 +576,8 @@ fn keep_alone(reached: &Reached, decisions: &mut HashMap<FaceId, (FaceClassifica
 
 /// Fails unless the kept faces close up: every edge they use must be used an
 /// even number of times by them — twice where two faces meet, four times
-/// where the result touches itself along the edge. An odd count is a hole in
+/// where the result touches itself along the edge, which a solid may (see
+/// `validation::manifold_check`). An odd count is a hole in
 /// the result, so a face was kept or dropped wrongly, or remesh left a face
 /// straddling the other solid; the error lists every face along that edge
 /// with its name and classification, which tells the two apart.
@@ -1221,12 +1222,14 @@ mod tests {
                 errors[0]
             );
         }
-        // The full validation too: `validate_fast` checks each face on its
-        // own, and passes an edge running through the middle of another face,
-        // or two edges crossing away from any vertex. Not `validate_manifold`:
-        // many of these results are genuinely non-manifold — solids touching
-        // along a line leave edges shared by four faces.
-        if let Err(errors) = geop_core_topology::validation::validate(&validation(), topology) {
+        // The full validation too, as `assert_valid` holds a solid to it:
+        // `validate_fast` checks each face on its own, and passes an edge
+        // running through the middle of another face, or two edges crossing
+        // away from any vertex. A result touching itself along a line,
+        // its edge shared by four faces, is a valid solid.
+        if let Err(errors) =
+            geop_core_topology::validation::validate_manifold(&validation(), topology)
+        {
             panic!("{op:?}: {} validate error(s): {}", errors.len(), errors[0]);
         }
         // Closed, which neither check covers: every edge of the result is used
