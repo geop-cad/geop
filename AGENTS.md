@@ -1229,6 +1229,63 @@ to a point (a face moved past its neighbour, walls too thick). No branch
 on surface kinds: the shell's lines-and-arcs-only offset went, and with it
 the refusal of every traced edge a boolean or fillet left.
 
+## A bound is as local as what it bounds
+
+The fitted offset pads its control points by a bound on what the fit
+misses, proven box by box. Two ways of taking that bound threw it away:
+
+- **One pad for the whole patch.** A shell gives each surface room,
+  carrying it on past its sides, and a rational arc carried on has
+  weights that fall off. Its bound there was a thousand times wider than
+  over the face, and padding every control point by the largest made a
+  sphere's vertex `1e-7` wide. A control point's basis function is zero
+  outside a few spans, so it is padded by the bounds of the boxes it
+  covers only (`NurbSurface3D::shifted`): the surface is still widened by
+  at least the bound everywhere, since the basis sums to one.
+- **A ratio as the numerator's hull over the denominator's.** `|e × m| /
+  (w |m|)` bounded by the largest numerator over the least denominator
+  across a box multiplies the bound by how much the weight changes across
+  it. For positive `d_i`, `Σ B_i a_i / Σ B_i d_i ≤ max a_i / d_i`: the
+  ratio of Bernstein coefficients is as tight as either, and costs
+  nothing (`ratio_bound`). The vertex went from `6e-11` to `1.4e-12`.
+
+The same holds for evaluating a rational surface over a box of `(u, v)`:
+`A / w` over a box divides two enclosures that move together, and the
+quotient widens with how far the point lies from the span's control point
+times how much the weight changes. A shell's copy of a traced edge, fitted
+through foot points evaluated over the boxes they project to, came out
+eight times as wide as the edge, and two offsets in a row past the `1e-4`
+an entity may carry. `NurbSurface3D::evaluate` now intersects the direct
+enclosure with the mean value form (the middle plus the partials over the
+box times the half widths): both enclose the same points.
+
+## An apex has no offset: close it where the offset does
+
+A cone's tip is a pole with no tangent plane; its normal turns all the way
+round there, and next to it the offset is no surface the patch could
+take: on one side its rows pass through each other across the axis, on
+the other they leave a hole round it. What a shell or a moved face wants
+is the offset closed in its own apex. That is found from the surface, not
+from knowing it is a cone (`NurbSurface3D::offset`, `closed`): cut the
+surface back to the row where `S_t·S_t − d N·S_tt` vanishes (the offset's
+row closes to a point), or carry it on through the apex to there, the
+normal continued through the apex with it; parametrize it over its old
+domain again so the apex stays where it was in `(u, v)`; and check on the
+offset that the row did close. Past an apex inside, one factor `1 − d κ`
+changes sign with the surface turning over: that is the offset keeping its
+way round, not a fold. An apex whose offset does not close in a point (an
+elliptic cone's) is refused by name.
+
+## Where the topology changes, reuse the boolean
+
+A face taken away at an inward corner leaves on its surface the face less
+its inner copy and the copy less the face: crossings, edges split across
+faces, two loop sets. That was designed as new machinery and never built.
+The solid less its inner side, closed into a solid, is the same thing, and
+the boolean already finds it, coplanar faces and all. Before writing a
+construction that changes topology, ask whether an operation the kernel
+already has computes it.
+
 ## A step sized by the tightest bend never arrives
 
 `adaptive_step_size` shortened every marching step so a full turn of the

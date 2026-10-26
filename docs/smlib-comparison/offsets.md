@@ -369,3 +369,27 @@ The case: a box with filleted top edges, top removed; or a cup whose rim fillet 
 6. Add 2.14, then 2.13.
 7. Add 2.9 (round mode) and 2.8.
 8. Do 2.12, 2.11 and 2.15, then local operations (§3.7).
+
+## 5. Status after round 2
+
+- **One offset (2.2, 2.11 at an apex).** `NurbSurface3D::offset` is the fitted
+  offset alone: tried on the surface's own net first, so planes,
+  cylinders, cones, spheres and tori keep their degrees and layout and come
+  out exact to the rounding of the bound (about `1e-13`). The bound uses
+  coefficient ratios and pads each control point only by the boxes its
+  basis function covers. An apex is closed generally (cut back to, or
+  carried on through the apex to, where the offset's row closes);
+  `offset.rs`'s revolution path is gone.
+- **2.4 inward-corner openings:** the solid less its inner side closed into
+  a solid, by the existing boolean (`Hollow::subtracted`). Outward walls
+  opened at an inward corner stay refused.
+- **2.8:** a vertex of four or more surfaces whose offsets do not meet is
+  refused naming the faces; poles apart (a pyramid's walls ruled into its
+  tip) no longer stop a vertex that the surfaces place.
+- **Widths:** `NurbSurface3D::evaluate` over a box intersects the mean value
+  form; an edge's copy is now about as wide as the edge.
+- **Still open, with ignored reproducers in `lib/geop-lib-shell`:** 2.3/2.7
+  for a face whose offset does not collapse but whose copy inverts
+  (`a_chamfer_narrower_than_the_walls`), 2.11 past the apex inside a face
+  (`a_cone_cut_off_short_of_its_tip_shelled_past_it`). 2.15 voids are
+  refused saying why (the void's wall would float free). 2.12 is unchanged.
