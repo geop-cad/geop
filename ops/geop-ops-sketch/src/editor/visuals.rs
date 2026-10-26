@@ -18,6 +18,21 @@ pub(super) fn axis_ends(args: &AddSketchArgs) -> Vec<PointId> {
         .collect()
 }
 
+/// The points never drawn or snapped to: the far ends of the sketch's own
+/// axes, and the inner control points of a spline taken from elsewhere (an
+/// edge projected into the plane), which belong to the edge and are not
+/// there to be edited.
+pub(super) fn hidden_points(args: &AddSketchArgs) -> Vec<PointId> {
+    let inner = args.sketch.curves.values().flat_map(|c| match &c.kind {
+        CurveKind::Spline {
+            control_points,
+            shape: Some(_),
+        } => &control_points[1..control_points.len() - 1],
+        _ => &[],
+    });
+    axis_ends(args).into_iter().chain(inner.copied()).collect()
+}
+
 /// The polyline `curve` is drawn as: the sketch's own axes across all of
 /// it, any other curve as it is.
 pub(super) fn drawn(args: &AddSketchArgs, curve: CurveId) -> Vec<P2> {
@@ -77,7 +92,7 @@ pub(super) fn visuals(
     let failed_points: Vec<PointId> = failed.iter().flat_map(|c| c.points()).collect();
     let failed_curves: Vec<CurveId> = failed.iter().flat_map(|c| c.curves()).collect();
     let world = |p: P2| to_world(frame, p);
-    let hidden = axis_ends(args);
+    let hidden = hidden_points(args);
     let mut out = Vec::new();
 
     if let Ok(regions) = sketch.regions() {
@@ -144,7 +159,7 @@ pub(super) fn visuals(
         }
     }
     if s.tool == Tool::Trim && !s.stroke.met.is_empty() {
-        let plan = Plan::new(sketch, &hidden);
+        let plan = Plan::new(sketch, &axis_ends(args));
         for (i, (curve, piece)) in plan.pieces(&s.stroke.met).into_iter().enumerate() {
             out.push(Visual::new(
                 format!("trim{i}"),
