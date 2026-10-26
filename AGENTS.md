@@ -670,6 +670,19 @@ points, Newton seeds, which meridian to leave a pole along, where to split a
 curve at a matched point. Validity is the minimum. When a choice is free,
 choose the well-conditioned one.
 
+## Normal equations square what is ill-conditioned
+
+The minimizer's step met its linearized constraints through the rows'
+coefficients `R` in an orthonormal basis, solved as `RᵀR y = −Rᵀc`. Two
+arcs of a trimmed sketch offset held to one crossing by a tangency each
+made `R` ill-conditioned, `RᵀR` squared it, and the sharpened `y` met none
+of the rows: the solve stopped flat at its first step with the dimension's
+residual untouched, though the configuration was proven. Solved by
+Householder reflections of the rows themselves, it moves. Where a step
+must meet rows, check that it does (`c + J δ`) before blaming the model;
+and solve least squares by orthogonal transformations, not by forming
+`AᵀA`.
+
 ## Decide a rank over the box you prove, not at a point
 
 `system::enclose` chose its independent constraint rows by eliminating the
