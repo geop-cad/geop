@@ -2393,3 +2393,46 @@ fn drawing_on_a_part_sends_the_part_once() {
         .part;
     assert!(std::rc::Rc::ptr_eq(&redrawn, &drawn), "drawn as it was");
 }
+
+/// A spline taken from elsewhere (an edge projected into the plane) is
+/// drawn as its curve and its ends: its inner control points belong to the
+/// edge, so they are neither drawn nor offered to snap to, as a drawn
+/// spline's are.
+#[test]
+fn a_projected_spline_shows_no_inner_control_points() {
+    let mut program = Program::new();
+    let plane = SketchPlane::Datum(origin_plane(FrameAxis::Z));
+    let mut args = AddSketchArgs::new(Some(plane));
+    let points: Vec<PointId> = [[0.0, 0.0], [1.0, 2.0], [2.0, -1.0], [3.0, 0.5]]
+        .into_iter()
+        .map(|[x, y]| {
+            args.sketch
+                .add_fixed_point(Scalar::from_f64(x), Scalar::from_f64(y))
+        })
+        .collect();
+    let spline = args.sketch.add_spline(points.clone());
+    let curve = args.sketch.curves.get_mut(&spline).unwrap();
+    curve.fixed = true;
+    if let CurveKind::Spline { shape, .. } = &mut curve.kind {
+        *shape = Some(geop_core_sketch::SplineShape {
+            degree: 3,
+            knots: [0.0, 0.0, 0.0, 0.0, 1.0, 1.0, 1.0, 1.0]
+                .map(Scalar::from_f64)
+                .to_vec(),
+            weights: vec![Scalar::ONE; 4],
+        });
+    }
+    program.push("sketch", args);
+    let step = Stepping::open(loaded(program), "sketch");
+    let drawn = |p: &PointId| {
+        step.presentation()
+            .visuals
+            .iter()
+            .any(|v| v.key == p.to_string())
+    };
+    assert!(drawn(&points[0]) && drawn(&points[3]), "its ends are drawn");
+    assert!(
+        !drawn(&points[1]) && !drawn(&points[2]),
+        "its inner control points are not"
+    );
+}
