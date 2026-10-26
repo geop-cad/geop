@@ -1,19 +1,20 @@
 //! Shells of bodies users built that once failed.
 
+use geop_core_geometry::nurb_surface::NurbSurface3D;
 use geop_core_math::{
     primitives::CoordinateSystem,
     scalars::Scalar,
-    vector::{Vector2, Vector3},
+    vector::{Vector2, Vector3, Vector4},
 };
-use geop_core_topology::{Body, FaceId, SolidId};
+use geop_core_topology::{Body, FaceId, ShellId, SolidId, build::BodySpec};
 use geop_lib_booleans::{RemeshParams, boolean};
 use geop_lib_sweep::{
     polyline, revolve_at_oriented,
     shapes::{Axis, revolved_cylinder, revolved_cylinder_along_axis, v3},
 };
 use geop_ops_model::{
-    BooleanOp, NamedModel, Namer, Profile,
-    testing::{assert_valid, middle},
+    BodyNames, BooleanOp, NamedModel, Namer, Profile,
+    testing::{assert_valid, assert_valid_sheets, middle},
 };
 
 use crate::{offset_faces, shell, thicken};
@@ -426,4 +427,64 @@ fn walls_running_into_each_other_are_refused() {
     let error = shell(&mut part, &namer, solid, &[], Scalar::from_f64(0.2)).unwrap_err();
     let message = error.root_message();
     assert!(message.contains("run into each other"), "{error:?}");
+}
+
+/// A sheet over the whole of a gentle bicubic bump: corners at height 0,
+/// the middle up by 0.1, over the unit square. Its surface is no plane and
+/// no surface of revolution, so its offset is fitted (see
+/// `NurbSurface3D::offset`), and its four sides are free edges carried
+/// along its normal.
+fn bump_sheet() -> (NamedModel, ShellId) {
+    let z = |i: usize, j: usize| {
+        let edge = |k: usize| k == 0 || k == 3;
+        if edge(i) || edge(j) { 0. } else { 0.1 }
+    };
+    let control_points: Vec<Vector4> = (0..4)
+        .flat_map(|i| (0..4).map(move |j| (i, j)))
+        .map(|(i, j)| {
+            Vector4::from_array([i as f64 / 3., j as f64 / 3., z(i, j), 1.].map(Scalar::from_f64))
+        })
+        .collect();
+    let knots: Vec<Scalar> = [0., 0., 0., 0., 1., 1., 1., 1.]
+        .map(Scalar::from_f64)
+        .to_vec();
+    let surface = NurbSurface3D::try_new(3, 3, control_points, knots.clone(), knots).unwrap();
+    let namer = Namer::new("sheet", "s").unwrap();
+    let names = BodyNames {
+        vertices: (0..4).map(|k| namer.name(&[&format!("v{k}")])).collect(),
+        edges: (0..4).map(|k| namer.name(&[&format!("e{k}")])).collect(),
+        faces: vec![namer.name(&["face"])],
+        solid: None,
+    };
+    let mut part = NamedModel::new();
+    let built = part
+        .build_body(BodySpec::sheet_on(surface).unwrap(), names)
+        .unwrap();
+    (part, built.shells[0])
+}
+
+/// A free-form sheet thickened: its face's offset is fitted and widened to
+/// enclose the true one, the free edges' copies are carried along the
+/// normal, and the walls are ruled between them.
+#[test]
+fn a_free_form_sheet_thickened() {
+    let (mut part, sheet) = bump_sheet();
+    let namer = Namer::new("thicken", "t").unwrap();
+    for along_normal in [false, true] {
+        let mut part = part.clone();
+        thicken(
+            &mut part,
+            &namer,
+            sheet,
+            Scalar::from_f64(0.05),
+            along_normal,
+        )
+        .unwrap_or_else(|e| panic!("{e:?}"));
+        assert_valid(&part);
+    }
+    let namer = Namer::new("offset", "o").unwrap();
+    let faces = part.topology().body_faces(Body::Sheet(sheet)).unwrap();
+    offset_faces(&mut part, &namer, &faces, Scalar::from_f64(0.05))
+        .unwrap_or_else(|e| panic!("{e:?}"));
+    assert_valid_sheets(&part);
 }

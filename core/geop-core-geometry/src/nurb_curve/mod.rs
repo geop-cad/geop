@@ -14,6 +14,7 @@ pub use helix::{Handedness, HelixRow, arc_span, cos_sin, helix_rows, sqrt2_over_
 mod interpolate;
 mod length;
 mod refine;
+pub(crate) use interpolate::solve_interpolation_system;
 pub use interpolate::true_point_fractions;
 pub use refine::ParameterRefinable;
 mod reverse;

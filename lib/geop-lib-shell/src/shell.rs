@@ -8,9 +8,11 @@
 //! anything.
 //!
 //! **The inner side.** Every face kept is offset inward by the thickness
-//! (see [`NurbSurface3D::offset`]), every face taken away stays where it is:
+//! (see [`NurbSurface3D::offset`]: exact for planes and revolutions, fitted
+//! and enclosed for any other), every face taken away stays where it is:
 //! its inner copy is what the opening leaves of it. A vertex moves to where
-//! the offsets of the faces around it meet, an edge to where the offsets of
+//! the offsets of the faces around it meet — the point at the thickness
+//! from each face, found on the faces themselves — an edge to where the offsets of
 //! its two faces meet — a line from one moved vertex to the other for a
 //! straight edge, an arc around the same axis for a circular one, and for
 //! any other the branch where the two offsets cross between the moved
@@ -41,9 +43,8 @@
 //! A free edge's copy, like a seam's, is the edge carried along its face's
 //! normal. The inner side alone is the sheet offset ([`offset_faces`]).
 //!
-//! What it does not do (yet): offset faces that are neither planes nor
-//! surfaces of revolution with a straight or circular meridian, take away
-//! part of a smooth surface — a face tangent to one that stays — take away
+//! What it does not do (yet): take away part of a smooth surface — a face
+//! tangent to one that stays — take away
 //! a face that meets one kept at an inward corner — a pocket's floor, a
 //! step, the face a boss stands on: the wall kept there is thickened away
 //! from the face, so the inner copy reaches past it and the opening is no
@@ -391,7 +392,7 @@ impl<'a> Hollow<'a> {
         // the face's surface.
         let around = spec.vertex_faces()?;
 
-        let offsets: Vec<Scalar> = removed
+        let face_offsets: Vec<Scalar> = removed
             .iter()
             .map(|&r| if r { Scalar::ZERO } else { thickness.neg() })
             .collect();
@@ -410,6 +411,11 @@ impl<'a> Hollow<'a> {
                 })
                 .collect::<GeopResult<Vec<_>>>()?;
 
+        let roomy = spec
+            .faces
+            .iter()
+            .map(|face| extended(face.surface.clone()))
+            .collect::<GeopResult<Vec<_>>>()?;
         let inner_points = (0..spec.vertices.len())
             .map(|v| {
                 if !walled[v] {
@@ -447,8 +453,18 @@ impl<'a> Hollow<'a> {
                     }
                     return Ok(Some(*pole));
                 }
+                // The conditions are on the faces themselves, each at its
+                // offset: exact, where an inner surface fitted to a
+                // free-form face is only as tight as its fit, and where a
+                // foot point on the face of a vertex of it is the vertex.
+                // With room around each face, as its inner copy has: at an
+                // inward corner the copy's foot point lies past the face.
+                let outer: Vec<_> = around[v]
+                    .iter()
+                    .map(|&(f, uv)| (&roomy[f], (uv[0], uv[1])))
+                    .collect();
                 let mut offsets = Vec::new();
-                for group in tangent_groups(&pieces)? {
+                for group in tangent_groups(&outer)? {
                     let f = |i: usize| around[v][i].0;
                     if group.iter().any(|&i| removed[f(i)] != removed[f(group[0])]) {
                         return Err(GeopError::new(format!(
@@ -457,8 +473,8 @@ impl<'a> Hollow<'a> {
                         )));
                     }
                     offsets.push(Offset {
-                        pieces: group.iter().map(|&i| pieces[i]).collect(),
-                        offset: Scalar::ZERO,
+                        pieces: group.iter().map(|&i| outer[i]).collect(),
+                        offset: face_offsets[f(group[0])],
                     });
                 }
                 meet(spec.vertices[v], &mut offsets, &[])
@@ -499,7 +515,7 @@ impl<'a> Hollow<'a> {
             open_edge,
             free_edge: uses.iter().map(|&n| n == 1).collect(),
             inner_surfaces,
-            offsets,
+            offsets: face_offsets,
             inner_points,
             inner_curves: Vec::new(),
             pieces: Vec::new(),
@@ -561,14 +577,26 @@ impl<'a> Hollow<'a> {
             err.with_context(format!("the inner copy of edge {}", self.names.edges[e]))
         };
         let (start, end) = (self.inner_point(edge.start), self.inner_point(edge.end));
-        let curve = match shaped_like(&edge.curve, start, end, edge.start == edge.end) {
-            Some(curve) => curve.map_err(ctx)?,
-            None => self.traced_inner_curve(e, start, end).map_err(ctx)?,
-        };
+        let faces = self.faces_of_edge(e);
+        // A copy shaped like the edge is exact where it is right: a line
+        // where two planes' offsets meet, an arc round a revolution's
+        // axis. Whether it is right is asked, not assumed — a straight
+        // edge of a bump is no straight line once carried along its
+        // normal — and where it is not, the copy is found as any other.
+        if let Some(curve) = shaped_like(&edge.curve, start, end, edge.start == edge.end)
+            .transpose()
+            .map_err(ctx)?
+            && surface_missed(&curve, faces.iter().copied(), &self.inner_surfaces)
+                .map_err(ctx)?
+                .is_none()
+        {
+            return Ok(Some(curve));
+        }
+        let curve = self.traced_inner_curve(e, start, end).map_err(ctx)?;
         // It is only right if it lies on both inner surfaces: say so if not,
         // rather than build an edge off its faces.
         if let Some((f, middle)) =
-            surface_missed(&curve, self.faces_of_edge(e), &self.inner_surfaces).map_err(ctx)?
+            surface_missed(&curve, faces, &self.inner_surfaces).map_err(ctx)?
         {
             return Err(ctx(GeopError::new(format!(
                 "its curve from {start:?} to {end:?} is not on the offset of face {} at {middle:?}: offsetting this kind of edge is not supported",

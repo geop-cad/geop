@@ -1,4 +1,5 @@
 use geop_core_math::{
+    combinatorics::binomial,
     geop_error::{GeopError, GeopResult, WithContext},
     scalars::Scalar,
     vector::{Vector, Vector3},
@@ -8,7 +9,9 @@ use super::{NurbSurface, evaluate::corner_nearest};
 use crate::{
     knot_insertion::is_clamped_at,
     nurb_curve::dehomogenize,
-    spline::{centered, find_span, homogeneous_derivatives, rational_derivatives},
+    spline::{
+        centered, de_boor, find_span, hodograph, homogeneous_derivatives, rational_derivatives,
+    },
 };
 
 impl NurbSurface<4> {
@@ -62,6 +65,104 @@ impl NurbSurface<4> {
             homogeneous_derivatives(q, kv, &cols, span_v, v, n),
             mixed.then(|| homogeneous_derivatives(p, ku, &rows_v, span_u, u, 1)[1]),
         ))
+    }
+
+    /// Every partial derivative up to `order` at `(u, v)`: `S[k][l]` is
+    /// `∂^(k+l) S / ∂u^k ∂v^l` for `k + l <= order`, `S[0][0]` the point.
+    /// Each homogeneous partial is the span's own net differenced `k` times
+    /// along `u` and `l` times along `v` ([`hodograph`]), then evaluated;
+    /// the Cartesian ones follow by the rational quotient rule (Piegl &
+    /// Tiller algorithm A4.4). Relative to a control point of the span, as
+    /// everything here is (see [`centered`]).
+    ///
+    /// Differenced first, then evaluated, so that an interval `(u, v)` box
+    /// gives an enclosure as wide as the box times the next derivative.
+    /// Evaluated first along `v` and differenced along `u` afterwards, as
+    /// [`Self::second_derivatives`] does for its mixed partial, the rows'
+    /// values over the box are independent intervals, and their third
+    /// differences, divided by the span's width cubed, came out a hundred
+    /// times wider than the partial itself.
+    pub fn partials(&self, u: Scalar, v: Scalar, order: usize) -> GeopResult<Vec<Vec<Vector3>>> {
+        let (p, q) = (self.degree_u, self.degree_v);
+        let (ku, kv) = (&self.knot_vector_u, &self.knot_vector_v);
+        let nv = self.num_v;
+        let span_u = find_span(p, ku, self.num_u - 1, u)?;
+        let span_v = find_span(q, kv, nv - 1, v)?;
+        let local: Vec<Vector<4>> = (span_u - p..=span_u)
+            .flat_map(|i| (span_v - q..=span_v).map(move |j| i * nv + j))
+            .map(|k| self.control_points[k])
+            .collect();
+        let at = corner_nearest(self, (span_u, u), (span_v, v));
+        let (cp, origin) = centered(&local, at);
+        let (base_u, base_v) = (span_u - p, span_v - q);
+        // The net differenced `l` times along `v`, as rows of fixed `u`.
+        let mut along_v: Vec<Vec<Vec<Vector<4>>>> = vec![
+            (0..=p)
+                .map(|i| cp[i * (q + 1)..(i + 1) * (q + 1)].to_vec())
+                .collect(),
+        ];
+        for l in 1..=order.min(q) {
+            let previous = &along_v[l - 1];
+            along_v.push(
+                previous
+                    .iter()
+                    .map(|row| hodograph(q, kv, row, base_v, l))
+                    .collect(),
+            );
+        }
+        // `a[k][l]`, the homogeneous partial: each of those differenced `k`
+        // times along `u`, evaluated at `(u, v)`.
+        let mut a = vec![vec![Vector::<4>::zero(); order + 1]; order + 1];
+        for k in 0..=order {
+            for l in 0..=order - k {
+                if k > p || l > q {
+                    continue;
+                }
+                let mut net: Vec<Vec<Vector<4>>> = along_v[l].clone();
+                for kk in 1..=k {
+                    let columns: Vec<Vec<Vector<4>>> = (0..=q - l)
+                        .map(|j| {
+                            let column: Vec<Vector<4>> = net.iter().map(|row| row[j]).collect();
+                            hodograph(p, ku, &column, base_u, kk)
+                        })
+                        .collect();
+                    net = (0..columns[0].len())
+                        .map(|i| columns.iter().map(|c| c[i]).collect())
+                        .collect();
+                }
+                let rows: Vec<Vector<4>> = net
+                    .iter()
+                    .map(|row| de_boor(q - l, &kv[base_v + l..], row, v, q - l))
+                    .collect();
+                a[k][l] = de_boor(p - k, &ku[base_u + k..], &rows, u, p - k);
+            }
+        }
+        let w = |k: usize, l: usize| a[k][l][3];
+        let inverse = Scalar::ONE.div(w(0, 0))?;
+        let mut s: Vec<Vec<Vector3>> = vec![Vec::new(); order + 1];
+        for k in 0..=order {
+            for l in 0..=order - k {
+                let mut value = Vector3::from_array([a[k][l][0], a[k][l][1], a[k][l][2]]);
+                let term =
+                    |f: i64, wv: Scalar, sv: &Vector3| sv.prod_scalar(Scalar::from_i64(f).mul(wv));
+                for j in 1..=l {
+                    value = value.sub(&term(binomial(l, j), w(0, j), &s[k][l - j]));
+                }
+                for i in 1..=k {
+                    value = value.sub(&term(binomial(k, i), w(i, 0), &s[k - i][l]));
+                    for j in 1..=l {
+                        value = value.sub(&term(
+                            binomial(k, i) * binomial(l, j),
+                            w(i, j),
+                            &s[k - i][l - j],
+                        ));
+                    }
+                }
+                s[k].push(value.prod_scalar(inverse));
+            }
+        }
+        s[0][0] = s[0][0].add(&Vector3::from_array([origin[0], origin[1], origin[2]]));
+        Ok(s)
     }
 
     /// Partial derivatives `(∂Scalar/∂u, ∂Scalar/∂v)` at `(u, v)`.
@@ -126,11 +227,16 @@ impl NurbSurface<4> {
     /// The boundary rows `(u, v)` touches, as `(u_fixed, first)`.
     fn rows_touching(&self, u: Scalar, v: Scalar) -> Vec<(bool, bool)> {
         let ((u0, u1), (v0, v1)) = (self.domain_u(), self.domain_v());
-        [(false, v, v0, true), (false, v, v1, false), (true, u, u0, true), (true, u, u1, false)]
-            .into_iter()
-            .filter(|&(_, t, end, _)| t.could_be_equal(end))
-            .map(|(u_fixed, _, _, first)| (u_fixed, first))
-            .collect()
+        [
+            (false, v, v0, true),
+            (false, v, v1, false),
+            (true, u, u0, true),
+            (true, u, u1, false),
+        ]
+        .into_iter()
+        .filter(|&(_, t, end, _)| t.could_be_equal(end))
+        .map(|(u_fixed, _, _, first)| (u_fixed, first))
+        .collect()
     }
 
     /// The pole `(u, v)` lies on: the point a boundary row it touches
@@ -247,6 +353,57 @@ mod tests {
     use crate::nurb_surface::NurbSurface;
     use crate::test_fixtures::{hom, revolved};
     use geop_core_math::scalars::Scalar;
+
+    /// `partials` agrees with `derivatives` and `second_derivatives` at a
+    /// point, and over a box a thousandth wide is about that much wider
+    /// than at its centre, up to third order: a rational patch, its net
+    /// refined.
+    #[test]
+    fn partials_are_tight_over_a_box() {
+        let surface = revolved(1., 0.).refined(4).unwrap();
+        let (u, v) = (Scalar::from_f64(0.3), Scalar::from_f64(0.6));
+        let at = surface.partials(u, v, 3).unwrap();
+        let (su, sv) = surface.derivatives(u, v).unwrap();
+        let [suu, suv, svv] = surface.second_derivatives(u, v).unwrap();
+        for (got, expected) in [
+            (at[1][0], su),
+            (at[0][1], sv),
+            (at[2][0], suu),
+            (at[1][1], suv),
+            (at[0][2], svv),
+        ] {
+            assert!(got.could_be_equal(&expected), "{got:?} vs {expected:?}");
+        }
+        assert!(at[0][0].could_be_equal(&surface.evaluate(u, v).unwrap()));
+        // Over the box, each partial is wider by about the box's width
+        // times the next one, `|S^(k+1)| h`: never a hundred times that.
+        let h = 1e-3;
+        let over = surface
+            .partials(
+                u.add(Scalar::new(-h / 2., h / 2.)),
+                v.add(Scalar::new(-h / 2., h / 2.)),
+                3,
+            )
+            .unwrap();
+        let mut table = String::new();
+        let mut worst: f64 = 0.;
+        for k in 0..=3 {
+            for l in 0..=3 - k {
+                let width = (0..3)
+                    .map(|c| over[k][l][c].width().to_f64())
+                    .fold(0., f64::max);
+                let size = (0..3)
+                    .map(|c| at[k][l][c].abs().to_f64())
+                    .fold(0., f64::max);
+                table += &format!("S[{k}][{l}]: {size:.3e} wide {width:.3e}\n");
+                worst = worst.max(width / h);
+            }
+        }
+        // Measured: at most 24 h, the third partial along `u`. Formed by
+        // evaluating rows first, the third partials were a hundred times
+        // wider.
+        assert!(worst < 50., "{table}");
+    }
 
     /// Flat unit patch in the xy-plane: normal should be constant +z everywhere.
     fn flat_xy() -> NurbSurface<4> {

@@ -7,6 +7,7 @@ pub use flat::FlatPatch;
 mod gordon;
 mod normal;
 mod offset;
+mod offset_fit;
 mod patch;
 mod project;
 mod reverse;

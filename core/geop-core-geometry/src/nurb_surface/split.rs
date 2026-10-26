@@ -134,6 +134,31 @@ impl<const D: usize> NurbSurface<D> {
         self.split_in_mid(Dir::V)
     }
 
+    /// The same surface with every span split into `pieces` in both
+    /// directions, at sharp knots: more control points to fit on.
+    pub(crate) fn refined(&self, pieces: usize) -> GeopResult<Self> {
+        let mut out = self.clone();
+        for dir in [Dir::U, Dir::V] {
+            let degree = out.degree_in(dir);
+            let mut knots = out.knots_in(dir).clone();
+            let mut rows = out.rows_along(dir);
+            let breaks = crate::spline::breakpoints(&knots, degree, rows[0].len());
+            for pair in breaks.windows(2) {
+                for k in 1..pieces {
+                    let f = Scalar::from_ratio(k as i64, pieces as i64)?;
+                    knot_insertion::insert(
+                        &mut knots,
+                        &mut rows,
+                        degree,
+                        Scalar::fraction(pair[0], pair[1], f),
+                    );
+                }
+            }
+            out = out.with_rows(dir, knots, rows);
+        }
+        Ok(out)
+    }
+
     /// This surface restricted to `u ∈ [u0, u1]`, `v ∈ [v0, v1]`, with the
     /// same cut rule as `NurbCurve::sub_curve`: only bounds strictly inside
     /// the domain are cut at, so the result covers at least the requested
