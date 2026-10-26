@@ -318,6 +318,15 @@ impl<'a> Work<'a> {
             if faces.0 != faces.1 || faces.0.len() != 2 || faces.0[0] == faces.0[1] {
                 continue;
             }
+            // Two edges meeting at a corner are no one edge: joined, the
+            // curve would turn there on a knot, its tangent lost.
+            let tangent_at_v = |edge: &EdgeSpec| {
+                let (t0, t1) = edge.curve.domain();
+                edge.curve.tangent(if edge.start == v { t0 } else { t1 })
+            };
+            if !tangent_at_v(one)?.could_be_parallel(&tangent_at_v(two)?) {
+                continue;
+            }
             if self.join(v, e1, e2)? {
                 return Ok(true);
             }
