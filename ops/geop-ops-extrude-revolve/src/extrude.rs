@@ -383,7 +383,10 @@ fn drafted_wall(
         // square to the plane keeps its weights, and a row's weights kept
         // the same numbers keep the wall a polynomial along its height.
         let weight = point[3];
-        let moved = wall.offset(height.abs().mul(slope).neg())?.control_points[k];
+        let moved = wall
+            .offset(height.abs().mul(slope).neg())?
+            .ok_or_else(|| GeopError::new("the draft makes a wall collapse at this height"))?
+            .control_points[k];
         let at = moved.dehomogenized()?.prod_scalar(weight);
         *point = Vector4::from_array([at[0], at[1], at[2], weight]);
     }
