@@ -48,8 +48,9 @@
 //! step, the face a boss stands on: the wall kept there is thickened away
 //! from the face, so the inner copy reaches past it and the opening is no
 //! longer the face less its inner copy — or open a solid that already has
-//! a void. Walls so thick that an edge's inner copy turns around are
-//! refused; that the inner side runs into itself otherwise is not noticed.
+//! a void. Walls so thick that an edge's inner copy turns around, or that
+//! an edge of the result crosses one of its faces, are refused; two faces
+//! crossing along a curve no edge reaches are not noticed.
 
 use std::collections::HashMap;
 
@@ -72,9 +73,10 @@ use geop_core_math::{
     with_context,
 };
 use geop_core_topology::{
-    Body, Curve2, Curve3, FaceId, Sense, ShellId, SolidId,
+    Body, Curve2, Curve3, FaceId, Model, Sense, ShellId, SolidId,
     build::{BodySpec, BuiltBody, CoedgeOn, CoedgeSpec, EdgeSpec, FaceSpec},
     contains::face::{PointClassification, pcurves_contain},
+    validation::{ValidationParameters, body_crossing},
 };
 use geop_ops_model::{BodyNames, NamedModel, Namer};
 
@@ -139,6 +141,7 @@ pub fn shell(
 
     let hollow = Hollow::new(&spec, &names, removed, thickness).with_context(ctx)?;
     let (result, result_names) = hollow.result(namer).with_context(ctx)?;
+    refuse_crossing(&result, &result_names).with_context(ctx)?;
     part.replace_with_solid(&[solid.into()], result, result_names)
         .with_context(ctx)
 }
@@ -182,6 +185,7 @@ pub fn thicken(
     let removed = vec![false; spec.faces.len()];
     let hollow = Hollow::new(&spec, &names, removed, thickness).with_context(ctx)?;
     let (result, result_names) = hollow.result(namer).with_context(ctx)?;
+    refuse_crossing(&result, &result_names).with_context(ctx)?;
     part.replace_with_solid(&[Body::Sheet(sheet)], result, result_names)
         .with_context(ctx)
 }
@@ -211,7 +215,37 @@ pub fn offset_faces(
     let removed = vec![false; spec.faces.len()];
     let hollow = Hollow::new(&spec, &names, removed, distance.neg()).with_context(ctx)?;
     let (result, result_names) = hollow.inner_side(namer).with_context(ctx)?;
+    refuse_crossing(&result, &result_names).with_context(ctx)?;
     part.build_body(result, result_names).with_context(ctx)
+}
+
+/// Refuses the body `spec`, named `names`, if it would run into itself:
+/// an edge of it that crosses one of its faces away from every vertex.
+/// The walls are built face by face from the faces' offsets, which say
+/// nothing about where faces apart from each other end up: a hole closer
+/// to a side than the walls are thick moves its wall through the side's.
+/// Asked of the body built on its own, so the part is left as it was.
+fn refuse_crossing(spec: &BodySpec, names: &BodyNames) -> GeopResult<()> {
+    let mut model = Model::new();
+    let built = model.build_body(spec.clone())?;
+    let params = ValidationParameters::default();
+    let Some((edge, face, point)) = body_crossing(&params, &model, built.body()?)? else {
+        return Ok(());
+    };
+    let edge = built
+        .edges
+        .iter()
+        .position(|&e| e == edge)
+        .expect("an edge built");
+    let face = built
+        .faces
+        .iter()
+        .position(|&f| f == face)
+        .expect("a face built");
+    Err(GeopError::new(format!(
+        "the walls run into each other: edge {} crosses face {} at {point:?}: the walls are too thick for this part, which is not supported",
+        names.edges[edge], names.faces[face]
+    )))
 }
 
 /// A face taken away, `f`, that meets a face kept, `g`, at an inward

@@ -392,3 +392,38 @@ fn the_pipe_of_a_tee_offset_and_thickened() {
     .unwrap_or_else(|e| panic!("{e:?}"));
     assert_valid(&part);
 }
+
+/// A 2 x 2 x 1 block drilled through, upright, at `(0.35, 1)` with a hole of
+/// radius 0.2: 0.15 of material between the hole and the side at `x = 0`.
+/// Shelled 0.2 thick, the hole's wall moves out to radius 0.4 and the
+/// side's inner copy in to `x = 0.2`: the two inner copies cross. That is
+/// refused, naming them, not built into a solid running into itself.
+#[test]
+fn walls_running_into_each_other_are_refused() {
+    let mut part = NamedModel::new();
+    let body = geop_lib_sweep::shapes::block(&mut part, "b", [0., 0., 0.], [2., 2., 1.]);
+    let drill = revolved_cylinder(
+        &mut part,
+        "h",
+        v3(0.35, 1., -0.5),
+        Scalar::from_f64(0.2),
+        Scalar::from_f64(2.),
+    )
+    .unwrap();
+    let namer = Namer::new("drilled", "d").unwrap();
+    let solid = boolean(
+        &mut part,
+        &namer,
+        body,
+        drill,
+        BooleanOp::Difference,
+        RemeshParams::default(),
+    )
+    .unwrap()
+    .expect("a drilled block");
+    assert_valid(&part);
+    let namer = Namer::new("shell", "s").unwrap();
+    let error = shell(&mut part, &namer, solid, &[], Scalar::from_f64(0.2)).unwrap_err();
+    let message = error.root_message();
+    assert!(message.contains("run into each other"), "{error:?}");
+}

@@ -1,8 +1,11 @@
 use geop_core_geometry::intersection::{curve_curve_intersect, curve_surface_intersect};
-use geop_core_math::{geop_error::GeopError, vector::Vector3};
+use geop_core_math::{
+    geop_error::{GeopError, GeopResult},
+    vector::Vector3,
+};
 
 use crate::{
-    EdgeId, Model, VertexId,
+    Body, EdgeId, FaceId, Model, VertexId,
     contains::face::{PointClassification, face_contains},
     validation::{ValidationParameters, body_groups},
 };
@@ -157,72 +160,94 @@ fn check_edge_and_face_consistent(
     errors: &mut Vec<GeopError>,
     model: &Model,
     edge_id: EdgeId,
-    face_id: crate::FaceId,
+    face_id: FaceId,
 ) {
-    let (edge, face) = (&model.edges[&edge_id], &model.faces[&face_id]);
-    {
-        {
-            let is_boundary_edge = model.face_edges(face_id).any(|e| e == edge_id);
-            if is_boundary_edge {
-                return;
-            }
+    match edge_crosses_face(params, model, edge_id, face_id) {
+        Err(e) => errors.push(e),
+        Ok(Some(point)) => errors.push(GeopError::new(format!(
+            "edge {} crosses face {}'s trimmed region at {point:?}, which is not an existing vertex — the edge should have been split there",
+            edge_id.0, face_id.0
+        ))),
+        Ok(None) => {}
+    }
+}
 
-            let intersections = match curve_surface_intersect(
-                &edge.curve,
-                &face.surface,
-                params.max_edge_face_intersection_samples,
+/// Where the edge `edge_id` crosses the trimmed region of the face
+/// `face_id`, away from every vertex, if it does — never for an edge that
+/// bounds the face (see [`check_edges_and_faces_consistent`]).
+pub fn edge_crosses_face(
+    params: &ValidationParameters,
+    model: &Model,
+    edge_id: EdgeId,
+    face_id: FaceId,
+) -> GeopResult<Option<Vector3>> {
+    let ctx = |e: GeopError| e.with_context(format!("edge {} x face {}", edge_id.0, face_id.0));
+    let (edge, face) = (&model.edges[&edge_id], &model.faces[&face_id]);
+    if model.face_edges(face_id).any(|e| e == edge_id) {
+        return Ok(None);
+    }
+    let intersections = curve_surface_intersect(
+        &edge.curve,
+        &face.surface,
+        params.max_edge_face_intersection_samples,
+        params.max_nodes,
+        params.min_subdivision_size,
+    )
+    .map_err(ctx)?;
+    // No "does this edge lie on the face" test here. Whether a coedge's
+    // pcurve actually traces its edge across that face is
+    // `curve_and_surface_sampling_check`'s job, and it answers the same
+    // question directly rather than by re-deriving it from the surface.
+    // What is left for this check is the crossings.
+    for (t, uv) in intersections.into_vec() {
+        let point = edge.curve.evaluate(t).map_err(ctx)?;
+        // Only a crossing *inside the face's trim* is a violation. The
+        // surface is untrimmed and extends well past the face: an edge of
+        // one lobe of a figure-8 crosses the plane of a coplanar face on
+        // the other lobe every time, nowhere near it. The search already
+        // returns where the crossing lands in `(u, v)`, so the trim test is
+        // free.
+        let inside_trim = matches!(
+            face_contains(
+                model,
+                face_id,
+                uv[0],
+                uv[1],
                 params.max_nodes,
                 params.min_subdivision_size,
-            ) {
-                Ok(v) => v,
-                Err(e) => {
-                    errors.push(e.with_context(format!("edge {} x face {}", edge_id.0, face_id.0)));
-                    return;
-                }
-            };
+                EDGE_ON_FACE_SEED,
+            ),
+            Ok(PointClassification::Inside)
+        );
+        if inside_trim && !coincides_with_a_vertex(model, &point) {
+            return Ok(Some(point));
+        }
+    }
+    Ok(None)
+}
 
-            // No "does this edge lie on the face" test here. Whether a
-            // coedge's pcurve actually traces its edge across that face is
-            // `curve_and_surface_sampling_check`'s job, and it answers the
-            // same question directly rather than by re-deriving it from the
-            // surface. What is left for this check is the crossings.
-            for (t, uv) in intersections.into_vec() {
-                let point = match edge.curve.evaluate(t) {
-                    Ok(p) => p,
-                    Err(e) => {
-                        errors.push(
-                            e.with_context(format!("edge {} x face {}", edge_id.0, face_id.0)),
-                        );
-                        continue;
-                    }
-                };
-                // Only a crossing *inside the face's trim* is a violation.
-                // The surface is untrimmed and extends well past the face:
-                // an edge of one lobe of a figure-8 crosses the plane of a
-                // coplanar face on the other lobe every time, nowhere near
-                // it. The search already returns where the crossing lands in
-                // `(u, v)`, so the trim test is free.
-                let inside_trim = matches!(
-                    face_contains(
-                        model,
-                        face_id,
-                        uv[0],
-                        uv[1],
-                        params.max_nodes,
-                        params.min_subdivision_size,
-                        EDGE_ON_FACE_SEED,
-                    ),
-                    Ok(PointClassification::Inside)
-                );
-                if inside_trim && !coincides_with_a_vertex(model, &point) {
-                    errors.push(GeopError::new(format!(
-                        "edge {} crosses face {}'s trimmed region at {point:?}, which is not an existing vertex — the edge should have been split there",
-                        edge_id.0, face_id.0
-                    )));
-                }
+/// An edge of `body` that crosses the trimmed region of one of its faces
+/// away from every vertex, with where: a body running into itself. `None`
+/// if no edge does — which does not rule out two faces crossing along a
+/// curve no edge of either reaches.
+pub fn body_crossing(
+    params: &ValidationParameters,
+    model: &Model,
+    body: Body,
+) -> GeopResult<Option<(EdgeId, FaceId, Vector3)>> {
+    let mut faces = model.body_faces(body)?;
+    faces.sort_by_key(|f| f.0);
+    let mut edges: Vec<EdgeId> = faces.iter().flat_map(|&f| model.face_edges(f)).collect();
+    edges.sort_by_key(|e| e.0);
+    edges.dedup();
+    for &edge in &edges {
+        for &face in &faces {
+            if let Some(point) = edge_crosses_face(params, model, edge, face)? {
+                return Ok(Some((edge, face, point)));
             }
         }
     }
+    Ok(None)
 }
 
 #[cfg(test)]
