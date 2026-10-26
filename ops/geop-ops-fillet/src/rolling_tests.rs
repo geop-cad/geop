@@ -539,3 +539,31 @@ fn cube_corner_with_mixed_radii_is_bevelled() {
     );
     assert!(!has_vertex(&model, [0.0, 0.0, 1.0]));
 }
+
+/// The same corner, rounded smoothly: a patch tangent to the three
+/// fillets, each ending at its section through where its contacts cross
+/// those of its neighbours on the faces they share (SMLib's
+/// `SmFilletCorner::CreateCornerPatch`), named `...,corner)` as the ball
+/// is. A setback corner (`SmFilletConvexNxNCorner` with `m_dSetBackDist`)
+/// is the same patch with six sides: each fillet ending a setback from the
+/// vertex along its edge, and the contacts of two neighbours joined on
+/// their face between their ends.
+#[test]
+#[ignore = "needs a smooth N-sided fill, tangent along each side to a given surface (the fillets' and the faces'), as a function in `core/` or `lib/` the fillet can call: `geop-ops-surface`'s boundary surface is an operation, and is tangent only for four sides. Until then the corner is bevelled (`cube_corner_with_mixed_radii_is_bevelled`); setbacks wait on the same patch"]
+fn cube_corner_with_mixed_radii_is_rounded_smoothly() {
+    let mut model = unit_cube();
+    let edges: Vec<String> = ["cube(b,c0,start)", "cube(b,c3,start)", "cube(b,p0)"]
+        .map(String::from)
+        .to_vec();
+    let shape = BlendShape::Fillet {
+        radii: Radii {
+            radius: 0.1,
+            end_radius: Some(0.2),
+            at_vertices: Vec::new(),
+        },
+    };
+    blended(&mut model, &edges, &shape);
+    assert!(
+        (model.topology().faces.keys()).any(|&f| model.name_of(f).unwrap().ends_with(",corner)"))
+    );
+}

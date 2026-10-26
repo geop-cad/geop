@@ -46,13 +46,16 @@ pub(crate) struct Cap {
 
 /// Where a tool's section lies at one of its stations: the section's
 /// control points, its vertices — the two contacts and the apex — what it
-/// is called, and its cap, if it is capped there.
+/// is called, and its cap, if it is capped there; or, `apex`, the section
+/// collapsed into one point, where the tool ends in it — a blend vanishing
+/// where its faces meet tangentially (see [`crate::blend::End::Vanish`]).
 #[derive(Clone, Debug)]
 pub(crate) struct ToolStation {
     pub(crate) points: [Vector4; 4],
     pub(crate) vertices: [Vector3; 3],
     pub(crate) name: String,
     pub(crate) cap: Option<Cap>,
+    pub(crate) apex: bool,
 }
 
 /// A blend's tool, ready to build: its stations and the spans between
@@ -261,6 +264,10 @@ pub(crate) fn build_tools(
         .map(|(_, tool)| tool.spans.iter().map(|s| s.name.clone()).collect())
         .collect();
     let flags = [false; 3];
+    let apexes: Vec<Vec<bool>> = tools
+        .iter()
+        .map(|(_, tool)| tool.stations.iter().map(|s| s.apex).collect())
+        .collect();
     let mut strips = Vec::with_capacity(tools.len());
     let mut caps = Vec::new();
     for (t, ((namer, tool), glued)) in tools.iter().zip(glued).enumerate() {
@@ -274,7 +281,7 @@ pub(crate) fn build_tools(
             let last = tool.stations.len() - 1;
             for (s, forward, name) in [(0, true, "start"), (last, false, "end")] {
                 let Some(cap) = &tool.stations[s].cap else {
-                    if ends_glued(s) {
+                    if ends_glued(s) || tool.stations[s].apex {
                         continue;
                     }
                     return Err(GeopError::new(format!("the tool's {name} has no cap")));
@@ -298,7 +305,7 @@ pub(crate) fn build_tools(
             closed: tool.closed,
             poles: &flags,
             on_axis: &flags,
-            apex: &[],
+            apex: &apexes[t],
             glued,
             geometry: *tool,
         });
