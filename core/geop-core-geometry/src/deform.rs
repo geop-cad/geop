@@ -1,6 +1,7 @@
 //! Maps of space applied to geometry: a rigid motion, a mirror or a
 //! scaling ([`Motion`]), and the deformations of a body about an axis —
-//! tapering, twisting and bending ([`AxialMap`]).
+//! tapering (or pinching, one way across the axis), shearing, twisting and
+//! bending ([`AxialMap`]).
 //!
 //! # One mechanism: composition on the control points
 //!
@@ -8,7 +9,8 @@
 //! takes the point `(x, y, t)` to `x a(t) + y b(t) + c(t)`: affine in `x`
 //! and `y`, with coefficients that are functions of `t` alone. A taper
 //! scales `x` and `y` by a factor linear in `t`; a twist turns them by an
-//! angle linear in `t`; a bend carries the plane `t = const` round a
+//! angle linear in `t`; a shear moves them across by an offset linear in
+//! `t`; a bend carries the plane `t = const` round a
 //! circle, `x` measured towards its centre. Each coefficient is
 //! `constant + slope s + cos·cos(rate s) + sin·sin(rate s)` with `s` the
 //! distance along the axis from the zone's start ([`AxialFunction`]).
@@ -353,11 +355,13 @@ impl AxialMap {
 
     /// Tapering about the axis through `origin` along `axis`: across the
     /// axis, scaled by one at `start` and by `factor` at `end`, linearly in
-    /// between, and by `factor` past the end. Exact. Fails for a factor
-    /// that is not definitely positive.
+    /// between, and by `factor` past the end — or, pinching, only along
+    /// `toward` (square to the axis), the other way across left as it is.
+    /// Exact. Fails for a factor that is not definitely positive.
     pub fn taper(
         origin: Vector3,
         axis: &Vector3,
+        toward: Option<&Vector3>,
         zone: (Scalar, Scalar),
         factor: Scalar,
     ) -> GeopResult<Self> {
@@ -366,10 +370,14 @@ impl AxialMap {
                 "AxialMap::taper: a factor of {factor:?} turns the body inside out or flattens it; it has to be positive"
             )));
         }
-        let (frame, start, end) = Self::frame(axis, None, zone)?;
+        let (frame, start, end) = Self::frame(axis, toward, zone)?;
         let slope = factor.sub(Scalar::ONE).div(end.sub(start))?;
         let scale = AxialFunction::linear(Scalar::ONE, slope, start);
         let zero = AxialFunction::ZERO;
+        let across = match toward {
+            None => scale,
+            Some(_) => AxialFunction::linear(Scalar::ONE, Scalar::ZERO, start),
+        };
         let along = AxialFunction::linear(start, Scalar::ONE, start);
         Ok(AxialMap {
             origin,
@@ -378,10 +386,52 @@ impl AxialMap {
             end,
             columns: [
                 [scale, zero, zero],
-                [zero, scale, zero],
+                [zero, across, zero],
                 [zero, zero, along],
             ],
         })
+    }
+
+    /// Shearing along the axis through `origin` along `axis`: each plane
+    /// across the axis moved towards `toward` (square to the axis) by
+    /// `offset` times its distance from `start` over the zone's length.
+    /// Affine, so the same map before, over and past the zone: the zone
+    /// only sets the rate ([`AxialMap::as_motion`]).
+    pub fn shear(
+        origin: Vector3,
+        axis: &Vector3,
+        toward: &Vector3,
+        zone: (Scalar, Scalar),
+        offset: Scalar,
+    ) -> GeopResult<Self> {
+        let (frame, start, end) = Self::frame(axis, Some(toward), zone)?;
+        let (zero, one, s0) = (Scalar::ZERO, Scalar::ONE, AxialFunction::ZERO);
+        let unit = AxialFunction::linear(one, zero, start);
+        let across = AxialFunction::linear(zero, offset.div(end.sub(start))?, start);
+        let along = AxialFunction::linear(start, one, start);
+        Ok(AxialMap {
+            origin,
+            frame,
+            start,
+            end,
+            columns: [[unit, s0, s0], [s0, unit, s0], [across, s0, along]],
+        })
+    }
+
+    /// The affine map it is, where it is one everywhere — a shear: its
+    /// columns across the axis constant and its offset linear along it, so
+    /// the law is the map it is tangent to at either end. None for a taper,
+    /// a twist or a bend.
+    pub fn as_motion(&self) -> GeopResult<Option<Motion>> {
+        let constant = |f: &AxialFunction| !f.is_trig() && f.slope.is_exactly(Scalar::ZERO);
+        let linear = |f: &AxialFunction| !f.is_trig();
+        let affine = self.columns[0].iter().all(constant)
+            && self.columns[1].iter().all(constant)
+            && self.columns[2].iter().all(linear);
+        if !affine {
+            return Ok(None);
+        }
+        self.tangent_motion(self.start).map(Some)
     }
 
     /// Twisting about the axis through `origin` along `axis`: turned by
@@ -1095,6 +1145,7 @@ mod tests {
         let map = AxialMap::taper(
             v(0.0, 0.0, 0.0),
             &v(0.0, 0.0, 1.0),
+            None,
             zone(0.0, 2.0),
             Scalar::from_f64(0.5),
         )
@@ -1102,6 +1153,50 @@ mod tests {
         let surface = slanted();
         let image = assert_maps_surface(&map, &surface);
         assert_eq!((image.degree_u, image.degree_v), (2, 2));
+        assert!(map.as_motion().unwrap().is_none());
+    }
+
+    /// A pinch scales only the way across it is given: a point at `(1, 1,
+    /// 1)`, halfway along a zone pinching `x` to a half, goes to `(0.75, 1,
+    /// 1)`. Exact, as a taper is.
+    #[test]
+    fn a_pinch_scales_one_way_across() {
+        let map = AxialMap::taper(
+            v(0.0, 0.0, 0.0),
+            &v(0.0, 0.0, 1.0),
+            Some(&v(1.0, 0.0, 0.0)),
+            zone(0.0, 2.0),
+            Scalar::from_f64(0.5),
+        )
+        .unwrap();
+        let p = map.point(&v(1.0, 1.0, 1.0)).unwrap();
+        assert!(p.could_be_equal(&v(0.75, 1.0, 1.0)), "{p:?}");
+        assert_maps_surface(&map, &slanted());
+    }
+
+    /// A shear is affine: the motion it is, the same before, over and past
+    /// the zone, moving a plane across the axis by the offset times its
+    /// distance from the zone's start over the zone's length.
+    #[test]
+    fn a_shear_is_a_motion() {
+        let map = AxialMap::shear(
+            v(0.0, 0.0, 0.0),
+            &v(0.0, 0.0, 1.0),
+            &v(0.0, 1.0, 0.0),
+            zone(1.0, 3.0),
+            Scalar::from_f64(0.5),
+        )
+        .unwrap();
+        let motion = map.as_motion().unwrap().expect("a shear is affine");
+        for (p, q) in [
+            (v(1.0, 0.0, 0.0), v(1.0, -0.25, 0.0)),
+            (v(0.0, 2.0, 2.0), v(0.0, 2.25, 2.0)),
+            (v(0.5, 0.0, 5.0), v(0.5, 1.0, 5.0)),
+        ] {
+            assert!(motion.apply(&p).could_be_equal(&q), "{p:?}");
+            assert!(map.point(&p).unwrap().could_be_equal(&q), "{p:?}");
+        }
+        assert!(!motion.mirrors());
     }
 
     /// A twist of a quarter turn and a bend of a half turn of a slanted
