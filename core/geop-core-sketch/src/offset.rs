@@ -387,10 +387,7 @@ impl Sketch {
                     span: Some((_, sweep)),
                     ..
                 } => {
-                    let (u, v) = (
-                        unwrapped(offset, s, true),
-                        unwrapped(offset, e, false),
-                    );
+                    let (u, v) = (unwrapped(offset, s, true), unwrapped(offset, e, false));
                     Plain::arc(s, e, sweep * (v - u))
                 }
                 _ => None,
