@@ -9,9 +9,9 @@ whole features:
 
 | area | file | headline gaps |
 |---|---|---|
-| Booleans and SSI | [booleans.md](booleans.md) | closed intersection loops no edge pierces; exact analytic curves (plane/quadric pairs); separate lumps and voids; post-process merge of faces on one surface; imprint, XOR, section curves, N-ary, sheet/wire booleans |
+| Booleans and SSI | [booleans.md](booleans.md) | closed intersection loops no edge pierces; separate lumps and voids; post-process merge of faces on one surface; imprint, XOR, section curves, N-ary, sheet/wire booleans |
 | Fillets and chamfers | [fillets.md](fillets.md) | corners with mixed convexity, different radii, 4+ edges; rollover over creases; vanishing fillets; setbacks and bevel corners; defillet; face-to-face fillets; conic/two-radius/constant-width sections |
-| Offsets and shells | [offsets.md](offsets.md) | edges neither straight nor circular; vanishing faces; inward-corner openings; free-form and extrusion offsets; self-intersection detection; per-face/outward shell; spline sketch offsets |
+| Offsets and shells | [offsets.md](offsets.md) | edges neither straight nor circular; vanishing faces; inward-corner openings; free-form offsets; self-intersection detection; per-face/outward shell; spline sketch offsets |
 | Direct modelling and healing | [direct.md](direct.md) | push-pull / move and offset face; delete face and heal; merge faces on one surface; stitch with T-junctions; defeature; scale; bend/twist/taper; mesh to B-rep |
 | Geometry, construction and queries | [geometry.md](geometry.md) | revolve with profile touching the axis; tapered extrude; sweep mitres at curved corners; loft to a point and closed lofts; crack-free adaptive tessellation; knot removal and degree reduction; G1 surfacing; tapered helix; projection; IGES |
 
@@ -31,6 +31,15 @@ whole features:
 - Validation after every operation.
 
 ## Not to port
+
+SMLib dispatches on surface type throughout (analytic plane/quadric
+intersections, offsets of extrusions and revolutions through their
+profiles, exact torus fillets, analytic STEP entities). geop keeps every
+curve and surface a NURBS and ports only the configurations SMLib handles,
+never the type dispatch (see AGENTS.md, "Everything is a NURBS curve or
+surface"). The detailed files still list those analytic items; they are not
+part of the port.
+
 
 SMLib has stubs and bugs that must not be copied (each file lists them):
 `SmBrep::ExtendSurfaces` is a no-op (its type check is always true),
