@@ -201,15 +201,15 @@ fn shell_opened_at_a_top_its_blends_are_tangent_to() {
     let rounded = program.build_model(registry).unwrap();
     assert_valid(&rounded);
     let top = face_name(&rounded, "fillet(round)", [0.0, 0.0, 1.0]);
-    program.push(
-        "s",
-        ShellArgs {
-            solid: solid("fillet(round)"),
-            faces: vec![ElementReference::new(model(), top.clone())],
-            thickness: 0.3.into(),
-        },
-    );
-    let part = program.build_model(registry).unwrap();
+    let args = ShellArgs {
+        solid: solid("fillet(round)"),
+        faces: vec![ElementReference::new(model(), top.clone())],
+        thickness: 0.3.into(),
+    };
+    let started = std::time::Instant::now();
+    let part = apply_to_model::<Shell>(rounded, "s", &args).unwrap();
+    let shelling = started.elapsed();
     assert_valid(&part);
     assert!(part.face_id(&format!("shell(s,{top})")).is_err());
+    assert!(shelling.as_secs() < 1, "{shelling:?}");
 }

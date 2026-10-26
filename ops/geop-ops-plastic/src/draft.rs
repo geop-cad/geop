@@ -284,9 +284,12 @@ impl<'a> Drafted<'a> {
                         .normal
                         .rotated_about(&hinge.direction, tilt.cos, tilt.sin),
                 });
-                extended(turned)?
+                {
+                    let room = turned.size()?;
+                    extended(turned, room)?
+                }
             } else if touched[f] {
-                extended(face.surface.clone())?
+                extended(face.surface.clone(), face.surface.size()?)?
             } else {
                 face.surface.clone()
             };

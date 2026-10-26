@@ -91,6 +91,12 @@ use geop_core_topology::{
 };
 use geop_ops_model::{BodyNames, NamedModel, Namer};
 
+/// How much room a face's surface is given around it, in wall
+/// thicknesses (see [`extended`]): an inner copy reaches past its face by
+/// about one where it meets another at an inward corner, more for a sharp
+/// one. A free choice.
+const ROOM: i64 = 4;
+
 /// Seed of the ray casting that finds which outer loop a hole lies in:
 /// any gives the same answer (see `pcurves_contain`), a constant keeps it
 /// reproducible.
@@ -361,21 +367,7 @@ fn collapse_edges(
             continue;
         }
         let (kept, gone) = if collapsed[f] { (g, f) } else { (f, g) };
-        // Tangent along the edge: the normals halfway along it parallel.
-        let curve = &spec.edges[e].curve;
-        let point = curve.evaluate(curve.mid_parameter()?)?;
-        let normal = |face: usize, pcurve: &Curve2| -> GeopResult<Vector3> {
-            let seed = pcurve.evaluate(pcurve.mid_parameter()?)?;
-            let (u, v) = surfaces[face].project(
-                point,
-                seed[0].sharpen(),
-                seed[1].sharpen(),
-                PROJECT_ITERATIONS,
-            )?;
-            surfaces[face].normal(u, v)
-        };
-        let (n_f, n_g) = (normal(f, f_pcurve)?, normal(g, g_pcurve)?);
-        if n_f.prod_cross(&n_g).norm_sq().could_be_equal(Scalar::ZERO) {
+        if tangent_along(spec, surfaces, e, (f, f_pcurve), (g, g_pcurve))? {
             along[gone].push(e);
             between[e] = vec![kept];
         } else {
@@ -403,6 +395,86 @@ fn collapse_edges(
         }
     }
     Ok((copy, between))
+}
+
+/// Whether the faces `f` and `g`, with their pcurves on edge `e`, are
+/// tangent along it: their normals halfway along it could be parallel.
+fn tangent_along(
+    spec: &BodySpec,
+    surfaces: &[NurbSurface3D],
+    e: usize,
+    (f, f_pcurve): (usize, &Curve2),
+    (g, g_pcurve): (usize, &Curve2),
+) -> GeopResult<bool> {
+    let curve = &spec.edges[e].curve;
+    let point = curve.evaluate(curve.mid_parameter()?)?;
+    let normal = |face: usize, pcurve: &Curve2| -> GeopResult<Vector3> {
+        let seed = pcurve.evaluate(pcurve.mid_parameter()?)?;
+        let (u, v) = surfaces[face].project(
+            point,
+            seed[0].sharpen(),
+            seed[1].sharpen(),
+            PROJECT_ITERATIONS,
+        )?;
+        surfaces[face].normal(u, v)
+    };
+    let (n_f, n_g) = (normal(f, f_pcurve)?, normal(g, g_pcurve)?);
+    Ok(n_f.prod_cross(&n_g).norm_sq().could_be_equal(Scalar::ZERO))
+}
+
+/// Per face taken away, whether it is smoothly open: tangent along every
+/// edge to the face kept there. Its walls do not stand on it, they end
+/// where it was — each edge is a free edge of the face kept, whose wall
+/// gets an end face there as a sheet's border does — and nothing is left
+/// of it. A face taken away that is tangent to a face kept along some
+/// edges and not others, or that meets another face taken away, is
+/// refused: its rim would end on a smooth surface.
+fn smoothly_open(
+    spec: &BodySpec,
+    names: &BodyNames,
+    removed: &[bool],
+    surfaces: &[NurbSurface3D],
+) -> GeopResult<Vec<bool>> {
+    let mut tangent = vec![0usize; spec.faces.len()];
+    let mut transverse = vec![0usize; spec.faces.len()];
+    let mut open = vec![0usize; spec.faces.len()];
+    for (e, at) in spec.edge_uses().iter().enumerate() {
+        let [a, b] = match *at.as_slice() {
+            [a, b] if a.0 != b.0 => [a, b],
+            _ => continue,
+        };
+        match (removed[a.0], removed[b.0]) {
+            (true, true) => {
+                open[a.0] += 1;
+                open[b.0] += 1;
+            }
+            (false, false) => {}
+            _ => {
+                let (gone, kept) = if removed[a.0] { (a, b) } else { (b, a) };
+                if tangent_along(spec, surfaces, e, (gone.0, gone.2), (kept.0, kept.2))? {
+                    tangent[gone.0] += 1;
+                } else {
+                    transverse[gone.0] += 1;
+                }
+            }
+        }
+    }
+    (0..spec.faces.len())
+        .map(|f| {
+            if tangent[f] == 0 {
+                return Ok(false);
+            }
+            if transverse[f] > 0 || open[f] > 0 {
+                return Err(GeopError::new(format!(
+                    "face {} is taken away tangent to a face kept along {} of its edges, and not along {}: the walls cannot end on a smooth surface, which is not supported",
+                    names.faces[f],
+                    tangent[f],
+                    transverse[f] + open[f]
+                )));
+            }
+            Ok(true)
+        })
+        .collect()
 }
 
 /// A coedge of the solid: face `f`, its loop `l` (0 the outer one), and
@@ -471,6 +543,9 @@ struct Hollow<'a> {
     /// Per vertex, each face around it once, with where the vertex is on
     /// the face's surface.
     around: Vec<FacesAround>,
+    /// Per face: whether it is taken away smoothly open (see
+    /// [`smoothly_open`]): nothing is left of it.
+    smooth: Vec<bool>,
     /// Per face: whether it is kept, but its offset collapses — a blend
     /// narrower than the walls are thick — so that it has no inner copy.
     collapsed: Vec<bool>,
@@ -535,15 +610,24 @@ impl<'a> Hollow<'a> {
             .map(|&r| if r { Scalar::ZERO } else { thickness.neg() })
             .collect();
         let mut collapsed = vec![false; spec.faces.len()];
-        let offsets = spec
+        // Each face with room around it, and its offset: of the surface with
+        // room, not the offset given room afterwards — carrying a fitted
+        // offset's last span of many on by the whole face's width spreads
+        // its width over the face.
+        let room = thickness.abs().mul(Scalar::from_i64(ROOM));
+        let roomy = spec
             .faces
             .iter()
+            .map(|face| extended(face.surface.clone(), room))
+            .collect::<GeopResult<Vec<_>>>()?;
+        let offsets = roomy
+            .iter()
             .enumerate()
-            .map(|(f, face)| {
+            .map(|(f, surface)| {
                 if removed[f] {
-                    return Ok(Some(face.surface.clone()));
+                    return Ok(Some(surface.clone()));
                 }
-                face.surface
+                surface
                     .offset(thickness.neg())
                     .map_err(|e| e.with_context(format!("offsetting face {}", names.faces[f])))
             })
@@ -577,22 +661,31 @@ impl<'a> Hollow<'a> {
             .zip(offsets)
             .enumerate()
             .map(|(f, (face, offset))| match offset {
-                Ok(Some(surface)) => extended(surface),
-                Ok(None) => extended(face.surface.clone()),
+                Ok(Some(surface)) => Ok(surface),
+                Ok(None) => Ok(roomy[f].clone()),
                 Err(_) if collapsed_by_neighbours[f] => {
                     collapsed[f] = true;
-                    extended(face.surface.clone())
+                    Ok(roomy[f].clone())
                 }
                 Err(e) => Err(e),
             })
             .collect::<GeopResult<Vec<_>>>()?;
 
-        let roomy = spec
-            .faces
-            .iter()
-            .map(|face| extended(face.surface.clone()))
-            .collect::<GeopResult<Vec<_>>>()?;
-        let (mut copy, between) = collapse_edges(spec, names, &collapsed, &roomy)?;
+        let smooth = smoothly_open(spec, names, &removed, &roomy)?;
+        let (mut copy, mut between) = collapse_edges(spec, names, &collapsed, &roomy)?;
+        // An edge of a face smoothly open is a free edge of the face kept
+        // there, its copy on that face's inner surface alone.
+        let mut free_edge: Vec<bool> = uses.iter().map(|&n| n == 1).collect();
+        for (e, at) in spec.edge_uses().iter().enumerate() {
+            if at.iter().any(|&(f, ..)| smooth[f]) {
+                free_edge[e] = true;
+                between[e] = at
+                    .iter()
+                    .map(|&(f, ..)| f)
+                    .filter(|&f| !removed[f])
+                    .collect();
+            }
+        }
         // Vertices joined by an edge that vanishes share their inner copy.
         let mut group: Vec<usize> = (0..spec.vertices.len()).collect();
         fn root(group: &mut [usize], v: usize) -> usize {
@@ -636,7 +729,7 @@ impl<'a> Hollow<'a> {
         for v in 0..spec.vertices.len() {
             for &(f, uv) in &around[v] {
                 let faces = &mut group_faces[group[v]];
-                if !collapsed[f] && !faces.iter().any(|&(g, _)| g == f) {
+                if !collapsed[f] && !smooth[f] && !faces.iter().any(|&(g, _)| g == f) {
                     faces.push((f, uv));
                 }
             }
@@ -669,7 +762,13 @@ impl<'a> Hollow<'a> {
                 // and the nearest points of the inner cone to it are a
                 // ring round the axis, not its apex.
                 let poles: Vec<_> = pieces.iter().map(|(s, (u, v))| s.pole_at(*u, *v)).collect();
-                if let Some(pole) = poles.iter().flatten().next() {
+                // A face with a pole among faces without — a rounded box's
+                // corner patch at the blends' ends — is no such vertex: the
+                // faces without say where it goes, and the conditions below
+                // read the pole's normal as its limit.
+                if let Some(pole) = poles.iter().flatten().next()
+                    && poles.iter().all(Option::is_some)
+                {
                     let removed_at = |i: usize| removed[around[v][i].0];
                     if (0..pieces.len()).any(|i| removed_at(i) != removed_at(0)) {
                         return Err(GeopError::new(format!(
@@ -679,7 +778,7 @@ impl<'a> Hollow<'a> {
                     }
                     if !poles.iter().all(|p| p.is_some_and(|p| p.could_be_equal(pole))) {
                         return Err(GeopError::new(format!(
-                            "vertex {} is at a pole of some of its faces' inner copies and not of others, or of poles apart: {poles:?}",
+                            "vertex {} is at poles apart of its faces' inner copies: {poles:?}",
                             names.vertices[v]
                         )));
                     }
@@ -794,7 +893,8 @@ impl<'a> Hollow<'a> {
             removed,
             walled,
             open_edge,
-            free_edge: uses.iter().map(|&n| n == 1).collect(),
+            free_edge,
+            smooth,
             around,
             collapsed,
             group,
@@ -1144,7 +1244,7 @@ impl<'a> Hollow<'a> {
         let mut out = HashMap::new();
         for (at, c) in self.coedges() {
             let (_, end) = self.spec.ends(c.on)?;
-            if !self.walled[end] || self.collapsed[at.f] {
+            if !self.walled[end] || self.collapsed[at.f] || self.smooth[at.f] {
                 continue;
             }
             let seed = c.pcurve.ends()?.1;
@@ -1331,6 +1431,9 @@ impl<'a> Hollow<'a> {
         let mut inner_faces = Vec::new();
         for (f, face) in spec.faces.iter().enumerate() {
             let name = &self.names.faces[f];
+            if self.smooth[f] {
+                continue;
+            }
             if self.removed[f] {
                 let rims = self.rims(f, &at)?;
                 let several = rims.len() > 1;
@@ -1383,11 +1486,11 @@ impl<'a> Hollow<'a> {
         // inner copy, `side[v]`.
         let mut side: Vec<Option<usize>> = vec![None; spec.vertices.len()];
         let mut walls = Vec::new();
-        for (_, c) in self.coedges() {
+        for (here, c) in self.coedges() {
             let CoedgeOn::Edge(e, sense) = c.on else {
                 continue;
             };
-            if !self.free_edge[e] {
+            if !self.free_edge[e] || self.removed[here.f] {
                 continue;
             }
             let (x, y) = spec.ends(c.on)?;
@@ -1858,92 +1961,86 @@ pub fn pcurve(
     )
 }
 
-/// `surface` over three times its domain in each direction it is straight
-/// in — degree 1, two rows of control points of equal weights — extended
-/// linearly: the same points at the same `(u, v)`, and more around them.
-/// It is not extended past a row that is a single point, a pole like a
-/// disc's center: the pole would end up inside the patch, where it has no
+/// `surface` carried on past each side by about `room` (in model units),
+/// at most by the domain's width, as the polynomial it is there (see
+/// [`NurbSurface3D::extended`]) — the same points at the same `(u, v)`, and
+/// more around them. Not past a side that is a single point, a pole like a
+/// disc's centre: the pole would end up inside the patch, where it has no
 /// normal, and the inner copy of a vertex there is that pole.
 ///
 /// A face's inner copy can reach past the face where they meet at an
 /// inward corner — or, for a plane cut off by the box around the profile,
-/// past where the patch ends — so its surface needs room around the face.
-/// How much is a free choice; the face's own size is room enough unless
-/// the walls are as thick as the face is wide.
-pub fn extended(mut surface: NurbSurface3D) -> GeopResult<NurbSurface3D> {
+/// past where the patch ends — so its surface needs room around the face,
+/// about as much as the walls are thick. How much is a free choice. More
+/// than needed is not free: a span carried on far is a polynomial
+/// extrapolated far, its width with it, and a curved one curls away.
+pub fn extended(mut surface: NurbSurface3D, room: Scalar) -> GeopResult<NurbSurface3D> {
     for along_u in [true, false] {
-        let (degree, num, other) = if along_u {
-            (surface.degree_u, surface.num_u, surface.num_v)
+        let (lo, hi) = if along_u {
+            surface.domain_u()
         } else {
-            (surface.degree_v, surface.num_v, surface.num_u)
+            surface.domain_v()
         };
-        if degree != 1 || num != 2 {
-            continue;
-        }
-        let index = |row: usize, j: usize| {
-            if along_u {
-                row * surface.num_v + j
-            } else {
-                j * surface.num_v + row
+        let width = hi.sub(lo).sharpen();
+        for at_end in [false, true] {
+            if is_pole(&surface, along_u, at_end)? {
+                continue;
             }
-        };
-        let cps = &surface.control_points;
-        if !(0..other).all(|j| cps[index(0, j)][3].could_be_equal(cps[index(1, j)][3])) {
-            continue;
-        }
-        let pole = |row: usize| -> GeopResult<bool> {
-            let first = cps[index(row, 0)].dehomogenized()?;
-            for j in 1..other {
-                if !cps[index(row, j)].dehomogenized()?.could_be_equal(&first) {
-                    return Ok(false);
+            // How fast the side's middle moves with the parameter there.
+            let ((u0, u1), (v0, v1)) = (surface.domain_u(), surface.domain_v());
+            let side = if at_end { hi } else { lo };
+            let (u, v) = if along_u {
+                (side, v0.add(v1).div(Scalar::TWO)?.sharpen())
+            } else {
+                (u0.add(u1).div(Scalar::TWO)?.sharpen(), side)
+            };
+            let (s_u, s_v) = surface.derivatives(u, v)?;
+            let speed = if along_u { s_u } else { s_v }.norm();
+            let mut by = width;
+            if speed.definitely_greater(Scalar::ZERO) {
+                let reach = room.div(speed)?.sharpen();
+                if reach.definitely_less(width) {
+                    by = reach;
                 }
             }
-            Ok(true)
-        };
-        let (start, end) = (!pole(0)?, !pole(1)?);
-        if !start && !end {
-            continue;
-        }
-        let mut control_points = cps.clone();
-        for j in 0..other {
-            let (a, b) = (cps[index(0, j)], cps[index(1, j)]);
-            let two = |p: &Vector<4>| p.prod_scalar(Scalar::TWO);
-            if start {
-                control_points[index(0, j)] = two(&a).sub(&b);
-            }
-            if end {
-                control_points[index(1, j)] = two(&b).sub(&a);
+            // A rational direction carried on too far turns a weight
+            // negative — an arc carried on goes round to infinity — so
+            // the room is halved until it is a surface: how much is a free
+            // choice.
+            for _ in 0..4 {
+                if let Ok(longer) = surface.extended(along_u, at_end, by) {
+                    surface = longer;
+                    break;
+                }
+                by = by.div(Scalar::TWO)?;
             }
         }
-        let knots = if along_u {
-            &surface.knot_vector_u
-        } else {
-            &surface.knot_vector_v
-        };
-        let (lo, hi) = (knots[1], knots[2]);
-        let width = hi.sub(lo);
-        let lo = if start { lo.sub(width) } else { lo };
-        let hi = if end { hi.add(width) } else { hi };
-        let knots = vec![lo, lo, hi, hi];
-        surface = if along_u {
-            NurbSurface3D::try_new(
-                1,
-                surface.degree_v,
-                control_points,
-                knots,
-                surface.knot_vector_v.clone(),
-            )?
-        } else {
-            NurbSurface3D::try_new(
-                surface.degree_u,
-                1,
-                control_points,
-                surface.knot_vector_u.clone(),
-                knots,
-            )?
-        };
     }
     Ok(surface)
+}
+
+/// Whether the side of `surface` at the start or end (`at_end`) of `u`
+/// (`along_u`) or `v` is a single point: every control point of its row
+/// could be the first.
+fn is_pole(surface: &NurbSurface3D, along_u: bool, at_end: bool) -> GeopResult<bool> {
+    let (nu, nv) = (surface.num_u, surface.num_v);
+    let row: Vec<usize> = if along_u {
+        let i = if at_end { nu - 1 } else { 0 };
+        (0..nv).map(|j| i * nv + j).collect()
+    } else {
+        let j = if at_end { nv - 1 } else { 0 };
+        (0..nu).map(|i| i * nv + j).collect()
+    };
+    let first = surface.control_points[row[0]].dehomogenized()?;
+    for &k in &row[1..] {
+        if !surface.control_points[k]
+            .dehomogenized()?
+            .could_be_equal(&first)
+        {
+            return Ok(false);
+        }
+    }
+    Ok(true)
 }
 
 #[cfg(test)]

@@ -132,15 +132,128 @@ impl<const D: usize> Net<D> {
         })
     }
 
-    /// `self − other`, of the same degrees.
-    pub fn minus(&self, other: &Self) -> Self {
+    /// `self − other`, each raised to the degrees of both first (see
+    /// [`Self::raised`]).
+    pub fn minus(&self, other: &Self) -> GeopResult<Self> {
+        let ((p, q), (r, s)) = (self.degrees(), other.degrees());
+        let (a, b) = (
+            self.raised(p.max(r), q.max(s))?,
+            other.raised(p.max(r), q.max(s))?,
+        );
+        let c =
+            a.c.iter()
+                .zip(&b.c)
+                .map(|(x, y)| x.iter().zip(y).map(|(x, y)| x.sub(y)).collect())
+                .collect();
+        Ok(Net { c, ..a })
+    }
+
+    /// Every coefficient times `s`.
+    pub fn scaled(&self, s: Scalar) -> Self {
         let c = self
             .c
             .iter()
-            .zip(&other.c)
-            .map(|(a, b)| a.iter().zip(b).map(|(x, y)| x.sub(y)).collect())
+            .map(|row| row.iter().map(|x| x.prod_scalar(s)).collect())
             .collect();
         Net { c, ..self.clone() }
+    }
+
+    /// The same polynomial at degrees `(p, q)`, at least its own: the
+    /// product with one, written at the degrees missing.
+    pub fn raised(&self, p: usize, q: usize) -> GeopResult<Self> {
+        let (own_p, own_q) = self.degrees();
+        if (own_p, own_q) == (p, q) {
+            return Ok(self.clone());
+        }
+        let one = Net::<1> {
+            c: vec![vec![Vector::from_array([Scalar::ONE]); q - own_q + 1]; p - own_p + 1],
+            u: self.u,
+            v: self.v,
+        };
+        self.product(&one, |x, o| x.prod_scalar(o[0]))
+    }
+
+    /// The same polynomial over the box `u` × `v` inside its own, in
+    /// Bernstein form there: de Casteljau, each row cut at both ends.
+    pub fn restricted(&self, u: (Scalar, Scalar), v: (Scalar, Scalar)) -> GeopResult<Self> {
+        let cut = |points: &[Vector<D>], (lo, hi): (Scalar, Scalar), (a, b): (Scalar, Scalar)| {
+            let width = hi.sub(lo);
+            let (s, t) = (a.sub(lo).div(width)?, b.sub(lo).div(width)?);
+            // Up to `t`: the left points of de Casteljau at `t`.
+            let n = points.len();
+            let mut work = points.to_vec();
+            let mut left = vec![work[0]];
+            for r in 1..n {
+                for i in 0..n - r {
+                    work[i] = Vector::interpolate(&work[i], &work[i + 1], t);
+                }
+                left.push(work[0]);
+            }
+            // From `s / t` of that on: the right points.
+            let f = if t.could_be_equal(Scalar::ZERO) {
+                Scalar::ZERO
+            } else {
+                s.div(t)?
+            };
+            let mut work = left;
+            let mut right = vec![work[n - 1]];
+            for r in 1..n {
+                for i in 0..n - r {
+                    work[i] = Vector::interpolate(&work[i], &work[i + 1], f);
+                }
+                right.push(work[n - 1 - r]);
+            }
+            right.reverse();
+            Ok::<_, geop_core_math::geop_error::GeopError>(right)
+        };
+        let (p, q) = self.degrees();
+        let rows = self
+            .c
+            .iter()
+            .map(|row| cut(row, self.v, v))
+            .collect::<GeopResult<Vec<_>>>()?;
+        let mut c = vec![Vec::with_capacity(q + 1); p + 1];
+        for j in 0..=q {
+            let column: Vec<Vector<D>> = rows.iter().map(|row| row[j]).collect();
+            for (i, x) in cut(&column, self.u, u)?.into_iter().enumerate() {
+                c[i].push(x);
+            }
+        }
+        Ok(Net { c, u, v })
+    }
+
+    /// The polynomial's value at the point `(u, v)` of its box.
+    pub fn value(&self, u: Scalar, v: Scalar) -> GeopResult<Vector<D>> {
+        let at = |points: &[Vector<D>], (lo, hi): (Scalar, Scalar), t: Scalar| {
+            let f = t.sub(lo).div(hi.sub(lo))?;
+            let mut work = points.to_vec();
+            for r in 1..work.len() {
+                for i in 0..work.len() - r {
+                    work[i] = Vector::interpolate(&work[i], &work[i + 1], f);
+                }
+            }
+            Ok::<_, geop_core_math::geop_error::GeopError>(work[0])
+        };
+        let column = self
+            .c
+            .iter()
+            .map(|row| at(row, self.v, v))
+            .collect::<GeopResult<Vec<_>>>()?;
+        at(&column, self.u, u)
+    }
+
+    /// The range of every coordinate over the box: the coefficients' hull
+    /// (the basis is non-negative and sums to one).
+    pub fn hull(&self) -> Vector<D> {
+        let mut out = self.c[0][0];
+        for row in &self.c {
+            for x in row {
+                for k in 0..D {
+                    out[k] = out[k].union(x[k]);
+                }
+            }
+        }
+        out
     }
 
     /// The coefficients along `side`.
@@ -204,13 +317,19 @@ impl<const D: usize> Net<D> {
 
 impl Net<4> {
     /// The homogeneous control net of `patch`, a single Bézier patch over
-    /// its domain, moved to a control point of it as the origin (see
-    /// `spline::centered`): the polynomials made of it are of the patch's
-    /// size, not of its distance from the origin.
-    pub fn of(patch: &NurbSurface3D) -> GeopResult<Self> {
+    /// its domain — `centred`, moved to a control point of it as the origin
+    /// (see `spline::centered`): the polynomials made of it are then of the
+    /// patch's size, not of its distance from the origin.
+    pub fn of(patch: &NurbSurface3D, centred: bool) -> GeopResult<Self> {
         let first = patch.control_points[0];
         let origin: Vec<Scalar> = (0..3)
-            .map(|k| Ok(first[k].div(first[3])?.sharpen()))
+            .map(|k| {
+                if centred {
+                    Ok(first[k].div(first[3])?.sharpen())
+                } else {
+                    Ok(Scalar::ZERO)
+                }
+            })
             .collect::<GeopResult<_>>()?;
         let c = (0..patch.num_u)
             .map(|i| {
@@ -294,16 +413,24 @@ pub(crate) fn cross(a: &Vector3, b: &Vector3) -> Vector3 {
     a.prod_cross(b)
 }
 
+pub(crate) fn dot(a: &Vector3, b: &Vector3) -> Vector<1> {
+    Vector::from_array([a.prod_dot(b)])
+}
+
+pub(crate) fn product(a: &Vector<1>, b: &Vector<1>) -> Vector<1> {
+    Vector::from_array([a[0].mul(b[0])])
+}
+
 /// The polynomial `M = w (A_u × A_v) − w_u (A × A_v) − w_v (A_u × A)` of
 /// the Bézier patch `patch`, `M / w³ = S_u × S_v` (see the module docs).
 pub(crate) fn normal_field(patch: &NurbSurface3D) -> GeopResult<Net<3>> {
-    let (a, w) = Net::of(patch)?.split();
+    let (a, w) = Net::of(patch, true)?.split();
     let (a_u, a_v) = (a.derivative(true)?, a.derivative(false)?);
     let (w_u, w_v) = (w.derivative(true)?, w.derivative(false)?);
     let first = w.product(&a_u.product(&a_v, cross)?, scale)?;
     let second = w_u.product(&a.product(&a_v, cross)?, scale)?;
     let third = w_v.product(&a_u.product(&a, cross)?, scale)?;
-    Ok(first.minus(&second).minus(&third))
+    first.minus(&second)?.minus(&third)
 }
 
 /// The sides of the Bézier patch `patch` that collapse to a point: a pole's.

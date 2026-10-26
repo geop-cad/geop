@@ -209,11 +209,12 @@ fn a_sphere_closed_all_round() {
     assert!(corners(&part).contains(&[1000, 0, 1500]));
     assert!(corners(&part).contains(&[-500, 0, 0]));
     // Moved along curved faces, the vertices are still as sharp as the
-    // rounding of a few steps.
+    // rounding of a few steps, and of carrying the faces' arcs on past
+    // their ends for room (see `extended`).
     for vertex in part.topology().vertices.values() {
         for k in 0..3 {
             assert!(
-                vertex.point[k].width().to_f64() < 1e-9,
+                vertex.point[k].width().to_f64() < 1e-8,
                 "{:?}",
                 vertex.point
             );

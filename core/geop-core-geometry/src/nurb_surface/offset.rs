@@ -75,7 +75,7 @@ impl NurbSurface3D {
                 }
             }
         }
-        self.fitted_offset(distance).map(Some)
+        self.fitted_offset(distance)
     }
 
     /// [`NurbSurface3D::offset`] of a surface of revolution around `axis`
