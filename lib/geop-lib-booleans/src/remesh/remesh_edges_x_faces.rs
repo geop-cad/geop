@@ -25,19 +25,16 @@
 //!    further along the very same edge.
 //! 4. For each start point, trace the intersection curve outward from it
 //!    (see [`trace_from_start_point`]) and splice in whatever new edge
-//!    that produces. The march finds which vertex the curve ends at; the
-//!    edge's curve is the exact arc where the two surfaces' shapes name
-//!    their meeting (a plane across a surface of revolution around its
-//!    normal, `circle_through`) and the arc's control points fit the
-//!    width an entity may carry, and a cubic fitted through the march
-//!    otherwise (see [`fit_traced_branch`]).
+//!    that produces. The march finds which vertex the curve ends at, and
+//!    the edge's curve is a cubic fitted through the march, whatever the
+//!    two surfaces are (see [`fit_traced_branch`]): no pair of surface
+//!    kinds is special-cased.
 
 use geop_core_geometry::{
     contains::{curve::curve_could_contain, surface::surface_could_contain},
     intersection::{Intersections, curve_surface_intersect, refine_crossing},
     nurb_curve::{NurbCurve, true_point_fractions},
     nurb_surface::NurbSurface3D,
-    shape::circle_through,
 };
 use geop_core_math::{
     geop_error::{GeopError, GeopResult, WithContext},
@@ -56,7 +53,6 @@ use geop_core_math::{
 use geop_core_topology::{
     Body, CoedgeGeometry, Edge, EdgeId, FaceId, Model, VertexId,
     contains::face::{PointClassification, face_contains, face_interior_point},
-    validation::numerical_accuracy,
 };
 use geop_ops_model::NamedModel;
 
@@ -1629,46 +1625,8 @@ fn trace_one_side(
     let edge_id = match duplicate {
         Some(id) => id,
         None => {
-            // Where the two surfaces' shapes say what their branch is — a
-            // plane across a cylinder, a cone, a sphere, a torus turning
-            // around its normal: a circle — the edge is that exact arc, the
-            // kernel's own rational quadratic, from the start vertex to the
-            // one reached, leaving the way the march left. The march found
-            // which vertex the branch ends at; the shapes say where it runs.
-            // An arc the shell, a lip or a reference axis can read as one,
-            // where a curve fitted through the marched points, however
-            // tightly it encloses the circle, is none.
-            // Both the exact arc and the fitted cubic enclose the branch;
-            // the arc is taken where it fits the width an entity may carry.
-            // Its weight is an answer, as wide as the surfaces' data leaves
-            // it (a centre read from control points a few ulps wide), and a
-            // homogeneous control point multiplies the weight by the
-            // coordinate: far from the origin that is a width of the
-            // coordinate's size times the weight's, where the fit, its
-            // weights exactly one, carries only its drift. Honest both, so
-            // the tighter is a free choice.
-            let arc = circle_through(&surf_a, &surf_b, &point)
-                .with_context(&ctx)?
-                .map(|circle| {
-                    circle
-                        .arc_leaving(point, hit_point, &first_dir)
-                        .with_context(&ctx)?
-                        .to_curve()
-                        .with_context(&ctx)
-                })
-                .transpose()?
-                .filter(|curve| {
-                    curve.control_points.iter().all(|p| {
-                        (0..4).all(|k| p[k].width().to_f64() <= numerical_accuracy::MAX_WIDTH)
-                    })
-                });
-            let exact = arc.is_some();
-            let curve = match arc {
-                Some(curve) => curve,
-                None => {
-                    fit_traced_branch(&surf_a, &surf_b, &points, &uvs, &mut widest_between, &ctx)?
-                }
-            };
+            let curve =
+                fit_traced_branch(&surf_a, &surf_b, &points, &uvs, &mut widest_between, &ctx)?;
             let widest = curve
                 .control_points
                 .iter()
@@ -1677,8 +1635,7 @@ fn trace_one_side(
                 .max_by(|a, b| a.1.total_cmp(&b.1))
                 .expect("a curve has control points");
             fitted = format!(
-                "{}{} control points, the widest {} of them, {:e} wide",
-                if exact { "an exact arc of " } else { "" },
+                "{} control points, the widest {} of them, {:e} wide",
                 curve.control_points.len(),
                 widest.0,
                 widest.1
@@ -1730,7 +1687,7 @@ fn trace_one_side(
     Ok(())
 }
 
-/// The curve of a traced branch whose shape nothing names: a cubic through
+/// The curve of a traced branch: a cubic through
 /// the marched `points` (each on both surfaces at its `uvs`), widened to
 /// enclose the branch between them.
 ///
