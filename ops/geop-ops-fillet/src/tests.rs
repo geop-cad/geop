@@ -213,7 +213,8 @@ pub(super) fn refusal(mut model: NamedModel, edges: &[impl ToString], shape: Ble
 
 /// What is refused: a radius that is not positive, no edges, an edge that
 /// is not there, and blends too large for the faces they run into — past
-/// their boundary, or ending exactly on the cube's opposite edge.
+/// their boundary, or ending exactly on the cube's opposite edge — and
+/// one wider than the cylinder whose rim it rounds bends.
 #[test]
 fn refuses_what_it_cannot_blend() {
     let round = |radius| BlendShape::round(radius);
@@ -226,7 +227,7 @@ fn refuses_what_it_cannot_blend() {
     let on_edge = refusal(unit_cube(), &["cube(b,p0)"], bevel(1.0));
     assert!(on_edge.contains("runs exactly along edge"), "{on_edge}");
     let wide = refusal(cylinder(), &["cylinder(c,p1,q0)"], round(0.6));
-    assert!(wide.contains("too large"), "{wide}");
+    assert!(wide.contains("bends more tightly"), "{wide}");
 }
 
 /// Checks the faces of `model` whose names end in `corner)` are pieces of

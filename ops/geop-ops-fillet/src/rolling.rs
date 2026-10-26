@@ -467,6 +467,10 @@ fn place(
         at_edge[k] = foot(surface, &p, seed)?;
         normals[k] = surface.normal(at_edge[k].0, at_edge[k].1)?;
     }
+    // A face bending more tightly than the ball by the edge already leaves
+    // the ball no place to touch it: said so, before looking for one.
+    let unit = [normals[0].normalize()?, normals[1].normalize()?];
+    fits(own.faces, own_surfaces, at_edge, unit, sr)?;
     let tangent = own.tangent(normals, &along, &p)?;
     let sides = sides(chain);
     // The pairs of faces to try: the link's own first.
@@ -505,6 +509,7 @@ fn place(
                 final_uv[k] = sharp_in(surfaces[k], (u, v));
                 off = off.max(off_foot(&center, &contact[k], &normals[k]));
             }
+            fits(pair, surfaces, final_uv, normals, sr)?;
             Ok((
                 off,
                 section(center, contact, normals, pair, final_uv, true)?,
@@ -573,6 +578,40 @@ fn place(
             sr.abs(),
         ))),
     }
+}
+
+/// Checks the ball of signed radius `sr` touching `surfaces`, the faces
+/// `faces`, at `uv`, their unit normals there `normals`, fits against them:
+/// that neither bends towards the ball more tightly than the ball does —
+/// across the ball's section, or along the edge — where the ball would cut
+/// into it. A blend that wide is refused, naming the face and the radius it
+/// bends round, rather than rolled through the face.
+fn fits(
+    faces: [FaceId; 2],
+    surfaces: [&NurbSurface3D; 2],
+    uv: Feet,
+    normals: [Vector3; 2],
+    sr: Scalar,
+) -> GeopResult<()> {
+    let along_edge = normals[0].prod_cross(&normals[1]).normalize()?;
+    for k in 0..2 {
+        let across = along_edge.prod_cross(&normals[k]).normalize()?;
+        for way in [across, along_edge] {
+            let kappa = surfaces[k].normal_curvature(uv[k].0, uv[k].1, &way)?;
+            if !sr.mul(kappa).definitely_less(Scalar::ONE) {
+                return Err(GeopError::new(format!(
+                    "face {} bends more tightly towards the ball than the ball does: it bends round a radius of {:?} there, where the blend's is {:?} — make the blend smaller than that",
+                    faces[k],
+                    Scalar::ONE
+                        .div(kappa.abs())
+                        .map(|r| r.to_f64())
+                        .unwrap_or(f64::INFINITY),
+                    sr.abs().to_f64()
+                )));
+            }
+        }
+    }
+    Ok(())
 }
 
 /// Where an open chain's blend runs on past its end vertex, through the

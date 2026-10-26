@@ -858,3 +858,23 @@ fn fillet_of_every_edge_of_a_plate_thinner_than_two_radii_is_refused() {
     let error = format!("{error:?}");
     assert!(error.contains("too large for the edge"), "{error}");
 }
+
+/// The floor of a blind hole of radius 0.4 rounded by 0.5: the ball would
+/// have to touch the hole's wall from inside a circle narrower than it.
+/// Refused, naming the wall and how tightly it bends, rather than failing
+/// somewhere in the rolling or the boolean.
+#[test]
+fn fillet_wider_than_a_hole_it_rounds_the_floor_of_is_refused() {
+    let mut program = geop_lib_fixtures::drilled_box();
+    let before = program.build_model(registry).unwrap();
+    let edges = edges_with_middle(&before, |m| {
+        near(m[2], 0.5) && ((m[0] - 1.0).powi(2) + (m[1] - 1.0).powi(2)).sqrt() < 0.45
+    });
+    assert!(!edges.is_empty(), "no edge round the hole's floor");
+    program.push("round", FilletArgs::constant(edges, 0.5));
+    let Err(error) = program.build_model(registry) else {
+        panic!("a fillet wider than the hole is not refused");
+    };
+    let error = format!("{error:?}");
+    assert!(error.contains("bends more tightly"), "{error}");
+}
