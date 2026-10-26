@@ -17,7 +17,7 @@
 //! trim, on the same NURBS curves the profile is made of. Polylines are
 //! sampled from those curves too, for drawing.
 
-use crate::sketch::{CurveId, CurveKind, Enclosure, PointId, Sketch};
+use crate::sketch::{CurveId, CurveKind, Enclosure, PointId, Sketch, SplineShape};
 use geop_core_geometry::{
     aabb::union_aabb,
     intersection::curve_curve_intersect,
@@ -761,32 +761,79 @@ pub fn curve_nurbs(
             control_points,
             shape,
         } => {
-            let n = control_points.len();
-            let Some(shape) = shape else {
-                let degree = spline_degree(n);
-                return Ok(vec![NurbCurve::try_new(
-                    degree,
-                    control_points
-                        .iter()
-                        .map(|p| at(p).homogeneous(Scalar::ONE))
-                        .collect(),
-                    spline_knots(n, degree)?,
-                )?]);
-            };
-            // Taken from elsewhere, on knots of its own: brought onto
-            // `[0, 1]`, like every other piece.
-            let curve = NurbCurve::try_new(
-                shape.degree,
-                control_points
-                    .iter()
-                    .zip(&shape.weights)
-                    .map(|(p, &w)| at(p).homogeneous(w))
-                    .collect(),
-                shape.knots.clone(),
-            )?;
-            Ok(vec![curve.with_unit_domain()?])
+            let points: Vec<Vector2> = control_points.iter().map(at).collect();
+            Ok(vec![spline_nurbs(&points, shape.as_ref())?])
         }
     }
+}
+
+/// The point at `t` of a spline of `n` control points and the shape
+/// `shape` — and its derivative there, if `derivative` — as a sum of its
+/// control points: each one whose basis function's support reaches `t`,
+/// by its index, with the rational basis function's value and derivative
+/// at `t`. Constant numbers, for the weights and the knots are design data:
+/// a point of a spline is linear in its control points. Read off the
+/// spline of each control point alone at one, the rest at zero.
+pub(crate) fn basis_at(
+    n: usize,
+    shape: Option<&SplineShape>,
+    t: Scalar,
+    derivative: bool,
+) -> GeopResult<Vec<(usize, Scalar, Scalar)>> {
+    let one_hot = |j: usize| -> Vec<Vector2> {
+        (0..n)
+            .map(|k| {
+                let one = if k == j { Scalar::ONE } else { Scalar::ZERO };
+                Vector2::from_array([one, Scalar::ZERO])
+            })
+            .collect()
+    };
+    let whole = spline_nurbs(&one_hot(0), shape)?;
+    let (degree, knots) = (whole.degree, &whole.knot_vector);
+    let mut out = Vec::new();
+    for j in 0..n {
+        if t.definitely_less(knots[j]) || t.definitely_greater(knots[j + degree + 1]) {
+            continue;
+        }
+        let spline = spline_nurbs(&one_hot(j), shape)?;
+        let value = spline.evaluate(t)?[0];
+        let slope = if derivative {
+            spline.tangent(t)?[0]
+        } else {
+            Scalar::ZERO
+        };
+        out.push((j, value, slope));
+    }
+    Ok(out)
+}
+
+/// The spline of the control points `points` and the shape `shape` (see
+/// [`CurveKind::Spline`]), on `[0, 1]`.
+pub(crate) fn spline_nurbs(
+    points: &[Vector2],
+    shape: Option<&SplineShape>,
+) -> GeopResult<NurbCurve2D> {
+    let n = points.len();
+    let Some(shape) = shape else {
+        let degree = spline_degree(n);
+        return NurbCurve::try_new(
+            degree,
+            points.iter().map(|p| p.homogeneous(Scalar::ONE)).collect(),
+            spline_knots(n, degree)?,
+        );
+    };
+    // Taken from elsewhere, on knots of its own: brought onto `[0, 1]`,
+    // like every other piece.
+    let curve = NurbCurve::try_new(
+        shape.degree,
+        points
+            .iter()
+            .zip(&shape.weights)
+            .map(|(p, &w)| p.homogeneous(w))
+            .collect(),
+        shape.knots.clone(),
+    )?;
+    curve.with_unit_domain()
 }
 
 // ── containment, on the curves themselves ───────────────────────────────────

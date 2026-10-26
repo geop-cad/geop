@@ -22,6 +22,7 @@
 //! domain) makes that point infeasible.
 use crate::{
     geometry::{Arc, line_distance},
+    profile::basis_at,
     sketch::{Constraint, ConstraintId, CurveId, CurveKind, Enclosure, Point, PointId, Sketch},
     variables::{PointLayout, Residuals, SketchPoint, Standing, Variables},
 };
@@ -33,9 +34,10 @@ use geop_core_math::{
 };
 
 /// The most variables a single constraint may depend on. The largest
-/// constraints (tangency or equality between two arcs) touch two arcs of
-/// five variables each.
-const MAX_LOCAL_VARS: usize = 10;
+/// constraint, a point of a spline's offset ([`Constraint::OffsetAt`]),
+/// touches the four control points of two cubics a point depends on and
+/// a circle's radius.
+const MAX_LOCAL_VARS: usize = 17;
 
 /// A residual with its gradient with respect to its constraint's own
 /// variables.
@@ -220,6 +222,39 @@ struct Prepared<'a> {
     constraint: &'a Constraint,
     vars: Vec<usize>,
     tangent: Option<TangentMode>,
+    /// For a [`Constraint::OffsetAt`], the splines' points as sums of
+    /// their control points.
+    offset: Option<OffsetBasis>,
+}
+
+/// The points of a [`Constraint::OffsetAt`]: of `a`, with its derivative,
+/// and of `b`, as sums of their control points (see [`spline_basis`]).
+struct OffsetBasis {
+    a: Vec<(PointId, Scalar, Scalar)>,
+    b: Vec<(PointId, Scalar, Scalar)>,
+}
+
+/// The spline `curve`'s point at `t` — and its derivative there, if
+/// `derivative` — as a sum of its control points (see [`basis_at`]).
+fn spline_basis(
+    sketch: &Sketch,
+    curve: CurveId,
+    t: Scalar,
+    derivative: bool,
+) -> GeopResult<Vec<(PointId, Scalar, Scalar)>> {
+    let CurveKind::Spline {
+        control_points,
+        shape,
+    } = &sketch.curve(curve)?.kind
+    else {
+        return Err(GeopError::new(format!("curve {curve} is no spline")));
+    };
+    Ok(
+        basis_at(control_points.len(), shape.as_ref(), t, derivative)?
+            .into_iter()
+            .map(|(j, value, slope)| (control_points[j], value, slope))
+            .collect(),
+    )
 }
 
 /// Whether `a` and `b` are both fixed points: then a coincidence between
@@ -271,6 +306,7 @@ impl<'a> Problem<'a> {
         for (&id, c) in &sketch.constraints {
             use Constraint::*;
             let mut vars = Vec::new();
+            let mut offset_basis = None;
             let pt = |p: &PointId, vars: &mut Vec<usize>| layout.points.point_vars(*p, vars);
             match c {
                 // Coincidence of two fixed points is a fact about where
@@ -315,6 +351,21 @@ impl<'a> Problem<'a> {
                     layout.curve_vars(sketch, *a, &mut vars);
                     layout.curve_vars(sketch, *b, &mut vars);
                 }
+                // The control points the two points depend on, and the
+                // circle's radius alone.
+                OffsetAt {
+                    a, at, b, on, by, ..
+                } => {
+                    let basis = OffsetBasis {
+                        a: spline_basis(sketch, *a, *at, true)?,
+                        b: spline_basis(sketch, *b, *on, false)?,
+                    };
+                    for (p, ..) in basis.a.iter().chain(&basis.b) {
+                        pt(p, &mut vars);
+                    }
+                    vars.push(layout.curve_var[by]);
+                    offset_basis = Some(basis);
+                }
             }
             vars.sort_unstable();
             vars.dedup();
@@ -333,6 +384,7 @@ impl<'a> Problem<'a> {
                 constraint: c,
                 vars,
                 tangent,
+                offset: offset_basis,
             });
         }
 
@@ -462,6 +514,25 @@ impl<'a> Problem<'a> {
             EqualSweep { a, b } => {
                 let half = |k: CurveId| geo.var(self.layout.curve_var[&k]);
                 out.push(half(b).sub(half(a)).mul(scale));
+            }
+            OffsetAt { by, across, .. } => {
+                let basis = p.offset.as_ref().expect("prepared with its basis");
+                let sum = |terms: &[(PointId, Scalar, Scalar)], slope: bool| {
+                    terms.iter().fold(
+                        Vector2::from_array([c(Scalar::ZERO); 2]),
+                        |acc, &(q, v, d)| {
+                            acc.add(&geo.point(q).prod_scalar(c(if slope { d } else { v })))
+                        },
+                    )
+                };
+                let tangent = sum(&basis.a, true).normalize()?;
+                let normal = Vector2::from_array([tangent[1].neg(), tangent[0]]);
+                let off = sum(&basis.b, false).sub(&sum(&basis.a, false));
+                if !across {
+                    out.push(off.prod_dot(&tangent));
+                }
+                let radius = geo.var(self.layout.curve_var[&by]).abs();
+                out.push(off.prod_dot(&normal).abs().sub(radius));
             }
             Offset { a, b, value } => match self.sketch.curves[&a].kind {
                 CurveKind::Line { .. } => {

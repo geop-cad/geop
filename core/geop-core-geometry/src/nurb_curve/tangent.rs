@@ -86,6 +86,11 @@ impl NurbCurve<3> {
     pub fn tangent(&self, t: Scalar) -> GeopResult<Vector2> {
         Ok(self.cartesian_derivatives::<2>(t, 1)?[1])
     }
+
+    /// Cartesian second derivative `C''(t)` (not normalized).
+    pub fn second_derivative(&self, t: Scalar) -> GeopResult<Vector2> {
+        Ok(self.cartesian_derivatives::<2>(t, 2)?[2])
+    }
 }
 
 #[cfg(test)]

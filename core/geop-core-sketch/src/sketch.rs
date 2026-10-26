@@ -456,6 +456,23 @@ pub enum Constraint {
         #[serde(with = "as_f64")]
         value: Scalar,
     },
+    /// The point `on` along the spline `b` lies the radius of the circle
+    /// `by` from the point `at` along the spline `a`, along `a`'s normal
+    /// there — or, `across`, only that far across it: anywhere on the line
+    /// `a`'s offset runs along there. Each as a fraction of the spline's
+    /// domain. The offset of a spline is no spline: a spline fitted through
+    /// such points is held to it (see [`crate::offset`]).
+    OffsetAt {
+        a: CurveId,
+        #[serde(with = "as_f64")]
+        at: Scalar,
+        b: CurveId,
+        #[serde(with = "as_f64")]
+        on: Scalar,
+        by: CurveId,
+        #[serde(default, skip_serializing_if = "is_false")]
+        across: bool,
+    },
 }
 
 impl Uses for Constraint {
@@ -555,6 +572,7 @@ impl Constraint {
             | Angle { a, b, .. }
             | EqualSweep { a, b }
             | Offset { a, b, .. } => vec![a, b],
+            OffsetAt { a, b, by, .. } => vec![a, b, by],
             _ => Vec::new(),
         }
     }
@@ -883,6 +901,12 @@ impl Sketch {
                 matches!(kind(*a)?, CurveKind::Arc { .. })
                     && matches!(kind(*b)?, CurveKind::Arc { .. }),
                 "two arcs",
+            ),
+            OffsetAt { a, b, by, .. } => need(
+                matches!(kind(*a)?, CurveKind::Spline { .. })
+                    && matches!(kind(*b)?, CurveKind::Spline { .. })
+                    && matches!(kind(*by)?, CurveKind::Circle { .. }),
+                "two splines and a circle",
             ),
         }
     }

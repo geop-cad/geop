@@ -1593,6 +1593,55 @@ fn offsets_to_both_sides_and_refusals() {
     assert!(tone == Tone::Error && why.contains("smaller"), "{why:?}");
 }
 
+/// Offset of a spline: its offset is no spline, so a spline is fitted to
+/// it, held to it point by point at the distance — the radius of a
+/// construction circle, which is asked for — and it follows that distance
+/// and the spline it is the offset of.
+#[test]
+fn a_spline_offsets_into_a_fitted_spline() {
+    let mut e = drawing();
+    e.key("s");
+    for [x, y] in [[0.2, 0.2], [0.7, 0.6], [1.2, 0.2]] {
+        e.click(x, y);
+    }
+    e.key("Enter");
+    let spline: Vec<CurveId> = e.drawn_curves().iter().map(|(id, _)| *id).collect();
+    assert_eq!(spline.len(), 1, "{:?}", e.drawn_curves());
+    let free = e.report().dof;
+    e.key("o");
+    // Its middle, `(P0 + 2 P1 + P2) / 4`.
+    e.click(0.7, 0.4);
+    assert_eq!(e.selection().len(), 1);
+    e.click(0.7, 0.55);
+    let fits: Vec<CurveId> = e
+        .drawn_curves()
+        .into_iter()
+        .filter(|(id, k)| matches!(k, CurveKind::Spline { .. }) && !spline.contains(id))
+        .map(|(id, _)| id)
+        .collect();
+    assert_eq!(fits.len(), 1, "{:?}", e.drawn_curves());
+    assert!(e.count(|c| matches!(c, Constraint::OffsetAt { .. })) >= 4);
+    assert!(e.presentation.prompt.is_some(), "the distance is asked for");
+    e.dialog("prompt", Value::Text("0.1".into()));
+    let report = e.report();
+    assert!(report.converged && report.dof == free, "{report:?}");
+    // Its points 0.1 from the spline: the middle of the fit straight
+    // above the spline's, where the spline runs level.
+    let s = e.sketch();
+    let middle = |c: CurveId| {
+        let CurveKind::Spline { control_points, .. } = &s.curves[&c].kind else {
+            unreachable!()
+        };
+        let q: Vec<P2> = control_points.iter().map(|&p| xy(s, p)).collect();
+        q
+    };
+    let source = middle(spline[0]);
+    let top = 0.25 * source[0][1] + 0.5 * source[1][1] + 0.25 * source[2][1];
+    let fit = middle(fits[0]);
+    let fit_top = fit.iter().map(|q| q[1]).fold(f64::MIN, f64::max);
+    assert!(fit_top > top + 0.09, "{fit:?} over {source:?}");
+}
+
 /// Mirror: what is selected is mirrored across the line clicked, a half
 /// outline ending on the sketch's `y` axis closing into a whole one; with
 /// nothing selected, the line comes first and each curve clicked after is
