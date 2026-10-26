@@ -1093,8 +1093,10 @@ search. Three times in `geop-ops-fillet`:
   straight from its station at the vertex. Where the walls stand square to
   the shared face, that station's section lies in the *other* wall's plane,
   its curves on that wall's face, and its contact on its own wall already on
-  the mitre plane (a run-on side of no length). It failed in the boolean,
-  and rolled blends meeting at an inward corner are refused instead.
+  the mitre plane (a run-on side of no length). It failed in the boolean.
+  What works for any two blends needs no mitre surface at all: each ends
+  flush at the other's wall, and the corner is cut by the two run on past
+  it, intersected — behind both walls, what both would cut.
 
 ## A hash map's order is no order
 

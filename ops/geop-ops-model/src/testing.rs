@@ -48,8 +48,23 @@ fn check(model: &Model, manifold: bool) -> Result<(), Vec<GeopError>> {
 /// The report of `errors`: how many, and each one's root message, a line
 /// each.
 fn report(errors: &[GeopError]) -> String {
-    let all: Vec<&str> = errors.iter().map(|e| e.root_message()).collect();
+    let all: Vec<String> = errors.iter().map(line).collect();
     format!("{} validation error(s):\n{}", all.len(), all.join("\n"))
+}
+
+/// One validation error on a line: its root message, and the context it
+/// was reported through, outermost first — which entities it is about.
+fn line(error: &GeopError) -> String {
+    let mut contexts = Vec::new();
+    let mut at = error;
+    while let GeopError::Context { inner, message } = at {
+        contexts.push(message.as_str());
+        at = inner;
+    }
+    match contexts.is_empty() {
+        true => error.root_message().to_string(),
+        false => format!("{} ({})", error.root_message(), contexts.join("; ")),
+    }
 }
 
 /// Checks `model` is a valid manifold model, failing with every validation

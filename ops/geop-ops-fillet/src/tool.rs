@@ -182,17 +182,6 @@ pub(crate) struct CornerEnd {
     pub(crate) contacts: [usize; 2],
 }
 
-/// Two tools ending where their edges meet at an inward corner, mitred:
-/// both run on to the plane halving the corner, where their sections are
-/// one, mirrored — the first's, by which the second's is joined to it
-/// without a cap. Their contacts by index: 0 on the face both touch,
-/// `shared`, 1 on the other.
-#[derive(Clone, Debug)]
-pub(crate) struct Joint {
-    pub(crate) shared: FaceId,
-    pub(crate) ends: [CornerEnd; 2],
-}
-
 impl CornerEnd {
     /// The index of the station of `tool` that ends here.
     pub(crate) fn station(&self, tool: &Tool) -> usize {
@@ -224,14 +213,10 @@ impl CornerEnd {
 /// bilinear patch from it along both tools' lines to their apexes, and on
 /// along the lines `N(q0)`, ... to the corner's apex `N(apex)`: `N(side0)`,
 /// ....
-///
-/// Where two tools are joined at a mitre (see [`Joint`]), the second's
-/// section there is the first's: its vertices and curves.
 pub(crate) fn build_tools(
     model: &mut NamedModel,
     tools: &[(&Namer, &Tool)],
     corners: &[Corner],
-    joints: &[Joint],
     solid: String,
 ) -> GeopResult<SolidId> {
     let mut spec = BodySpec::new(true);
@@ -262,38 +247,6 @@ pub(crate) fn build_tools(
         }
         contact_vertex.push((first..spec.vertices.len()).collect::<Vec<_>>());
     }
-    // A mitre's second tool's section is its first's: which of the first's
-    // contacts each of the second's is, and the apexes one.
-    let mut mitred: Vec<(usize, usize)> = Vec::new();
-    for joint in joints {
-        let [lead, follow] = &joint.ends;
-        if lead.tool >= follow.tool {
-            return Err(GeopError::new(
-                "a mitre's first tool has to be built before its second",
-            ));
-        }
-        let mut which = vec![0; 3];
-        for (slot, &contact) in which.iter_mut().zip(&follow.contacts) {
-            *slot = lead
-                .contacts
-                .iter()
-                .position(|&c| c == contact)
-                .ok_or_else(|| GeopError::new("a mitre's tools meet in different contacts"))?;
-        }
-        which[2] = 2;
-        let (lead_station, follow_station) = (
-            lead.station(tools[lead.tool].1),
-            follow.station(tools[follow.tool].1),
-        );
-        glued[follow.tool].push(Glue::Section {
-            station: follow_station,
-            strip: lead.tool,
-            at: lead_station,
-            joints: which,
-        });
-        mitred.extend([(lead.tool, lead_station), (follow.tool, follow_station)]);
-    }
-
     let joint_names: Vec<[String; 3]> = tools.iter().map(|(_, tool)| tool.joint_names()).collect();
     let curve_names: Vec<[String; 3]> = tools
         .iter()
@@ -316,7 +269,6 @@ pub(crate) fn build_tools(
                 .iter()
                 .flat_map(|c| &c.ends)
                 .any(|e| e.tool == t && e.station(tool) == s)
-                || mitred.contains(&(t, s))
         };
         if !tool.closed {
             let last = tool.stations.len() - 1;

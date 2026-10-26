@@ -129,26 +129,9 @@ fn fillet_of_an_upright_edge_between_faces_at_160_degrees() {
 
 /// A drawer handle (Fusion 360 tutorial "Drawer pull": two round posts, a
 /// bar across their tops, the joints rounded): a post of radius 3 standing
-/// under a bar 8 wide, the circle where they meet rounded by 1.5. The
-/// fillet's contact on the bar's underside is a circle of radius 4.5, which
-/// runs off the bar (half-width 4) on both sides.
-///
-/// The bracket case of the same shape is refused up front ("the blend is
-/// too large for face ...: it would run past the face's boundary"); this
-/// one is not, and the fillet builds an invalid solid:
-///
-/// > coedge 247's pcurve sample 1 (t=0.244) maps through its face's
-/// > surface to a point that is not on edge 243's curve at all (point
-/// > (-1.83, 4.11, 20.0))
-///
-/// at `y = 4.11`, outside the bar, on the edges between the blend faces
-/// `fillet(round,cylinder(post,c0,end),fillet,q3)` and the bar's sides.
-/// With a radius of 1 (contact exactly on the bar's edge) or 0.5 the
-/// fillet builds valid. Either a refusal naming the bar's side, or a blend
-/// that runs out through the bar's side, is expected; not an invalid model.
-#[test]
-#[ignore = "bug: a fillet whose contact circle runs past the face it lies on (post r=3 under a bar 8 wide, r=1.5) builds an invalid solid instead of refusing; r=1 and r=0.5 build valid"]
-fn fillet_of_a_post_joint_whose_contact_runs_off_the_bar() {
+/// under a bar 8 wide, the circle where they meet. The program, and that
+/// circle's arcs.
+fn post_under_bar() -> (Program, Vec<String>) {
     let mut program = Program::new();
     program.push(
         "post",
@@ -163,8 +146,87 @@ fn fillet_of_a_post_joint_whose_contact_runs_off_the_bar() {
         near(m[2], 20.0) && (m[0].powi(2) + m[1].powi(2)).sqrt() < 3.5
     });
     assert_eq!(arcs.len(), 4, "{arcs:?}");
+    (program, arcs)
+}
+
+/// The drawer handle's joint rounded by 1.5: the fillet's contact on the
+/// bar's underside is a circle of radius 4.5, which runs off the bar
+/// (half-width 4) on both sides, over its convex side edges: a cliff. Its
+/// contact checked only halfway along each arc, it built an invalid solid
+/// (edges at `y = 4.11`, outside the bar). Checked whole, the contact
+/// crosses the bar's side edges, and the fill is cut off flush with the
+/// bar's sides, carried on below them: filled under the bar, not past it.
+/// (Merging the fill's edge in the side's plane, a U from one crossing to
+/// the other, with the bar's straight edge between the same two vertices
+/// put the U's coedges on the line: two edges sharing their vertices are
+/// now one only where one's middle lies on the other.)
+#[test]
+fn fillet_of_a_post_joint_whose_contact_runs_off_the_bar() {
+    let (mut program, arcs) = post_under_bar();
     program.push("round", FilletArgs::constant(arcs, 1.5));
-    assert_builds_valid(&program);
+    let part = program.build_model(registry).unwrap();
+    assert_valid(&part);
+    let at = |p| where_in(&part, "fillet(round)", p);
+    // Under the bar, between the post and the contact circle: filled.
+    assert_eq!(at([0.0, 3.6, 19.8]), PointClassification::Inside);
+    assert_eq!(at([3.6, 0.0, 19.8]), PointClassification::Inside);
+    // Past the bar's side, where the fill would have run on: not.
+    assert_eq!(at([0.0, 4.05, 19.99]), PointClassification::Outside);
+    assert_eq!(at([0.0, -4.05, 19.99]), PointClassification::Outside);
+}
+
+/// A block with a rib standing on its top at one end, set back from the
+/// front edge: the front top edge rounded so large that its contact on the
+/// top runs under the rib, across its foot — a wall, the edge between them
+/// concave: the round crashes into it. It is cut off flush with the rib's
+/// side, so that it cuts nothing of the rib.
+#[test]
+fn fillet_whose_contact_runs_into_a_rib() {
+    let mut program = Program::new();
+    program.push(
+        "base",
+        PrimitiveArgs::block([0.0, 0.0, 0.0], [10.0, 10.0, 5.0]),
+    );
+    program.push(
+        "rib",
+        PrimitiveArgs::block([8.0, 0.5, 5.0], [10.0, 10.0, 8.0]).join("block(base)"),
+    );
+    let part = rounded_where(program, |m| near(m[1], 0.0) && near(m[2], 5.0), 1.0, true);
+    let at = |p| where_in(&part, "fillet(round)", p);
+    assert_eq!(at([4.0, 0.05, 4.95]), PointClassification::Outside);
+    assert_eq!(at([4.0, 0.5, 4.5]), PointClassification::Inside);
+    // In the rib, just above its foot by the edge: not cut into.
+    assert_eq!(at([9.0, 0.7, 5.1]), PointClassification::Inside);
+}
+
+/// A block with a rib standing on its top, set back from the front edge
+/// and running across it: the front top edge rounded so large that its
+/// contact on the top runs under the rib, across its foot and on past it
+/// back onto the top. Cut off by the rib's sides, the round would be cut
+/// away on the rib's far side too: refused, naming the rib's side.
+#[test]
+fn fillet_whose_contact_runs_under_a_rib_and_out_again_is_refused() {
+    let mut program = Program::new();
+    program.push(
+        "base",
+        PrimitiveArgs::block([0.0, 0.0, 0.0], [10.0, 10.0, 5.0]),
+    );
+    program.push(
+        "rib",
+        PrimitiveArgs::block([4.0, 0.5, 5.0], [5.0, 10.0, 8.0]).join("block(base)"),
+    );
+    let before = program.build_model(registry).unwrap();
+    let edge = edges_with_middle(&before, |m| near(m[1], 0.0) && near(m[2], 5.0));
+    assert_eq!(edge.len(), 1, "{edge:?}");
+    program.push("round", FilletArgs::constant(edge, 1.0));
+    let Err(error) = program.build_model(registry) else {
+        panic!("a round running under a rib and out again is not refused");
+    };
+    let error = format!("{error:?}");
+    assert!(
+        error.contains("a blend is cut off only by a face its contact leaves for good"),
+        "{error}"
+    );
 }
 
 /// A thin plate with a hole (Fusion 360 "Bottle opener" and sheet-like
@@ -306,7 +368,7 @@ fn assert_rounds(
     edges: Vec<String>,
     r: f64,
     cuts: bool,
-) {
+) -> NamedModel {
     let before = program.build_model(registry).unwrap();
     let mut chained: Vec<geop_core_topology::EdgeId> = Vec::new();
     for edge in &edges {
@@ -333,10 +395,18 @@ fn assert_rounds(
     };
     let (a, b) = (volume(&before, solid), volume(&part, "fillet(round)"));
     let change = if cuts { a - b } else { b - a };
+    // The faces the blend made, by name: what tells a blend that was not
+    // applied from one applied wrong.
+    let mut made: Vec<&str> = (part.topology().faces.keys())
+        .filter_map(|&f| part.name_of(f))
+        .filter(|n| n.starts_with("fillet(round"))
+        .collect();
+    made.sort();
     assert!(
         change > 0.1 * r * r * length && change < 10.0 * r * r * length,
-        "the volume went from {a} to {b}, along {length} of edges"
+        "the volume went from {a} to {b}, along {length} of edges; the blend made faces {made:?}"
     );
+    part
 }
 
 /// The turbine example, the edges named by `prefixes` rounded by 0.1 (see
@@ -652,4 +722,139 @@ fn rounding_a_turbine_blades_root_on_the_hub_is_refused_at_the_trailing_edge() {
     ] {
         assert!(error.contains(face), "{error}");
     }
+}
+
+/// `program` with the one edge whose middle is where `keep` says rounded
+/// by `r` as the step `round`, as [`assert_rounds`] checks it — cut where
+/// `cuts`, filled else: the part built.
+fn rounded_where(
+    program: Program,
+    keep: impl Fn([f64; 3]) -> bool,
+    r: f64,
+    cuts: bool,
+) -> NamedModel {
+    let before = program.build_model(registry).unwrap();
+    let edges = edges_with_middle(&before, keep);
+    assert_eq!(edges.len(), 1, "{edges:?}");
+    let [solid] = before.solid_names().try_into().unwrap();
+    assert_rounds(program, registry, &solid, edges, r, cuts)
+}
+
+/// A plate standing against a round post (a bracket's arm into its hub):
+/// the plate's top edge, straight between two planes, runs into the post's
+/// side, a cylinder. Rounded, the blend runs on into the post, rolled, and
+/// is cut off by it: the plate's corner is rounded away, the post not cut
+/// into. (Swept, a straight edge between planes ended flush only with a
+/// plane square to it, and this was refused.)
+#[test]
+fn fillet_of_a_plate_edge_running_into_a_post() {
+    let mut program = Program::new();
+    program.push(
+        "post",
+        PrimitiveArgs::cylinder_z([0.0, 0.0, 0.0], 5.0, 10.0),
+    );
+    program.push(
+        "plate",
+        PrimitiveArgs::block([-12.0, -2.0, 0.0], [0.0, 2.0, 4.0]).join("cylinder(post)"),
+    );
+    let part = rounded_where(
+        program,
+        |m| near(m[1], 2.0) && near(m[2], 4.0) && m[0] < 0.0,
+        1.0,
+        true,
+    );
+    let solid = "fillet(round)";
+    let at = |p| where_in(&part, solid, p);
+    assert_eq!(at([-8.0, 1.95, 3.95]), PointClassification::Outside);
+    assert_eq!(at([-8.0, 1.0, 3.0]), PointClassification::Inside);
+    // In the post, above the plate's corner: not cut into.
+    assert_eq!(at([-4.2, 2.4, 4.3]), PointClassification::Inside);
+}
+
+/// A rib running into a wall that stands at an angle to it (a gusset into
+/// a drafted side): the rib's top edge, straight between two planes, runs
+/// into a plane not square to it. Rounded, rolled on into the wall and cut
+/// off by it; the wall not cut into.
+#[test]
+fn fillet_of_a_rib_edge_running_into_an_oblique_wall() {
+    let mut program = Program::new();
+    program.push(
+        "wall",
+        PrimitiveArgs::prism(
+            &[[10.0, -5.0], [20.0, -5.0], [20.0, 15.0], [14.0, 15.0]],
+            0.0,
+            10.0,
+        ),
+    );
+    program.push(
+        "rib",
+        PrimitiveArgs::block([0.0, 4.0, 0.0], [13.0, 6.0, 3.0]).join("prism(wall)"),
+    );
+    let part = rounded_where(
+        program,
+        |m| near(m[1], 6.0) && near(m[2], 3.0) && m[0] < 12.0,
+        0.8,
+        true,
+    );
+    let solid = "fillet(round)";
+    let at = |p| where_in(&part, solid, p);
+    assert_eq!(at([5.0, 5.95, 2.95]), PointClassification::Outside);
+    assert_eq!(at([5.0, 5.0, 2.0]), PointClassification::Inside);
+    // In the wall, just past where the rib's corner meets it.
+    assert_eq!(at([12.5, 6.0, 3.0]), PointClassification::Inside);
+}
+
+/// A rib on a base plate, both running into a round post: the concave
+/// edge between the rib's side and the plate's top, straight between two
+/// planes, runs into the post's side. Filled in, rolled on into the post
+/// and cut off by it, so that the fill does not stick out of the post.
+#[test]
+fn fillet_of_a_rib_root_running_into_a_post() {
+    let mut program = Program::new();
+    program.push(
+        "post",
+        PrimitiveArgs::cylinder_z([0.0, 0.0, 0.0], 5.0, 10.0),
+    );
+    program.push(
+        "base",
+        PrimitiveArgs::block([-12.0, -6.0, 0.0], [0.0, 6.0, 2.0]).join("cylinder(post)"),
+    );
+    program.push(
+        "rib",
+        PrimitiveArgs::block([-12.0, -1.0, 2.0], [0.0, 1.0, 5.0]).join("block(base)"),
+    );
+    let part = rounded_where(
+        program,
+        |m| near(m[1], 1.0) && near(m[2], 2.0) && m[0] < 0.0,
+        0.8,
+        false,
+    );
+    let solid = "fillet(round)";
+    let at = |p| where_in(&part, solid, p);
+    assert_eq!(at([-8.0, 1.05, 2.05]), PointClassification::Inside);
+    assert_eq!(at([-8.0, 1.7, 2.7]), PointClassification::Outside);
+}
+
+/// A thin plate, 0.15 thick, every edge rounded by 0.1 (a user rounding
+/// "everything" on a sheet-metal-like part): the balls rounding the two
+/// corners at either end of an upright edge touch it 0.1 from each end,
+/// past each other. Refused, naming the corner, rather than built with
+/// two corner patches overlapping. (What would build it is one patch for
+/// both corners — four faces round the short edge — which is missing.)
+#[test]
+fn fillet_of_every_edge_of_a_plate_thinner_than_two_radii_is_refused() {
+    let mut program = Program::new();
+    program.push(
+        "plate",
+        PrimitiveArgs::block([0.0, 0.0, 0.0], [1.0, 1.0, 0.15]),
+    );
+    let before = program.build_model(registry).unwrap();
+    let edges = edges_with_middle(&before, |_| true);
+    assert_eq!(edges.len(), 12, "{edges:?}");
+    program.push("round", FilletArgs::constant(edges, 0.1));
+    let Err(error) = program.build_model(registry) else {
+        panic!("the plate's edges rounded past each other are not refused");
+    };
+    let error = format!("{error:?}");
+    assert!(error.contains("too large for the edge"), "{error}");
 }
