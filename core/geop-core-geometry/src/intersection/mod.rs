@@ -8,7 +8,8 @@ pub use coincidence::{Hit, Overlap};
 pub use curve_curve::refine_crossing as refine_curve_curve_crossing;
 pub use curve_curve::{curve_curve_intersect, curve_curve_overlaps_and_crossings};
 pub use curve_surface::{
-    curve_surface_crossings, curve_surface_intersect, curve_surface_overlaps, refine_crossing,
+    crossing_points, curve_surface_crossings, curve_surface_intersect, curve_surface_overlaps,
+    refine_crossing,
 };
 
 /// Result of a subdivision-based intersection search: either the finite set

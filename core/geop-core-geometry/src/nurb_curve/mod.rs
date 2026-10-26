@@ -15,6 +15,7 @@ mod interpolate;
 mod join;
 mod length;
 mod refine;
+pub(crate) use interpolate::basis_funs;
 pub(crate) use interpolate::solve_interpolation_system;
 pub use interpolate::true_point_fractions;
 pub use refine::ParameterRefinable;

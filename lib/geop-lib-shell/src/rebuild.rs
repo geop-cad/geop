@@ -35,9 +35,7 @@
 //! meet near it. The topology never changes here.
 
 use geop_core_geometry::{
-    intersection::{
-        Intersections, curve_curve_intersect, curve_surface_intersect, refine_crossing,
-    },
+    intersection::{Intersections, crossing_points, curve_curve_intersect},
     meet::{Offset, meet, tangent_groups},
     nurb_curve::{NurbCurve, NurbCurve3D, true_point_fractions},
     nurb_surface::NurbSurface3D,
@@ -459,44 +457,10 @@ impl<'a> Rebuild<'a> {
         let mut best: Option<(Vector3, f64)> = None;
         for &i in other {
             let (surface, _) = pieces[i];
-            let hits = match curve_surface_intersect(
-                curve,
-                surface,
-                8,
-                MAX_NODES,
-                min_subdivision_size(),
-            )? {
-                Intersections::Found(hits) => hits,
-                Intersections::Coincident(_) => {
-                    return Err(GeopError::new(
-                        "the seam from it lies on the moved surface: where it goes is not determined",
-                    ));
-                }
-            };
-            for (t, uv) in hits {
-                let (t, uv) = refine_crossing(curve, surface, t, uv);
-                let ctx = |e: GeopError| {
-                    e.with_context(format!(
-                        "the seam crossing surface {i} at t={t:?}, uv={uv:?}, the surface's domain {:?} x {:?}",
-                        surface.domain_u(),
-                        surface.domain_v()
-                    ))
-                };
-                let on_curve = curve.evaluate(t).map_err(ctx)?;
-                // At a pole the collapsed parameter says nothing — the
-                // crossing's enclosure of it may run the whole row — and
-                // the point is the pole.
-                let on_surface = match surface.pole_at(uv[0], uv[1]) {
-                    Some(pole) => pole,
-                    None => surface.evaluate(uv[0], uv[1]).map_err(ctx)?,
-                };
-                if !on_curve.could_be_equal(&on_surface) {
-                    continue;
-                }
-                // Both enclose the crossing: so does what they share.
-                let point = Vector3::from_array(std::array::from_fn(|k| {
-                    on_curve[k].intersect(on_surface[k])
-                }));
+            let points = crossing_points(curve, surface).map_err(|e| {
+                e.with_context(format!("the seam from it crossing surface {i}, moved"))
+            })?;
+            for (point, _) in points {
                 let distance = point.sub(&seed).norm_sq().to_f64();
                 if best.is_none_or(|(_, d)| distance < d) {
                     best = Some((point, distance));
@@ -612,7 +576,12 @@ impl<'a> Rebuild<'a> {
             (Some(seam), straight) => match (restricted(seam, start, end), straight) {
                 (Ok(along), _) => along,
                 (Err(_), Some(line)) => line,
-                (Err(err), None) => return Err(err),
+                (Err(err), None) => {
+                    return Err(err.with_context(format!(
+                        "it is a seam between faces {} and {}, pieces of one smooth surface",
+                        self.names.faces[*f], self.names.faces[*g]
+                    )));
+                }
             },
             (None, Some(line)) => line,
             (None, None) => {

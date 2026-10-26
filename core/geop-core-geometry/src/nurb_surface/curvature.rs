@@ -79,6 +79,20 @@ impl NurbSurface<4> {
         v: Scalar,
         along: &Vector3,
     ) -> GeopResult<Option<Scalar>> {
+        let kappa = self.normal_curvature(u, v, along)?.abs();
+        if kappa.could_be_equal(Scalar::ZERO) {
+            Ok(None)
+        } else {
+            Ok(Some(Scalar::ONE.div(kappa)?.abs()))
+        }
+    }
+
+    /// The normal curvature at `(u, v)` along the unit tangent `along`,
+    /// signed: positive where the surface bends towards its normal
+    /// `normalize(Su × Sv)` (see [`Self::normal`]) that way, the inverse of
+    /// the radius of the circle it bends round there, on that side (see
+    /// [`Self::curvature_radius_along`]).
+    pub fn normal_curvature(&self, u: Scalar, v: Scalar, along: &Vector3) -> GeopResult<Scalar> {
         let (su, sv) = self.derivatives(u, v)?;
         let [suu, suv, svv] = self.second_derivatives(u, v)?;
         let n = su.prod_cross(&sv).normalize()?;
@@ -87,18 +101,12 @@ impl NurbSurface<4> {
         let (t_u, t_v) = (along.prod_dot(&su), along.prod_dot(&sv));
         let a = g.mul(t_u).sub(f.mul(t_v)).div(det)?;
         let b = e.mul(t_v).sub(f.mul(t_u)).div(det)?;
-        let kappa = suu
+        Ok(suu
             .prod_dot(&n)
             .mul(a)
             .mul(a)
             .add(Scalar::TWO.mul(suv.prod_dot(&n)).mul(a).mul(b))
-            .add(svv.prod_dot(&n).mul(b).mul(b))
-            .abs();
-        if kappa.could_be_equal(Scalar::ZERO) {
-            Ok(None)
-        } else {
-            Ok(Some(Scalar::ONE.div(kappa)?.abs()))
-        }
+            .add(svv.prod_dot(&n).mul(b).mul(b)))
     }
 
     /// The mean curvature at `(u, v)`, signed against the normal

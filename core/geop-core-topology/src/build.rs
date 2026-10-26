@@ -313,6 +313,77 @@ impl BodySpec {
         }
     }
 
+    /// Takes the vertex `v` apart: the edge ends `moved` — an edge, and
+    /// whether its end (or else its start) — go to a new vertex at `point`,
+    /// and a new edge on `curve`, from `v` to the new vertex, runs between
+    /// them in every loop the move breaks, its pcurve on face `f`, run in
+    /// `sense`, `pcurve(f, sense)`. The new vertex and the new edge.
+    pub fn split_vertex(
+        &mut self,
+        v: usize,
+        moved: &[(usize, bool)],
+        point: Vector3,
+        curve: Curve3,
+        mut pcurve: impl FnMut(usize, Sense) -> GeopResult<Curve2>,
+    ) -> GeopResult<(usize, usize)> {
+        let w = self.vertices.len();
+        self.vertices.push(point);
+        for &(e, at_end) in moved {
+            let edge = (self.edges.get_mut(e))
+                .ok_or_else(|| GeopError::new(format!("BodySpec: no edge {e}")))?;
+            let end = if at_end {
+                &mut edge.end
+            } else {
+                &mut edge.start
+            };
+            if *end != v {
+                return Err(GeopError::new(format!(
+                    "BodySpec: edge {e} does not {} at vertex {v}",
+                    if at_end { "end" } else { "start" }
+                )));
+            }
+            *end = w;
+        }
+        let new = self.edges.len();
+        self.edges.push(EdgeSpec {
+            curve,
+            start: v,
+            end: w,
+        });
+        for f in 0..self.faces.len() {
+            let face = &self.faces[f];
+            let mut loops = Vec::with_capacity(1 + face.holes.len());
+            for lp in face.loops() {
+                let mut out = Vec::with_capacity(lp.len() + 1);
+                for (k, c) in lp.iter().enumerate() {
+                    out.push(c.clone());
+                    let (_, end) = self.ends(c.on)?;
+                    let (start, _) = self.ends(lp[(k + 1) % lp.len()].on)?;
+                    let sense = match (end, start) {
+                        (a, b) if a == b => continue,
+                        (a, b) if (a, b) == (v, w) => Sense::Forward,
+                        (a, b) if (a, b) == (w, v) => Sense::Reversed,
+                        (a, b) => {
+                            return Err(GeopError::new(format!(
+                                "BodySpec: a loop of face {f} runs to vertex {a} and on from vertex {b}"
+                            )));
+                        }
+                    };
+                    out.push(CoedgeSpec {
+                        on: CoedgeOn::Edge(new, sense),
+                        pcurve: pcurve(f, sense)?,
+                    });
+                }
+                loops.push(out);
+            }
+            let mut loops = loops.into_iter();
+            let face = &mut self.faces[f];
+            face.outer = loops.next().unwrap_or_default();
+            face.holes = loops.collect();
+        }
+        Ok((w, new))
+    }
+
     /// The vertex a coedge running along `on` starts at, and the one it
     /// ends at.
     pub fn ends(&self, on: CoedgeOn) -> GeopResult<(usize, usize)> {

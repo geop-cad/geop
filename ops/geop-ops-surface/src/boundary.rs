@@ -13,8 +13,10 @@
 //!   edges, a single circle included.
 //! - **four edges**: their Coons patch (see [`NurbSurface3D::coons`]), which
 //!   runs exactly along every one of them. Along edges picked as `tangent`
-//!   it is made tangent to the flat face each of those edges bounds,
-//!   continuing it smoothly (see [`NurbSurface3D::tangent_to_planes`]).
+//!   it is made tangent to the face each of those edges bounds, continuing
+//!   it smoothly (see [`NurbSurface3D::tangent_to`]): exactly to a flat
+//!   face, and to a curved one leaving it at a millionth of a radian
+//!   outwards, checked all along, so that it never dips through it.
 //! - **three, or five and more**: a flat inner polygon — each corner of the
 //!   loop's halfway to their average, on the plane through it square to
 //!   the loop — and a quadrilateral along every edge, between the edge, the
@@ -27,7 +29,7 @@
 //! A Coons patch needs a corner wherever two of its sides meet: a loop of
 //! four that runs on smoothly through a vertex leaves a patch with no
 //! normal there, and is refused, naming the vertex. So is tangency
-//! anywhere but along a loop of four, or to a face that is not flat. Two
+//! anywhere but along a loop of four. Two
 //! edges sharing an end are ruled into a face that comes to a point there,
 //! as a cone into its apex: that side of the patch collapses to the
 //! shared vertex.
@@ -40,7 +42,8 @@ use geop_core_editor::{
 };
 use geop_core_geometry::{
     nurb_curve::{NurbCurve, NurbCurve2D, NurbCurve3D, flatten_point, loop_signed_area},
-    nurb_surface::{FlatPatch, NurbSurface3D},
+    nurb_surface::{FlatPatch, Neighbour, NurbSurface3D},
+    search::{MAX_NODES, min_subdivision_size},
     shape::Plane,
 };
 use geop_core_math::{
@@ -66,7 +69,7 @@ use crate::{NamedCurve, SheetSpec};
 /// operation `B`. A curve is an edge, of a face or of a wire — a 3-D
 /// sketch's line, arc or spline — or a planar sketch's curve. The curves
 /// are copied, the originals left as they are; with `tangent`, the fill
-/// continues the flat faces those of its edges bound smoothly.
+/// continues the faces those of its edges bound smoothly.
 ///
 /// The face is named `boundary(B)`. The copy of each curve or end `X`
 /// picked is `boundary(B,X)` — for a sketch's curve `X` is `K,c3`, and
@@ -83,7 +86,7 @@ pub struct BoundarySurface;
 pub struct BoundarySurfaceArgs {
     /// The curves to span: two, or a closed loop.
     pub edges: Vec<CurveSource>,
-    /// Those of them the fill is to be tangent along, to the flat face each
+    /// Those of them the fill is to be tangent along, to the face each
     /// bounds.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub tangent: Vec<ElementReference<NamedModel, Edge>>,
@@ -95,7 +98,7 @@ impl PartOperation for BoundarySurface {
     const KIND: &'static str = "boundary_surface";
     const INFO: OperationInfo = OperationInfo::new(
         "Boundary surface",
-        "Span a face standing on its own between two edges, or fill a closed loop of edges — optionally tangent to the flat faces along them.",
+        "Span a face standing on its own between two edges, or fill a closed loop of edges — optionally tangent to the faces along them.",
         OperationGroup::Surface,
         OperationTier::Small,
     )
@@ -248,11 +251,11 @@ pub fn boundary_surface(
         }
         _ => {
             let sides = chain(&sides)?;
-            let planes = tangent
+            let faces = tangent
                 .iter()
-                .map(|&t| Ok((t.to_string(), tangent_plane(part, t)?)))
+                .map(|&t| Ok((t.to_string(), Tangency::along(part, t)?)))
                 .collect::<GeopResult<Vec<_>>>()?;
-            fill(namer, &sides, &planes)?
+            fill(namer, &sides, &faces)?
         }
     };
     Ok((spec, names))
@@ -404,38 +407,62 @@ fn chain(sides: &[Side]) -> GeopResult<Vec<Side>> {
     Ok(out)
 }
 
-/// What a fill is tangent to along an edge: a plane, and the direction in
-/// it away from the face it continues.
-type Tangency = (Plane, Vector3);
+/// What a fill is tangent to along an edge: the face the edge bounds — its
+/// surface, its plane if it is flat — and whether that face runs the edge
+/// the way the edge's curve does.
+#[derive(Clone, Debug)]
+struct Tangency {
+    surface: NurbSurface3D,
+    plane: Option<Plane>,
+    forward: bool,
+}
 
-/// The plane of the flat face the edge named `name` bounds, and the direction
-/// in it away from that face at the middle of the edge — what a fill
-/// tangent along the edge continues.
-fn tangent_plane(part: &NamedModel, name: &str) -> GeopResult<Tangency> {
-    let model = part.topology();
-    let edge = part.edge_id(name)?;
-    let coedges = model.coedges_of_edge(edge);
-    let [coedge] = coedges.as_slice() else {
-        return Err(GeopError::new(format!(
-            "edge {name} bounds {} faces: tangency is to the one face an edge bounds, standing on its own",
-            coedges.len()
-        )));
-    };
-    let coedge = model.get_coedge(*coedge)?;
-    let plane = part.plane_of_face(
-        coedge.face,
-        &format!("tangency along edge {name} is supported to flat faces"),
-    )?;
-    // The face lies to the left of its boundary, seen from where its normal
-    // points: away from it is the edge's direction, as the face runs it,
-    // crossed with the normal.
-    let curve = &model.get_edge(edge)?.curve;
-    let mut along = curve.tangent(curve.mid_parameter()?)?;
-    if coedge.sense == Sense::Reversed {
-        along = along.neg();
+impl Tangency {
+    /// The one face the edge named `name` bounds, standing on its own:
+    /// what a fill tangent along the edge continues.
+    fn along(part: &NamedModel, name: &str) -> GeopResult<Self> {
+        let model = part.topology();
+        let edge = part.edge_id(name)?;
+        let coedges = model.coedges_of_edge(edge);
+        let [coedge] = coedges.as_slice() else {
+            return Err(GeopError::new(format!(
+                "edge {name} bounds {} faces: tangency is to the one face an edge bounds, standing on its own",
+                coedges.len()
+            )));
+        };
+        let coedge = model.get_coedge(*coedge)?;
+        let surface = model.get_face(coedge.face)?.surface.clone();
+        Ok(Self {
+            plane: surface.as_plane()?,
+            surface,
+            forward: coedge.sense == Sense::Forward,
+        })
     }
-    let away = along.prod_cross(&plane.normal);
-    Ok((plane, away))
+
+    /// At the fraction `t` of the way along `side`, as it runs: the face's
+    /// unit normal, and the way in its tangent plane away from it — the
+    /// face lies to the left of its boundary, seen from where its normal
+    /// points, so away from it is the way the face runs the edge crossed
+    /// with the normal.
+    fn at(&self, side: &Side, t: Scalar) -> GeopResult<(Vector3, Vector3)> {
+        let curve = side.oriented();
+        let (t0, t1) = curve.domain();
+        let s = Scalar::interpolate(t0, t1, t);
+        let point = curve.evaluate(s)?;
+        let normal = match &self.plane {
+            Some(plane) => plane.normal,
+            None => self
+                .surface
+                .normal_at(&point, MAX_NODES, min_subdivision_size())?,
+        };
+        let along = curve.tangent(s)?;
+        let along = if side.forward == self.forward {
+            along
+        } else {
+            along.neg()
+        };
+        Ok((normal, along.prod_cross(&normal)))
+    }
 }
 
 /// Whether the loop of `sides` has a corner where side `k` meets the next:
@@ -450,11 +477,11 @@ fn has_corner(a: &Curve3, b: &Curve3) -> GeopResult<bool> {
 }
 
 /// The closed loop `sides` filled (see the module docs), tangent along the
-/// edges of `planes` to their planes.
+/// edges of `faces` to those faces.
 fn fill(
     namer: &Namer,
     sides: &[Side],
-    planes: &[(String, Tangency)],
+    faces: &[(String, Tangency)],
 ) -> GeopResult<(BodySpec, BodyNames)> {
     let n = sides.len();
     // The loop's corners, side `k` running from corner `k` to `k + 1`, and
@@ -472,13 +499,14 @@ fn fill(
     };
 
     if let Some(plane) = flat(sides)? {
-        for (e, (p, _)) in planes {
-            let same = p
-                .normal
-                .prod_cross(&plane.normal)
-                .norm_sq()
-                .could_be_equal(Scalar::ZERO)
-                && p.signed_distance(&plane.point).could_be_equal(Scalar::ZERO);
+        for (e, face) in faces {
+            let same = face.plane.as_ref().is_some_and(|p| {
+                p.normal
+                    .prod_cross(&plane.normal)
+                    .norm_sq()
+                    .could_be_equal(Scalar::ZERO)
+                    && p.signed_distance(&plane.point).could_be_equal(Scalar::ZERO)
+            });
             if !same {
                 let side = sides.iter().find(|s| s.entity == *e).expect("a side");
                 return Err(GeopError::new(format!(
@@ -523,13 +551,19 @@ fn fill(
             names.edges.push(namer.name(&[&s.name]));
         }
         let mut surface = NurbSurface3D::coons([&curves[0], &curves[1], &curves[2], &curves[3]])?;
-        if !planes.is_empty() {
-            let mut at: [Option<Tangency>; 4] = Default::default();
-            for (e, plane) in planes {
-                let k = sides.iter().position(|s| s.entity == *e).expect("a side");
-                at[k] = Some(plane.clone());
-            }
-            surface = surface.tangent_to_planes(&at)?;
+        if !faces.is_empty() {
+            let along: [Option<(&Side, &Tangency)>; 4] = std::array::from_fn(|k| {
+                let (_, face) = faces.iter().find(|(e, _)| sides[k].entity == *e)?;
+                Some((&sides[k], face))
+            });
+            let at = along.map(|along| along.map(|(side, face)| move |t: Scalar| face.at(side, t)));
+            let neighbours: [Option<Neighbour<'_>>; 4] = std::array::from_fn(|k| {
+                Some(Neighbour {
+                    at: at[k].as_ref()?,
+                    flat: along[k]?.1.plane.is_some(),
+                })
+            });
+            surface = surface.tangent_to(&neighbours)?;
         }
         spec.faces.push(FaceSpec::on_unit_square(
             surface,
@@ -540,7 +574,7 @@ fn fill(
         return Ok((spec, names));
     }
 
-    if let Some((e, _)) = planes.first() {
+    if let Some((e, _)) = faces.first() {
         let side = sides.iter().find(|s| s.entity == *e).expect("a side");
         return Err(GeopError::new(format!(
             "a loop of {n} edges is filled with a patch of quadrilaterals, which cannot be made tangent along edge {}: tangency is supported along a loop of four edges",

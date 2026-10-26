@@ -2,10 +2,10 @@
 //! its top. Deleting bodies and extracting faces, and splitting with those,
 //! are run by `geop-ops-boolean`'s tests.
 
-use crate::{ProjectCurve, ProjectCurveArgs};
-use geop_core_math::{geop_error::GeopResult, primitives::FrameAxis};
+use crate::{Along, ProjectCurve, ProjectCurveArgs};
+use geop_core_math::{geop_error::GeopResult, primitives::FrameAxis, scalars::Scalar};
 use geop_core_program::element::ElementReference;
-use geop_lib_sweep::shapes::block_part;
+use geop_lib_sweep::shapes::{block_part, revolved_cylinder, v3};
 use geop_ops_model::sketch::{
     Sketch,
     figures::{n, on_origin},
@@ -40,6 +40,7 @@ fn project_onto_top(mark: Sketch) -> GeopResult<NamedModel> {
     let project = ProjectCurveArgs {
         sketch: whole_sketch("mark"),
         face: ElementReference::new(model(), top),
+        along: Along::SketchNormal,
     };
     run_step::<ProjectCurve>(&mut part, "p", &project)?;
     Ok(model_of(&part))
@@ -85,6 +86,70 @@ fn project_a_line_ending_on_the_face_fails() {
     mark.add_line(a, b);
     let error = error(project_onto_top(mark));
     assert!(error.root_message().contains("end inside"), "{error:?}");
+}
+
+/// A circle in the plane `x = 0`, round `(0, 1, 1)` of radius `0.2`,
+/// projected onto a cylinder of radius one round the line `x = -2, y = 0`
+/// each point to its nearest: the circle the cylinder is cut along is the
+/// sketch's circle seen from the axis — every point of it on the cylinder,
+/// at the height of the point it came from and on the ray to it from the
+/// axis — not along the sketch's normal, which misses the cylinder where
+/// the circle is further than one from the axis.
+#[test]
+fn project_a_circle_onto_a_cylinder_along_its_normal() {
+    let mut cylinder = NamedModel::new();
+    let f = Scalar::from_f64;
+    revolved_cylinder(&mut cylinder, "c", v3(-2.0, 0.0, 0.0), f(1.0), f(2.0)).unwrap();
+    // The quarter of the side facing the circle.
+    let facing = v3(-2.0 + 0.894, 0.447, 1.0);
+    let side = (cylinder.topology().faces.iter())
+        .find(|(_, face)| {
+            let (_, _, p) = face.surface.closest_point(&facing).unwrap();
+            p.sub(&facing).norm().to_f64() < 1e-3
+        })
+        .map(|(&id, _)| cylinder.name_of(id).unwrap().to_string())
+        .expect("a face facing the circle");
+    let mut part = given_part(&cylinder).unwrap();
+    let mut mark = Sketch::new();
+    let c = mark.add_point(n(1.0), n(1.0));
+    mark.add_circle(c, n(0.2));
+    let on_yz = AddSketchArgs::on(on_origin(FrameAxis::X), mark);
+    run_step::<AddSketch>(&mut part, "mark", &on_yz).unwrap();
+    let project = ProjectCurveArgs {
+        sketch: whole_sketch("mark"),
+        face: ElementReference::new(model(), side.clone()),
+        along: Along::FaceNormal,
+    };
+    run_step::<ProjectCurve>(&mut part, "p", &project).unwrap();
+    let part = model_of(&part);
+    assert_valid(&part);
+    let model = part.topology();
+    let side = part.face_id(&side).unwrap();
+    let hole = model.get_face(side).unwrap().holes.len();
+    assert_eq!(hole, 1);
+    let cut = (model.edges.iter())
+        .filter(|(id, _)| part.name_of(**id).unwrap().starts_with("project(p"))
+        .map(|(_, e)| e)
+        .next()
+        .expect("an edge cut along");
+    for i in 0..=16 {
+        let (t0, t1) = cut.curve.domain();
+        let t = Scalar::interpolate(t0, t1, Scalar::from_ratio(i, 16).unwrap());
+        let p = cut.curve.evaluate(t).unwrap().to_f64_array();
+        let (x, y) = (p[0] + 2.0, p[1]);
+        assert!(
+            ((x * x + y * y).sqrt() - 1.0).abs() < 1e-6,
+            "{p:?} is off the cylinder"
+        );
+        // The sketch's point it came from: on the ray from the axis, in
+        // the plane `x = 0`.
+        let from = [2.0 * y / x, p[2]];
+        let off = ((from[0] - 1.0).powi(2) + (from[1] - 1.0).powi(2)).sqrt() - 0.2;
+        assert!(
+            off.abs() < 1e-4,
+            "{p:?} comes from {from:?}, {off:e} off the circle"
+        );
+    }
 }
 
 // ── Direct edits ────────────────────────────────────────────────────────────
@@ -282,7 +347,7 @@ mod delete_face {
         assert_volume(&part, &part.solid_names()[0], 4.0 - 0.125, 1e-5);
         let cut: Vec<String> = faces_named(&part, "")
             .into_iter()
-            .filter(|n| n.starts_with("combine(corner,prism("))
+            .filter(|n| n.starts_with("prism(corner,"))
             .collect();
         assert_eq!(cut.len(), 1, "{cut:?}");
         let part = deleted(program, cut, HealGap::Heal);

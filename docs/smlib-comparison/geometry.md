@@ -74,9 +74,9 @@ Verdicts:
 | Ruled surface | `N_CreateRuledSrf` `NL_SrfCommon.cpp:846` | `patch.rs:58` `ruled` | par |
 | **Ruled surface between a curve and a point (cone to an apex)** | `N_CreateRuledSrfBetweenCrvAndPt` `NL_SrfCommon.cpp:2171` | refused (`boundary.rs`: "two edges sharing an end — the ruled face would come to a point") | **missing** |
 | Coons patch | `N_CreateCoonsSrf`, `N_CreateCoonsSrfTwist` | `patch.rs:127` `coons` | par |
-| **Coons with cross-boundary derivatives (G1 to curved neighbours)** | `N_CreateCoonsSrfCrossBoundaryDerivs` `NL_SrfAdv.cpp:22012`, `SmTangentField` | `patch.rs:339` `tangent_to_planes`: G1 to *flat* neighbours only | **worse** |
+| **Coons with cross-boundary derivatives (G1 to curved neighbours)** | `N_CreateCoonsSrfCrossBoundaryDerivs` `NL_SrfAdv.cpp:22012`, `SmTangentField` | `patch.rs` `tangent_to`: exact to flat neighbours; to curved ones leaving them at `TILT` (1e-6 rad) towards their normal, collocated at the Greville abscissae and checked between, refined while it strays | par |
 | Gordon surface | `N_CreateGordonSrf` | `gordon.rs:172` | par |
-| **N-sided G1 hole fill** | `N_FillNSidedHole` `NL_SrfAdv.cpp:18585` (k+1 patches, cross-derivative curves, central tangent plane) | `boundary.rs`: a C0 "honest patchwork" of Coons quads about a flat inner polygon | **worse** |
+| **N-sided G1 hole fill** | `N_FillNSidedHole` `NL_SrfAdv.cpp:18585` (k+1 patches, cross-derivative curves, central tangent plane) | `boundary.rs`: a C0 "honest patchwork" of Coons quads about a flat inner polygon; G1 across the spokes is an ignored reproducer (`five_sided_hole_filled_smoothly`: the inner corners must be flat points) | **worse** |
 | Skinning (loft surface): degree, closed C1, approximation tolerance, given params/knots | `N_CreateSkinSrf` `NL_SrfAdv.cpp:7899` (flags `cld`, `deg`, `knotTol`), `...Approx`, `...ApproxTol`, `...Params`, `...Interp` | `lib/geop-lib-sweep/src/loft.rs` (`through` is a cubic Bessel spline), `skin.rs` | worse (see §2) |
 | **Skin with boundary continuity (G1 to adjacent surfaces at the first and last section)** | `N_CreateSkinSrfBoundaryContinuity` `NL_SrfAdv.cpp:13262`, `N_CreateSkinSrfBoundaryDerivs` | none | **missing** |
 | Skin along a spine | `N_CreateSkinSpine` `NL_SrfAdv.cpp:10401` | none (guides at most 3, affine) | missing |
@@ -109,7 +109,7 @@ Verdicts:
 | **Sweep frame modes**: binormal law curve `curZ`, translational, fixed direction | `N_CreateSweepScale` `curZ`, `SmSweepOptions::bTranslationalSweep` (`inc/SmPrimitiveCreation.h`) | `Orientation::{FollowPath, FixedNormal}` | worse (no fixed-binormal or law mode) |
 | **Scale and twist laws** | `curS` (3-axis scale vector as a function of t), `pScaleReference` / `pScaleCurve` in `CreateCurveSweep` | linear twist and `end_scale` only, or rails | worse |
 | Sweep tolerance (approximation error control) | `E` in `N_CreateSweepScale`, `dAppoxTol3d` | `SECTIONS_PER_KNOT_SPAN = 4` (`path_sweep.rs:117`) fixed, no error measured | worse |
-| **Path corner at an arc or spline (mitre)** | `CreateSweepAlongPlanarPath` `SmPrimitiveCreation.cpp:5722`: sweeps each segment extended past the corner, cuts both at the bisector plane, using a brep intersection when they are not lines | line-line mitre only. A corner at an arc or spline is refused (`path_sweep.rs:21`, test `corner_at_an_arc_is_refused`) | **worse** |
+| **Path corner at an arc or spline (mitre)** | `CreateSweepAlongPlanarPath` `SmPrimitiveCreation.cpp:5722`: sweeps each segment extended past the corner, cuts both at the bisector plane, using a brep intersection when they are not lines | each wall on the surface it sweeps along its own curve, the body rebuilt where they cross (`path_sweep.rs` `sweep_along`); off a planar path a joint of the profile is two vertices, one per side (`apart_at_corner`). A circle round a corner out of the plane is an ignored reproducer: its walls touch inside a station edge | par |
 | Profile wider than the path's bend | none (merge option `m_bDoMerge`) | `clear_of_bends` refuses it by name (`path_sweep.rs:1271`) | better (geop) |
 | Pipe sweep (circle of radius r) | `CreatePipeSweep` `:6853` | sweep with a circle profile | par |
 | Loft (skin primitive): degree, approximation tolerance, caps | `CreateSkinPrimitive` `:6290`, `:6323`, `CreateSkinFromFaces:6711` | `loft.rs` (matched points, corners, guides, ruled for 2, cubic for 3+) | geop better at matching. Options worse |
@@ -127,7 +127,7 @@ Verdicts:
 | Capability | SMLib | geop | Verdict |
 |---|---|---|---|
 | Parallel projection of a curve onto faces | `SmBrep::CreateParallelProjectionCurves` `SmBrep.cpp:4928`, `SmSurface::CreateParallelProjectionCurves` | `ops/geop-ops-edit/src/project.rs`: sketch curves along the sketch normal only (extrude, then imprint) | worse |
-| **Normal (closest-point) projection of a 3-D curve onto faces** | `SmBrep::CreateNormalProjectionCurves` `SmBrep.cpp:5033`, `SmSurfaceDropCurve` (`DropAndTrimCurve`) | none | **missing** |
+| **Normal (closest-point) projection of a 3-D curve onto faces** | `SmBrep::CreateNormalProjectionCurves` `SmBrep.cpp:5033`, `SmSurfaceDropCurve` (`DropAndTrimCurve`) | `ops/geop-ops-edit/src/project.rs` `Along::FaceNormal`: a sheet through the normal lines at the curve's nearest points (`closest_point`), imprinted; planar sketches only | worse (3-D curves) |
 | Perspective and rotational projection of curves | `SmProjectedCurve` (`SM_PT_PERSPECTIVE`, `SM_PT_ROTATION`) | none (`view.rs` is parallel only) | missing (low priority) |
 | Planar section curves of a body, without a boolean | `SmBrep::CreatePlanarSectionCurves` `SmBrep.cpp:5169`, `SmSLC` | `ops/geop-ops-drawing/src/section.rs` subtracts a box (a full boolean) | worse (cost, solids only) |
 | Silhouette curves, parallel view | `SmSurfaceSilhouette`, global solver plus tracer | `ops/geop-ops-drawing/src/silhouette.rs` (exact zero set, Newton tracing) | worse at seeding (see §2) |
@@ -228,7 +228,9 @@ reproducer first, then the fix.
 - **Test:** a rectangle with rounded corners whose fillet radius is smaller than the inset, drafted
   inward: the corners must turn into cones to a point.
 
-**3. Path sweep corner at an arc or spline.**
+**3. Path sweep corner at an arc or spline.** Done: walls on their own swept surfaces, rebuilt
+(`geop_lib_shell::rebuilt`), sharp or smooth profiles, joints taken apart off a planar path. Left:
+a circle whose walls touch inside a station edge (`sweep_a_pipe_round_a_corner_out_of_the_plane`).
 - **SMLib:** `SmPrimitiveCreation.cpp:5722` `CreateSweepAlongPlanarPath`:
   - extends every path segment past the corner and sweeps each one;
   - cuts both bodies by the bisector plane, whose normal is the average of the two tangents, flipped

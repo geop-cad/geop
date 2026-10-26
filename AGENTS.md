@@ -1072,6 +1072,24 @@ the approximation's error is no tangency to the boolean. The blend in
 towards the ball, and checks between stations that it really leaves on
 that side, so that it meets the face in its contact curve alone.
 
+An exact tangency needs no tilt, and must not get one. The blend used to be
+extruded along a straight edge between planes and revolved round a circle,
+exact and tangent, and rolled everywhere else. One rolled path for all of
+them has to be as good: the stations' sections are interpolated multiplied
+by the edge's weight at their parameter (`along_weight`), so that a section
+carried along a line or round a circle unchanged is a polynomial in the
+edge's parameter the cubic reproduces exactly. Where the untilted skin
+then meets the ball between stations to rounding (`span_is_exact`: the
+stations are rounded each where it lies, so "to its enclosures" told a
+box's rounds from their stations by `5e-17`), it is kept untilted — and as
+plain as the edge, one Bézier piece of the lowest degree that is still
+the ball: a cubic skin through ten stations of a straight blend is exact
+too, but its offset in a shell came out `1.2e-4` wide. Tilted, a revolved handle's rim showed two
+silhouettes per face where the crease ran, and a draft no longer saw the
+fillet as tangent. The apex closing the section off is the untilted
+arc's either way, so that a tilted tool and an untilted one meet in their
+apex edges where they cross, not a tilt apart.
+
 Where the approximated data is only C1 — a face's curvature jumping across
 an edge, a radius changing its rate at a vertex — no number of stations
 makes a cubic follow it to that accuracy. Put a station exactly there and
@@ -1103,6 +1121,26 @@ search. Three times in `geop-ops-fillet`:
   What works for any two blends needs no mitre surface at all: each ends
   flush at the other's wall, and the corner is cut by the two run on past
   it, intersected — behind both walls, what both would cut.
+
+## Newton needs the second derivatives where it is far from flat
+
+`NurbSurface::project` stepped by Gauss-Newton, the first fundamental form
+alone. Over a curved surface that step overshoots by the target's distance
+over the surface's radius of curvature: a target twice the radius off a
+cylinder swings from side to side of its foot point for ever. A pocket's
+rim rounded with the radius its corner's fill was rounded with put the
+ball's centre exactly there, and `meet` ran off along the fill's end. The
+step is Newton's on the squared distance wherever its Hessian is
+definitely positive definite, and Gauss-Newton's only where it is not.
+
+## A trimmed face is still that face
+
+A boolean names a piece split off a face `N(F,E)`, and the other piece
+keeps `F` — whichever one the splice left the name on. Where the boolean
+then keeps only one piece, that piece is the face, trimmed: it takes the
+name back (`name_lone_pieces`), its piece's name standing for it too. A
+fillet rolled instead of extruded split the box's bottom along its tool
+the other way round, and the draft about the bottom no longer found it.
 
 ## A hash map's order is no order
 

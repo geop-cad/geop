@@ -1,7 +1,7 @@
 //! Boundary surfaces between the edges of cubes and of sheets built for the
 //! purpose.
 
-use geop_core_geometry::nurb_curve::NurbCurve;
+use geop_core_geometry::{nurb_curve::NurbCurve, nurb_surface::TILT};
 use geop_core_math::{
     scalars::Scalar,
     vector::{Vector3, Vector4},
@@ -308,9 +308,77 @@ fn cover_tangent_to_a_flange() {
     assert!(!along_lip(
         &plain.topology().get_face(face).unwrap().surface
     ));
-    // Tangent to a guide edge, whose face is curved: refused.
-    let err = refused(span(part, &edges, &["guide(e2)".into()]));
-    assert!(err.contains("not planar"), "{err}");
+}
+
+/// A cover running on from a quarter cylinder's rim to a straight edge:
+/// filled between the rim, two lines along the cylinder's axis and the
+/// edge, and tangent to the cylinder along the rim — its tangent plane
+/// turning a quarter turn along it, which no patch follows exactly: the
+/// cover leaves the cylinder at a millionth of a radian outwards all along.
+#[test]
+fn cover_tangent_to_a_cylinder() {
+    let mut part = NamedModel::new();
+    let quarter = |x: f64| {
+        NurbCurve::try_new(
+            2,
+            vec![
+                pt(x, 1., 0., 1.),
+                pt(x, 1., 1., std::f64::consts::SQRT_2 / 2.0),
+                pt(x, 0., 1., 1.),
+            ],
+            [0., 0., 0., 1., 1., 1.].map(Scalar::from_f64).to_vec(),
+        )
+        .unwrap()
+    };
+    coons_sheet(
+        &mut part,
+        "cylinder",
+        [
+            line([0., 1., 0.], [1., 1., 0.]),
+            quarter(1.),
+            line([1., 0., 1.], [0., 0., 1.]),
+            quarter(0.).reverse(),
+        ],
+    );
+    coons_sheet(
+        &mut part,
+        "guide",
+        [
+            line([1., 1., 0.], [2., 1., 0.]),
+            line([2., 1., 0.], [2., 0., 1.]),
+            line([2., 0., 1.], [1., 0., 1.]),
+            quarter(1.).reverse(),
+        ],
+    );
+    let rim = "cylinder(e1)".to_string();
+    let edges = [
+        rim.clone(),
+        "guide(e0)".into(),
+        "guide(e1)".into(),
+        "guide(e2)".into(),
+    ];
+    let cover = span(part.clone(), &edges, std::slice::from_ref(&rim)).unwrap();
+    assert_valid_sheets(&cover);
+    let face = cover.face_id("boundary(b)").unwrap();
+    let surface = &cover.topology().get_face(face).unwrap().surface;
+    // Along the rim, where the cover is at `(u, 0)` and the cylinder's
+    // normal points out from the axis: the cover's normal is the
+    // cylinder's, but for the tilt.
+    for i in 0..=64 {
+        let u = Scalar::from_ratio(i, 64).unwrap();
+        let p = surface.evaluate(u, Scalar::ZERO).unwrap();
+        let out = v3(0., p[1].to_f64(), p[2].to_f64());
+        let n = surface.normal(u, Scalar::ZERO).unwrap();
+        let off = n.prod_cross(&out).norm().to_f64();
+        assert!(off < 3.0 * TILT, "at {u:?}: {n:?}, off by {off:e}");
+    }
+    // Without tangency, it leaves the cylinder at an angle.
+    let plain = span(part, &edges, &[]).unwrap();
+    let face = plain.face_id("boundary(b)").unwrap();
+    let plain = &plain.topology().get_face(face).unwrap().surface;
+    let n = plain.normal(Scalar::from_f64(0.5), Scalar::ZERO).unwrap();
+    let h = std::f64::consts::FRAC_1_SQRT_2;
+    assert!(n.prod_cross(&v3(0., h, h)).norm().to_f64() > 0.01, "{n:?}");
 }
 
 /// Edges that do not close a loop are refused, naming where it breaks off.
@@ -399,6 +467,54 @@ fn fill_and_knit(n: usize, lift: f64) {
     let part = apply_to_model::<crate::Knit>(part, "k", &args).unwrap();
     assert_valid_sheets(&part);
     assert_eq!(part.topology().shells.len(), 1, "{n} sides, lifted {lift}");
+}
+
+/// The five-sided hole filled smoothly: the quadrilaterals either side of
+/// each spoke share their normal all along it, as SMLib's
+/// `N_FillNSidedHole` does.
+#[test]
+#[ignore = "bug: the fill is a C0 patchwork across its spokes. Making each quadrilateral \
+    tangent (`NurbSurface3D::tangent_to`) to the one before it along their spoke and to \
+    the flat inner polygon along its inner side was tried: spokes leaving the loop's \
+    corners in the plane of its edges there, arriving in the polygon's plane. It rings \
+    at the inner corners and cannot converge, for a reason that is no numerics: where \
+    two quadrilaterals and the flat polygon meet, each tangent to the other two, the \
+    symmetric shape operator of each quadrilateral vanishes on both polygon sides, so \
+    the corner has to be a flat point of both (the vertex enclosure problem). Cubic \
+    spokes arriving in the plane are not flat there; the corner 3 x 3 control points of \
+    each quadrilateral have to lie in the polygon's plane, with spokes of degree five \
+    osculating it. The attempt is in no commit."]
+fn five_sided_hole_filled_smoothly() {
+    let n = 5;
+    let part = ring_of_strips(n, 0.3);
+    let edges: Vec<String> = (0..n).map(|k| format!("strip{k}(e0)")).collect();
+    let part = span(part, &edges, &[]).unwrap();
+    let model = part.topology();
+    for (&edge, e) in &model.edges {
+        if !part.name_of(edge).unwrap().ends_with("spoke)") {
+            continue;
+        }
+        let middle = e.curve.evaluate(e.curve.mid_parameter().unwrap()).unwrap();
+        let normals: Vec<Vector3> = (model.coedges_of_edge(edge).iter())
+            .map(|&c| {
+                let face = model.get_coedge(c).unwrap().face;
+                let surface = &model.get_face(face).unwrap().surface;
+                surface
+                    .normal_at(
+                        &middle,
+                        geop_core_geometry::search::MAX_NODES,
+                        geop_core_geometry::search::min_subdivision_size(),
+                    )
+                    .unwrap()
+            })
+            .collect();
+        let off = normals[0].prod_cross(&normals[1]).norm().to_f64();
+        assert!(
+            off < 3.0 * TILT,
+            "across {}: {off:e}",
+            part.name_of(edge).unwrap()
+        );
+    }
 }
 
 /// A five-sided hole that is not flat: filled with five quadrilaterals,

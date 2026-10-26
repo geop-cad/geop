@@ -7,7 +7,7 @@ use geop_core_editor::{
     editing::{Button, StepEditEvent, Value},
     editor::{Command, Editor},
     registry::Registry,
-    testing::{dialog, pointer},
+    testing::{Stepping, dialog, pointer},
 };
 use geop_core_program::testing::args;
 use geop_lib_fixtures::bodies::block;
@@ -147,4 +147,16 @@ fn merge_faces_takes_the_newest_solid() {
     let args: crate::MergeFacesArgs = args(editor.program().steps.last().unwrap());
     assert_eq!(args.bodies.len(), 1, "{args:?}");
     assert_eq!(args.bodies[0].name(), "block(body)");
+}
+
+/// A new projection is told to project along the face's normal: the step
+/// holds it.
+#[test]
+fn project_curve_projects_along_the_face_normal() {
+    let mut step = Stepping::new(on_a_box(), "project_curve");
+    let args: crate::ProjectCurveArgs = step.args();
+    assert_eq!(args.along, crate::Along::SketchNormal);
+    step.dialog("along", Value::Choice("face_normal".into()));
+    let args: crate::ProjectCurveArgs = step.args();
+    assert_eq!(args.along, crate::Along::FaceNormal);
 }

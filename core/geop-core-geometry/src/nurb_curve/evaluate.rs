@@ -82,6 +82,27 @@ impl<const D: usize> NurbCurve<D> {
     }
 }
 
+impl<const D: usize> NurbCurve<D> {
+    /// The weight at `t`: the homogeneous coordinate the curve's point there
+    /// is divided by — the union of its value on every knot span `t`
+    /// reaches. A polynomial curve's is one everywhere; a rational one's says
+    /// how its parameter runs: its points, multiplied by it, are a
+    /// polynomial in `t` on each span, which is what makes a rational
+    /// quadratic an exact circle.
+    pub fn weight(&self, t: Scalar) -> GeopResult<Scalar> {
+        let p = self.degree;
+        let n = self.control_points.len();
+        let mut weight: Option<Scalar> = None;
+        for (span, piece) in find_spans(p, &self.knot_vector, n - 1, t)? {
+            let local = &self.control_points[span - p..=span];
+            let knots = &self.knot_vector[span - p..];
+            let w = de_boor(p, knots, local, piece, p)[D - 1];
+            weight = Some(weight.map_or(w, |u| u.union(w)));
+        }
+        weight.ok_or_else(|| GeopError::new(format!("NurbCurve::weight(t={t:?}): no knot span")))
+    }
+}
+
 // ── 3-D curve: evaluate returns Vector3 ─────────────────────────────────────
 
 impl NurbCurve<4> {

@@ -29,6 +29,7 @@ use crate::{
     intersection::curve_curve,
     nurb_curve::{NurbCurve, dehomogenize},
     nurb_surface::NurbSurface,
+    search::{MAX_NODES, min_subdivision_size},
 };
 use geop_core_math::{
     disjoint_set::DisjointSet,
@@ -413,6 +414,50 @@ pub fn refine_crossing(
         return (t, uv);
     }
     (t_ref, Vector2::from_array([u_ref, v_ref]))
+}
+
+/// Every point where `curve` crosses `surface`, each refined
+/// ([`refine_crossing`]) and with where it is on the surface: what the
+/// curve and the surface give there intersected, both enclosures of one
+/// point — at a pole, where the collapsed parameter says nothing, the pole.
+/// A curve lying on the surface along an arc is refused: where it meets the
+/// surface is no point.
+pub fn crossing_points(
+    curve: &NurbCurve<4>,
+    surface: &NurbSurface<4>,
+) -> GeopResult<Vec<(Vector<3>, Vector2)>> {
+    let hits = match curve_surface_intersect(curve, surface, 8, MAX_NODES, min_subdivision_size())?
+    {
+        Intersections::Found(hits) => hits,
+        Intersections::Coincident(_) => {
+            return Err(GeopError::new(
+                "the curve lies on the surface: where it crosses it is no point",
+            ));
+        }
+    };
+    let mut points = Vec::with_capacity(hits.len());
+    for (t, uv) in hits {
+        let (t, uv) = refine_crossing(curve, surface, t, uv);
+        let ctx = |e: GeopError| {
+            e.with_context(format!(
+                "the curve crossing the surface at t={t:?}, uv={uv:?}, the surface's domain {:?} x {:?}",
+                surface.domain_u(),
+                surface.domain_v()
+            ))
+        };
+        let on_curve = curve.evaluate(t).map_err(ctx)?;
+        let on_surface = match surface.pole_at(uv[0], uv[1]) {
+            Some(pole) => pole,
+            None => surface.evaluate(uv[0], uv[1]).map_err(ctx)?,
+        };
+        if on_curve.could_be_equal(&on_surface) {
+            let point = Vector::from_array(std::array::from_fn(|k| {
+                on_curve[k].intersect(on_surface[k])
+            }));
+            points.push((point, uv));
+        }
+    }
+    Ok(points)
 }
 
 #[cfg(test)]

@@ -83,8 +83,8 @@ fn prism_with_rounded_upright(corners: &[[f64; 2]], corner: [f64; 2], radius: f6
 /// same way), the radius (0.15 on the small one fails). A chamfer of the
 /// same edge builds. Up to 155° the fillet builds; at 160° it fails
 /// differently (see [`fillet_of_an_upright_edge_between_faces_at_160_degrees`]).
+/// That was the extruded tool; rolled, as every edge now is, it builds.
 #[test]
-#[ignore = "bug: the fillet of an edge whose faces meet at 169° fails in predictor_corrector_step (the corrector leaves the leaning face); 155° builds, a chamfer builds"]
 fn fillet_of_an_upright_edge_between_faces_at_169_degrees() {
     assert_builds_valid(&prism_with_rounded_upright(
         &[
@@ -531,11 +531,14 @@ fn rounding_the_top_of_a_blade_section() {
 /// resolves taken as one, the vertex's station dropped by them — and the
 /// rolled tool is built, but the boolean leaves the first span's face
 /// through `c4` straddling the tool (`classify_face`: an intersection curve
-/// not imprinted). The turbine's own sections, not scaled alike, cross it
-/// apart, and its trailing edge is rounded
-/// (`rounding_a_turbine_blades_trailing_edge`).
+/// not imprinted). With that boolean fixed, the one station kept for the
+/// two crossings still left one side's contact `7.6e-7` short of the
+/// section edge it crosses, and validation refused the tool's edge between
+/// the two: the station now takes each side's contact on its own edge. The
+/// turbine's own sections, not scaled alike, cross it apart, and its
+/// trailing edge is rounded (`rounding_a_turbine_blades_trailing_edge`).
 #[test]
-#[ignore = "bug: a lofted blade's trailing edge, the sections scaled alike, is rounded but the boolean misses an intersection curve on the first span's face by the middle section (classify_face: straddles); the turbine's own sections round"]
+#[ignore = "slow: 40 s, a lofted blade's trailing edge rounded — run with `cargo test -- --ignored`"]
 fn rounding_the_trailing_edge_of_a_lofted_blade() {
     let mut program = Program::new();
     let heights = [0.0, 7.07, 25.27];
@@ -659,7 +662,7 @@ fn rounding_a_turbine_blades_trailing_edge() {
     assert_turbine_rounds(
         &[
             "circular_pattern(circular_pattern1,1,loft(loft1,sketch1,p5,sketch2>sketch3))",
-            "combine(circular_pattern1,1,circular_pattern(circular_pattern1,1,loft(loft1,sketch1,p5,sketch1>sketch2)),combine(",
+            "circular_pattern(circular_pattern1,1,loft(loft1,sketch1,p5,sketch1>sketch2))",
         ],
         true,
     );
@@ -857,4 +860,24 @@ fn fillet_of_every_edge_of_a_plate_thinner_than_two_radii_is_refused() {
     };
     let error = format!("{error:?}");
     assert!(error.contains("too large for the edge"), "{error}");
+}
+
+/// The floor of a blind hole of radius 0.4 rounded by 0.5: the ball would
+/// have to touch the hole's wall from inside a circle narrower than it.
+/// Refused, naming the wall and how tightly it bends, rather than failing
+/// somewhere in the rolling or the boolean.
+#[test]
+fn fillet_wider_than_a_hole_it_rounds_the_floor_of_is_refused() {
+    let mut program = geop_lib_fixtures::drilled_box();
+    let before = program.build_model(registry).unwrap();
+    let edges = edges_with_middle(&before, |m| {
+        near(m[2], 0.5) && ((m[0] - 1.0).powi(2) + (m[1] - 1.0).powi(2)).sqrt() < 0.45
+    });
+    assert!(!edges.is_empty(), "no edge round the hole's floor");
+    program.push("round", FilletArgs::constant(edges, 0.5));
+    let Err(error) = program.build_model(registry) else {
+        panic!("a fillet wider than the hole is not refused");
+    };
+    let error = format!("{error:?}");
+    assert!(error.contains("bends more tightly"), "{error}");
 }

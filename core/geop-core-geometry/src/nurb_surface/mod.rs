@@ -12,6 +12,7 @@ mod normal;
 mod offset;
 mod offset_fit;
 mod patch;
+pub use patch::{Neighbour, TILT};
 mod project;
 mod reverse;
 mod revolve;

@@ -753,7 +753,7 @@ impl NurbSurface3D {
             }
             let mut pieces = 1;
             loop {
-                let net = base.refined(pieces).map_err(ctx)?;
+                let net = base.refined([pieces, pieces]).map_err(ctx)?;
                 let shift = net.fitted_shift(&offsetting).map_err(ctx)?;
                 if pieces < MAX_OFFSET_PIECES && !shift.fits(&offsetting).map_err(ctx)? {
                     pieces *= 2;
@@ -994,7 +994,7 @@ mod tests {
         let surface = bump(0.5);
         let distance = Scalar::from_f64(0.1);
         let error = |pieces: usize| {
-            let net = surface.refined(pieces).unwrap();
+            let net = surface.refined([pieces, pieces]).unwrap();
             let offsetting = Offsetting {
                 surface: &surface,
                 distance,

@@ -371,7 +371,7 @@ mod tests {
     /// refined.
     #[test]
     fn partials_are_tight_over_a_box() {
-        let surface = revolved(1., 0.).refined(4).unwrap();
+        let surface = revolved(1., 0.).refined([4, 4]).unwrap();
         let (u, v) = (Scalar::from_f64(0.3), Scalar::from_f64(0.6));
         let at = surface.partials(u, v, 3).unwrap();
         let (su, sv) = surface.derivatives(u, v).unwrap();
