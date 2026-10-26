@@ -1,5 +1,5 @@
-//! Offsetting a chain of lines, arcs and splines — or a circle — by a
-//! distance, the offset tied to the chain by constraints so it follows it.
+//! Offsetting chains of lines, arcs and splines — or circles — by a
+//! distance, the offset tied to them by constraints so it follows them.
 //!
 //! **One dimension.** The offset of the chain's first curve is an
 //! [`Constraint::Offset`] — the distance, a dimension to give. Every other
@@ -45,8 +45,18 @@
 //! about its source's corner touching it, as large as one about the first
 //! part's: one dimension still says how far all of it is.
 //!
+//! **Several chains at once.** An outline and its holes, offset together,
+//! each go into the same area: of two closed chains one inside the other,
+//! one inward and the other outward. Each is run the way that has that
+//! area on its left, so that where their offsets cross they are cut and
+//! run on from one into the other, as a chain's own do; a part of another
+//! chain holds the distance as a part cut off does. A circle among them
+//! keeps its offset whole, held by a construction circle on it, level with
+//! its center, as large as the distance.
+//!
 //! Refused: an arc offset past its center, a spline offset past its
-//! center of curvature, and an offset that leaves nothing.
+//! center of curvature, a circle's offset that another crosses, and an
+//! offset that leaves nothing.
 
 use std::rc::Rc;
 
@@ -64,7 +74,7 @@ use crate::{
         self, P2, Plain, add, angle_between, bounds, cross, distance, dot, perp, scale,
         segments_cross, sub, unit, wrap, xy,
     },
-    profile::{Chain, basis_at, spline_nurbs},
+    profile::{Chain, ProfileEdge, basis_at, spline_nurbs},
     sketch::{Constraint, ConstraintId, CurveId, CurveKind, PointId, Sketch},
 };
 
@@ -605,6 +615,72 @@ fn solve_dense(mut rows: Vec<Vec<f64>>, mut targets: Vec<P2>) -> GeopResult<Vec<
         .collect())
 }
 
+/// Per chain of `chains`, the distance its offset goes to its own left:
+/// the first's `d`, and each other's into the same area as the first's —
+/// of two closed chains one inside the other (an outline and a hole) one
+/// inward and the other outward, as they run the same way round or not;
+/// of two side by side both inward or both outward. An open chain goes to
+/// its own left as the first does.
+fn sides(sketch: &Sketch, chains: &[Chain], d: f64) -> GeopResult<Vec<f64>> {
+    // Each closed chain as a polygon of its pieces as drawn.
+    let mut polygons: Vec<Option<Vec<P2>>> = Vec::new();
+    for chain in chains {
+        if !chain.closed {
+            polygons.push(None);
+            continue;
+        }
+        let mut points = Vec::new();
+        for e in &chain.edges {
+            let piece = oriented(sketch, e.curve, e.reversed, 0.0)?;
+            for k in 0..32 {
+                points.push(piece.at(k as f64 / 32.0));
+            }
+        }
+        polygons.push(Some(points));
+    }
+    let area = |q: &[P2]| {
+        (0..q.len())
+            .map(|k| cross(q[k], q[(k + 1) % q.len()]))
+            .sum::<f64>()
+    };
+    let inside = |p: P2, q: &[P2]| {
+        let mut odd = false;
+        for k in 0..q.len() {
+            let (a, b) = (q[k], q[(k + 1) % q.len()]);
+            if (a[1] > p[1]) != (b[1] > p[1])
+                && p[0] < a[0] + (p[1] - a[1]) / (b[1] - a[1]) * (b[0] - a[0])
+            {
+                odd = !odd;
+            }
+        }
+        odd
+    };
+    // How many of the other closed chains a closed one lies inside.
+    let depth = |c: usize| -> usize {
+        let Some(q) = &polygons[c] else {
+            return 0;
+        };
+        (0..chains.len())
+            .filter(|&o| o != c)
+            .filter(|&o| polygons[o].as_ref().is_some_and(|r| inside(q[0], r)))
+            .count()
+    };
+    let (Some(first), base) = (&polygons[0], depth(0)) else {
+        return Ok(vec![d; chains.len()]);
+    };
+    let turn = area(first).signum();
+    Ok((0..chains.len())
+        .map(|c| match &polygons[c] {
+            Some(q) if c > 0 => {
+                let same = area(q).signum() == turn;
+                let nested = (depth(c) + base) % 2 == 1;
+                if same != nested { d } else { -d }
+            }
+            _ => d,
+        })
+        .collect())
+}
+
 impl Sketch {
     /// How far `p` is from the chain `chain`: positive to its left.
     pub fn chain_side(&self, chain: &Chain, p: P2) -> GeopResult<f64> {
@@ -622,8 +698,10 @@ impl Sketch {
         Ok(best.map_or(0.0, |(_, signed)| signed))
     }
 
-    /// Offsets the chain `curves` (see [`Sketch::chain`]) by `distance` —
-    /// to its left, to its right if negative — its corners as `corners`
+    /// Offsets the chains `curves` (see [`Sketch::chains`]) by `distance`
+    /// — the first to its left, to its right if negative, and every other
+    /// one into the same area: away from the first where it lies inside or
+    /// round it, as a hole's or an outline's — its corners as `corners`
     /// says (see the module docs). Returns the curves made, and the
     /// dimension of the distance.
     pub fn offset(
@@ -632,19 +710,19 @@ impl Sketch {
         distance: Scalar,
         corners: Corners,
     ) -> GeopResult<Offsetted> {
-        let chain = self.chain(curves)?;
-        let pieces_of: Vec<(CurveId, bool)> =
-            chain.edges.iter().map(|e| (e.curve, e.reversed)).collect();
+        let chains = self.chains(curves)?;
         let d = distance.to_f64();
         if d == 0.0 || !d.is_finite() {
             return Err(GeopError::new(format!("cannot offset by {d}")));
         }
         let value = distance.abs();
 
-        // A circle: one about the same center.
-        if let [(c, _)] = pieces_of[..]
-            && let CurveKind::Circle { center, radius } = self.curves[&c].kind
+        // A circle alone: one about the same center.
+        if let [chain] = &chains[..]
+            && let [edge] = &chain.edges[..]
+            && let CurveKind::Circle { center, radius } = self.curves[&edge.curve].kind
         {
+            let c = edge.curve;
             let r = radius.to_f64() - d;
             if r <= 0.0 {
                 return Err(GeopError::new(format!(
@@ -662,8 +740,64 @@ impl Sketch {
                 distance,
             });
         }
-
+        // Each chain's distance to its own left: into the area the first
+        // one's offset goes into.
+        let towards = sides(self, &chains, d)?;
+        // Each run the way that has that area on the same side as the
+        // first's: then the offsets, cut where they cross, run on from one
+        // chain's into another's.
+        let chains: Vec<Chain> = (chains.into_iter().zip(&towards))
+            .map(|(chain, &side)| {
+                if side.signum() == d.signum() {
+                    return chain;
+                }
+                Chain {
+                    edges: (chain.edges.into_iter().rev())
+                        .map(|e| ProfileEdge {
+                            curve: e.curve,
+                            reversed: !e.reversed,
+                        })
+                        .collect(),
+                    closed: chain.closed,
+                }
+            })
+            .collect();
+        let towards = vec![d; chains.len()];
+        // Circles apart: whole, about their centers.
+        let (rings, chains): (Vec<_>, Vec<_>) = chains.into_iter().zip(towards).partition(
+            |(chain, _)| {
+                matches!(&chain.edges[..], [edge] if matches!(self.curves[&edge.curve].kind, CurveKind::Circle { .. }))
+            },
+        );
+        let mut pieces_of: Vec<(CurveId, bool)> = Vec::new();
+        let mut along: Vec<f64> = Vec::new();
+        let mut chain_of: Vec<(usize, usize, bool)> = Vec::new();
+        for (chain, d) in &chains {
+            let start = pieces_of.len();
+            for e in &chain.edges {
+                pieces_of.push((e.curve, e.reversed));
+                along.push(*d);
+                chain_of.push((start, chain.edges.len(), chain.closed));
+            }
+        }
         let n = pieces_of.len();
+        // The piece after `i` in its chain, and before.
+        let next_piece = |i: usize| -> Option<usize> {
+            let (start, len, closed) = chain_of[i];
+            if i + 1 < start + len {
+                Some(i + 1)
+            } else {
+                closed.then_some(start)
+            }
+        };
+        let previous_piece = |i: usize| -> Option<usize> {
+            let (start, len, closed) = chain_of[i];
+            if i > start {
+                Some(i - 1)
+            } else {
+                closed.then_some(start + len - 1)
+            }
+        };
         // The finest the solver tells points apart, in this sketch: one
         // part in `RELATIVE_TOLERANCE` of its size.
         let size = {
@@ -677,10 +811,22 @@ impl Sketch {
             .iter()
             .map(|&(c, r)| oriented(self, c, r, 0.0))
             .collect::<GeopResult<_>>()?;
-        let offsets: Vec<Shape> = pieces_of
-            .iter()
-            .map(|&(c, r)| oriented(self, c, r, d))
+        let offsets: Vec<Shape> = (pieces_of.iter().zip(&along))
+            .map(|(&(c, r), &d)| oriented(self, c, r, d))
             .collect::<GeopResult<_>>()?;
+        // The circles and their offsets.
+        let mut circles: Vec<(CurveId, Shape, Shape)> = Vec::new();
+        for (chain, d) in &rings {
+            // A circle runs counter-clockwise; run the other way, its left
+            // is outward.
+            let c = chain.edges[0].curve;
+            let d = if chain.edges[0].reversed { -*d } else { *d };
+            circles.push((
+                c,
+                oriented(self, c, false, 0.0)?,
+                oriented(self, c, false, d)?,
+            ));
+        }
         let spline = |i: usize| matches!(pieces[i], Shape::Spline { .. });
         // Each joint: where the offsets of the pieces before and after it
         // end and start, and what joins them.
@@ -701,10 +847,13 @@ impl Sketch {
             /// open end is.
             Square,
         }
-        let joints = if chain.closed { n } else { n - 1 };
-        let mut joint_of = Vec::new();
-        for i in 0..joints {
-            let j = (i + 1) % n;
+        let mut joint_of: Vec<Option<Joint>> = Vec::new();
+        for i in 0..n {
+            let Some(j) = next_piece(i) else {
+                joint_of.push(None);
+                continue;
+            };
+            let d = along[i];
             let (ci, cj) = (pieces_of[i].0, pieces_of[j].0);
             let p = pieces[i].at(1.0);
             let (ti, tj) = (pieces[i].tangent(1.0), pieces[j].tangent(0.0));
@@ -729,7 +878,7 @@ impl Sketch {
                     Shape::Plain(Plain::Line { .. })
                 )
             );
-            joint_of.push(if smooth {
+            joint_of.push(Some(if smooth {
                 Joint::Shared {
                     at: from,
                     by: Held::Tangent,
@@ -774,39 +923,35 @@ impl Sketch {
                     at,
                     by: Held::Circle,
                 }
-            });
+            }));
         }
         // Whether the offsets meet where they cross, cut back or carried on
         // to there, at the joint `k`: not at the offset of a corner.
         let crossed = |k: usize| {
             matches!(
                 joint_of[k],
-                Joint::Shared {
+                Some(Joint::Shared {
                     by: Held::Circle,
                     ..
-                }
+                })
             )
         };
-        let start_crossed = |i: usize| (i > 0 || chain.closed) && crossed((i + n - 1) % n);
-        let end_crossed = |i: usize| (i < n - 1 || chain.closed) && crossed(i);
+        let start_crossed = |i: usize| previous_piece(i).is_some_and(crossed);
+        let end_crossed = crossed;
 
         // Where each offset piece starts and ends.
         let start_of = |i: usize| -> P2 {
-            if i == 0 && !chain.closed {
-                return offsets[0].at(0.0);
-            }
-            match &joint_of[(i + n - 1) % n] {
-                Joint::Shared { at, .. } => *at,
-                Joint::Round { to, .. } => *to,
+            match previous_piece(i).and_then(|k| joint_of[k].as_ref()) {
+                None => offsets[i].at(0.0),
+                Some(Joint::Shared { at, .. }) => *at,
+                Some(Joint::Round { to, .. }) => *to,
             }
         };
         let end_of = |i: usize| -> P2 {
-            if i == n - 1 && !chain.closed {
-                return offsets[n - 1].at(1.0);
-            }
             match &joint_of[i] {
-                Joint::Shared { at, .. } => *at,
-                Joint::Round { from, .. } => *from,
+                None => offsets[i].at(1.0),
+                Some(Joint::Shared { at, .. }) => *at,
+                Some(Joint::Round { from, .. }) => *from,
             }
         };
         // The offset drawn round the chain, before it is trimmed: each
@@ -814,7 +959,13 @@ impl Sketch {
         // round where the piece is too short for its corners — and the arcs
         // round the corners between them, in order.
         let mut path: Vec<(Shape, Of)> = Vec::new();
+        // The element after each along its chain's offset.
+        let mut path_next: Vec<Option<usize>> = Vec::new();
+        let mut chain_start = 0;
         for (i, offset) in offsets.iter().enumerate() {
+            if chain_of[i].0 == i {
+                chain_start = path.len();
+            }
             let (s, e) = (start_of(i), end_of(i));
             let piece = match offset {
                 Shape::Plain(Plain::Line { .. }) => {
@@ -858,13 +1009,42 @@ impl Sketch {
             if let Some(piece) = piece {
                 path.push((piece, Of::Piece(i)));
             }
-            if let Some(Joint::Round { from, to, sweep }) = joint_of.get(i)
+            if let Some(Joint::Round { from, to, sweep }) = &joint_of[i]
                 && let Some(arc) = Plain::arc(*from, *to, *sweep)
             {
                 path.push((Shape::Plain(arc), Of::Round(i)));
             }
+            let (start, len, closed) = chain_of[i];
+            if i + 1 == start + len {
+                for k in chain_start..path.len() {
+                    path_next.push(if k + 1 < path.len() {
+                        Some(k + 1)
+                    } else {
+                        (closed && path.len() > chain_start).then_some(chain_start)
+                    });
+                }
+            }
         }
-        let m = path.len();
+        let mut path_previous: Vec<Option<usize>> = vec![None; path.len()];
+        for (k, next) in path_next.iter().enumerate() {
+            if let Some(next) = *next {
+                path_previous[next] = Some(k);
+            }
+        }
+        // A circle's offset is kept whole: one that another offset crosses
+        // would be cut, which is not supported.
+        for (k, (c, _, ring)) in circles.iter().enumerate() {
+            let crossed = path
+                .iter()
+                .any(|(shape, _)| !shape.crossings(ring).is_empty())
+                || (circles.iter().enumerate())
+                    .any(|(j, (_, _, other))| j != k && !ring.crossings(other).is_empty());
+            if crossed {
+                return Err(GeopError::new(format!(
+                    "the offset of circle {c} by {d} would cross another offset: cutting a circle's offset is not supported"
+                )));
+            }
+        }
 
         // Cut where it crosses itself, and keep what is no nearer the chain
         // than the distance: what a piece too short for its corners, or
@@ -874,8 +1054,7 @@ impl Sketch {
                 || plain::distance(shape.at(1.0), q) <= resolution
         };
         let to_chain = |q: P2| {
-            pieces
-                .iter()
+            (pieces.iter().chain(circles.iter().map(|(_, c, _)| c)))
                 .map(|p| plain::distance(q, p.at(p.nearest(q))))
                 .fold(f64::INFINITY, f64::min)
         };
@@ -912,7 +1091,7 @@ impl Sketch {
                 }
             }
         }
-        if subs.is_empty() {
+        if subs.is_empty() && circles.is_empty() {
             return Err(GeopError::new(format!(
                 "the offset by {d} leaves nothing: the chain is too short or narrow for it"
             )));
@@ -924,11 +1103,11 @@ impl Sketch {
         let mut next: Vec<Option<usize>> = vec![None; subs.len()];
         for a in 0..subs.len() {
             let end = subs[a].shape.at(1.0);
-            let open_end = subs[a].to_end && subs[a].elem == m - 1 && !chain.closed;
+            let open_end = subs[a].to_end && path_next[subs[a].elem].is_none();
             let found: Vec<usize> = (0..subs.len())
                 .filter(|&b| {
                     let joined = if subs[a].to_end {
-                        subs[b].from_start && subs[b].elem == (subs[a].elem + 1) % m
+                        subs[b].from_start && Some(subs[b].elem) == path_next[subs[a].elem]
                     } else {
                         !subs[b].from_start
                     };
@@ -991,21 +1170,22 @@ impl Sketch {
             let (s, e) = sketch.curves[&source].endpoints().expect("an open curve");
             if reversed { s } else { e }
         };
-        let first = (0..subs.len())
-            .find(|&a| matches!(path[subs[a].elem].1, Of::Piece(_)))
-            .ok_or_else(|| {
-                GeopError::new(format!(
-                    "the offset by {d} leaves only arcs round corners: the chain is too short for it"
-                ))
-            })?;
-        let first_piece = match path[subs[first].elem].1 {
+        let first = (0..subs.len()).find(|&a| matches!(path[subs[a].elem].1, Of::Piece(_)));
+        if first.is_none() && !subs.is_empty() {
+            return Err(GeopError::new(format!(
+                "the offset by {d} leaves only arcs round corners: the chain is too short for it"
+            )));
+        }
+        let first_piece = first.map(|first| match path[subs[first].elem].1 {
             Of::Piece(i) | Of::Round(i) => i,
-        };
+        });
         // A construction circle about the first part's corner, as large as
         // the distance: what a spline's offset, and a part cut off from the
         // corners, is held at.
         let mut reach: Option<CurveId> = None;
-        if (0..subs.len()).any(of_spline) {
+        if let Some(first_piece) = first_piece
+            && (0..subs.len()).any(of_spline)
+        {
             let circle = self.add_circle(corner_of(self, first_piece), value);
             self.set_construction(circle, true);
             reach = Some(circle);
@@ -1051,7 +1231,7 @@ impl Sketch {
                             } else {
                                 ends_pinned
                             };
-                            let dist = if reversed { -d } else { d };
+                            let dist = if reversed { -along[i] } else { along[i] };
                             let tolerance = FIT_TOLERANCE * size;
                             let (control, at) = fitted(
                                 &of.spline,
@@ -1137,7 +1317,7 @@ impl Sketch {
         }
         // The circle the splines' offsets are held at, as large as the
         // first part is from its source.
-        if let Some(circle) = reach
+        if let (Some(circle), Some(first)) = (reach, first)
             && !of_spline(first)
         {
             self.constrain(Constraint::Tangent {
@@ -1151,7 +1331,9 @@ impl Sketch {
         // corner, or across it where offsets cross, and the other part's
         // own distance places it there.
         let mut held: Vec<bool> = (0..subs.len()).map(of_spline).collect();
-        held[first] = true;
+        if let Some(first) = first {
+            held[first] = true;
+        }
         let mut joined: Vec<(usize, usize)> = Vec::new();
         for a in 0..subs.len() {
             let (Some(b), Some(i)) = (next[a], joint_after(a)) else {
@@ -1163,7 +1345,10 @@ impl Sketch {
             joined.push((a, b));
             let (oa, ob) = (curve_of[a], curve_of[b]);
             let splines = [of_spline(a), of_spline(b)];
-            match (path[subs[a].elem].1, path[subs[b].elem].1, &joint_of[i]) {
+            let joint = joint_of[i]
+                .as_ref()
+                .expect("a joint after a piece with one next");
+            match (path[subs[a].elem].1, path[subs[b].elem].1, joint) {
                 (Of::Piece(_), Of::Piece(_), Joint::Shared { by, .. }) => match by {
                     _ if splines == [true, true] => {}
                     Held::Circle if splines[0] || splines[1] => {
@@ -1222,6 +1407,9 @@ impl Sketch {
             if held[a] {
                 continue;
             }
+            let (Some(first), Some(first_piece)) = (first, first_piece) else {
+                unreachable!("a part of a piece is kept");
+            };
             let reference = *reach.get_or_insert_with(|| {
                 let circle = self.add_circle(corner_of(self, first_piece), value);
                 self.set_construction(circle, true);
@@ -1254,13 +1442,17 @@ impl Sketch {
         }
         // An open chain's offset ends square to the chain's ends; a
         // spline's, held at its end's offset, does already.
-        if !chain.closed {
+        {
             for a in 0..subs.len() {
-                let (k, at_start) = match (subs[a].from_start, subs[a].to_end, subs[a].elem) {
-                    (true, _, 0) if previous[a].is_none() => (0, true),
-                    (_, true, k) if k == m - 1 && next[a].is_none() => (k, false),
-                    _ => continue,
-                };
+                let k = subs[a].elem;
+                let at_start =
+                    if subs[a].from_start && path_previous[k].is_none() && previous[a].is_none() {
+                        true
+                    } else if subs[a].to_end && path_next[k].is_none() && next[a].is_none() {
+                        false
+                    } else {
+                        continue;
+                    };
                 let Of::Piece(i) = path[k].1 else {
                     continue;
                 };
@@ -1278,10 +1470,113 @@ impl Sketch {
                 self.square_end(source, end, image);
             }
         }
+        // Each circle's offset about its center, as far from it as the
+        // distance: the first dimension, or a construction circle on it,
+        // level with its center, as large as the one the rest is held at,
+        // touching the offset.
+        for (c, _, ring) in &circles {
+            let Shape::Plain(Plain::Round { center, radius, .. }) = ring else {
+                unreachable!("a circle's offset is a circle");
+            };
+            let CurveKind::Circle {
+                center: middle,
+                radius: source,
+            } = self.curves[c].kind
+            else {
+                unreachable!("a circle");
+            };
+            let circle = self.add_circle(middle, Scalar::from_f64(*radius));
+            made.push(circle);
+            if distance.is_none() {
+                distance = Some(self.constrain(Constraint::Offset {
+                    a: *c,
+                    b: circle,
+                    value,
+                }));
+                continue;
+            }
+            let on = self.new_point_at(add(*center, [source.to_f64(), 0.0]));
+            self.constrain(Constraint::PointOnCurve {
+                point: on,
+                curve: *c,
+            });
+            let level = self.add_line(middle, on);
+            self.set_construction(level, true);
+            self.constrain(Constraint::Horizontal { line: level });
+            let touching = self.add_circle(on, value);
+            self.set_construction(touching, true);
+            self.constrain(Constraint::Tangent {
+                a: circle,
+                b: touching,
+            });
+            let reference = match reach {
+                Some(reach) => reach,
+                None => {
+                    let first = first.expect("a part kept, its distance given");
+                    let first_piece = first_piece.expect("a part kept");
+                    let circle = self.add_circle(corner_of(self, first_piece), value);
+                    self.set_construction(circle, true);
+                    self.constrain(Constraint::Tangent {
+                        a: curve_of[first],
+                        b: circle,
+                    });
+                    reach = Some(circle);
+                    circle
+                }
+            };
+            self.constrain(Constraint::Equal {
+                a: touching,
+                b: reference,
+            });
+        }
         Ok(Offsetted {
             curves: made,
             distance: distance.expect("a part of a piece is kept"),
         })
+    }
+
+    /// The curves `curves` as chains (see [`Sketch::chain`]): each made of
+    /// those joined to each other end to end.
+    pub fn chains(&self, curves: &[CurveId]) -> GeopResult<Vec<Chain>> {
+        let class = self.point_classes();
+        let ends = |c: CurveId| -> GeopResult<Vec<PointId>> {
+            Ok(match self.curve(c)?.endpoints() {
+                Some((s, e)) => vec![class[&s], class[&e]],
+                None => Vec::new(),
+            })
+        };
+        let mut left: Vec<CurveId> = Vec::new();
+        for &c in curves {
+            if !left.contains(&c) {
+                left.push(c);
+            }
+        }
+        let mut chains = Vec::new();
+        while let Some(first) = left.first().copied() {
+            let mut group = vec![first];
+            let mut points = ends(first)?;
+            left.remove(0);
+            loop {
+                let mut joined = None;
+                for (k, &c) in left.iter().enumerate() {
+                    if ends(c)?.iter().any(|p| points.contains(p)) {
+                        joined = Some(k);
+                        break;
+                    }
+                }
+                let Some(k) = joined else {
+                    break;
+                };
+                let c = left.remove(k);
+                points.extend(ends(c)?);
+                group.push(c);
+            }
+            chains.push(self.chain(&group)?);
+        }
+        if chains.is_empty() {
+            return Err(GeopError::new("no curves to make a chain of"));
+        }
+        Ok(chains)
     }
 
     /// Keeps `image`, an end of the offset of `source`, square to `source`
@@ -1656,10 +1951,112 @@ mod tests {
         let spline = s.add_spline(q.to_vec());
         let e = s.offset(&[spline], n(-1.5), Corners::Round).unwrap_err();
         assert!(e.root_message().contains("bends tighter"), "{e}");
-        let e = s
-            .offset(&[rect[0], rect[2]], n(0.1), Corners::Round)
-            .unwrap_err();
-        assert!(e.root_message().contains("separate chains"), "{e}");
+    }
+
+    /// A closed square of side `side` at `corner`, counter-clockwise, its
+    /// corners fixed: its sides.
+    fn fixed_square(s: &mut Sketch, corner: [f64; 2], side: f64) -> Vec<CurveId> {
+        let q = [[0.0, 0.0], [1.0, 0.0], [1.0, 1.0], [0.0, 1.0]]
+            .map(|q| [corner[0] + side * q[0], corner[1] + side * q[1]]);
+        let p = q.map(|q| s.add_point(n(q[0]), n(q[1])));
+        for (&point, q) in p.iter().zip(q) {
+            s.constrain(Constraint::Fix {
+                point,
+                x: n(q[0]),
+                y: n(q[1]),
+            });
+        }
+        (0..4).map(|i| s.add_line(p[i], p[(i + 1) % 4])).collect()
+    }
+
+    /// An outline and a hole in it offset at once, both into the material
+    /// between them though both run counter-clockwise: the outline in, the
+    /// hole out — a square and a circle hole too. One dimension for all.
+    #[test]
+    fn an_outline_and_its_holes_offset_into_the_material() {
+        let mut s = Sketch::new();
+        let outline = fixed_square(&mut s, [0.0, 0.0], 4.0);
+        let hole = fixed_square(&mut s, [1.0, 1.0], 1.0);
+        let middle = s.add_point(n(3.0), n(3.0));
+        s.constrain(Constraint::Fix {
+            point: middle,
+            x: n(3.0),
+            y: n(3.0),
+        });
+        let round = s.add_circle(middle, n(0.4));
+        s.constrain(Constraint::Radius {
+            curve: round,
+            value: n(0.4),
+        });
+        let all: Vec<CurveId> = outline
+            .iter()
+            .chain(&hole)
+            .copied()
+            .chain([round])
+            .collect();
+        let made = s.offset(&all, n(0.2), Corners::Round).unwrap();
+        let report = s.solve().unwrap();
+        assert!(report.converged && report.dof == 0, "{report:?}");
+        let sides: Vec<CurveId> = lines(&s, &made.curves);
+        assert_eq!(sides.len(), 8, "{made:?}");
+        let (inner, outer): (Vec<CurveId>, Vec<CurveId>) = sides
+            .iter()
+            .partition(|&&c| bounds(&s, &[c])[0] > 0.5 && bounds(&s, &[c])[2] < 3.5);
+        assert!(
+            near(bounds(&s, &outer), [0.2, 0.2, 3.8, 3.8]),
+            "{:?}",
+            bounds(&s, &outer)
+        );
+        assert!(
+            near(bounds(&s, &inner), [0.8, 0.8, 2.2, 2.2]),
+            "{:?}",
+            bounds(&s, &inner)
+        );
+        let circle = made
+            .curves
+            .iter()
+            .find(|c| {
+                matches!(s.curves[c].kind, CurveKind::Circle { .. }) && !s.curves[c].construction
+            })
+            .unwrap();
+        let CurveKind::Circle { radius, .. } = s.curves[circle].kind else {
+            unreachable!()
+        };
+        assert!((radius.to_f64() - 0.6).abs() < 1e-7, "{radius:?}");
+        set(&mut s, made.distance, 0.1);
+        assert!(s.solve().unwrap().converged);
+        assert!(
+            near(bounds(&s, &outer), [0.1, 0.1, 3.9, 3.9]),
+            "{:?}",
+            bounds(&s, &outer)
+        );
+        s.enclose().unwrap();
+    }
+
+    /// A hole closer to the outline than twice the distance: the two
+    /// offsets run into each other and are cut where they cross, the
+    /// outline's offset and the hole's joined into one curve round both.
+    #[test]
+    fn a_hole_near_the_outline_offsets_into_one_curve() {
+        let mut s = Sketch::new();
+        let outline = fixed_square(&mut s, [0.0, 0.0], 4.0);
+        let hole = fixed_square(&mut s, [2.8, 1.5], 1.0);
+        let all: Vec<CurveId> = outline.iter().chain(&hole).copied().collect();
+        let made = s.offset(&all, n(0.3), Corners::Round).unwrap();
+        let report = s.solve().unwrap();
+        assert!(report.converged && report.dof == 0, "{report:?}");
+        // What is left between the offsets: one area, round the hole and
+        // the offsets' meeting.
+        let loops = s.chain(
+            &made
+                .curves
+                .iter()
+                .copied()
+                .filter(|c| !s.curves[c].construction)
+                .collect::<Vec<_>>(),
+        );
+        assert!(loops.is_ok_and(|chain| chain.closed), "{made:?}");
+        s.enclose().unwrap();
     }
 
     /// The chain through a curve runs on as long as it does not branch.

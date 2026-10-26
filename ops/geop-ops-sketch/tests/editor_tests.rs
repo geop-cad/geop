@@ -1593,6 +1593,46 @@ fn offsets_to_both_sides_and_refusals() {
     assert!(tone == Tone::Error && why.contains("smaller"), "{why:?}");
 }
 
+/// Offset of an outline and a hole in it at once: both chains selected,
+/// a click in the material between them offsets both into it, the outline
+/// in and the hole out, by one distance.
+#[test]
+fn an_outline_and_a_hole_offset_at_once() {
+    let mut e = drawing();
+    e.key("r");
+    e.click(0.0, 0.0);
+    e.click(2.0, 1.0);
+    e.click(0.5, 0.3);
+    e.click(1.0, 0.7);
+    e.key("Escape");
+    let drawn = e.drawn_curves().len();
+    e.key("o");
+    e.click(1.0, 0.0);
+    e.click(0.75, 0.3);
+    assert_eq!(e.selection().len(), 8, "both rectangles");
+    // In the material, 0.1 right of the hole's right side.
+    e.click(1.1, 0.5);
+    assert_eq!(e.count(|c| matches!(c, Constraint::Offset { .. })), 1);
+    assert_eq!(e.curves_of("line").len(), 8 + 8, "{:?}", e.drawn_curves());
+    assert!(e.drawn_curves().len() > drawn + 8);
+    e.dialog("prompt", Value::Text("0.1".into()));
+    let report = e.report();
+    assert!(report.converged, "{report:?}");
+    let s = e.sketch();
+    let new_lines: Vec<CurveId> = e
+        .curves_of("line")
+        .into_iter()
+        .filter(|c| !s.curves[c].construction)
+        .collect();
+    let all = bounds(s, &new_lines);
+    assert!(
+        near(all, [0.0, 0.0, 2.0, 1.0]),
+        "the outline and its offset inside it: {all:?}"
+    );
+    // The hole grown by 0.1 all round: its offset's corners rounded.
+    assert_eq!(e.curves_of("arc").len(), 4);
+}
+
 /// Offset of a spline: its offset is no spline, so a spline is fitted to
 /// it, held to it point by point at the distance — the radius of a
 /// construction circle, which is asked for — and it follows that distance

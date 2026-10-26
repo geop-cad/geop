@@ -219,8 +219,8 @@ impl Sketch {
     }
 
     /// The chain through `curve`: it, and on from each of its ends the
-    /// line or arc joined there — as long as exactly one other line or arc
-    /// of its kind (profile or construction) is.
+    /// line, arc or spline joined there — as long as exactly one other of
+    /// its kind (profile or construction) is.
     pub fn chain_through(&self, curve: CurveId) -> GeopResult<Vec<CurveId>> {
         let construction = self.curve(curve)?.construction;
         let Some((s, e)) = self.curves[&curve].endpoints() else {
@@ -231,7 +231,6 @@ impl Sketch {
             .curves
             .iter()
             .filter(|(_, c)| c.construction == construction)
-            .filter(|(_, c)| matches!(c.kind, CurveKind::Line { .. } | CurveKind::Arc { .. }))
             .filter_map(|(&id, c)| c.endpoints().map(|(s, e)| (id, class[&s], class[&e])))
             .collect();
         let others_at = |p: PointId, not: CurveId| -> Vec<(CurveId, PointId)> {

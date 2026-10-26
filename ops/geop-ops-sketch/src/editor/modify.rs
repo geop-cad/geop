@@ -42,11 +42,25 @@ pub(super) fn offset_to(
     both: bool,
     corners: Corners,
 ) -> GeopResult<Vec<Offsetted>> {
-    let chain = sketch.chain(curves)?;
-    let d = sketch.chain_side(&chain, at)?;
-    let mut made = vec![sketch.offset(curves, Scalar::from_f64(d), corners)?];
+    // As far as the pointer is from the chain nearest it, and to that
+    // side of it: that chain first, the others offset with it.
+    let mut nearest: Option<(f64, Vec<CurveId>)> = None;
+    for chain in sketch.chains(curves)? {
+        let d = sketch.chain_side(&chain, at)?;
+        if nearest.as_ref().is_none_or(|(n, _)| d.abs() < n.abs()) {
+            nearest = Some((d, chain.edges.iter().map(|e| e.curve).collect()));
+        }
+    }
+    let Some((d, first)) = nearest else {
+        return Ok(Vec::new());
+    };
+    let curves: Vec<CurveId> = (first.iter())
+        .chain(curves.iter().filter(|c| !first.contains(c)))
+        .copied()
+        .collect();
+    let mut made = vec![sketch.offset(&curves, Scalar::from_f64(d), corners)?];
     if both {
-        made.push(sketch.offset(curves, Scalar::from_f64(-d), corners)?);
+        made.push(sketch.offset(&curves, Scalar::from_f64(-d), corners)?);
     }
     Ok(made)
 }
