@@ -26,9 +26,11 @@
 //!
 //! A Coons patch needs a corner wherever two of its sides meet: a loop of
 //! four that runs on smoothly through a vertex leaves a patch with no
-//! normal there, and is refused, naming the vertex. So are two edges sharing an end — the
-//! ruled face would come to a point — and tangency anywhere but along a
-//! loop of four, or to a face that is not flat.
+//! normal there, and is refused, naming the vertex. So is tangency
+//! anywhere but along a loop of four, or to a face that is not flat. Two
+//! edges sharing an end are ruled into a face that comes to a point there,
+//! as a cone into its apex: that side of the patch collapses to the
+//! shared vertex.
 
 use geop_core_editor::{
     edit_form::{EditForm, FormState},
@@ -265,7 +267,8 @@ fn closes(a: &Side, b: &Side) -> bool {
 }
 
 /// The ruled face between `a` and `b`, `b` turned if its ends line up
-/// better with `a`'s that way round.
+/// better with `a`'s that way round. Where they share an end, the face
+/// comes to a point there: that side is the shared vertex.
 fn ruled(namer: &Namer, a: &Side, b: &Side) -> GeopResult<(BodySpec, BodyNames)> {
     let along = distance(&a.start, &b.start) + distance(&a.end, &b.end);
     let across = distance(&a.start, &b.end) + distance(&a.end, &b.start);
@@ -274,50 +277,68 @@ fn ruled(namer: &Namer, a: &Side, b: &Side) -> GeopResult<(BodySpec, BodyNames)>
     } else {
         b.clone()
     };
-    if a.start.could_be_equal(&b.start) || a.end.could_be_equal(&b.end) {
+    let (apex_start, apex_end) = (
+        a.start.could_be_equal(&b.start),
+        a.end.could_be_equal(&b.end),
+    );
+    if apex_start && apex_end {
         return Err(GeopError::new(format!(
-            "edges {} and {} share an end: the ruled face between them would come to a point there, which is not supported",
+            "edges {} and {} share both ends: they close a loop, not two sides of a ruled face",
             a.name, b.name
         )));
     }
-    // Vertices 0 -> 1 along `a`, 2 -> 3 along `b`.
-    let vertices = vec![a.start, a.end, b.start, b.end];
-    let vertex_names = [&a.start_name, &a.end_name, &b.start_name, &b.end_name]
-        .map(|n| namer.name(&[n]))
-        .to_vec();
+    // Vertices 0 -> 1 along `a`, 2 -> 3 along `b`: `b`'s end the same as
+    // `a`'s where they share it.
+    let mut vertices = vec![a.start, a.end];
+    let mut vertex_names = vec![namer.name(&[&a.start_name]), namer.name(&[&a.end_name])];
+    let mut vertex = |shared: bool, of_a: usize, point: Vector3, name: &str| {
+        if shared {
+            return of_a;
+        }
+        vertices.push(point);
+        vertex_names.push(namer.name(&[name]));
+        vertices.len() - 1
+    };
+    let b_start = vertex(apex_start, 0, b.start, &b.start_name);
+    let b_end = vertex(apex_end, 1, b.end, &b.end_name);
     let copy = |side: &Side, start: usize, end: usize| EdgeSpec {
         curve: side.curve.clone(),
         start: if side.forward { start } else { end },
         end: if side.forward { end } else { start },
     };
-    let edges = vec![
-        copy(a, 0, 1),
-        copy(&b, 2, 3),
-        EdgeSpec {
-            curve: NurbCurve3D::line(a.end, b.end)?,
-            start: 1,
-            end: 3,
-        },
-        EdgeSpec {
-            curve: NurbCurve3D::line(b.start, a.start)?,
-            start: 2,
-            end: 0,
-        },
-    ];
-    let edge_names = vec![
-        namer.name(&[&a.name]),
-        namer.name(&[&b.name]),
-        namer.name(&[&a.end_name, &b.end_name]),
-        namer.name(&[&b.start_name, &a.start_name]),
-    ];
+    let mut edges = vec![copy(a, 0, 1), copy(&b, b_start, b_end)];
+    let mut edge_names = vec![namer.name(&[&a.name]), namer.name(&[&b.name])];
+    // A side between the two edges: a line, or the shared vertex.
+    let mut side = |shared: bool, from: (usize, Vector3, &str), to: (usize, Vector3, &str)| {
+        if shared {
+            return Ok(CoedgeOn::Vertex(from.0));
+        }
+        edges.push(EdgeSpec {
+            curve: NurbCurve3D::line(from.1, to.1)?,
+            start: from.0,
+            end: to.0,
+        });
+        edge_names.push(namer.name(&[from.2, to.2]));
+        Ok::<_, GeopError>(CoedgeOn::Edge(edges.len() - 1, Sense::Forward))
+    };
+    let end_side = side(
+        apex_end,
+        (1, a.end, &a.end_name),
+        (b_end, b.end, &b.end_name),
+    )?;
+    let start_side = side(
+        apex_start,
+        (b_start, b.start, &b.start_name),
+        (0, a.start, &a.start_name),
+    )?;
     let surface = NurbSurface3D::ruled(&a.oriented(), &b.oriented())?;
     let face = FaceSpec::on_unit_square(
         surface,
         [
             CoedgeOn::Edge(0, a.sense()),
-            CoedgeOn::Edge(2, Sense::Forward),
+            end_side,
             CoedgeOn::Edge(1, b.sense().opposite()),
-            CoedgeOn::Edge(3, Sense::Forward),
+            start_side,
         ],
     )?;
     Ok((

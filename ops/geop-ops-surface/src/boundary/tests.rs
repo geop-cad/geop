@@ -151,14 +151,25 @@ fn ruled_between_opposite_edges() {
     assert!(part.edge_id(&format!("boundary(b,{a})")).is_ok());
 }
 
-/// Two edges meeting at a corner would make a ruled face come to a point.
+/// Two edges meeting at a corner are ruled into a face coming to a point
+/// there: half the cube's top, a triangle of the two edges and the line
+/// across, its third side the shared corner.
 #[test]
-fn ruled_between_edges_sharing_a_corner_is_refused() {
+fn ruled_between_edges_sharing_a_corner_comes_to_a_point() {
     let part = unit_cube();
     let a = edge_between(&part, [0., 0., 1.], [1., 0., 1.]);
     let b = edge_between(&part, [1., 0., 1.], [1., 1., 1.]);
-    let err = refused(span(part, &[a, b], &[]));
-    assert!(err.contains("share an end"), "{err}");
+    let part = span(part, &[a, b], &[]).unwrap();
+    assert_valid_sheets(&part);
+    let face = part.face_id("boundary(b)").unwrap();
+    let topology = part.topology();
+    let edges: std::collections::BTreeSet<_> = topology
+        .iterate_face_coedges(face)
+        .filter_map(|c| topology.get_coedge(c).unwrap().edge().ok())
+        .collect();
+    assert_eq!(edges.len(), 3);
+    let (area, _) = topology.face_area(face).unwrap();
+    assert!((area.to_f64() - 0.5).abs() < 1e-9, "{area:?}");
 }
 
 /// The four edges of a cube's face, in any order: flat, so filled with
