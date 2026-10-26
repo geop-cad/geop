@@ -50,12 +50,8 @@ use super::{
 /// The table parameter a gear's tooth count is chosen by.
 pub const TEETH: &str = "teeth";
 
-/// The most teeth a gear of the library has: with 120, each arc of the rim
-/// is cut by ten gaps, and grows too wide on the way (see [`RIM_ARCS`]).
-pub const MOST_TEETH: usize = 80;
-
-/// How many arcs a gear's rim is drawn in (see [`spur_gear`]).
-const RIM_ARCS: usize = 12;
+/// The most teeth a gear of the library has.
+pub const MOST_TEETH: usize = 120;
 
 /// The columns of the [`TEETH`] table: `z`, then the lower side of the gap
 /// between two teeth, of module 1 (see [`involute::Gap`]): its foot `fx`,
@@ -113,27 +109,12 @@ pub fn spur_gear(file: &'static str) -> GeopResult<StandardPart> {
     );
     let m = col("m");
     let z = format!("{TEETH}.z");
-    // The disc's rim in twelve arcs, one every 30°: every gap cut splits
-    // the arc it crosses, and an edge split again and again grows wider
-    // with each split — a quarter of a circle crossed by the gaps of more
-    // than about 35 teeth came out too wide to cut the next one. Their
-    // ends, on multiples of 30°, are tooth centres or at least 0.015 of a
-    // module from where any gap of up to 120 teeth crosses the rim.
+    // The disc's rim, a circle of the tip diameter: its quarters end on
+    // multiples of 90°, tooth centres or at least 0.015 of a module from
+    // where any gap of up to 120 teeth crosses the rim.
     let mut blank = Drawing::new(&program)?;
-    let tip = format!("{m} * ({z} / 2 + 1)");
-    let rim = (0..RIM_ARCS)
-        .map(|j| {
-            let angle = 360 * j / RIM_ARCS;
-            blank.point(
-                format!("{tip} * cos({angle})"),
-                format!("{tip} * sin({angle})"),
-            )
-        })
-        .collect::<GeopResult<Vec<_>>>()?;
-    for j in 0..RIM_ARCS {
-        blank.arc(rim[j], rim[(j + 1) % RIM_ARCS], &tip, true)?;
-    }
     let centre = blank.origin();
+    blank.circle(centre, &format!("{m} * ({z} + 2)"))?;
     blank.circle(centre, "bore")?;
     extrude(
         &mut program,
