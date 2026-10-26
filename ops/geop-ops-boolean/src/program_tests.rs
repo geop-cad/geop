@@ -4,27 +4,31 @@
 
 use geop_core_math::{geop_error::GeopResult, primitives::FrameAxis, scalars::Scalar};
 use geop_core_program::{
-    element::ElementReference, operation_registry::OperationRegistry, program::Program,
+    element::{ElementReference, HasElements},
+    operation_registry::OperationRegistry,
+    program::Program,
 };
-use geop_lib_fixtures::{Primitive, PrimitiveArgs};
+use geop_lib_fixtures::{GivenDatum, GivenDatumArgs, Primitive, PrimitiveArgs};
 use geop_ops_edit::{DeleteBody, DeleteBodyArgs, ExtractFace, ExtractFaceArgs};
 use geop_ops_extrude_revolve::{
     Extent, ExtrudeArgs, Output, RevolveArgs, RevolveAxis,
     testing::{extrude, one_way, two_ways},
 };
-use geop_ops_model::datums::origin_axis;
+use geop_ops_model::datums::{datum, origin_axis};
 use geop_ops_model::sketch::{
     Sketch,
     figures::{n, on_face, on_origin, polygon},
     whole_sketch,
 };
 use geop_ops_model::{
-    BooleanOp, Combine, NamedModel, model, solid,
+    BooleanOp, Combine, NamedModel, Path, model, solid,
     testing::{Built, assert_valid},
 };
 use geop_ops_sketch::AddSketchArgs;
 
-use crate::{Boolean, BooleanArgs, Split, SplitArgs};
+use crate::{
+    Boolean, BooleanArgs, Imprint, ImprintArgs, Section, SectionArgs, SectionWith, Split, SplitArgs,
+};
 
 /// The operations these tests' programs are written in: given solids, and
 /// the sketches and extrusions the tests of up to next are about.
@@ -34,7 +38,10 @@ fn registry() -> GeopResult<OperationRegistry> {
         .with(Boolean)?
         .with(Split)?
         .with(DeleteBody)?
-        .with(ExtractFace)
+        .with(ExtractFace)?
+        .with(Imprint)?
+        .with(Section)?
+        .with(GivenDatum)
 }
 
 /// The element `name` of the part's model, as a `K`.
@@ -336,4 +343,164 @@ fn symmetric_difference_of_two_overlapping_blocks() {
         None,
         &program,
     );
+}
+
+/// Two unit blocks, the second moved by half along each axis.
+fn overlapping_blocks() -> Program {
+    let mut program = Program::new();
+    program.push("a", PrimitiveArgs::block([0.0; 3], [1.0; 3]));
+    program.push("b", PrimitiveArgs::block([0.5; 3], [1.5; 3]));
+    program
+}
+
+/// The name of the face of the solid `solid` of `part` that lies highest.
+fn top_face(part: &NamedModel, solid: &str) -> String {
+    let topology = part.topology();
+    let faces = topology.solid_faces(part.solid_id(solid).unwrap()).unwrap();
+    let top = (faces.into_iter())
+        .max_by(|&f, &g| {
+            let z = |f| topology.faces[&f].surface.aabb()[2].lower().to_f64();
+            z(f).total_cmp(&z(g))
+        })
+        .unwrap();
+    part.name(top).unwrap().to_string()
+}
+
+/// Two overlapping blocks imprinted on each other: both stay, three faces
+/// of each divided where the other crosses it, and the volumes are as they
+/// were. The step round-trips and builds incrementally.
+#[test]
+fn imprint_two_overlapping_blocks() {
+    let mut program = overlapping_blocks();
+    program.push(
+        "i",
+        ImprintArgs {
+            body: named("block(a)"),
+            tool: named("block(b)"),
+            face: None,
+        },
+    );
+    let part = program.build_model(registry).unwrap();
+    assert_valid(&part);
+    assert_eq!(part.solid_names(), ["block(a)", "block(b)"]);
+    for name in ["block(a)", "block(b)"] {
+        let solid = part.solid_id(name).unwrap();
+        let topology = part.topology();
+        assert_eq!(topology.solid_faces(solid).unwrap().len(), 9, "{name}");
+        let volume = topology.mass_properties(solid).unwrap().volume;
+        assert!(volume.could_be_equal(Scalar::ONE), "{name}: {volume:?}");
+    }
+    let registry = std::rc::Rc::new(registry().unwrap());
+    geop_core_program::testing::assert_round_trips(registry.clone(), None, &program);
+    let before = overlapping_blocks();
+    geop_core_program::testing::assert_incremental(registry, None, &[before, program]);
+}
+
+/// Imprinted on one face only, the first block's top, the second block
+/// divides that face alone and stays as it was.
+#[test]
+fn imprint_onto_one_face() {
+    let mut program = overlapping_blocks();
+    // The first block's top, at `z = 1`.
+    let blocks = program.build_model(registry).unwrap();
+    let top = top_face(&blocks, "block(a)");
+    program.push(
+        "i",
+        ImprintArgs {
+            body: named("block(a)"),
+            tool: named("block(b)"),
+            face: Some(named(&top)),
+        },
+    );
+    let part = program.build_model(registry).unwrap();
+    assert_valid(&part);
+    let faces = |name: &str| {
+        let solid = part.solid_id(name).unwrap();
+        part.topology().solid_faces(solid).unwrap().len()
+    };
+    assert_eq!((faces("block(a)"), faces("block(b)")), (7, 6));
+
+    // A face of the other block is refused, by name.
+    let mut wrong = overlapping_blocks();
+    wrong.push(
+        "i",
+        ImprintArgs {
+            body: named("block(a)"),
+            tool: named("block(b)"),
+            face: Some(named(top_face(&blocks, "block(b)"))),
+        },
+    );
+    let error = wrong.build_model(registry).unwrap_err();
+    assert!(
+        error.root_message().contains("is not of the body"),
+        "{error:?}"
+    );
+}
+
+/// The section of two overlapping blocks is one closed run of six curves,
+/// both blocks left as they are: a path, picked by any of its edges.
+#[test]
+fn section_of_two_overlapping_blocks_is_a_closed_path() {
+    let mut program = overlapping_blocks();
+    program.push(
+        "s",
+        SectionArgs {
+            body: named("block(a)"),
+            with: SectionWith::Body(named("block(b)")),
+        },
+    );
+    let part = program.build_model(registry).unwrap();
+    assert_valid(&part);
+    let topology = part.topology();
+    assert_eq!(topology.wires.len(), 1);
+    assert_eq!(topology.faces.len(), 12, "the blocks as they were");
+    let wire = topology.wires.values().next().unwrap();
+    let edge = part.name(wire.edges[3]).unwrap();
+    let path = <NamedModel as HasElements<Path>>::element(&part, edge).unwrap();
+    assert_eq!(path.curves.len(), 6);
+    assert_eq!(path.joint_names.len(), 6, "closed");
+    geop_core_program::testing::assert_round_trips(
+        std::rc::Rc::new(registry().unwrap()),
+        None,
+        &program,
+    );
+}
+
+/// A cylinder cut by a datum plane across its axis: a circle, its four
+/// quarters on the quarters of the side.
+#[test]
+fn section_of_a_cylinder_by_a_datum_plane() {
+    let mut program = Program::new();
+    program.push("c", PrimitiveArgs::cylinder_z([0.0; 3], 0.5, 2.0));
+    program.push("p", GivenDatumArgs::plane([0.0, 0.0, 0.7], [0.0, 0.0, 1.0]));
+    program.push(
+        "s",
+        SectionArgs {
+            body: named("cylinder(c)"),
+            with: SectionWith::Plane(datum("p")),
+        },
+    );
+    let part = program.build_model(registry).unwrap();
+    assert_valid(&part);
+    let topology = part.topology();
+    let wire = topology.wires.values().next().unwrap();
+    assert_eq!(wire.edges.len(), 4);
+    for v in &wire.vertices {
+        let z = topology.vertices[v].point[2];
+        assert!(z.could_be_equal(Scalar::from_f64(0.7)), "{z:?}");
+    }
+
+    // A plane above the cylinder crosses nothing, and is refused.
+    let mut above = Program::new();
+    above.push("c", PrimitiveArgs::cylinder_z([0.0; 3], 0.5, 2.0));
+    above.push("p", GivenDatumArgs::plane([0.0, 0.0, 3.0], [0.0, 0.0, 1.0]));
+    above.push(
+        "s",
+        SectionArgs {
+            body: named("cylinder(c)"),
+            with: SectionWith::Plane(datum("p")),
+        },
+    );
+    let error = above.build_model(registry).unwrap_err();
+    assert!(error.root_message().contains("do not meet"), "{error:?}");
 }

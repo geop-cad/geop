@@ -28,7 +28,7 @@ use geop_core_program::{
     element::{ElementReference, HasElements, Kind, PickedElement},
     reader::Reader,
 };
-use geop_core_topology::{Body as TopologyBody, EdgeId, FaceId};
+use geop_core_topology::{Body as TopologyBody, EdgeId, FaceId, Sense};
 
 use crate::{
     NamedModel, RefId,
@@ -227,20 +227,56 @@ impl HasElements<Curve> for NamedModel {
     }
 }
 
-/// An edge of a face — of a solid or of a sheet — not of a wire: a wire's
-/// edge is part of what built it, a 3-D sketch, which is the path.
+/// An edge of a face — of a solid or of a sheet — as the one curve it is;
+/// an edge of a wire as the run of the wire's edges it is in, from end to
+/// end or round (see [`geop_core_topology::Model::wire_chains`]), named
+/// after its edges and the vertices between them. (A 3-D sketch's wire is
+/// picked as the sketch, whose path is named after its elements.)
 impl HasElements<Path> for NamedModel {
     type Element<'a> = Chain<NurbCurve3D>;
     const SINGLETON: Option<&'static str> = Some(MODEL);
 
     fn element(&self, name: &str) -> GeopResult<Chain<NurbCurve3D>> {
         let edge = self.edge_id(name)?;
-        if self.topology().wire_of_edge(edge).is_some() {
-            return Err(GeopError::new(format!(
-                "edge {name:?} is of a wire: pick what built it as the path"
-            )));
+        let topology = self.topology();
+        let Some(wire) = topology.wire_of_edge(edge) else {
+            return self.edge_chain(edge);
+        };
+        let chains = topology.wire_chains(wire)?;
+        let run = (chains.into_iter())
+            .find(|chain| chain.iter().any(|&(e, _)| e == edge))
+            .ok_or_else(|| GeopError::new(format!("edge {name:?} is in no run of its wire")))?;
+        let mut chain = Chain {
+            name: name.to_string(),
+            curves: Vec::new(),
+            curve_names: Vec::new(),
+            joint_names: Vec::new(),
+        };
+        let mut end = None;
+        for &(e, sense) in &run {
+            let e_name = self.name(e)?.to_string();
+            let e = topology.get_edge(e)?;
+            let (start, stop, curve) = match sense {
+                Sense::Forward => (e.start_vertex, e.end_vertex, e.curve.clone()),
+                Sense::Reversed => (e.end_vertex, e.start_vertex, e.curve.reverse()),
+            };
+            chain.curves.push(curve);
+            chain.curve_names.push(e_name);
+            chain.joint_names.push(self.name(start)?.to_string());
+            end = Some(stop);
         }
-        self.edge_chain(edge)
+        let first = topology.get_edge(run[0].0)?;
+        let start = match run[0].1 {
+            Sense::Forward => first.start_vertex,
+            Sense::Reversed => first.end_vertex,
+        };
+        // An open run has a joint at its end too; a closed one ends where
+        // it starts.
+        match end {
+            Some(end) if end != start => chain.joint_names.push(self.name(end)?.to_string()),
+            _ => {}
+        }
+        Ok(chain)
     }
 }
 
