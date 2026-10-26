@@ -1098,6 +1098,17 @@ search. Three times in `geop-ops-fillet`:
   flush at the other's wall, and the corner is cut by the two run on past
   it, intersected — behind both walls, what both would cut.
 
+## Newton needs the second derivatives where it is far from flat
+
+`NurbSurface::project` stepped by Gauss-Newton, the first fundamental form
+alone. Over a curved surface that step overshoots by the target's distance
+over the surface's radius of curvature: a target twice the radius off a
+cylinder swings from side to side of its foot point for ever. A pocket's
+rim rounded with the radius its corner's fill was rounded with put the
+ball's centre exactly there, and `meet` ran off along the fill's end. The
+step is Newton's on the squared distance wherever its Hessian is
+definitely positive definite, and Gauss-Newton's only where it is not.
+
 ## A hash map's order is no order
 
 `Model`'s entities live in `HashMap`s, whose iteration order differs between
