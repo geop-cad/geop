@@ -10,6 +10,7 @@
 //! | the result solid | `N` |
 //! | vertex where edges `E1 < E2` cross | `N(E1,E2,i,n)`: the `i`-th of their `n` crossings, counted along `E1` |
 //! | vertex where edge `E` pierces face `F` | `N(E,F,i,n)`: the `i`-th of the `n` piercings, counted along `E` |
+//! | vertex on a closed loop of faces `F1 < F2` no edge pierces | `N(F1,F2,i,n)`: the `i`-th of the `n` such vertices, counted along the direction their turning points were sought in |
 //! | piece of edge `E` starting at vertex `V` | `N(E,V)` ([`Namer::piece`]) — the piece at `E`'s own start keeps the name `E` |
 //! | edge traced along faces `F1 < F2` from vertex `P` to `Q` (`P < Q`) | `N(F1,F2,P,Q)`, with a trailing `,k` only if several such edges join the same `P` and `Q` |
 //! | piece of face `F` split off along edge `E` | `N(F,E)` ([`Namer::piece`]) — the other piece keeps the name `F` |
@@ -170,6 +171,28 @@ impl BooleanNaming {
             along,
             other,
             t,
+        });
+        Ok(())
+    }
+
+    /// Records that `vertex` was created on a closed loop `face_a` and
+    /// `face_b` meet in, `along` the direction its turning points were
+    /// sought in (see `remesh_edges_x_faces::find_loop_start_points`).
+    pub fn loop_point(
+        &mut self,
+        vertex: VertexId,
+        face_a: FaceId,
+        face_b: FaceId,
+        along: Scalar,
+    ) -> GeopResult<()> {
+        let a = self.face_origin(face_a)?.to_string();
+        let b = self.face_origin(face_b)?.to_string();
+        let (along_face, other) = if a <= b { (a, b) } else { (b, a) };
+        self.recipes.push(Recipe::Crossing {
+            vertex,
+            along: along_face,
+            other,
+            t: along,
         });
         Ok(())
     }

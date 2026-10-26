@@ -29,10 +29,16 @@
 //!    the edge's curve is a cubic fitted through the march, whatever the
 //!    two surfaces are (see [`fit_traced_branch`]): no pair of surface
 //!    kinds is special-cased.
+//! 5. Last, the closed loops that no edge pierces, so that no start point
+//!    leads to: a vertex at each of their turning points along a direction,
+//!    found by a subdivision search over each pair of faces (see
+//!    [`find_loop_start_points`]), and the loops traced from them as in 4.
 
 use geop_core_geometry::{
     contains::{curve::curve_could_contain, surface::surface_could_contain},
-    intersection::{Intersections, curve_surface_intersect, refine_crossing},
+    intersection::{
+        Intersections, curve_surface_intersect, refine_crossing, surface_surface::turning_points,
+    },
     nurb_curve::{NurbCurve, true_point_fractions},
     nurb_surface::NurbSurface3D,
 };
@@ -267,7 +273,143 @@ pub fn remesh_edges_x_faces(
         trace_from_start_point(model, naming, start, &candidates, params).with_context(&ctx)?;
     }
 
+    // Last, the closed loops no edge leads to: a vertex on each of their
+    // turning points, and the loops traced between them like any other
+    // curve. After the traces above, so that a turning point of a curve
+    // already traced lies on its edge, on the boundary of both faces, and
+    // is not taken again.
+    let loops =
+        find_loop_start_points(model, naming, solid_a, solid_b, params).with_context(&ctx)?;
+    candidates.extend(loops.iter().map(|s| s.vertex));
+    for start in &loops {
+        trace_from_start_point(model, naming, start, &candidates, params).with_context(&ctx)?;
+    }
+
     Ok(())
+}
+
+/// A vertex on every closed loop that `solid_a`'s faces meet `solid_b`'s in
+/// within both faces, where no edge leads to it, so no piercing starts a
+/// trace of it: at the loop's turning points along a direction (see
+/// `geop_core_geometry::intersection::surface_surface`), at least two on
+/// each loop, so a trace from one reaches the next.
+///
+/// Searched once per pair of the faces the two solids had before the
+/// remesh, whose pieces share their surface, and each candidate refined
+/// onto the curve with the corrector the march uses, then kept only if it
+/// lies inside a face of each solid, off every edge: a point on a curve
+/// already traced lies on that edge, which bounds both faces. Two points
+/// that could be one are one vertex.
+fn find_loop_start_points(
+    model: &mut NamedModel,
+    naming: &mut BooleanNaming,
+    solid_a: Body,
+    solid_b: Body,
+    params: &RemeshParams,
+) -> GeopResult<Vec<TracingStartPoint>> {
+    // The faces of `solid`, grouped by what they were split from: one
+    // surface each.
+    let by_origin = |model: &Model, solid: Body| -> GeopResult<Vec<Vec<FaceId>>> {
+        let mut groups: std::collections::BTreeMap<String, Vec<FaceId>> = Default::default();
+        let mut faces = model.body_faces(solid)?;
+        faces.sort_by_key(|f| f.0);
+        for face in faces {
+            groups
+                .entry(naming.face_origin(face)?.to_string())
+                .or_default()
+                .push(face);
+        }
+        Ok(groups.into_values().collect())
+    };
+    let topology = model.topology();
+    let (groups_a, groups_b) = (by_origin(topology, solid_a)?, by_origin(topology, solid_b)?);
+    let mut found: Vec<(Vector3, FaceId, FaceId, Scalar)> = Vec::new();
+    for faces_a in &groups_a {
+        let surf_a = &topology.get_face(faces_a[0])?.surface;
+        for faces_b in &groups_b {
+            let surf_b = &topology.get_face(faces_b[0])?.surface;
+            let ctx = with_context!(
+                "find_loop_start_points(faces of solid_a={faces_a:?}, faces of solid_b={faces_b:?})"
+            );
+            let turning = turning_points(surf_a, surf_b, params.max_nodes).with_context(&ctx)?;
+            for candidate in &turning.candidates {
+                let [u_a, v_a, u_b, v_b] = candidate.seed;
+                let (Ok(start), Ok(n_a), Ok(n_b)) = (
+                    surf_a.evaluate(u_a, v_a),
+                    surf_a.normal(u_a, v_a),
+                    surf_b.normal(u_b, v_b),
+                ) else {
+                    continue;
+                };
+                let Ok(along) = n_a.prod_cross(&n_b).normalize() else {
+                    continue;
+                };
+                // Onto the curve, across it: the plane the corrector lands on
+                // is square to the curve there. A candidate it brings onto
+                // no common point is none: the boxes only said one could be.
+                let Ok((point, u_a, v_a, u_b, v_b)) = predictor_corrector_step(
+                    surf_a,
+                    surf_b,
+                    start,
+                    along,
+                    u_a,
+                    v_a,
+                    u_b,
+                    v_b,
+                    Scalar::ZERO,
+                ) else {
+                    continue;
+                };
+                // Where the surfaces cross, so a curve leaves the point.
+                let (Ok(n_a), Ok(n_b)) = (surf_a.normal(u_a, v_a), surf_b.normal(u_b, v_b)) else {
+                    continue;
+                };
+                if n_a.prod_cross(&n_b).normalize().is_err() {
+                    continue;
+                }
+                let inside =
+                    |faces: &[FaceId], u: Scalar, v: Scalar| -> GeopResult<Option<FaceId>> {
+                        for &face in faces {
+                            let class = face_contains(
+                                topology,
+                                face,
+                                u,
+                                v,
+                                params.max_nodes,
+                                params.curve_curve_min_subdivision_size,
+                                FACE_CONTAINS_SEED,
+                            )?;
+                            if class == PointClassification::Inside {
+                                return Ok(Some(face));
+                            }
+                        }
+                        Ok(None)
+                    };
+                let (Some(face_a), Some(face_b)) = (
+                    inside(faces_a, u_a, v_a).with_context(&ctx)?,
+                    inside(faces_b, u_b, v_b).with_context(&ctx)?,
+                ) else {
+                    continue;
+                };
+                if found.iter().any(|(p, ..)| p.could_be_equal(&point)) {
+                    continue;
+                }
+                found.push((point, face_a, face_b, point.prod_dot(&turning.direction)));
+            }
+        }
+    }
+    let mut starts = Vec::with_capacity(found.len());
+    for (point, face_a, face_b, along) in found {
+        let vertex = model.insert_vertex(point, naming.provisional())?;
+        naming.loop_point(vertex, face_a, face_b, along)?;
+        starts.push(TracingStartPoint {
+            vertex,
+            edge_solid: solid_a,
+            face: face_b,
+            face_solid: solid_b,
+        });
+    }
+    Ok(starts)
 }
 
 /// Whether `edge_id` already has a boundary coedge on `face_id` — if so,
