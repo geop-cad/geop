@@ -7,6 +7,7 @@
 //!
 //! Each takes a fraction of a second: they all run with every `cargo test`.
 
+use geop_core_program::element::ElementReference;
 use geop_core_program::program::Program;
 use geop_lib_fixtures::bodies::{
     block, block_corner_cut_off, block_drilled, block_pocketed, block_stepped, block_with_boss,
@@ -14,12 +15,13 @@ use geop_lib_fixtures::bodies::{
     hemisphere, one_solid, sphere_drilled,
 };
 use geop_ops_model::{
-    element,
+    element, model,
     testing::{Cases, outcome},
 };
 
 use crate::{
-    DeleteFace, DeleteFaceArgs, HealGap, MoveFace, MoveFaceArgs, OffsetFace, OffsetFaceArgs,
+    DeleteFace, DeleteFaceArgs, HealGap, MergeFaces, MergeFacesArgs, MoveFace, MoveFaceArgs,
+    OffsetFace, OffsetFaceArgs,
 };
 
 /// Whether an error's root message is an edit refusing what it does not
@@ -46,12 +48,19 @@ fn is_refusal(message: &str) -> bool {
 /// and shifted by `distance` along each axis; panics listing every case
 /// gone wrong.
 fn stress(program: Program, distance: f64) {
-    let (part, _) = one_solid(&program);
+    let (part, solid) = one_solid(&program);
     let mut faces: Vec<String> = (part.topology().faces.keys())
         .map(|&id| part.name_of(id).unwrap().to_string())
         .collect();
     faces.sort();
     let mut cases = Cases::default();
+    let merge = MergeFacesArgs {
+        bodies: vec![ElementReference::new(model(), &solid)],
+    };
+    cases.record(
+        "faces merged".into(),
+        outcome::<MergeFaces>(&part, &merge, is_refusal),
+    );
     for face in faces {
         for d in [distance, -distance] {
             let args = OffsetFaceArgs {

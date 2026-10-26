@@ -38,7 +38,10 @@ below is what was missing then, and where each item stands now.
   into), put on another face's surface, and deleted — holes, bosses,
   pockets, chamfers, fillets and cut corners healed over by the faces
   around them, or the solid left open; the solid rebuilt face by face
-  around them, for any NURBS faces, every name kept.
+  around them, for any NURBS faces, every name kept. Faces that lie on
+  one surface (blocks united flush, a pattern of overlapping blocks) merged
+  into one, decided on the NURBS representation; merged names still find
+  the face.
 - Fillets on any edge (rolling ball), tangent chains, variable radius,
   rounded corners where three fillets meet; chamfers on any edge.
 - Sheet metal: base and edge flanges, hems, open and closed corners, cuts

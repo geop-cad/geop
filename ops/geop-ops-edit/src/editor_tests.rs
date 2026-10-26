@@ -129,3 +129,22 @@ fn delete_face_picks_a_face_and_leaves_it_open() {
         .expect("the scene is sent");
     assert!(scene.part.solids.is_empty(), "{:?}", scene.part.solids);
 }
+
+/// A new merge takes the newest solid as it opens, and builds.
+#[test]
+fn merge_faces_takes_the_newest_solid() {
+    let mut editor = on_a_box();
+    editor.handle(Command::New {
+        kind: "merge_faces".into(),
+    });
+    let update = editor.handle(Command::Commit);
+    let program = update.program.expect("the program changed");
+    assert!(
+        program.steps.iter().all(|s| s.error.is_none()),
+        "{:?}",
+        program.steps
+    );
+    let args: crate::MergeFacesArgs = args(editor.program().steps.last().unwrap());
+    assert_eq!(args.bodies.len(), 1, "{args:?}");
+    assert_eq!(args.bodies[0].name(), "block(body)");
+}

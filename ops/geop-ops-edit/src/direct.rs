@@ -22,7 +22,9 @@ use geop_core_math::{
 use geop_core_program::{element::ElementReference, part::StepContext, reader::Reader};
 use geop_core_topology::FaceId;
 use geop_lib_shell::{Heal, Smooth, delete_faces, replace_faces};
-use geop_ops_model::{Face, ModelOperation, NamedModel, Namer, build_model, model, read_model};
+use geop_ops_model::{
+    Body, Face, ModelOperation, NamedModel, Namer, build_model, model, read_model, resolve_bodies,
+};
 use serde::{Deserialize, Serialize};
 
 /// A face of the model, by name.
@@ -152,7 +154,24 @@ impl HealGap {
     ];
 }
 
+/// Takes out of the bodies `bodies` the topology they do not need: faces
+/// that lie on one surface — two blocks united flush leave two in one
+/// plane — made one, and vertices between two edges of the same two
+/// faces dropped, the edges made one (see
+/// [`geop_ops_model::NamedModel::merge_faces_on_one_surface`]). What is
+/// made one keeps the name of the oldest of what it is made of, and the
+/// others' names stand for it.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Serialize, Deserialize)]
+pub struct MergeFaces;
+
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+pub struct MergeFacesArgs {
+    /// The bodies to simplify: solids, or a face of each sheet.
+    pub bodies: Vec<ElementReference<NamedModel, Body>>,
+}
+
 part_operation!(
+    MergeFaces(MergeFacesArgs),
     MoveFace(MoveFaceArgs),
     OffsetFace(OffsetFaceArgs),
     ReplaceFace(ReplaceFaceArgs),
@@ -383,12 +402,71 @@ impl ModelOperation for ReplaceFace {
                     .point)
             })
             .collect::<GeopResult<_>>()?;
-        let target = covering(topology.get_face(with)?.surface.clone(), &corners)?;
+        let target = topology.get_face(with)?.surface.covering(&corners)?;
         let anchor = face_point(model, face)?;
         replace_faces(model, &namer, &[face], Smooth::Refuse, |name, old| {
             facing_as(&target, old, anchor)
                 .map_err(|e| e.with_context(format!("putting face {name} on another surface")))
         })?;
+        Ok(())
+    }
+}
+
+impl PartOperation for MergeFaces {
+    const KIND: &'static str = "merge_faces";
+    const INFO: OperationInfo = info(
+        "Merge faces",
+        "Make faces that lie on one surface one face, and drop the edges and vertices between them.",
+    )
+    .icon(crate::icons::MERGE_FACES);
+    type Args = MergeFacesArgs;
+    type Session = ();
+
+    /// The newest solid.
+    fn new_args(context: &Context) -> MergeFacesArgs {
+        MergeFacesArgs {
+            bodies: (read_model(&context.before).ok())
+                .and_then(|model| model.newest_solid())
+                .map(|name| ElementReference::new(model(), name))
+                .into_iter()
+                .collect(),
+        }
+    }
+
+    fn run(ctx: &mut StepContext, args: &MergeFacesArgs) -> GeopResult<()> {
+        let _step = ctx.step();
+        build_model::<Self>(ctx, args)
+    }
+
+    /// The bodies, picked.
+    fn form<'a>(
+        context: &'a Context<'a>,
+        args: &MergeFacesArgs,
+        _: &FormState<()>,
+    ) -> EditForm<'a, MergeFacesArgs> {
+        let mut f = EditForm::<MergeFacesArgs>::default();
+        f.pick(
+            "bodies",
+            "bodies",
+            &context.before,
+            &args.bodies,
+            true,
+            |edit, picked| edit.args.bodies = picked,
+        );
+        f
+    }
+}
+
+impl ModelOperation for MergeFaces {
+    fn build(
+        model: &mut NamedModel,
+        reader: &Reader,
+        _: &str,
+        args: &MergeFacesArgs,
+    ) -> GeopResult<()> {
+        for body in resolve_bodies(reader, &args.bodies)? {
+            model.merge_faces_on_one_surface(body)?;
+        }
         Ok(())
     }
 }
@@ -457,55 +535,6 @@ impl ModelOperation for DeleteFace {
         delete_faces(model, &namer, &faces, heal)?;
         Ok(())
     }
-}
-
-/// How often [`covering`] carries a surface on, at most: each time by as
-/// much as its domain is long, so it grows past any reach in a few.
-const MOST_COVERINGS: usize = 8;
-
-/// `surface` carried on past its sides ([`NurbSurface3D::extended`]) until
-/// the foot point of each of `points` on it lies inside its domain, not on
-/// a side: a surface another face is put on has to reach that face's
-/// corners. Carried on past a side each time by as much as the domain is
-/// long that way — how much is a free choice — and refused, naming the
-/// point, where it cannot be carried on far enough.
-fn covering(mut surface: NurbSurface3D, points: &[Vector3]) -> GeopResult<NurbSurface3D> {
-    for _ in 0..MOST_COVERINGS {
-        let mut sides = [[false; 2]; 2];
-        for point in points {
-            let ((u0, u1), (v0, v1)) = (surface.domain_u(), surface.domain_v());
-            let half = Scalar::from_f64(0.5);
-            let (u, v) = surface.project_in_domain(
-                *point,
-                Scalar::interpolate(u0, u1, half).sharpen(),
-                Scalar::interpolate(v0, v1, half).sharpen(),
-                PROJECT_ITERATIONS,
-            )?;
-            for (k, (t, lo, hi)) in [(u, u0, u1), (v, v0, v1)].into_iter().enumerate() {
-                sides[k][0] |= t.could_be_equal(lo);
-                sides[k][1] |= t.could_be_equal(hi);
-            }
-        }
-        if sides.iter().flatten().all(|&side| !side) {
-            return Ok(surface);
-        }
-        for (k, ends) in sides.iter().enumerate() {
-            for (at_end, &short) in ends.iter().enumerate() {
-                if !short {
-                    continue;
-                }
-                let (lo, hi) = if k == 0 {
-                    surface.domain_u()
-                } else {
-                    surface.domain_v()
-                };
-                surface = surface.extended(k == 0, at_end == 1, hi.sub(lo).sharpen())?;
-            }
-        }
-    }
-    Err(GeopError::new(format!(
-        "the new surface, carried on {MOST_COVERINGS} times, does not reach the face's corners {points:?}"
-    )))
 }
 
 /// A point of the face `face` of `part` and where it is on the face's

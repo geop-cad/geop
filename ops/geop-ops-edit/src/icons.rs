@@ -9,3 +9,4 @@ pub(crate) const MOVE_FACE: &str = r#"<path d="M3 13 L9 16 L9 10 L3 7 Z"/><path 
 pub(crate) const OFFSET_FACE: &str = r#"<path d="M3 15 L10 18 L17 15 L10 12 Z" stroke-dasharray="1.5 1.5"/><path d="M3 9 L10 12 L17 9 L10 6 Z"/><path d="M10 6 L10 2 M8.5 3.5 L10 2 L11.5 3.5" stroke-width="1"/>"#;
 pub(crate) const REPLACE_FACE: &str = r#"<path d="M3 14 L10 17 L17 14 L10 11 Z"/><path d="M3 7 C6 4 14 4 17 7" stroke-dasharray="1.5 1.5"/><path d="M10 11 L10 6.5 M8.5 8 L10 6.5 L11.5 8" stroke-width="1"/>"#;
 pub(crate) const DELETE_FACE: &str = r#"<path d="M3 12 L10 15.5 L17 12 L10 8.5 Z" stroke-dasharray="1.5 1.5"/><path d="M7 4 L13 10 M13 4 L7 10" stroke-width="1"/>"#;
+pub(crate) const MERGE_FACES: &str = r#"<path d="M3 12 L10 15.5 L17 12 L10 8.5 Z"/><path d="M6.5 10.25 L13.5 13.75" stroke-dasharray="1 1.5"/><path d="M8 4 L10 6.5 L12 4" stroke-width="1"/>"#;

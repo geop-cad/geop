@@ -388,3 +388,100 @@ mod delete_face {
         assert!(format!("{error}").contains("meet"), "{error}");
     }
 }
+
+// ── Merging faces on one surface ────────────────────────────────────────────
+
+mod merge_faces {
+    use geop_core_program::element::ElementReference;
+    use geop_core_program::{operation_registry::OperationRegistry, program::Program};
+    use geop_lib_fixtures::PrimitiveArgs;
+    use geop_ops_model::{
+        Combine, NamedModel, model,
+        testing::{Built, assert_valid, assert_volume},
+    };
+
+    use crate::{MergeFaces, MergeFacesArgs};
+
+    fn registry() -> geop_core_math::geop_error::GeopResult<OperationRegistry> {
+        geop_lib_fixtures::registry()?.with(MergeFaces)
+    }
+
+    /// `program` and the step `m` merging the faces of its solid `solid`.
+    fn merged(mut program: Program, solid: &str) -> NamedModel {
+        program.push(
+            "m",
+            MergeFacesArgs {
+                bodies: vec![ElementReference::new(model(), solid)],
+            },
+        );
+        program.build_model(registry).unwrap()
+    }
+
+    /// Two blocks united flush: one box, six faces, twelve edges, eight
+    /// corners — and the names of the faces made part of others still find
+    /// them.
+    #[test]
+    fn blocks_united_flush_are_one_box() {
+        let mut program = Program::new();
+        program.push("a", PrimitiveArgs::block([0.0; 3], [1.0, 1.0, 1.0]));
+        program.push(
+            "b",
+            PrimitiveArgs::block([1.0, 0.0, 0.0], [2.0, 1.0, 1.0])
+                .combined(Combine::join("block(a)")),
+        );
+        let joined = program.build_model(registry).unwrap();
+        let solid = joined.solid_names()[0].clone();
+        assert!(joined.topology().faces.len() > 6);
+        let part = merged(program, &solid);
+        assert_valid(&part);
+        let model = part.topology();
+        assert_eq!(model.faces.len(), 6);
+        assert_eq!(model.edges.len(), 12);
+        assert_eq!(model.vertices.len(), 8);
+        assert_volume(&part, &solid, 2.0, 1e-5);
+        let top_a = part.face_id("block(a,end)").unwrap();
+        let top_b = part.face_id("block(b,end)").unwrap();
+        assert_eq!(top_a, top_b);
+    }
+
+    /// A row of four overlapping blocks joined one by one: one long box.
+    #[test]
+    fn a_row_of_overlapping_blocks_is_one_box() {
+        let mut program = Program::new();
+        program.push("a", PrimitiveArgs::block([0.0; 3], [1.0, 1.0, 1.0]));
+        let mut last = "block(a)".to_string();
+        for (k, step) in ["b", "c", "d"].iter().enumerate() {
+            let x = 0.6 * (k + 1) as f64;
+            program.push(
+                *step,
+                PrimitiveArgs::block([x, 0.0, 0.0], [x + 1.0, 1.0, 1.0])
+                    .combined(Combine::join(&last)),
+            );
+            last = format!("block({step})");
+        }
+        let joined = program.build_model(registry).unwrap();
+        let solid = joined.solid_names()[0].clone();
+        let part = merged(program, &solid);
+        assert_valid(&part);
+        assert_eq!(part.topology().faces.len(), 6);
+        assert_volume(&part, &solid, 2.8, 1e-5);
+    }
+
+    /// A box with a block standing on its top, not flush: nothing lies on
+    /// one surface across an edge, and nothing changes.
+    #[test]
+    fn a_step_stays_a_step() {
+        let mut program = Program::new();
+        program.push("a", PrimitiveArgs::block([0.0; 3], [2.0, 2.0, 1.0]));
+        program.push(
+            "b",
+            PrimitiveArgs::block([0.5, 0.5, 1.0], [1.5, 1.5, 2.0])
+                .combined(Combine::join("block(a)")),
+        );
+        let joined = program.build_model(registry).unwrap();
+        let solid = joined.solid_names()[0].clone();
+        let part = merged(program, &solid);
+        assert_valid(&part);
+        assert_eq!(part.topology().faces.len(), joined.topology().faces.len());
+    }
+}

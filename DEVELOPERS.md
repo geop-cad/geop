@@ -22,7 +22,7 @@ apart (see Scripts).
 |---|---|
 | `core/geop-core-math` | the interval scalar and the number trait it shares with dual numbers, linear algebra, the error type, frames, rays, datums, poses, solvers |
 | `core/geop-core-geometry` | NURBS curves and surfaces, their constructors, compatible curves, Coons and Gordon patches, containment and intersection |
-| `core/geop-core-topology` | the B-rep, building, editing and validation, wires |
+| `core/geop-core-topology` | the B-rep, building, editing and validation, wires; faces on one surface merged (`BodySpec::merged`) |
 | `core/geop-core-rasterize` | a model as a triangle mesh, STL, debug renderings |
 | `core/geop-core-sketch` | 2-D constraint sketches: entities, constraints as residuals, profiles, dimensions in a plane |
 | `core/geop-core-program` | a program, its values and the part it builds: a memo table of nodes made by `StepContext::produce`, placed parts, the runner, the workspace of files and the `Cache` of what they were made into (`.geopc` beside a file, given a `CacheStore`); feature `testing`: `assert_incremental`, `assert_round_trips` |
@@ -47,7 +47,7 @@ apart (see Scripts).
 | `ops/geop-ops-pattern` | patterns, mirrors and moves of bodies and features |
 | `ops/geop-ops-subd` | subdivision surfaces: a control cage, edited with the box modelling tools (extrude, inset, bevel, loop cut, slide, merge, dissolve, bridge, fill, sharp and soft creases, a mirror) and built as its Catmull–Clark limit surface |
 | `ops/geop-ops-surface` | boundary and UV surfaces, offset, thicken, knit, trim and extend |
-| `ops/geop-ops-edit` | delete a body, extract a face, project a sketch onto a face; direct edits: move, offset (push-pull), replace and delete faces (healed over or left open), the solid rebuilt around them |
+| `ops/geop-ops-edit` | delete a body, extract a face, project a sketch onto a face; direct edits: move, offset (push-pull), replace and delete faces (healed over or left open), the solid rebuilt around them; faces on one surface merged |
 | `ops/geop-ops-assembly` | placing parts, mates and joints, part patterns, the joints panel, the drag tool, the settler, STL and URDF export |
 | `ops/geop-ops-harness` | wire harnesses routed through connectors and clips |
 | `ops/geop-ops-step` | STEP import and export, assemblies as products and occurrences |

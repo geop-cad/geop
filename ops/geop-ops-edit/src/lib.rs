@@ -25,8 +25,8 @@ mod stress_tests;
 
 pub use delete::{DeleteBody, DeleteBodyArgs};
 pub use direct::{
-    DeleteFace, DeleteFaceArgs, HealGap, MoveFace, MoveFaceArgs, OffsetFace, OffsetFaceArgs,
-    ReplaceFace, ReplaceFaceArgs,
+    DeleteFace, DeleteFaceArgs, HealGap, MergeFaces, MergeFacesArgs, MoveFace, MoveFaceArgs,
+    OffsetFace, OffsetFaceArgs, ReplaceFace, ReplaceFaceArgs,
 };
 pub use extract::{ExtractFace, ExtractFaceArgs};
 pub use project::{ProjectCurve, ProjectCurveArgs};
@@ -44,5 +44,6 @@ pub fn register(r: Registry) -> GeopResult<Registry> {
         .operation(MoveFace)?
         .operation(OffsetFace)?
         .operation(ReplaceFace)?
-        .operation(DeleteFace)
+        .operation(DeleteFace)?
+        .operation(MergeFaces)
 }
