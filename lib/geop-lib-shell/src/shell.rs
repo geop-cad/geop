@@ -41,6 +41,18 @@
 //! end where it was, each of its edges a free edge of the face kept there,
 //! with an end face along it as a sheet's border has ([`smoothly_open`]).
 //!
+//! **An opening at an inward corner.** A face taken away that meets a
+//! face kept at an inward corner — a pocket's floor, a step, the face a
+//! boss stands on — has an inner copy that reaches past it: the wall kept
+//! there is thickened away from it and stands on its surface beyond its
+//! edge. What is left on that surface is then the face less its copy (the
+//! rim, facing as the face) and the copy less the face (the underside of
+//! the wall, facing the other way): the hollow's section by the surface.
+//! That is what the solid less its inner side, closed into a solid of its
+//! own, comes to, and a boolean finds it, the face and its copy lying on
+//! one surface as faces of a union often do. The walls' names there are
+//! the boolean's.
+//!
 //! **The result.** The faces kept, their inner copies turned around, and
 //! the rims, as one solid. Without an opening, the inner side is a void of
 //! its own: a second shell.
@@ -53,11 +65,9 @@
 //! The inner side alone is the sheet offset ([`offset_faces`]).
 //!
 //! What it does not do (yet): take away a face tangent to faces kept along
-//! some of its edges and not others, take away a face that meets one kept
-//! at an inward corner — a pocket's floor, a step, the face a boss stands
-//! on: the wall kept there is thickened away from the face, so the inner
-//! copy reaches past it and the opening is no longer the face less its
-//! inner copy — or open a solid that already has a void. Walls so thick
+//! some of its edges and not others, open the walls grown outward where a
+//! face taken away meets one kept at an inward corner, or open a solid
+//! that already has a void. Walls so thick
 //! that an inner edge turns around or shrinks to a point, or that an edge
 //! of the result crosses one of its faces, are refused; two faces crossing
 //! along a curve no edge reaches are not noticed.
@@ -83,7 +93,8 @@ use geop_core_topology::{
     contains::face::{PointClassification, pcurves_contain},
     validation::{ValidationParameters, body_crossing},
 };
-use geop_ops_model::{BodyNames, NamedModel, Namer};
+use geop_lib_booleans::{RemeshParams, boolean};
+use geop_ops_model::{BodyNames, BooleanOp, NamedModel, Namer};
 
 use crate::rebuild::{along, rebuilt, room, smooth_along};
 
@@ -152,14 +163,6 @@ pub fn shell(
     }
     let names = part.source_names(&sources).with_context(ctx)?;
     let removed: Vec<bool> = sources.faces.iter().map(|f| open.contains(f)).collect();
-    if let Some((f, g, e)) = inward_corner(&spec, &removed).with_context(ctx)? {
-        return Err(GeopError::new(format!(
-            "face {} is taken away where it meets face {} at an inward corner, along edge {}: its opening would reach past it, which is not supported",
-            names.faces[f], names.faces[g], names.edges[e]
-        )))
-        .with_context(ctx);
-    }
-
     if let Some((f, _)) = thicker.iter().find(|(f, _)| !faces.contains(f)) {
         return Err(GeopError::new(format!(
             "face {f} is not a face of the solid being shelled"
@@ -177,7 +180,18 @@ pub fn shell(
             )
         })
         .collect();
+    let corner = inward_corner(&spec, &removed).with_context(ctx)?;
+    if let Some((f, g, e)) = corner.filter(|_| outward) {
+        return Err(GeopError::new(format!(
+            "face {} is taken away where it meets face {} at an inward corner, along edge {}, and the walls grow outward: not supported",
+            names.faces[f], names.faces[g], names.edges[e]
+        )))
+        .with_context(ctx);
+    }
     let hollow = Hollow::new(&spec, &names, removed, &thickness).with_context(ctx)?;
+    if corner.is_some() {
+        return hollow.subtracted(part, namer, solid).with_context(ctx);
+    }
     let (mut result, result_names) = hollow.result(namer).with_context(ctx)?;
     if outward {
         // The faces turned inside out face the void they bound now, and
@@ -1040,6 +1054,37 @@ impl<'a> Hollow<'a> {
             vec![outer_faces, inner_faces]
         };
         Ok((out, names))
+    }
+
+    /// The solid `solid` of `part`, this hollow's, less its inner side
+    /// closed into a solid: the walls, open where faces are taken away, as
+    /// a boolean finds them (see the module docs). The inner side's faces
+    /// are named as [`Self::inner_side`] names them, the rest as the
+    /// boolean names what is left of the solid's.
+    fn subtracted(
+        &self,
+        part: &mut NamedModel,
+        namer: &Namer,
+        solid: SolidId,
+    ) -> GeopResult<SolidId> {
+        let (mut inner, mut names) = self.inner_side(namer)?;
+        inner.solid = true;
+        names.solid = Some(namer.name(&["inner"]));
+        let inner = part
+            .build_body(inner, names)
+            .map_err(|e| e.with_context("closing the inner side into a solid"))?
+            .solid
+            .ok_or_else(|| GeopError::new("the inner side closes into no solid"))?;
+        boolean(
+            part,
+            namer,
+            solid,
+            inner,
+            BooleanOp::Difference,
+            RemeshParams::default(),
+        )
+        .map_err(|e| e.with_context("the solid less its inner side"))?
+        .ok_or_else(|| GeopError::new("the walls leave nothing of the solid"))
     }
 
     /// The inner side alone, as a sheet of its own: the inner copy of every

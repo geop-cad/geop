@@ -507,13 +507,6 @@ fn a_free_form_sheet_thickened() {
 /// hollow is the block shrunk by 0.1 less the notch grown by 0.1 along its
 /// walls, so the walls hold 3.75 − (1.8 · 1.8 · 0.8 − 1 · 0.5 · 0.4).
 #[test]
-#[ignore = "inward-corner openings are not supported: `inward_corner` refuses (face \
-cube(n,start) taken away where it meets face cube(n,c0) at an inward corner). The fix: the \
-removed face F's inner copy F' reaches past F under the kept walls, so F's surface keeps \
-F minus F' (the rim, facing as F) and F' minus F (the walls' ends, facing the other way). \
-Needs crossings of F's result edges with its copy's (curve_curve_intersect, refined), those \
-edges split in every face of the result, the pieces classified by pcurves_contain at their \
-pcurve's middle, and both loop sets built on F's surface. Not started in code."]
 fn a_notch_opened_at_its_ceiling() {
     let mut part = NamedModel::new();
     let body = geop_lib_sweep::shapes::block(&mut part, "b", [0., 0., 0.], [2., 2., 1.]);
@@ -545,6 +538,50 @@ fn a_notch_opened_at_its_ceiling() {
     assert_valid(&part);
     let volume = part.topology().mass_properties(shelled).unwrap().volume;
     let walls = 3.75 - (1.8 * 1.8 * 0.8 - 1.0 * 0.5 * 0.4);
+    assert!(
+        volume.could_be_equal(Scalar::from_f64(walls)),
+        "{volume:?} vs {walls}"
+    );
+}
+
+/// A step: a 2 x 1 x 1 block with a 1 x 1 x 1 block on its right half,
+/// opened at the lower top and shelled 0.1 thick. The riser meets the lower
+/// top at an inward corner, and the riser's wall stands on the lower top's
+/// plane past its edge: underneath it, facing down into the hollow, a strip
+/// 0.1 wide of that plane is left. The hollow is the step shrunk by 0.1,
+/// the lower top kept where it was: 1.8 · 0.8 · 0.9 + 0.8 · 0.8 · 0.9.
+#[test]
+fn a_step_opened_at_its_lower_top() {
+    let mut part = NamedModel::new();
+    let low = geop_lib_sweep::shapes::block(&mut part, "l", [0., 0., 0.], [2., 1., 1.]);
+    let high = geop_lib_sweep::shapes::block(&mut part, "h", [1., 0., 1.], [2., 1., 2.]);
+    let namer = Namer::new("step", "s").unwrap();
+    let solid = boolean(
+        &mut part,
+        &namer,
+        low,
+        high,
+        BooleanOp::Union,
+        RemeshParams::default(),
+    )
+    .unwrap()
+    .expect("a step");
+    assert_valid(&part);
+    let lower_top: Vec<FaceId> = faces_at_height(&part, solid, 1.);
+    assert_eq!(lower_top.len(), 1, "{lower_top:?}");
+    let namer = Namer::new("shell", "s").unwrap();
+    let shelled = shell(
+        &mut part,
+        &namer,
+        solid,
+        &lower_top,
+        Scalar::from_f64(0.1),
+        &[],
+    )
+    .unwrap_or_else(|e| panic!("{e:?}"));
+    assert_valid(&part);
+    let volume = part.topology().mass_properties(shelled).unwrap().volume;
+    let walls = 3. - (1.8 * 0.8 * 0.9 + 0.8 * 0.8 * 0.9);
     assert!(
         volume.could_be_equal(Scalar::from_f64(walls)),
         "{volume:?} vs {walls}"
