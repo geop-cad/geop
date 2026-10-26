@@ -151,35 +151,82 @@ fn post_under_bar() -> (Program, Vec<String>) {
 
 /// The drawer handle's joint rounded by 1.5: the fillet's contact on the
 /// bar's underside is a circle of radius 4.5, which runs off the bar
-/// (half-width 4) on both sides. Its contact checked only halfway along
-/// each arc, it built an invalid solid (edges at `y = 4.11`, outside the
-/// bar, between the blend faces and the bar's sides). Checked whole, the
-/// contact circle crosses the bar's side edges: refused.
-/// With a radius of 1 (contact exactly on the bar's edge) or 0.5 the
-/// fillet builds valid.
+/// (half-width 4) on both sides, over its convex side edges: a cliff. Its
+/// contact checked only halfway along each arc, it built an invalid solid
+/// (edges at `y = 4.11`, outside the bar). Checked whole, the contact
+/// crosses the bar's side edges, and the fill is cut off flush with the
+/// bar's sides, carried on below them: filled under the bar, not past it.
+/// (Merging the fill's edge in the side's plane, a U from one crossing to
+/// the other, with the bar's straight edge between the same two vertices
+/// put the U's coedges on the line: two edges sharing their vertices are
+/// now one only where one's middle lies on the other.)
 #[test]
-fn fillet_of_a_post_joint_whose_contact_runs_off_the_bar_is_refused() {
-    let (mut program, arcs) = post_under_bar();
-    program.push("round", FilletArgs::constant(arcs, 1.5));
-    let Err(error) = program.build_model(registry) else {
-        panic!("a fillet running off the bar is not refused");
-    };
-    let error = format!("{error:?}");
-    assert!(error.contains("the blend is too large for its faces"), "{error}");
-}
-
-/// What a designer expects of
-/// [`fillet_of_a_post_joint_whose_contact_runs_off_the_bar_is_refused`]:
-/// the ball rolled off the bar's underside over its convex side edges — a
-/// "cliff" rollover — the tool running on past the underside into the air
-/// and cut off by the bar's sides carried on, so that it cuts nothing of
-/// them.
-#[test]
-#[ignore = "missing: rolling over a crease of the opposite bend (a cliff); the fillet is refused (see fillet_of_a_post_joint_whose_contact_runs_off_the_bar_is_refused)"]
 fn fillet_of_a_post_joint_whose_contact_runs_off_the_bar() {
     let (mut program, arcs) = post_under_bar();
     program.push("round", FilletArgs::constant(arcs, 1.5));
-    assert_builds_valid(&program);
+    let part = program.build_model(registry).unwrap();
+    assert_valid(&part);
+    let at = |p| where_in(&part, "fillet(round)", p);
+    // Under the bar, between the post and the contact circle: filled.
+    assert_eq!(at([0.0, 3.6, 19.8]), PointClassification::Inside);
+    assert_eq!(at([3.6, 0.0, 19.8]), PointClassification::Inside);
+    // Past the bar's side, where the fill would have run on: not.
+    assert_eq!(at([0.0, 4.05, 19.99]), PointClassification::Outside);
+    assert_eq!(at([0.0, -4.05, 19.99]), PointClassification::Outside);
+}
+
+/// A block with a rib standing on its top at one end, set back from the
+/// front edge: the front top edge rounded so large that its contact on the
+/// top runs under the rib, across its foot — a wall, the edge between them
+/// concave: the round crashes into it. It is cut off flush with the rib's
+/// side, so that it cuts nothing of the rib.
+#[test]
+fn fillet_whose_contact_runs_into_a_rib() {
+    let mut program = Program::new();
+    program.push(
+        "base",
+        PrimitiveArgs::block([0.0, 0.0, 0.0], [10.0, 10.0, 5.0]),
+    );
+    program.push(
+        "rib",
+        PrimitiveArgs::block([8.0, 0.5, 5.0], [10.0, 10.0, 8.0]).join("block(base)"),
+    );
+    let part = rounded_where(program, |m| near(m[1], 0.0) && near(m[2], 5.0), 1.0, true);
+    let at = |p| where_in(&part, "fillet(round)", p);
+    assert_eq!(at([4.0, 0.05, 4.95]), PointClassification::Outside);
+    assert_eq!(at([4.0, 0.5, 4.5]), PointClassification::Inside);
+    // In the rib, just above its foot by the edge: not cut into.
+    assert_eq!(at([9.0, 0.7, 5.1]), PointClassification::Inside);
+}
+
+/// A block with a rib standing on its top, set back from the front edge
+/// and running across it: the front top edge rounded so large that its
+/// contact on the top runs under the rib, across its foot and on past it
+/// back onto the top. Cut off by the rib's sides, the round would be cut
+/// away on the rib's far side too: refused, naming the rib's side.
+#[test]
+fn fillet_whose_contact_runs_under_a_rib_and_out_again_is_refused() {
+    let mut program = Program::new();
+    program.push(
+        "base",
+        PrimitiveArgs::block([0.0, 0.0, 0.0], [10.0, 10.0, 5.0]),
+    );
+    program.push(
+        "rib",
+        PrimitiveArgs::block([4.0, 0.5, 5.0], [5.0, 10.0, 8.0]).join("block(base)"),
+    );
+    let before = program.build_model(registry).unwrap();
+    let edge = edges_with_middle(&before, |m| near(m[1], 0.0) && near(m[2], 5.0));
+    assert_eq!(edge.len(), 1, "{edge:?}");
+    program.push("round", FilletArgs::constant(edge, 1.0));
+    let Err(error) = program.build_model(registry) else {
+        panic!("a round running under a rib and out again is not refused");
+    };
+    let error = format!("{error:?}");
+    assert!(
+        error.contains("a blend is cut off only by a face its contact leaves for good"),
+        "{error}"
+    );
 }
 
 /// A thin plate with a hole (Fusion 360 "Bottle opener" and sheet-like

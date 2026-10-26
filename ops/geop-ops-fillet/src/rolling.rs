@@ -123,7 +123,7 @@ use geop_core_topology::{EdgeId, FaceId, Model, VertexId};
 use geop_lib_booleans::RemeshParams;
 use geop_ops_model::NamedModel;
 
-use crate::blend::{Bend, End, bend, check_contacts, run_out_length, tool_end};
+use crate::blend::{Bend, Crossing, End, bend, check_contacts, run_out_length, tool_end};
 use crate::tool::{Cap, Tool, ToolSpan, ToolStation, embed, flatten, flatten_point, wall_surface};
 use geop_ops_model::tangent::{Link, TangentChain as Chain};
 
@@ -705,7 +705,11 @@ fn carried_fraction(fraction: f64) -> f64 {
 /// past it (see [`carried_fraction`]), by how fast it runs there: where a
 /// face ending at `at` would go on — at its surface's side, or at a trim
 /// short of it.
-fn carried_on_past(surface: &NurbSurface3D, at: &Vector3, reach: f64) -> GeopResult<NurbSurface3D> {
+pub(crate) fn carried_on_past(
+    surface: &NurbSurface3D,
+    at: &Vector3,
+    reach: f64,
+) -> GeopResult<NurbSurface3D> {
     let Some((u, v)) = surface.locate(at, MAX_NODES, min_subdivision_size())? else {
         return Err(GeopError::new(format!(
             "the point {at:?} does not lie on the face's surface"
@@ -744,7 +748,11 @@ fn carried_on_past(surface: &NurbSurface3D, at: &Vector3, reach: f64) -> GeopRes
 /// meets the face it is cut off by, and only there — elsewhere the tool may
 /// run along the face (the blade's root fill, along the face it is cut off
 /// by at the trailing edge, beyond it).
-fn around(surface: &NurbSurface3D, at: &Vector3, reach: f64) -> GeopResult<NurbSurface3D> {
+pub(crate) fn around(
+    surface: &NurbSurface3D,
+    at: &Vector3,
+    reach: f64,
+) -> GeopResult<NurbSurface3D> {
     let Some((u, v)) = surface.locate(at, MAX_NODES, min_subdivision_size())? else {
         return Err(GeopError::new(format!(
             "the point {at:?} does not lie on the face's surface"
@@ -1885,6 +1893,21 @@ pub(crate) struct Rolled {
 }
 
 impl Rolled {
+    /// How wide its tool is, as a plain number: the farthest any of its
+    /// stations' vertices lies from another — how far the faces it is
+    /// cut off by are carried on (see [`crate::blend::cuts`]).
+    pub fn width(&self) -> f64 {
+        let mut widest = 0.0f64;
+        for station in &self.tool.stations {
+            for a in &station.vertices {
+                for b in &station.vertices {
+                    widest = widest.max(distance(a, b));
+                }
+            }
+        }
+        widest
+    }
+
     /// Whether the tool is built in halves: where its chain is open and
     /// starts and ends at one vertex, on its own (see [`halving`]) — a
     /// loop round a face with one corner, a lofted blade's tip round to
@@ -3015,7 +3038,7 @@ fn run_on(span: &mut ToolSpan, to: [Vector4; 4], at_end: bool) -> GeopResult<()>
 /// where it touches them (see [`check_contacts`]): the faces either side of
 /// its chain, rolled across at the edges between them, run on past at the
 /// chain's ends.
-pub(crate) fn check_touches(model: &Model, rolled: &Rolled) -> GeopResult<()> {
+pub(crate) fn check_touches(model: &Model, rolled: &Rolled) -> GeopResult<Vec<Crossing>> {
     let chain = &rolled.chain;
     let ends: Vec<VertexId> = match chain.closed {
         true => Vec::new(),

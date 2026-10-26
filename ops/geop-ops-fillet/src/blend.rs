@@ -53,6 +53,13 @@
 //! A blend has to meet both faces inside them — checked along the whole of
 //! where it touches them (see [`check_contacts`]) — so one too large for
 //! its faces, or running exactly along another of their edges, is refused.
+//! Where its contact runs off a face across an edge onto another face at a
+//! crease — over a cliff, a convex edge, or into a wall, a concave one —
+//! the tool is cut off by that face's surface carried on, the part beyond
+//! it dropped (see [`Cut`]): a round under a bar narrower than it ends
+//! flush with the bar's sides, one running into a rib flush with the rib.
+//! A contact that leaves its face that way and comes back to it further
+//! on is refused: the cut would drop the blend beyond too.
 //!
 //! Several edges are blended one after the other, every tool built from the
 //! solid as it was before the first. Where two blended edges meet at a
@@ -96,7 +103,7 @@ use geop_core_math::{
 use geop_core_topology::{
     Body, EdgeId, FaceId, Model, SolidId, VertexId,
     build::BodySpec,
-    contains::face::{PointClassification, face_contains},
+    contains::face::{PointClassification, face_contains, face_interior_point},
 };
 use geop_lib_booleans::{RemeshParams, boolean, split};
 use geop_lib_sweep::{SweepLoop, extrude, revolve};
@@ -726,7 +733,7 @@ fn check_touches(
     section: &Section,
     tool: &ToolProfile,
     blended: &[EdgeId],
-) -> GeopResult<()> {
+) -> GeopResult<Vec<Crossing>> {
     let mut contacts = Vec::new();
     let mut middles = Vec::new();
     let (sides, ends) = match &section.sweep {
@@ -802,25 +809,43 @@ fn check_touches(
     check_contacts(model, &sides, &contacts, &middles, &ends, blended)
 }
 
+/// Where a blend's contact runs off a face it touches, across one of the
+/// face's edges, onto the face `beyond` — at the points `at` — the unit
+/// direction `into` the face it runs off, square to the edge at the first,
+/// and `on`, points of the contact on its faces between crossings, which
+/// every cut has to keep.
+#[derive(Clone, Debug)]
+pub(crate) struct Crossing {
+    pub(crate) beyond: FaceId,
+    pub(crate) at: Vec<Vector3>,
+    pub(crate) into: Vector3,
+    pub(crate) on: Vec<Vector3>,
+}
+
 /// Checks a blend touching the faces `sides` — those on the left of its
 /// edges and those on their right — along the curves `contacts`, per
 /// piece of the blend its contacts on either side, meets them where they
 /// are: that each contact, the whole of it, crosses no edge of the faces
 /// on its side but those it is meant to — an edge between two of them,
 /// which it rolls across, the blend's own edges `own`, and an edge at one
-/// of its ends `ends`, past which it runs on or out. A blend too large for
-/// a face runs off it across another of its edges, and one running
-/// exactly along an edge asks the boolean to cut along it: both refused,
-/// naming the edge. (The question is about the curve, not a point of it: a
-/// contact circle running off a bar on both sides of the point halfway
-/// along it was let through when only that point was asked, and built an
-/// invalid solid.)
+/// of its ends `ends`, past which it runs on or out. (The question is
+/// about the curve, not a point of it: a contact circle running off a bar
+/// on both sides of the point halfway along it was let through when only
+/// that point was asked, and built an invalid solid.)
 ///
-/// A contact that crosses none of those edges lies on one side of them
-/// all, which one point of it decides: each of `middles`, per link of the
-/// blend a point of its contact on either side within it, has to lie on a
-/// face of its side — inside it, or on an edge it may meet. One wholly
-/// beyond its faces, too large for them, is refused.
+/// A contact that crosses another edge runs off its face onto the face
+/// beyond (a cliff where the edge is convex, a wall where it is concave):
+/// there the blend is cut off by that face's surface, the part on the far
+/// side of it dropped (see [`Cut`]). Those crossings, one per face beyond.
+/// A contact running exactly along an edge asks the boolean to cut along
+/// it, and one rolling onto a face tangent to its own is no crossing a
+/// cut makes: both refused, naming the edge.
+///
+/// A contact on one side that crosses none of those edges lies on one side
+/// of them all, which one point of it decides: each of `middles`, per link
+/// of the blend a point of its contact on either side within it, has to
+/// lie on a face of its side — inside it, or on an edge it may meet. One
+/// wholly beyond its faces, too large for them, is refused.
 pub(crate) fn check_contacts(
     model: &Model,
     sides: &[Vec<FaceId>; 2],
@@ -828,23 +853,13 @@ pub(crate) fn check_contacts(
     middles: &[[Vector3; 2]],
     ends: &[VertexId],
     own: &[EdgeId],
-) -> GeopResult<()> {
-    for points in middles {
-        for (k, p) in points.iter().enumerate() {
-            let mut on = false;
-            for &face in &sides[k] {
-                on |= on_face(model, face, p)?;
-            }
-            if !on {
-                return Err(GeopError::new(format!(
-                    "the blend is too large for its faces: where it touches faces {:?}, at {p:?}, it lies beyond them",
-                    sides[k]
-                )));
-            }
-        }
-    }
+) -> GeopResult<Vec<Crossing>> {
     let size = RemeshParams::default().curve_curve_min_subdivision_size;
+    let mut crossings: Vec<Crossing> = Vec::new();
+    // The points of the contacts on their faces between crossings.
+    let mut kept: Vec<Vector3> = Vec::new();
     for (k, faces) in sides.iter().enumerate() {
+        let crossed = crossings.len();
         // The edges the contact on this side must not cross.
         let mut fences: Vec<EdgeId> = Vec::new();
         for &face in faces {
@@ -861,28 +876,252 @@ pub(crate) fn check_contacts(
         }
         fences.sort_by_key(|e| e.0);
         for (piece, contact) in contacts.iter().enumerate() {
+            let mut params: Vec<Scalar> = Vec::new();
             for &edge in &fences {
                 let curve = &model.get_edge(edge)?.curve;
                 let ctx = with_context!(
                     "the blend's contact with the faces {faces:?} on side {k}, piece {piece}, against edge {edge}"
                 );
-                let hits = curve_curve_intersect(&contact[k], curve, 1, MAX_NODES, size)
-                    .with_context(ctx)?;
-                let what = match &hits {
-                    Intersections::Found(found) if found.is_empty() => continue,
-                    Intersections::Found(_) => "runs off the faces it touches across",
-                    Intersections::Coincident(_) => "runs exactly along",
+                let hits =
+                    curve_curve_intersect(&contact[k], curve, MOST_CROSSINGS, MAX_NODES, size)
+                        .with_context(ctx)?;
+                let mut at = Vec::new();
+                for &(t, _) in hits.as_slice() {
+                    at.push(contact[k].evaluate(t)?);
+                    params.push(t);
+                }
+                let found = match hits {
+                    Intersections::Found(found) => found,
+                    Intersections::Coincident(_) => {
+                        return Err(GeopError::new(format!(
+                            "the blend is too large for its faces: where it touches faces {faces:?} it runs exactly along edge {edge}, at {:?}",
+                            at.first()
+                        )));
+                    }
                 };
-                let at = (hits.into_vec().first())
-                    .map(|&(t, _)| contact[k].evaluate(t))
-                    .transpose()?;
+                if found.is_empty() {
+                    continue;
+                }
+                let crossing = crossing_at(model, faces, edge, at).with_context(ctx)?;
+                match crossings.iter_mut().find(|c| c.beyond == crossing.beyond) {
+                    Some(c) => c.at.extend(crossing.at),
+                    None => crossings.push(crossing),
+                }
+            }
+            if params.is_empty() {
+                continue;
+            }
+            // Between two crossings — or a crossing and an end — the
+            // contact lies on its faces or off them throughout, which its
+            // middle says: those on them, to be kept by every cut.
+            let (t0, t1) = contact[k].domain();
+            params.extend([t0, t1]);
+            params.sort_by(|a, b| a.midpoint().to_f64().total_cmp(&b.midpoint().to_f64()));
+            let mut on = Vec::new();
+            for pair in params.windows(2) {
+                let t = pair[0]
+                    .upper()
+                    .add(pair[1].lower())
+                    .div(Scalar::TWO)?
+                    .sharpen();
+                let p = contact[k].evaluate(t)?;
+                let mut lies = false;
+                for &face in faces {
+                    lies |= on_face(model, face, &p)?;
+                }
+                if lies {
+                    on.push(p);
+                }
+            }
+            kept.extend(on);
+        }
+        if crossings.len() > crossed {
+            continue;
+        }
+        for points in middles {
+            let p = &points[k];
+            let mut on = false;
+            for &face in faces {
+                on |= on_face(model, face, p)?;
+            }
+            if !on {
                 return Err(GeopError::new(format!(
-                    "the blend is too large for its faces: where it touches faces {faces:?} it {what} edge {edge}, at {at:?}"
+                    "the blend is too large for its faces: where it touches faces {faces:?}, at {p:?}, it lies beyond them"
                 )));
             }
         }
     }
-    Ok(())
+    for c in &mut crossings {
+        c.on = kept.clone();
+    }
+    Ok(crossings)
+}
+
+/// How many crossings of a contact with one edge are asked for at most:
+/// a contact runs off a face and back onto it at most this often across
+/// one edge — a free choice of how hard to look, enough for a circle
+/// crossing a straight edge, twice.
+const MOST_CROSSINGS: usize = 4;
+
+/// Where a contact on the faces `faces` crosses `edge`, at `at`: onto the
+/// face across it, and the way into the face it runs off. Refused where
+/// the edge bounds one face only, or the face across it is tangent to the
+/// one it runs off there (the ball would roll on onto it, which a cut does
+/// not make).
+fn crossing_at(
+    model: &Model,
+    faces: &[FaceId],
+    edge: EdgeId,
+    at: Vec<Vector3>,
+) -> GeopResult<Crossing> {
+    let Some(pair) = model.faces_of_edge(edge) else {
+        return Err(GeopError::new(format!(
+            "the blend's contact runs off its face across edge {edge}, which bounds one face only"
+        )));
+    };
+    // The face on the edge's left runs along it the way it runs.
+    let (from, beyond, way) = if faces.contains(&pair[0]) {
+        (pair[0], pair[1], Scalar::ONE)
+    } else {
+        (pair[1], pair[0], Scalar::ONE.neg())
+    };
+    let normal = |face: FaceId, p: &Vector3| -> GeopResult<Vector3> {
+        let surface = &model.get_face(face)?.surface;
+        surface.normal_at(p, MAX_NODES, min_subdivision_size())
+    };
+    for p in &at {
+        if normal(from, p)?.could_be_parallel(&normal(beyond, p)?) {
+            return Err(GeopError::new(format!(
+                "the blend's contact runs off face {from} across edge {edge}, at {p:?}, onto face {beyond}, which could be tangent to it there: a blend is cut off only by a face it meets at a crease"
+            )));
+        }
+    }
+    let curve = &model.get_edge(edge)?.curve;
+    let t = curve
+        .closest_parameter_from(&at[0], curve.mid_parameter()?)?
+        .sharpen();
+    let along = curve.tangent(t)?.prod_scalar(way);
+    let into = normal(from, &at[0])?
+        .normalize()?
+        .prod_cross(&along)
+        .normalize()?;
+    Ok(Crossing {
+        beyond,
+        at,
+        into,
+        on: Vec::new(),
+    })
+}
+
+/// A blend's tool cut off by the surface of a face it runs onto (see
+/// [`check_contacts`]): split along `sheet`, a piece of the surface
+/// carried on round where the contact crosses onto it, and every piece of
+/// it on the far side of `side`, the surface carried on, from `keep` —
+/// a point on the blend's own side — dropped.
+#[derive(Clone, Debug)]
+pub(crate) struct Cut {
+    sheet: NurbSurface3D,
+    side: NurbSurface3D,
+    keep: Vector3,
+}
+
+/// The cuts of a tool `reach` wide whose contacts make `crossings` (see
+/// [`check_contacts`]): each face crossed onto, its surface carried on
+/// past every crossing as far as the tool reaches, the blend kept on the
+/// side of it the face it runs off lies on — `reach` into it from the
+/// first crossing, a free choice: on a plane any distance is. Refused
+/// where a cut would drop part of the contact on its faces: a wall the
+/// contact runs across and back off (a rib standing on the face), whose
+/// sides would cut away the blend on its far side too.
+pub(crate) fn cuts(model: &Model, crossings: &[Crossing], reach: f64) -> GeopResult<Vec<Cut>> {
+    let mut cuts = Vec::new();
+    for crossing in crossings {
+        let ctx = with_context!("cutting the blend off by face {}", crossing.beyond);
+        let mut side = model.get_face(crossing.beyond)?.surface.clone();
+        for p in &crossing.at {
+            side = rolling::carried_on_past(&side, p, reach).with_context(ctx)?;
+        }
+        let first = crossing.at[0];
+        let spread = (crossing.at.iter())
+            .map(|p| p.sub(&first).norm().upper().to_f64())
+            .fold(0.0, f64::max);
+        let sheet = rolling::around(&side, &first, 2.0 * reach + spread).with_context(ctx)?;
+        let keep = first.add(&crossing.into.prod_scalar(Scalar::from_f64(reach)));
+        let keep_side = side_of(&side, &keep)?;
+        for p in &crossing.on {
+            if keep_side.is_none() || side_of(&side, p)? != keep_side {
+                return Err(GeopError::new(format!(
+                    "the blend's contact runs off its face onto face {} and on beyond it back onto its face, at {p:?}: a blend is cut off only by a face its contact leaves for good",
+                    crossing.beyond
+                )))
+                .with_context(ctx);
+            }
+        }
+        cuts.push(Cut { sheet, side, keep });
+    }
+    Ok(cuts)
+}
+
+/// Which side of `surface` the point `p` lies on, along the normal at its
+/// nearest point: `true` in front, `false` behind, none if it could lie on
+/// it.
+fn side_of(surface: &NurbSurface3D, p: &Vector3) -> GeopResult<Option<bool>> {
+    let (u, v, q) = surface.closest_point(p)?;
+    let off = p.sub(&q).prod_dot(&surface.normal(u, v)?);
+    Ok(if off.definitely_greater(Scalar::ZERO) {
+        Some(true)
+    } else if off.definitely_less(Scalar::ZERO) {
+        Some(false)
+    } else {
+        None
+    })
+}
+
+/// `tool` cut off as `cut` says, named by `namer` as a split names what it
+/// makes: the one piece left on the blend's side.
+fn cut_off(model: &mut NamedModel, namer: &Namer, tool: SolidId, cut: &Cut) -> GeopResult<SolidId> {
+    let keep = side_of(&cut.side, &cut.keep)?.ok_or_else(|| {
+        GeopError::new(format!(
+            "the blend's contact at {:?}, which says which side of the face it runs onto it is on, could lie on that face",
+            cut.keep
+        ))
+    })?;
+    let (pieces, sheet) = split_by_sheet(model, &namer.scoped("cut"), tool, &cut.sheet)?;
+    let mut kept = Vec::new();
+    let mut rest = vec![Body::Sheet(sheet)];
+    for piece in pieces {
+        // A point inside one of its faces, other than those the sheet cut,
+        // which lie on the surface: the piece lies on one side of the
+        // sheet, and any of its points off it says which.
+        let mut side = None;
+        let topology = model.topology();
+        for face in topology.solid_faces(piece)? {
+            let (u, v) =
+                face_interior_point(topology, face, MAX_NODES, min_subdivision_size(), SEED)?;
+            let p = topology.get_face(face)?.surface.evaluate(u, v)?;
+            if let Some(s) = side_of(&cut.side, &p)? {
+                side = Some(s);
+                break;
+            }
+        }
+        match side {
+            Some(s) if s == keep => kept.push(piece),
+            Some(_) => rest.push(Body::Solid(piece)),
+            None => {
+                return Err(GeopError::new(
+                    "a piece of the blend's tool cut off by a face it runs onto lies on that face throughout",
+                ));
+            }
+        }
+    }
+    let [piece] = kept[..] else {
+        return Err(GeopError::new(format!(
+            "the blend's tool cut off by a face it runs onto came apart in {} pieces on the blend's side, not one",
+            kept.len()
+        )));
+    };
+    model.delete_bodies(&rest)?;
+    Ok(piece)
 }
 
 /// Whether the point `p` lies on `face`: on its surface, inside its
@@ -1545,6 +1784,8 @@ pub fn blend(
     let mut solid: Option<SolidId> = None;
     let mut covered: Vec<EdgeId> = Vec::new();
     let mut plans: Vec<(Plan, ToolProfile)> = Vec::new();
+    // Per tool, the faces it runs onto and is cut off by.
+    let mut plan_cuts: Vec<Vec<Cut>> = Vec::new();
     let mut chains: Vec<(String, Chain)> = Vec::new();
     for name in edges {
         let ctx = with_context!("edge {name:?}");
@@ -1572,8 +1813,10 @@ pub fn blend(
         match planned {
             Planned::Swept(plan, blended) => {
                 let profile = tool_profile(&plan.section, shape).with_context(ctx)?;
-                check_touches(model.topology(), &plan.section, &profile, &blended)
+                let crossings = check_touches(model.topology(), &plan.section, &profile, &blended)
                     .with_context(ctx)?;
+                let width = 2.0 * reach(&profile.control, &plan.section.corner);
+                plan_cuts.push(cuts(model.topology(), &crossings, width).with_context(ctx)?);
                 covered.extend(blended);
                 plans.push((plan, profile));
             }
@@ -1663,6 +1906,7 @@ pub fn blend(
     }
 
     let mut rolled: Vec<(String, Rolled)> = Vec::new();
+    let mut rolled_cuts: Vec<Vec<Cut>> = Vec::new();
     for ((name, chain), ends) in chains.into_iter().zip(corners.chains) {
         let ctx = with_context!("edge {name:?}");
         let ends_of: Vec<VertexId> = match chain.closed {
@@ -1675,9 +1919,11 @@ pub fn blend(
         }
         .map_err(|e| e.with_context(corners_at(model, &ends_of)))
         .with_context(ctx)?;
-        rolling::check_touches(model.topology(), &r).with_context(ctx)?;
+        let crossings = rolling::check_touches(model.topology(), &r).with_context(ctx)?;
+        rolled_cuts.push(cuts(model.topology(), &crossings, 2.0 * r.width()).with_context(ctx)?);
         rolled.push((name, r));
     }
+    let all_cuts: Vec<Vec<Cut>> = plan_cuts.into_iter().chain(rolled_cuts).collect();
     let tools = Tools {
         plans: &plans,
         rolled: &rolled,
@@ -1718,6 +1964,9 @@ pub fn blend(
                     tool = trimmed(model, &scope, tool, surface, &station.vertices[2])
                         .with_context(ctx)?;
                 }
+                for cut in &all_cuts[component[0]] {
+                    tool = cut_off(model, &scope, tool, cut).with_context(ctx)?;
+                }
                 target = apply_tool(model, &scope, target, tool, rolled.bend).with_context(ctx)?;
             }
             continue;
@@ -1744,6 +1993,13 @@ pub fn blend(
                     .with_context(with_context!("the tool of edge {:?}", tools.edge(i)))?;
             }
         }
+        // Each tool cut off by the faces it runs onto.
+        for &i in &component {
+            for cut in &all_cuts[i] {
+                tool = cut_off(model, &scope, tool, cut)
+                    .with_context(with_context!("the tool of edge {:?}", tools.edge(i)))?;
+            }
+        }
         let bend = tools.bend(component[0]);
         target = apply_tool(model, &scope, target, tool, bend).with_context(ctx)?;
     }
@@ -1761,20 +2017,7 @@ fn trimmed(
     surface: &NurbSurface3D,
     past: &Vector3,
 ) -> GeopResult<SolidId> {
-    let namer = namer.scoped("trim");
-    let spec = BodySpec::sheet_on(surface.clone())?;
-    let names = BodyNames {
-        vertices: (0..4).map(|k| namer.name(&[&format!("v{k}")])).collect(),
-        edges: (0..4).map(|k| namer.name(&[&format!("e{k}")])).collect(),
-        faces: vec![namer.name(&["sheet"])],
-        solid: None,
-    };
-    let built = model.build_body(spec, names)?;
-    let sheet = *built
-        .shells
-        .first()
-        .ok_or_else(|| GeopError::new("a sheet came out as no shell"))?;
-    let pieces = split(model, &namer, tool, sheet, RemeshParams::default())?;
+    let (pieces, sheet) = split_by_sheet(model, &namer.scoped("trim"), tool, surface)?;
     let mut dropped = false;
     let mut kept = Vec::new();
     let mut rest = vec![Body::Sheet(sheet)];
@@ -1813,6 +2056,30 @@ fn trimmed(
     };
     model.delete_bodies(&rest)?;
     Ok(piece)
+}
+
+/// `tool` split along a sheet on `surface`, named by `namer` as a split
+/// names what it makes: the pieces, and the sheet.
+fn split_by_sheet(
+    model: &mut NamedModel,
+    namer: &Namer,
+    tool: SolidId,
+    surface: &NurbSurface3D,
+) -> GeopResult<(Vec<SolidId>, geop_core_topology::ShellId)> {
+    let spec = BodySpec::sheet_on(surface.clone())?;
+    let names = BodyNames {
+        vertices: (0..4).map(|k| namer.name(&[&format!("v{k}")])).collect(),
+        edges: (0..4).map(|k| namer.name(&[&format!("e{k}")])).collect(),
+        faces: vec![namer.name(&["sheet"])],
+        solid: None,
+    };
+    let built = model.build_body(spec, names)?;
+    let sheet = *built
+        .shells
+        .first()
+        .ok_or_else(|| GeopError::new("a sheet came out as no shell"))?;
+    let pieces = split(model, namer, tool, sheet, RemeshParams::default())?;
+    Ok((pieces, sheet))
 }
 
 /// Every tool of a blend: the swept ones' plans, the rolled ones — by index
