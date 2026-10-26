@@ -100,6 +100,15 @@ fn keeps(op: BooleanOp, class: FaceClassification, from_a: bool) -> Keep {
         (BooleanOp::Difference, Outside | OnOppositeNormal) if from_a => Keep::AsIs,
         (BooleanOp::Difference, Inside) if !from_a => Keep::Reversed,
         (BooleanOp::Difference, Inside | Outside | OnSameNormal | OnOppositeNormal) => Keep::Drop,
+
+        // Symmetric difference: (a - b) and (b - a), each bounded by its
+        // own faces outside the other and the other's faces inside it,
+        // turned around. Where the two lie along each other, the material
+        // is on one side of both (in both, so in neither piece) or on
+        // either side (in one each, so inside the result): no boundary.
+        (BooleanOp::SymmetricDifference, Outside) => Keep::AsIs,
+        (BooleanOp::SymmetricDifference, Inside) => Keep::Reversed,
+        (BooleanOp::SymmetricDifference, OnSameNormal | OnOppositeNormal) => Keep::Drop,
     }
 }
 
@@ -317,6 +326,11 @@ fn combine(
             BooleanOp::Union => (false, !alone),
             BooleanOp::Difference => (true, true),
             BooleanOp::Intersection => (true, false),
+            BooleanOp::SymmetricDifference => {
+                return Err(ctx(GeopError::new(
+                    "up to next: a symmetric difference keeps every piece of the tool, so it reaches no next face; use a blind extent",
+                )));
+            }
         };
         let reached = match reach_up_to_next(
             topology,
@@ -981,6 +995,7 @@ mod tests {
                 BooleanOp::Union => in_a || in_b,
                 BooleanOp::Intersection => in_a && in_b,
                 BooleanOp::Difference => in_a && !in_b,
+                BooleanOp::SymmetricDifference => in_a != in_b,
             };
             let actual = match result {
                 Some(solid) => match strictly_inside(s.model.topology(), solid, p) {
@@ -1046,6 +1061,20 @@ mod tests {
     fn union_matches_point_membership() {
         for (i, name) in MEMBERSHIP_SCENES.iter().enumerate() {
             check_boolean_matches_point_membership(name, BooleanOp::Union, 0xB001 + i as u64);
+        }
+    }
+
+    /// What is in one solid but not the other: the drilled box's material
+    /// outside the cylinder and the cylinder's outside the box, as one solid
+    /// whose two pieces meet along the rims.
+    #[test]
+    fn symmetric_difference_matches_point_membership() {
+        for (i, name) in MEMBERSHIP_SCENES.iter().enumerate() {
+            check_boolean_matches_point_membership(
+                name,
+                BooleanOp::SymmetricDifference,
+                0xB201 + i as u64,
+            );
         }
     }
 

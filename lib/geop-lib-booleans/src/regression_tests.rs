@@ -59,8 +59,8 @@ fn volume(model: &NamedModel, solid: SolidId) -> Scalar {
 /// which no edge of either solid pierces, so no piercing starts a trace of
 /// it. Every boolean of the two has to cut both faces along the oval.
 /// Checked by validity and by the volumes: the union and the intersection
-/// together hold both solids, and the difference is the block less the
-/// intersection.
+/// together hold both solids, the difference is the block less the
+/// intersection, and the symmetric difference the union less it.
 #[test]
 fn dome_poking_through_a_plate() {
     let build = || {
@@ -76,6 +76,7 @@ fn dome_poking_through_a_plate() {
         BooleanOp::Union,
         BooleanOp::Intersection,
         BooleanOp::Difference,
+        BooleanOp::SymmetricDifference,
     ] {
         let (mut model, dome, plate) = build();
         let namer = Namer::new("boolean", "b").unwrap();
@@ -87,9 +88,13 @@ fn dome_poking_through_a_plate() {
         }
         volumes.push(volume(&model, result));
     }
-    let [union, intersection, difference] = volumes[..] else {
+    let [union, intersection, difference, symmetric] = volumes[..] else {
         unreachable!()
     };
+    assert!(
+        symmetric.add(intersection).could_be_equal(union),
+        "{symmetric:?} + {intersection:?} vs {union:?}"
+    );
     assert!(
         union.add(intersection).could_be_equal(v_dome.add(v_plate)),
         "{union:?} + {intersection:?} vs {v_dome:?} + {v_plate:?}"
