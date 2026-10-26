@@ -264,6 +264,7 @@ pub fn revolve_at_oriented(
             profile: closed,
             poles,
             on_axis,
+            apex: false,
         }
     };
     // A full turn runs along its stations' `e1 x e2`, so it takes the
@@ -475,6 +476,7 @@ mod tests {
             profile,
             poles: vec![on, false, false, on],
             on_axis: vec![false, false, false, on],
+            apex: false,
         }
     }
 
@@ -608,6 +610,7 @@ mod tests {
                 on_axis: vec![false],
                 poles,
                 profile,
+                apex: false,
             };
             let built = revolve(&mut model, &namer, None, &z_axes(), 0.0, 360.0, &[lp]).unwrap();
             model.check_names().unwrap();

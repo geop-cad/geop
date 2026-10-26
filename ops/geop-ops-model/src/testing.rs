@@ -11,7 +11,7 @@ use geop_core_editor::editor::Editor;
 use geop_core_math::{
     geop_error::{GeopError, GeopResult},
     scalars::Scalar,
-    vector::Vector3,
+    vector::{Vector2, Vector3},
 };
 use geop_core_program::{
     operation::Operation, operation_registry::OperationRegistry, part::Part, program::Program,
@@ -23,9 +23,7 @@ use geop_core_rasterize::{
 };
 use geop_core_topology::{
     Body, Edge, FaceId, Model, SolidId,
-    boundary::BoundaryType,
     contains::shell::{PointClassification, shell_contains},
-    uv_loop::sample_loop_to_polygon,
     validation::{ValidationParameters, validate, validate_manifold},
 };
 
@@ -48,8 +46,23 @@ fn check(model: &Model, manifold: bool) -> Result<(), Vec<GeopError>> {
 /// The report of `errors`: how many, and each one's root message, a line
 /// each.
 fn report(errors: &[GeopError]) -> String {
-    let all: Vec<&str> = errors.iter().map(|e| e.root_message()).collect();
+    let all: Vec<String> = errors.iter().map(line).collect();
     format!("{} validation error(s):\n{}", all.len(), all.join("\n"))
+}
+
+/// One validation error on a line: its root message, and the context it
+/// was reported through, outermost first — which entities it is about.
+fn line(error: &GeopError) -> String {
+    let mut contexts = Vec::new();
+    let mut at = error;
+    while let GeopError::Context { inner, message } = at {
+        contexts.push(message.as_str());
+        at = inner;
+    }
+    match contexts.is_empty() {
+        true => error.root_message().to_string(),
+        false => format!("{} ({})", error.root_message(), contexts.join("; ")),
+    }
 }
 
 /// Checks `model` is a valid manifold model, failing with every validation
@@ -127,26 +140,16 @@ pub fn assert_draws_its_trims(part: &NamedModel) {
     const N: usize = 24;
     let model = part.topology();
     for (&id, face) in &model.faces {
-        let enclosed: f64 = face
-            .boundaries()
-            .filter_map(|b| match b {
-                BoundaryType::Loop(anchor) => Some(anchor),
-                BoundaryType::Vertex(_) => None,
-            })
-            .map(|anchor| {
-                let polygon: Vec<[f64; 2]> = sample_loop_to_polygon(model, anchor, N)
-                    .unwrap()
-                    .iter()
-                    .map(|p| [p[0].to_f64(), p[1].to_f64()])
-                    .collect();
-                area2(&polygon) / 2.0
-            })
+        let (triangles, trims) = face_triangles_uv(model, face, N).unwrap();
+        let plain = |p: &Vector2| [p[0].to_f64(), p[1].to_f64()];
+        let enclosed: f64 = trims
+            .iter()
+            .map(|polygon| area2(&polygon.iter().map(plain).collect::<Vec<_>>()) / 2.0)
             .sum::<f64>()
             .abs();
-        let covered: f64 = face_triangles_uv(model, face, N)
-            .unwrap()
+        let covered: f64 = triangles
             .iter()
-            .map(|(a, b, c)| area2(&[a, b, c].map(|p| [p[0].to_f64(), p[1].to_f64()])).abs() / 2.0)
+            .map(|(a, b, c)| area2(&[a, b, c].map(plain)).abs() / 2.0)
             .sum();
         assert!(
             (covered - enclosed).abs() <= 1e-9 * enclosed.max(1e-9),

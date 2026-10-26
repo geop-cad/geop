@@ -97,6 +97,7 @@ fn walls() -> Program {
             sketch: whole_sketch("outline"),
             extent: Extents::blind(1.0),
             output: Output::Faces { up_to: None },
+            draft: 0.0,
         },
     );
     program
@@ -120,6 +121,7 @@ fn extruded_faces_knit_into_a_box() {
                 named("boundary(top)"),
             ],
             solid: true,
+            gap: 0.0,
         },
     );
     let part = program.build_model(registry).unwrap();
@@ -142,6 +144,7 @@ fn open_box_thickened_into_a_cover() {
         KnitArgs {
             faces: vec![named(&wall), named("boundary(top)")],
             solid: false,
+            gap: 0.0,
         },
     );
     program.push(
@@ -204,6 +207,7 @@ fn lofted_faces_knit_into_a_solid() {
         KnitArgs {
             faces: vec![named(wall), named("boundary(base)"), named("boundary(lid)")],
             solid: true,
+            gap: 0.0,
         },
     );
     let part = program.build_model(registry).unwrap();

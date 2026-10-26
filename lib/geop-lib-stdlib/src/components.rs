@@ -254,6 +254,7 @@ pub fn nema17(file: &'static str) -> GeopResult<StandardPart> {
                     ..Extents::blind(4.5)
                 },
                 output: Output::Solid(Combine::cut(target)),
+                draft: 0.0,
             },
         );
         target = format!("extrude({id})");
@@ -565,6 +566,7 @@ fn servo(
                         ..Extents::blind(4.0 * tab)
                     },
                     output: Output::Solid(Combine::cut(target)),
+                    draft: 0.0,
                 },
             );
             target = format!("extrude({id})");

@@ -1,4 +1,7 @@
-use geop_core_geometry::intersection::{curve_curve_intersect, refine_curve_curve_crossing};
+use geop_core_geometry::{
+    contains::curve::curve_could_contain,
+    intersection::{curve_curve_intersect, refine_curve_curve_crossing},
+};
 use geop_core_math::{
     geop_error::{GeopError, GeopResult, WithContext},
     scalars::Scalar,
@@ -103,18 +106,34 @@ fn find_edge_edge_action(
             let (start_a, end_a) = (ea.start_vertex, ea.end_vertex);
             let (start_b, end_b) = (eb.start_vertex, eb.end_vertex);
 
-            if start_a == start_b && end_a == end_b {
+            // Two edges between the same two vertices are one only where
+            // they run along each other: a fill cut off flush by a plane
+            // left a U-shaped edge in it between the two ends of a straight
+            // one, and merging the two put the U's coedges on the line. No
+            // edge crosses another between its vertices any more, so one
+            // point of the one, its middle, says whether all of it lies on
+            // the other.
+            let shared = (
+                start_a == start_b && end_a == end_b,
+                start_a == end_b && end_a == start_b,
+            );
+            if (shared.0 || shared.1)
+                && curve_could_contain(
+                    &ea.curve,
+                    &eb.curve
+                        .evaluate(eb.curve.mid_parameter()?)
+                        .with_context(&ctx)?,
+                    params.max_nodes,
+                    params.curve_curve_min_subdivision_size,
+                )
+                .with_context(&ctx)
+                .with_context(&edge_ctx)?
+                .is_some()
+            {
                 return Ok(Some(EdgeEdgeAction::Merge {
                     edge_into: edge_a,
                     edge_deleted: edge_b,
-                    reversed: false,
-                }));
-            }
-            if start_a == end_b && end_a == start_b {
-                return Ok(Some(EdgeEdgeAction::Merge {
-                    edge_into: edge_a,
-                    edge_deleted: edge_b,
-                    reversed: true,
+                    reversed: shared.1 && !shared.0,
                 }));
             }
 

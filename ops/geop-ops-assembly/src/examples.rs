@@ -89,6 +89,7 @@ pub fn pin() -> Program {
             sketch: whole_sketch("pin_sketch"),
             extent: Extents::blind(2.0),
             output: Output::Solid(Combine::NewBody),
+            draft: 0.0,
         },
     );
     program
@@ -177,6 +178,7 @@ pub fn bar(length: f64) -> Program {
             sketch: whole_sketch("link_sketch"),
             extent: Extents::blind(0.2),
             output: Output::Solid(Combine::NewBody),
+            draft: 0.0,
         },
     );
     program
@@ -454,6 +456,7 @@ pub fn metric_plate() -> Program {
             sketch: whole_sketch("outline"),
             extent: Extents::blind(5.0),
             output: Output::Solid(Combine::NewBody),
+            draft: 0.0,
         },
     );
     program.push("hole_sketch", hole.on(outline_plane()));
@@ -466,6 +469,7 @@ pub fn metric_plate() -> Program {
                 ..Extents::blind(0.0)
             },
             output: Output::Solid(Combine::cut("extrude(plate)")),
+            draft: 0.0,
         },
     );
     program

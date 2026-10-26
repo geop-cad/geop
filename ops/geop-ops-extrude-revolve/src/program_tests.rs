@@ -328,6 +328,67 @@ fn loft_a_square_to_a_circle() {
     assert!(part.face_id("loft(transition,end)").is_ok());
 }
 
+/// A square below, a sketch of a single point above it: the loft comes to
+/// the point, a pyramid of four walls and a cap, its apex named after the
+/// point's sketch. A point between two profiles is refused.
+#[test]
+fn loft_a_square_to_a_point_is_a_pyramid() {
+    let mut program = Program::new();
+    program.push(
+        "bottom",
+        AddSketchArgs::on(on_origin(FrameAxis::Z), square(1.0)),
+    );
+    lifted(&mut program, "top_plane", 3.0);
+    let mut tip = Sketch::new();
+    tip.add_point(n(0.25), n(0.0));
+    program.push("tip", AddSketchArgs::on(on_datum("top_plane"), tip));
+    program.push("spire", lofted(&["bottom", "tip"]));
+    let part = program.build_model(registry).unwrap();
+    assert_valid(&part);
+    assert_eq!(part.topology().faces.len(), 4 + 1);
+    assert!(part.vertex_id("loft(spire,tip)").is_ok());
+    let solid = part.solid_id("loft(spire)").unwrap();
+    let volume = part.topology().mass_properties(solid).unwrap().volume;
+    assert!((volume.to_f64() - 4.0).abs() < 1e-9, "{volume:?}");
+
+    program.push(
+        "upper",
+        AddSketchArgs::on(on_datum("top_plane"), square(0.5)),
+    );
+    program.push("through", lofted(&["bottom", "tip", "upper"]));
+    let Err(error) = program.build_model(registry) else {
+        panic!("lofted through a point");
+    };
+    assert!(
+        error.root_message().contains("only at its start or end"),
+        "{error:?}"
+    );
+}
+
+/// Four circles round the `z` axis, lofted through and back to the first:
+/// the loft closes on itself, a ring with no caps.
+#[test]
+fn loft_back_to_its_first_profile_closes_into_a_ring() {
+    let mut program = Program::new();
+    for k in 0..4 {
+        let a = PI / 2.0 * k as f64;
+        let (c, s) = (a.cos(), a.sin());
+        program.push(
+            format!("p{k}"),
+            GivenDatumArgs::plane([2.0 * c, 2.0 * s, 0.0], [-s, c, 0.0]),
+        );
+        program.push(
+            format!("s{k}"),
+            AddSketchArgs::on(on_datum(&format!("p{k}")), disc([0.0, 0.0], 0.3)),
+        );
+    }
+    program.push("ring", lofted(&["s0", "s1", "s2", "s3", "s0"]));
+    let part = program.build_model(registry).unwrap();
+    assert_valid(&part);
+    assert_eq!(part.topology().faces.len(), 4 * 4);
+    assert!(part.face_id("loft(ring,start)").is_err());
+}
+
 /// Through three profiles — a square, a circle, a smaller square — and
 /// cut out of a block: a loft as a tool.
 #[test]
@@ -1288,6 +1349,36 @@ fn revolve_touching_an_outside_axis_fails() {
     assert!(error.root_message().contains("touches"), "{error:?}");
 }
 
+/// An arc tangent to its axis touches it at a point inside the curve, not
+/// at a joint: revolved, the wall would come to a pole no joint stands for.
+/// It is refused, naming the curve.
+#[test]
+fn revolve_arc_tangent_to_its_axis_is_refused_by_name() {
+    let mut s = Sketch::new();
+    let a0 = s.add_point(n(0.0), n(-2.0));
+    let a1 = s.add_point(n(0.0), n(2.0));
+    let axis = s.add_line(a0, a1);
+    s.set_construction(axis, true);
+    // From 100 degrees round to 230 on the unit circle about (1, 0), past
+    // 180, where it touches the axis, and back along the chord.
+    let at = |deg: f64| (1.0 + deg.to_radians().cos(), deg.to_radians().sin());
+    let (x0, y0) = at(100.0);
+    let (x1, y1) = at(230.0);
+    let start = s.add_point(n(x0), n(y0));
+    let end = s.add_point(n(x1), n(y1));
+    let circle = s.add_arc(start, end, n(130f64.to_radians()));
+    s.add_line(end, start);
+    let Err(error) = revolved_on_zx(s, RevolveAxis::Sketch(sketch_element("profile", axis))) else {
+        panic!("revolved");
+    };
+    let message = error.root_message();
+    assert!(
+        message.contains("touches the revolve axis inside"),
+        "{error:?}"
+    );
+    assert!(message.contains(&format!("profile,{circle}")), "{error:?}");
+}
+
 /// An axis out of the sketch's plane is refused.
 #[test]
 fn revolve_around_an_axis_off_the_plane_fails() {
@@ -1552,11 +1643,11 @@ fn extrude_up_to_next() {
     // The post's foot on the sketch, its head on the block's bottom: none of
     // the tool past that is left.
     assert_eq!(heights(&joined), [0, 2000, 3000]);
-    // The block's six faces, the post's four walls and its foot — and the
-    // block's top face in two: the tool, built long enough to reach past
-    // the block, was imprinted on it where it came out again, and the
-    // pieces it leaves are not merged back.
-    assert_eq!(joined.topology().faces.len(), 6 + 4 + 1 + 1);
+    // The block's six faces, the post's four walls and its foot. The tool,
+    // built long enough to reach past the block, was imprinted on the
+    // block's top where it came out again; the pieces of that face it left
+    // are merged back into one.
+    assert_eq!(joined.topology().faces.len(), 6 + 4 + 1);
 
     let cut = on_block(0.0, 1.0, vec![up_to_next(Combine::cut(target()))]).unwrap();
     assert_valid(&cut);
@@ -1769,4 +1860,200 @@ fn runner_reports_the_failing_step() {
     let before = part.before("hole");
     let built = read_model(&before).unwrap();
     assert!(built.solid_id("extrude(box)").is_ok());
+}
+
+// ── drafted extrusions ──────────────────────────────────────────────────────
+
+/// The rectangle `[0, 4] x [0, 2]` with its corners rounded to `r`, each
+/// arc tangent to the lines either side; and the curves, the arcs at the
+/// odd places.
+fn rounded_rectangle(r: f64) -> (Sketch, Vec<geop_core_sketch::CurveId>) {
+    let mut s = Sketch::new();
+    let corners = [
+        [r, 0.0],
+        [4.0 - r, 0.0],
+        [4.0, r],
+        [4.0, 2.0 - r],
+        [4.0 - r, 2.0],
+        [r, 2.0],
+        [0.0, 2.0 - r],
+        [0.0, r],
+    ];
+    let p: Vec<PointId> = corners
+        .iter()
+        .map(|c| s.add_point(n(c[0]), n(c[1])))
+        .collect();
+    let curves: Vec<_> = (0..8)
+        .map(|k| {
+            let (a, b) = (p[k], p[(k + 1) % 8]);
+            if k % 2 == 0 {
+                s.add_line(a, b)
+            } else {
+                s.add_arc(a, b, n(PI / 2.0))
+            }
+        })
+        .collect();
+    for k in 0..8 {
+        s.constrain(Constraint::Tangent {
+            a: curves[k],
+            b: curves[(k + 1) % 8],
+        });
+    }
+    (s, curves)
+}
+
+/// `sketch` on the origin's xy plane extruded by `extent`, drafted by
+/// `draft` degrees, into a new body.
+fn drafted(sketch: Sketch, extent: Extents, draft: f64) -> GeopResult<NamedModel> {
+    let mut program = Program::new();
+    program.push(
+        "profile",
+        AddSketchArgs::on(on_origin(FrameAxis::Z), sketch),
+    );
+    program.push(
+        "e",
+        ExtrudeArgs {
+            draft,
+            ..extrusion("profile", extent, Combine::NewBody)
+        },
+    );
+    program.build_model(registry)
+}
+
+/// A square drafted by ten degrees narrows to its top by `tan(10°)` on
+/// every side: its walls are planes at the draft angle, ruled from each
+/// side to its offset.
+#[test]
+fn drafted_square_narrows_to_its_top() {
+    let part = drafted(
+        outline(&[[0.0, 0.0], [1.0, 0.0], [1.0, 1.0], [0.0, 1.0]]),
+        Extents::blind(1.0),
+        10.0,
+    )
+    .unwrap();
+    assert_valid(&part);
+    let topology = part.topology();
+    assert_eq!(topology.faces.len(), 6);
+    let inset = 10f64.to_radians().tan();
+    let mut top = 0;
+    for v in topology.vertices.values() {
+        if v.point[2].could_be_equal(Scalar::ONE) {
+            top += 1;
+            for k in 0..2 {
+                let x = v.point[k];
+                assert!(
+                    x.could_be_equal(Scalar::from_f64(inset))
+                        || x.could_be_equal(Scalar::from_f64(1.0 - inset)),
+                    "{:?}",
+                    v.point
+                );
+            }
+        }
+    }
+    assert_eq!(top, 4);
+    // A frustum of a pyramid: h / 3 (A + a + sqrt(A a)).
+    let a = (1.0 - 2.0 * inset).powi(2);
+    let expected = (1.0 + a + a.sqrt()) / 3.0;
+    assert_exact_volume(&part, expected);
+}
+
+/// A rounded plate with a round hole, drafted: the outline shrinks, the
+/// arcs into cones about their own centres, and the hole grows.
+#[test]
+fn drafted_rounded_plate_with_a_hole_is_valid() {
+    let (mut s, _) = rounded_rectangle(0.5);
+    let c = s.add_point(n(2.0), n(1.0));
+    s.add_circle(c, n(0.3));
+    let part = drafted(s, Extents::blind(1.0), 5.0).unwrap();
+    assert_valid(&part);
+    // The area at height `h`, inset by `d = h tan(5°)`: a quadratic in
+    // `h`, so Simpson's rule integrates it exactly.
+    let t = 5f64.to_radians().tan();
+    let area = |h: f64| {
+        let d = h * t;
+        (4.0 - 2.0 * d) * (2.0 - 2.0 * d) - (4.0 - PI) * (0.5 - d).powi(2) - PI * (0.3 + d).powi(2)
+    };
+    let expected = (area(0.0) + 4.0 * area(0.5) + area(1.0)) / 6.0;
+    assert_exact_volume(&part, expected);
+}
+
+/// A half disc drafted inwards: its arc meets its diameter at sharp
+/// corners, which move along a curve as the height grows — the offset
+/// circle and line meet at `x = ±sqrt((1 - d)² - d²)` — so the ruled walls
+/// between the profile and its offset are near the drafted cone and plane,
+/// not on them: each runs from a point of the arc to the point the same
+/// fraction along its offset, a chord inside the cone where the two arcs
+/// span different angles. Valid, and within half a percent of the drafted
+/// volume (0.3 % under it).
+#[test]
+fn drafted_half_disc_is_near_the_drafted_volume() {
+    let mut s = Sketch::new();
+    let a = s.add_point(n(-1.0), n(0.0));
+    let b = s.add_point(n(1.0), n(0.0));
+    s.add_line(a, b);
+    s.add_arc(b, a, n(PI));
+    let part = drafted(s, Extents::blind(1.0), 10.0).unwrap();
+    assert_valid(&part);
+    let t = 10f64.to_radians().tan();
+    let area = |h: f64| {
+        let (d, r) = (h * t, 1.0 - h * t);
+        r * r * (d / r).acos() - d * (r * r - d * d).sqrt()
+    };
+    // Simpson's rule, fine enough for the comparison below.
+    let k = 64;
+    let expected = (0..k)
+        .map(|i| {
+            let (h0, h1) = (i as f64 / k as f64, (i + 1) as f64 / k as f64);
+            (area(h0) + 4.0 * area((h0 + h1) / 2.0) + area(h1)) / (6.0 * k as f64)
+        })
+        .sum::<f64>();
+    let solid = part.solid_id("extrude(e)").unwrap();
+    let volume = part
+        .topology()
+        .mass_properties(solid)
+        .unwrap()
+        .volume
+        .to_f64();
+    assert!(
+        (volume - expected).abs() < 5e-3 * expected,
+        "{volume}, drafted {expected}"
+    );
+}
+
+/// Drafted both ways from the sketch's plane, the solid narrows away from
+/// it either way: a ridge of edges on the plane.
+#[test]
+fn drafted_symmetric_extrude_has_a_ridge_on_the_plane() {
+    let s = outline(&[[0.0, 0.0], [1.0, 0.0], [1.0, 1.0], [0.0, 1.0]]);
+    let part = drafted(s, both_ways(1.0), 10.0).unwrap();
+    assert_valid(&part);
+    let topology = part.topology();
+    assert_eq!(topology.faces.len(), 2 + 8);
+    assert_eq!(topology.vertices.len(), 12);
+}
+
+/// A rounded corner smaller than the draft's inset would shrink to a point
+/// and past it: refused, naming the arc.
+#[test]
+fn drafted_past_a_rounded_corner_is_refused_by_name() {
+    let (s, curves) = rounded_rectangle(0.1);
+    let Err(error) = drafted(s, Extents::blind(1.0), 30.0) else {
+        panic!("drafted");
+    };
+    assert!(
+        error.root_message().contains(&format!("{}", curves[1])),
+        "{error:?}"
+    );
+}
+
+/// Checks the drafted solid `extrude(e)` of `part` encloses `expected`, by
+/// its mass properties (integrated from its faces, not its mesh).
+#[track_caller]
+fn assert_exact_volume(part: &NamedModel, expected: f64) {
+    let solid = part.solid_id("extrude(e)").unwrap();
+    let volume = part.topology().mass_properties(solid).unwrap().volume;
+    assert!(
+        (volume.to_f64() - expected).abs() <= 1e-9 * expected,
+        "encloses {volume:?}, expected {expected}"
+    );
 }

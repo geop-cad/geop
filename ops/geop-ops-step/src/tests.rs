@@ -1473,3 +1473,101 @@ fn a_part_written_as_step_imports_back_to_as_many_solids() {
     assert_eq!(bytes.len(), 84 + 50 * triangles);
     assert!(triangles > 0);
 }
+
+/// One plane face of two squares side by side, both its bounds running
+/// counter-clockwise about its normal: two outer loops, as some systems
+/// write a face their kernel splits later.
+const TWO_SQUARES: &str = "
+#100=CARTESIAN_POINT('',(0.,0.,0.));
+#101=CARTESIAN_POINT('',(1.,0.,0.));
+#102=CARTESIAN_POINT('',(1.,1.,0.));
+#103=CARTESIAN_POINT('',(0.,1.,0.));
+#104=CARTESIAN_POINT('',(2.,0.,0.));
+#105=CARTESIAN_POINT('',(3.,0.,0.));
+#106=CARTESIAN_POINT('',(3.,1.,0.));
+#107=CARTESIAN_POINT('',(2.,1.,0.));
+#110=VERTEX_POINT('',#100);
+#111=VERTEX_POINT('',#101);
+#112=VERTEX_POINT('',#102);
+#113=VERTEX_POINT('',#103);
+#114=VERTEX_POINT('',#104);
+#115=VERTEX_POINT('',#105);
+#116=VERTEX_POINT('',#106);
+#117=VERTEX_POINT('',#107);
+#120=DIRECTION('',(1.,0.,0.));
+#121=DIRECTION('',(0.,1.,0.));
+#122=VECTOR('',#120,1.);
+#123=VECTOR('',#121,1.);
+#130=LINE('',#100,#122);
+#131=LINE('',#101,#123);
+#132=LINE('',#103,#122);
+#133=LINE('',#100,#123);
+#134=LINE('',#104,#122);
+#135=LINE('',#105,#123);
+#136=LINE('',#107,#122);
+#137=LINE('',#104,#123);
+#140=EDGE_CURVE('',#110,#111,#130,.T.);
+#141=EDGE_CURVE('',#111,#112,#131,.T.);
+#142=EDGE_CURVE('',#113,#112,#132,.T.);
+#143=EDGE_CURVE('',#110,#113,#133,.T.);
+#144=EDGE_CURVE('',#114,#115,#134,.T.);
+#145=EDGE_CURVE('',#115,#116,#135,.T.);
+#146=EDGE_CURVE('',#117,#116,#136,.T.);
+#147=EDGE_CURVE('',#114,#117,#137,.T.);
+#150=ORIENTED_EDGE('',*,*,#140,.T.);
+#151=ORIENTED_EDGE('',*,*,#141,.T.);
+#152=ORIENTED_EDGE('',*,*,#142,.F.);
+#153=ORIENTED_EDGE('',*,*,#143,.F.);
+#154=EDGE_LOOP('',(#150,#151,#152,#153));
+#155=FACE_BOUND('',#154,.T.);
+#160=ORIENTED_EDGE('',*,*,#144,.T.);
+#161=ORIENTED_EDGE('',*,*,#145,.T.);
+#162=ORIENTED_EDGE('',*,*,#146,.F.);
+#163=ORIENTED_EDGE('',*,*,#147,.F.);
+#164=EDGE_LOOP('',(#160,#161,#162,#163));
+#165=FACE_BOUND('',#164,.T.);
+#170=PLANE('',#8);
+#171=ADVANCED_FACE('pair',(#155,#165),#170,.T.);
+#172=OPEN_SHELL('',(#171));
+#999=SHELL_BASED_SURFACE_MODEL('',(#172));";
+
+/// A face with two outer loops is two faces: each loop round its own.
+#[test]
+fn a_face_of_two_outer_loops_is_two_faces() {
+    let part = import(&file(".MILLI.,.METRE.", TWO_SQUARES));
+    assert_eq!(counts(part.topology()), (2, 8, 8));
+}
+
+/// A cone written as its base disc and its side, the side bounded by the
+/// base circle alone: its apex is no vertex of the file, only where the
+/// side's surface comes to a point.
+const CONE_WITHOUT_APEX: &str = "
+#100=CARTESIAN_POINT('',(1.,0.,0.));
+#101=VERTEX_POINT('',#100);
+#102=CIRCLE('',#8,1.);
+#103=EDGE_CURVE('',#101,#101,#102,.T.);
+#104=ORIENTED_EDGE('',*,*,#103,.T.);
+#105=EDGE_LOOP('',(#104));
+#106=FACE_OUTER_BOUND('',#105,.T.);
+#107=PLANE('',#8);
+#108=ADVANCED_FACE('base',(#106),#107,.T.);
+#110=ORIENTED_EDGE('',*,*,#103,.F.);
+#111=EDGE_LOOP('',(#110));
+#112=FACE_OUTER_BOUND('',#111,.T.);
+#113=CONICAL_SURFACE('',#8,1.,0.7853981633974483);
+#114=ADVANCED_FACE('side',(#112),#113,.T.);
+#120=CLOSED_SHELL('',(#108,#114));
+#999=MANIFOLD_SOLID_BREP('cone',#120);";
+
+/// The cone's apex, where no loop of the file goes, is a vertex of the
+/// imported solid all the same, where the side's surface comes to a point:
+/// a valid cone of height 1 below its base.
+#[test]
+fn a_cone_without_its_apex_imports() {
+    let part = import(&file(".MILLI.,.METRE.", CONE_WITHOUT_APEX));
+    let (lo, hi) = bounds(part.topology());
+    assert!(
+        (lo[2] + 1.0).abs() < 1e-9 && hi[2].abs() < 1e-9,
+        "{lo:?} {hi:?}"
+    );
+}

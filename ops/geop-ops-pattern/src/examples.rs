@@ -46,6 +46,7 @@ pub fn patterned_plate() -> Program {
             sketch: whole_sketch("outline"),
             extent: Extents::blind(0.5),
             output: Output::Solid(Combine::NewBody),
+            draft: 0.0,
         },
     );
     let mut hole = Sketch::new();
@@ -59,6 +60,7 @@ pub fn patterned_plate() -> Program {
             sketch: whole_sketch("hole_sketch"),
             extent: through,
             output: Output::Solid(Combine::cut("extrude(plate)")),
+            draft: 0.0,
         },
     );
     program.push(

@@ -86,8 +86,9 @@
 //! Where every edge of a corner is filleted, it ends at the ball rounding
 //! the corner instead, set back from it (see [`crate::corner`]): its last
 //! station that ball's great arc, untilted, the corner's piece of the ball
-//! sharing it. Two blends meeting at an inward corner are only mitred
-//! between straight edges of constant radius. A chain that ends where it
+//! sharing it. Two blends meeting at an inward corner each end at the
+//! other's wall, and the corner is cut by both run on past it (see
+//! [`crate::blend`]). A chain that ends where it
 //! starts — round a face with one corner — has its tool's ends overlap
 //! there, and is built in halves (see [`Rolled::halves`]).
 //!
@@ -123,7 +124,7 @@ use geop_core_topology::{EdgeId, FaceId, Model, VertexId};
 use geop_lib_booleans::RemeshParams;
 use geop_ops_model::NamedModel;
 
-use crate::blend::{Bend, End, bend, check_touch_at, run_out_length, tool_end};
+use crate::blend::{Bend, Crossing, End, bend, check_contacts, run_out_length, tool_end};
 use crate::tool::{Cap, Tool, ToolSpan, ToolStation, embed, flatten, flatten_point, wall_surface};
 use geop_ops_model::tangent::{Link, TangentChain as Chain};
 
@@ -535,7 +536,7 @@ fn place(
     match best {
         Some((_, station)) => Ok(station),
         None => Err(GeopError::new(format!(
-            "the ball of radius {:?} touches no pair of the faces along the chain truly at {p:?}: it would touch a face beyond them, or none — each pair tried, and how far off its foot points it leaves the ball: {tried:?}",
+            "the blend may be too large for its faces: the ball of radius {:?} touches no pair of the faces along the chain truly at {p:?}, it would touch a face beyond them, or none — each pair tried, and how far off its foot points it leaves the ball: {tried:?}",
             sr.abs(),
         ))),
     }
@@ -701,10 +702,15 @@ fn carried_fraction(fraction: f64) -> f64 {
 }
 
 /// `surface` carried on ([`NurbSurface3D::extended`]) past every side of
-/// it the point `at` lies on, far enough to reach `reach` on past it (see
-/// [`carried_fraction`]), by how fast it runs there: where a face ending at
-/// `at` would go on.
-fn carried_on_past(surface: &NurbSurface3D, at: &Vector3, reach: f64) -> GeopResult<NurbSurface3D> {
+/// it nearer the point `at` than `reach`, far enough to reach `reach` on
+/// past it (see [`carried_fraction`]), by how fast it runs there: where a
+/// face ending at `at` would go on — at its surface's side, or at a trim
+/// short of it.
+pub(crate) fn carried_on_past(
+    surface: &NurbSurface3D,
+    at: &Vector3,
+    reach: f64,
+) -> GeopResult<NurbSurface3D> {
     let Some((u, v)) = surface.locate(at, MAX_NODES, min_subdivision_size())? else {
         return Err(GeopError::new(format!(
             "the point {at:?} does not lie on the face's surface"
@@ -725,8 +731,12 @@ fn carried_on_past(surface: &NurbSurface3D, at: &Vector3, reach: f64) -> GeopRes
         let by = width
             .mul(Scalar::from_f64(carried_fraction(fraction)))
             .sharpen();
+        // Every side nearer `at` than `reach`, at the speed there: the
+        // side `at` lies on, and one a face trimmed short of its surface's
+        // end has beyond its boundary — a free choice, only ever farther.
         for (at_end, side) in [(false, t0), (true, t1)] {
-            if t.could_be_equal(side) {
+            let gap = side.sub(t).abs().mul(speed.norm()).lower().to_f64();
+            if t.could_be_equal(side) || gap < reach {
                 carried = carried.extended(along_u, at_end, by)?;
             }
         }
@@ -739,7 +749,11 @@ fn carried_on_past(surface: &NurbSurface3D, at: &Vector3, reach: f64) -> GeopRes
 /// meets the face it is cut off by, and only there — elsewhere the tool may
 /// run along the face (the blade's root fill, along the face it is cut off
 /// by at the trailing edge, beyond it).
-fn around(surface: &NurbSurface3D, at: &Vector3, reach: f64) -> GeopResult<NurbSurface3D> {
+pub(crate) fn around(
+    surface: &NurbSurface3D,
+    at: &Vector3,
+    reach: f64,
+) -> GeopResult<NurbSurface3D> {
     let Some((u, v)) = surface.locate(at, MAX_NODES, min_subdivision_size())? else {
         return Err(GeopError::new(format!(
             "the point {at:?} does not lie on the face's surface"
@@ -1871,12 +1885,30 @@ pub(crate) struct Rolled {
     pub chain: Chain,
     pub bend: Bend,
     pub tool: Tool,
-    /// Per link, the ball at its middle: where it must touch its faces
-    /// inside them.
-    middles: Vec<Station>,
+    /// Per span of the tool, the curves enclosing where it touches the
+    /// faces on the chain's left and right (see [`check_touches`]).
+    contacts: Vec<[NurbCurve3D; 2]>,
+    /// Per link, where the ball nearest its middle touches the faces: a
+    /// point of each contact within the chain (see [`check_touches`]).
+    middles: Vec<[Vector3; 2]>,
 }
 
 impl Rolled {
+    /// How wide its tool is, as a plain number: the farthest any of its
+    /// stations' vertices lies from another — how far the faces it is
+    /// cut off by are carried on (see [`crate::blend::cuts`]).
+    pub fn width(&self) -> f64 {
+        let mut widest = 0.0f64;
+        for station in &self.tool.stations {
+            for a in &station.vertices {
+                for b in &station.vertices {
+                    widest = widest.max(distance(a, b));
+                }
+            }
+        }
+        widest
+    }
+
     /// Whether the tool is built in halves: where its chain is open and
     /// starts and ends at one vertex, on its own (see [`halving`]) — a
     /// loop round a face with one corner, a lofted blade's tip round to
@@ -2142,13 +2174,15 @@ type ChainEnd = (VertexId, End, Option<FaceId>, Vector3);
 
 /// How the tool of `chain`, bending `bend`, ends at the start and the end
 /// of it, if it is open (see [`tool_end`]) — as `meeting` says where it is
-/// joined to a corner's ball or mitred: decided before anything is rolled,
-/// so that an end that is not supported is refused by name.
+/// joined to a corner's ball, and run out through a wall where `run_out`
+/// says: decided before anything is rolled, so that an end that is not
+/// supported is refused by name.
 fn chain_ends(
     model: &Model,
     chain: &Chain,
     bend: Bend,
     meeting: [Option<End>; 2],
+    run_out: [bool; 2],
 ) -> GeopResult<Option<[ChainEnd; 2]>> {
     if chain.closed {
         return Ok(None);
@@ -2160,7 +2194,14 @@ fn chain_ends(
             continue;
         }
         let ctx = with_context!("the blend's end at vertex {vertex}");
-        let (kind, face) = tool_end(model, vertex, faces, &out, bend).with_context(ctx)?;
+        let (mut kind, face) = tool_end(model, vertex, faces, &out, bend).with_context(ctx)?;
+        // Run on out through a wall, as through a face it left the solid
+        // by: for what it cuts at an inward corner (see [`crate::blend`]).
+        if let (true, End::Wall { squareness, .. }) = (run_out[k], &kind) {
+            kind = End::RunOut {
+                squareness: squareness.neg(),
+            };
+        }
         ends.push((vertex, kind, Some(face), out));
     }
     let [a, b]: [ChainEnd; 2] = ends
@@ -2179,14 +2220,13 @@ pub(crate) struct ChainCorner {
 }
 
 /// Where the open `chain`'s blend runs into a wall at its start and its end
-/// (see [`End::Wall`]): the vertex, the unit direction from it back along
-/// the chain, and the faces either side there — for the mitres where two
-/// do at one vertex (see [`crate::blend`]).
+/// (see [`End::Wall`]): the vertex, and the faces either side there — for
+/// the inward corners where two do at one vertex (see [`crate::blend`]).
 #[allow(clippy::type_complexity)]
 pub(crate) fn chain_walls(
     model: &Model,
     chain: &Chain,
-) -> GeopResult<[Option<(VertexId, Vector3, [FaceId; 2])>; 2]> {
+) -> GeopResult<[Option<(VertexId, [FaceId; 2])>; 2]> {
     let mut walls = [None, None];
     if chain.closed {
         return Ok(walls);
@@ -2195,7 +2235,7 @@ pub(crate) fn chain_walls(
     for (k, (vertex, faces, out)) in chain.ends(model)?.into_iter().enumerate() {
         // An end that is not supported is refused when the chain is rolled.
         if let Ok((End::Wall { .. }, _)) = tool_end(model, vertex, faces, &out, bend) {
-            walls[k] = Some((vertex, out.neg(), faces));
+            walls[k] = Some((vertex, faces));
         }
     }
     Ok(walls)
@@ -2296,6 +2336,7 @@ pub(crate) fn plan_rolled(
     chain: Chain,
     radii: &Radii,
     corners: [Option<ChainCorner>; 2],
+    run_out: [bool; 2],
 ) -> GeopResult<Rolled> {
     let topology = model.topology();
     let mut law = RadiusLaw::new(model, &chain, radii)?;
@@ -2342,7 +2383,20 @@ pub(crate) fn plan_rolled(
             setback: Scalar::from_f64(position),
         });
     }
-    let decided_ends = chain_ends(topology, &chain, bend, meeting_ends)?;
+    // The balls rounding the corners at both ends meet the chain in order,
+    // or the blend between them has no length: a short edge between two
+    // rounded corners, the fillet too large for it.
+    if let [Some((start, _)), Some((end, _))] = &at_corners
+        && start >= end
+    {
+        let vertices = chain.vertices(topology)?;
+        return Err(GeopError::new(format!(
+            "the fillet is too large for the edge: the balls rounding the corners at its ends, vertices {} and {}, meet it at {start} and {end} along it (its vertices at whole positions), past each other",
+            vertices[0],
+            vertices.last().expect("vertices")
+        )));
+    }
+    let decided_ends = chain_ends(topology, &chain, bend, meeting_ends, run_out)?;
     let (run_on, trims) = run_ons(model, &chain, &law, side, &decided_ends)?;
     let halve = halving(topology, &chain, &corners)?;
     let (rolling, curves) = {
@@ -2446,7 +2500,10 @@ fn run_ons(
             face,
             match kind {
                 End::RunOut { .. } => false,
-                End::Flush { unless: Some(_) } | End::Wall { unless: Some(_) } => true,
+                End::Flush { unless: Some(_) }
+                | End::Wall {
+                    unless: Some(_), ..
+                } => true,
                 _ => continue,
             },
         ) else {
@@ -2486,16 +2543,18 @@ fn run_ons(
             .fold(0.0, f64::max);
         let mut length = run_out_length(width, &squareness).upper().to_f64();
         // Past a face it leaves nearly along, a blend would run on farther
-        // than its edge is long, and its faces be carried on as far.
-        let link = if k == 0 {
-            chain.first()?
-        } else {
-            chain.last()?
-        };
-        let (edge_length, _) = topology.get_edge(link.edge)?.curve.length()?;
-        if length > edge_length.lower().to_f64() {
+        // than its chain is long, and its faces be carried on as far. (Not
+        // the end link's edge alone: the arc of a pocket's rim cut short
+        // by a flat side is a piece shorter than a blend runs out past any
+        // face, and carried on, it goes on round the same circle.)
+        let mut chain_length = 0.0;
+        for link in &chain.links {
+            let (length, _) = topology.get_edge(link.edge)?.curve.length()?;
+            chain_length += length.lower().to_f64();
+        }
+        if length > chain_length {
             return Err(GeopError::new(format!(
-                "the edge crosses face {face} at vertex {vertex} so nearly along it (the way it runs on, dotted with the face's normal, is {squareness:?}) that the blend would run on {length} past it, farther than the edge is long: only an edge crossing the third face more squarely is blended there"
+                "the edge crosses face {face} at vertex {vertex} so nearly along it (the way it runs on, dotted with the face's normal, is {squareness:?}) that the blend would run on {length} past it, farther than the edges blended along with it are long: only an edge crossing the third face more squarely is blended there"
             )))
             .with_context(ctx);
         }
@@ -2536,7 +2595,7 @@ fn run_ons(
         if trimmed {
             let ctx = with_context!("carrying face {face} on past vertex {vertex}");
             let carried = carried_on_past(surface, &point, length).with_context(ctx)?;
-            trims[k] = Some(around(&carried, &point, 2.0 * length).with_context(ctx)?);
+            trims[k] = Some(around(&carried, &point, length).with_context(ctx)?);
         }
         run_on[k] = Some(found);
     }
@@ -2584,6 +2643,7 @@ pub(crate) fn plan_chamfer(
     model: &NamedModel,
     chain: Chain,
     distances: [f64; 2],
+    run_out: [bool; 2],
 ) -> GeopResult<Rolled> {
     if !distances.iter().all(|&d| d > 0.0) {
         return Err(GeopError::new(format!(
@@ -2592,7 +2652,7 @@ pub(crate) fn plan_chamfer(
     }
     let topology = model.topology();
     let bend = chain_bend(topology, &chain)?;
-    let decided_ends = chain_ends(topology, &chain, bend, [None, None])?;
+    let decided_ends = chain_ends(topology, &chain, bend, [None, None], run_out)?;
     let halve = halving(topology, &chain, &[None, None])?;
     let smallest = distances[0].min(distances[1]);
     let (rolling, curves) = {
@@ -2751,6 +2811,10 @@ fn assemble(
         c[0].widen(&pad);
         c[2].widen(&pad);
     }
+    let contacts = curves
+        .iter()
+        .map(|c| [c[0].clone(), c[2].clone()])
+        .collect();
 
     // Which way round the section runs: the blend's normal — along the
     // chain, crossed with the way from the first contact to the second —
@@ -2813,19 +2877,10 @@ fn assemble(
         {
             let station = if at_end { last_station } else { first };
             let ctx = with_context!("the blend's end at vertex {vertex}");
-            match &kind {
-                End::Corner { .. } => {
-                    // Joined to a corner's ball: open, its contacts the
-                    // corner's.
-                    continue;
-                }
-                End::Mitre { .. } => {
-                    return Err(GeopError::new(
-                        "a rolling-ball blend is only mitred between straight edges of constant radius",
-                    ))
-                    .with_context(ctx);
-                }
-                _ => {}
+            if let End::Corner { .. } = &kind {
+                // Joined to a corner's ball: open, its contacts the
+                // corner's.
+                continue;
             }
             let Some(face) = face else {
                 return Err(GeopError::new("the blend's end has no face to end at"))
@@ -2861,6 +2916,15 @@ fn assemble(
                     station.cap = Some(Cap { plane, flat });
                 }
                 End::RunOut { .. } => {
+                    // The station in the plane it crosses, exactly: where
+                    // along the edge it is is a free choice, and the ball's
+                    // center, sharpened, put it a rounding off the plane —
+                    // its contact a rounding off the corner of the face the
+                    // plane bounds, where a blend of that face's other edge
+                    // may already have put a vertex.
+                    let row = &mut stations[index];
+                    row.points = flat.map(|p| embed(&p, &plane));
+                    row.vertices = flat_vertices.map(|p| embed(&p, &plane).head::<3>());
                     // As far again as the tool is wide, out of the solid
                     // through the plane, as a straight blend runs out.
                     let width = [station.contact[0], station.contact[1], station.apex]
@@ -2908,7 +2972,7 @@ fn assemble(
                         stations.insert(0, far);
                     }
                 }
-                End::Mitre { .. } | End::Corner { .. } => {
+                End::Corner { .. } => {
                     unreachable!("met above")
                 }
             }
@@ -2934,7 +2998,7 @@ fn assemble(
                     d(a).total_cmp(&d(b))
                 })
                 .expect("positions");
-            rolling.stations[nearest].clone()
+            rolling.stations[nearest].contact
         })
         .collect();
     let closed = chain.closed;
@@ -2950,6 +3014,7 @@ fn assemble(
             sides: if swap { ["b", "a"] } else { ["a", "b"] },
             blend: if chord { "chamfer" } else { "fillet" },
         },
+        contacts,
         middles,
     })
 }
@@ -2998,21 +3063,22 @@ fn run_on(span: &mut ToolSpan, to: [Vector4; 4], at_end: bool) -> GeopResult<()>
     Ok(())
 }
 
-/// Checks the blend meets each face where the face is: the ball halfway
-/// along each edge of the chain touches its faces inside them. A blend too
-/// large for a face runs past its boundary, and one ending exactly on
-/// another of its edges asks the boolean to cut along that edge.
-pub(crate) fn check_touches(model: &Model, rolled: &Rolled) -> GeopResult<()> {
-    for station in &rolled.middles {
-        for k in 0..2 {
-            let face = station.faces[k];
-            let (u, v) = station.uv[k];
-            let ctx = with_context!(
-                "where the blend meets face {face}, at {:?}",
-                station.contact[k]
-            );
-            check_touch_at(model, face, u, v).with_context(ctx)?;
-        }
-    }
-    Ok(())
+/// Checks the blend meets the faces where they are, along the whole of
+/// where it touches them (see [`check_contacts`]): the faces either side of
+/// its chain, rolled across at the edges between them, run on past at the
+/// chain's ends.
+pub(crate) fn check_touches(model: &Model, rolled: &Rolled) -> GeopResult<Vec<Crossing>> {
+    let chain = &rolled.chain;
+    let ends: Vec<VertexId> = match chain.closed {
+        true => Vec::new(),
+        false => chain.ends(model)?.map(|(v, _, _)| v).to_vec(),
+    };
+    check_contacts(
+        model,
+        &sides(chain),
+        &rolled.contacts,
+        &rolled.middles,
+        &ends,
+        &chain.edges(),
+    )
 }

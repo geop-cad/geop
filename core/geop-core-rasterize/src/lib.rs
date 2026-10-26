@@ -3,18 +3,21 @@
 //! entity it came from — to draw it, pick in it, write it as STL ([`stl`]),
 //! or render it for debugging ([`debug`]).
 //!
-//! Every face — trimmed or not — has its outer boundary (and any holes)
-//! sampled from their pcurves into `(u, v)` polygons, then triangulated by
+//! Every edge is sampled once ([`sample_curve`]), and every face — trimmed
+//! or not — has its outer boundary (and any holes) made of those samples,
+//! placed in its `(u, v)` (see [`mesh::boundary`]), then triangulated by
 //! [`grid::triangulate_face`]: a curvature-sized `(u, v)` grid with every
 //! cell clipped exactly against the trim (see that module's doc comment),
 //! so a flat patch renders as a couple of triangles and a curved one gets
 //! whatever resolution its own curvature actually needs — mapped through
 //! `surface.evaluate`, the rendered mesh always both respects the face's
-//! real trim and follows its true curvature.
+//! real trim and follows its true curvature. The faces' meshes are then
+//! joined along their edges (see [`mesh`]): the mesh of a solid is closed.
 
 mod clip;
 pub mod debug;
 mod grid;
+mod mesh;
 pub mod stl;
 
 pub use grid::triangulate_polygon;
@@ -32,18 +35,85 @@ use geop_core_math::{
     solvers::refine::{Refine, Refined, refine},
     vector::{Vector2, Vector3},
 };
-use geop_core_topology::{EdgeId, Face, FaceId, Model, VertexId};
+use geop_core_topology::{
+    CoedgeGeometry, EdgeId, Face, FaceId, Model, VertexId, boundary::BoundaryType,
+};
 use grid::dist_point_to_segment;
 
 /// `face`'s trimmed region triangulated in `(u, v)` space, by a grid sized
 /// by the face's curvature and clipped to its trim (see
-/// [`grid::triangulate_face`]), each triangle by its corners.
-pub fn face_triangles_uv(model: &Model, face: &Face, n: usize) -> GeopResult<Vec<Triangle2>> {
+/// [`grid::triangulate_face`]), each triangle by its corners — and the
+/// trim it covers: its loops as the polygons of its edges' samples, the
+/// outer first.
+pub fn face_triangles_uv(
+    model: &Model,
+    face: &Face,
+    n: usize,
+) -> GeopResult<(Vec<Triangle2>, Vec<Vec<Vector2>>)> {
+    let mut edges = BTreeMap::new();
+    for anchor in loops(face) {
+        for c in model.iterate_loop_coedges(anchor) {
+            if let CoedgeGeometry::Edge(e) = model.get_coedge(c)?.geometry {
+                edges.insert(e, sample_edge(model, e, n)?);
+            }
+        }
+    }
     let mut samples = grid::Samples::new(face);
-    Ok(grid::triangulate_face(model, face, n, &mut samples)?
+    let (triangles, boundaries) = face_mesh(model, face, n, &edges, &mut samples)?;
+    let at = |p: &clip::Point| Vector2::from_array(p.map(Scalar::from_f64));
+    Ok((
+        triangles
+            .into_iter()
+            .map(|[a, b, c]| (samples.uv(a), samples.uv(b), samples.uv(c)))
+            .collect(),
+        boundaries
+            .iter()
+            .map(|b| b.uv.iter().map(at).collect())
+            .collect(),
+    ))
+}
+
+/// The anchors of `face`'s trim loops, the outer first.
+fn loops(face: &Face) -> Vec<geop_core_topology::CoedgeId> {
+    std::iter::once(&face.outer)
+        .chain(&face.holes)
+        .filter_map(|b| match b {
+            BoundaryType::Loop(anchor) => Some(*anchor),
+            BoundaryType::Vertex(_) => None,
+        })
+        .collect()
+}
+
+/// `face` triangulated in `(u, v)`, trimmed by the polylines `edges` its
+/// edges were sampled into: the triangles, and its trim loops.
+fn face_mesh(
+    model: &Model,
+    face: &Face,
+    n: usize,
+    edges: &BTreeMap<EdgeId, Vec<Vector3>>,
+    samples: &mut grid::Samples,
+) -> GeopResult<(Vec<[clip::Point; 3]>, Vec<mesh::Boundary>)> {
+    let BoundaryType::Loop(_) = face.outer else {
+        return Ok((Vec::new(), Vec::new()));
+    };
+    let boundaries = loops(face)
         .into_iter()
-        .map(|[a, b, c]| (samples.uv(a), samples.uv(b), samples.uv(c)))
-        .collect())
+        .map(|anchor| mesh::boundary(model, face, anchor, n, edges))
+        .collect::<GeopResult<Vec<_>>>()?;
+    let holes: Vec<Vec<clip::Point>> = boundaries[1..].iter().map(|b| b.uv.clone()).collect();
+    let triangles = grid::triangulate_face(&boundaries[0].uv, &holes, n, samples)?;
+    Ok((triangles, boundaries))
+}
+
+/// Edge `e` of `model` sampled (see [`sample_curve`]), its ends exactly
+/// its vertices' points: the polyline every face it bounds meets along.
+fn sample_edge(model: &Model, e: EdgeId, n: usize) -> GeopResult<Vec<Vector3>> {
+    let edge = model.get_edge(e)?;
+    let mut points = sample_curve(&edge.curve, n)?;
+    let last = points.len() - 1;
+    points[0] = model.get_vertex(edge.start_vertex)?.point;
+    points[last] = model.get_vertex(edge.end_vertex)?.point;
+    Ok(points)
 }
 
 /// A [`Model`] rasterized once, with every sampled point/polyline/triangle
@@ -142,29 +212,63 @@ pub fn rasterize(model: &Model, n: usize) -> GeopResult<RasterizedModel> {
         .collect();
 
     let mut edges = BTreeMap::new();
-    for (&id, edge) in model.edges.iter() {
-        edges.insert(id, sample_curve(&edge.curve, n)?);
+    for &id in model.edges.keys() {
+        edges.insert(id, sample_edge(model, id, n)?);
     }
+    let last: BTreeMap<EdgeId, usize> = edges.iter().map(|(&e, p)| (e, p.len() - 1)).collect();
+
+    // Every face meshed on its own, then all joined along their edges.
+    let mut ids = Vec::new();
+    let mut all_samples = Vec::new();
+    let mut all_boundaries = Vec::new();
+    let mut triangles = Vec::new();
+    for (&id, face) in model.faces.iter() {
+        let mut samples = grid::Samples::new(face);
+        let (tris, boundaries) = face_mesh(model, face, n, &edges, &mut samples)?;
+        ids.push(id);
+        all_samples.push(samples);
+        all_boundaries.push(boundaries);
+        triangles.push(tris);
+    }
+    let trims: Vec<mesh::Trim> = all_boundaries
+        .iter()
+        .map(|boundaries| mesh::Trim {
+            model,
+            boundaries,
+            last: &last,
+        })
+        .collect();
+    let mut meshes: Vec<mesh::Mesh> = triangles
+        .iter()
+        .zip(&trims)
+        .map(|(tris, trim)| mesh::Mesh::new(tris, trim))
+        .collect::<GeopResult<_>>()?;
+    mesh::zip(&mut meshes, &trims);
 
     let mut faces = BTreeMap::new();
-    for (&id, face) in model.faces.iter() {
+    for ((id, m), samples) in ids.into_iter().zip(&meshes).zip(&mut all_samples) {
+        let points = (0..m.uv.len())
+            .map(|i| match mesh::placed(model, m.on[i], &edges)? {
+                Some(p) => Ok(p),
+                None => samples.point(m.uv[i]),
+            })
+            .collect::<GeopResult<Vec<_>>>()?;
         let mut tris = Vec::new();
-        let mut samples = grid::Samples::new(face);
-        for [a, b, c] in grid::triangulate_face(model, face, n, &mut samples)? {
-            let Ok(t) =
-                TriangleFace::try_new(samples.point(a)?, samples.point(b)?, samples.point(c)?)
-            else {
+        for &[a, b, c] in &m.triangles {
+            // A triangle without area — three points along an edge — has
+            // no normal: it covers nothing, and the triangles beside it
+            // meet each other.
+            let Ok(t) = TriangleFace::try_new(points[a], points[b], points[c]) else {
                 continue;
             };
             // The surface's own normal at each corner, for smooth shading.
             // A corner where it does not exist leaves the whole triangle
             // flat.
-            tris.push(
-                match (samples.normal(a), samples.normal(b), samples.normal(c)) {
-                    (Some(na), Some(nb), Some(nc)) => t.with_vertex_normals([na, nb, nc]),
-                    _ => t,
-                },
-            );
+            let mut normal = |i: usize| samples.normal(m.uv[i]);
+            tris.push(match (normal(a), normal(b), normal(c)) {
+                (Some(na), Some(nb), Some(nc)) => t.with_vertex_normals([na, nb, nc]),
+                _ => t,
+            });
         }
         faces.insert(id, tris);
     }

@@ -54,7 +54,8 @@ fn face_name(part: &NamedModel, solid: &str, normal: [f64; 3]) -> String {
 /// kinds, so the shell has to offset the general (fitted) edge.
 ///
 /// Shelling a filleted body is the first thing every enclosure tutorial
-/// does.
+/// does. The shell now offsets every edge by the general rebuild, which
+/// traces it where the offsets of its faces meet.
 #[test]
 fn shell_of_a_block_with_a_rounded_upright_edge() {
     let mut program = Program::new();

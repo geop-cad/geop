@@ -194,14 +194,6 @@ pub fn meet(
             for (normal, p) in planes {
                 rows.push((*normal, normal.prod_dot(&seed.sub(p))));
             }
-            // The seed meets every condition as far as they say where: a
-            // further step would only add its width. On a fitted surface,
-            // as wide as the fit, the sharpened iterates never repeat bit
-            // for bit, and thirty steps' widths summed made a sheet's
-            // corner thirty times as wide as the surface.
-            if rows.iter().all(|(_, off)| off.could_be_equal(Scalar::ZERO)) {
-                return Ok(Step::Done);
-            }
             let step = shortest_solution(&rows).with_context(&|e: GeopError| {
                 let feet: Vec<Vec<(Scalar, Scalar)>> = offsets
                     .iter()

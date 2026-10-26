@@ -12,6 +12,7 @@ pub use fit::WidestBetween;
 mod helix;
 pub use helix::{Handedness, HelixRow, arc_span, cos_sin, helix_rows, sqrt2_over_2};
 mod interpolate;
+mod join;
 mod length;
 mod refine;
 pub(crate) use interpolate::solve_interpolation_system;

@@ -101,6 +101,7 @@ pub fn box_with_drill_hole() -> Program {
             sketch: whole_sketch("outline"),
             extent: Extents::blind(1.0),
             output: Output::Solid(Combine::NewBody),
+            draft: 0.0,
         },
     );
 
@@ -116,6 +117,7 @@ pub fn box_with_drill_hole() -> Program {
             sketch: whole_sketch("hole_sketch"),
             extent: Extents::blind(-0.5),
             output: Output::Solid(Combine::cut("extrude(box)")),
+            draft: 0.0,
         },
     );
     program
@@ -143,6 +145,7 @@ pub fn bracket() -> Program {
             sketch: whole_sketch("outline"),
             extent: Extents::blind(10.0),
             output: Output::Solid(Combine::NewBody),
+            draft: 0.0,
         },
     );
 
@@ -158,6 +161,7 @@ pub fn bracket() -> Program {
             sketch: whole_sketch("hole_sketch"),
             extent: Extents::blind(-10.0),
             output: Output::Solid(Combine::cut("extrude(block)")),
+            draft: 0.0,
         },
     );
     program
@@ -253,6 +257,7 @@ pub fn cross_drilled_shaft() -> Program {
                 reversed: false,
             },
             output: Output::Solid(Combine::cut("revolve(shaft)")),
+            draft: 0.0,
         },
     );
     program
@@ -317,6 +322,7 @@ pub fn handle_with_hole() -> Program {
             sketch: whole_sketch("outline"),
             extent: Extents::blind(1.0),
             output: Output::Solid(Combine::NewBody),
+            draft: 0.0,
         },
     );
 
@@ -338,6 +344,7 @@ pub fn handle_with_hole() -> Program {
                 reversed: false,
             },
             output: Output::Solid(Combine::cut("extrude(handle)")),
+            draft: 0.0,
         },
     );
     program
@@ -412,6 +419,7 @@ pub fn luggage_tag() -> Program {
                 reversed: false,
             },
             output: Output::Solid(Combine::NewBody),
+            draft: 0.0,
         },
     );
     program
@@ -455,6 +463,7 @@ pub fn revolved_cone_on_box() -> Program {
             sketch: whole_sketch("sketch1"),
             extent: Extents::blind(1.8900000000000001),
             output: Output::Solid(Combine::NewBody),
+            draft: 0.0,
         },
     );
 
@@ -554,6 +563,7 @@ pub fn parametric_plate() -> Program {
             sketch: whole_sketch("outline"),
             extent: Extents::blind("thickness"),
             output: Output::Solid(Combine::NewBody),
+            draft: 0.0,
         },
     );
 
@@ -597,6 +607,7 @@ pub fn parametric_plate() -> Program {
             sketch: whole_sketch("hole_sketch"),
             extent: Extents::blind(-0.3),
             output: Output::Solid(Combine::cut("extrude(plate)")),
+            draft: 0.0,
         },
     );
     program
@@ -786,6 +797,7 @@ pub fn motor_flange() -> Program {
             sketch: whole_sketch("outline"),
             extent: Extents::blind(2.5),
             output: Output::Solid(Combine::NewBody),
+            draft: 0.0,
         },
     );
     program

@@ -95,7 +95,7 @@ fn check_edges_of_body_disjoint(
             ) {
                 Ok(v) => v,
                 Err(e) => {
-                    errors.push(e.with_context(format!("edge {} x edge {}", ids[i].0, ids[j].0)));
+                    errors.push(e.with_context(format!("edge {} x edge {}", ids[i], ids[j])));
                     continue;
                 }
             };
@@ -112,8 +112,7 @@ fn check_edges_of_body_disjoint(
                 let point = match edge_a.curve.evaluate(t_a) {
                     Ok(p) => p,
                     Err(e) => {
-                        errors
-                            .push(e.with_context(format!("edge {} x edge {}", ids[i].0, ids[j].0)));
+                        errors.push(e.with_context(format!("edge {} x edge {}", ids[i], ids[j])));
                         continue;
                     }
                 };

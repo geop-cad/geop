@@ -932,6 +932,61 @@ fn dragged_points_snap_onto_points() {
     assert!(e.has(|c| matches!(c, Constraint::Midpoint { .. })));
 }
 
+/// A corner of a line and an arc — a D's flat side meeting its round one
+/// — is rounded as two lines' corner is: both cut back along them, the arc
+/// on its own circle, and an arc tangent to each between them, its radius
+/// a dimension asked for. Both of the D's corners rounded, it still bounds
+/// one region.
+#[test]
+fn fillets_round_corners_of_a_line_and_an_arc() {
+    let mut e = drawing();
+    e.lines(&[[0.0, 0.0], [2.0, 0.0]]);
+    e.act("tool", "arc");
+    e.click(2.0, 0.0);
+    e.click(0.0, 0.0);
+    e.click(1.0, 1.0);
+    e.key("Escape");
+    assert_eq!(e.curves_of("arc").len(), 1);
+    e.act("tool", "fillet");
+    e.click(2.0, 0.0);
+    assert_eq!(e.curves_of("arc").len(), 2);
+    assert_eq!(e.count(|c| matches!(c, Constraint::Tangent { .. })), 2);
+    assert!(e.presentation.prompt.is_some());
+    assert!(e.report().converged, "{:?}", e.report());
+    e.dialog("prompt", Value::Text("0.1".into()));
+    assert!(e.report().converged, "{:?}", e.report());
+    e.click(0.0, 0.0);
+    e.dialog("prompt", Value::Text("0.2".into()));
+    assert!(e.report().converged, "{:?}", e.report());
+    assert_eq!(e.count(|c| matches!(c, Constraint::Tangent { .. })), 4);
+    assert_eq!(e.sketch().regions().unwrap().len(), 1);
+}
+
+/// A corner of two arcs — a lens's — is rounded alike: both cut back on
+/// their own circles, a third tangent to both between them.
+#[test]
+fn fillets_round_corners_of_two_arcs() {
+    let mut e = drawing();
+    e.act("tool", "arc");
+    e.click(0.0, 0.0);
+    e.click(2.0, 0.0);
+    e.click(1.0, 0.5);
+    e.key("Escape");
+    e.act("tool", "arc");
+    e.click(2.0, 0.0);
+    e.click(0.0, 0.0);
+    e.click(1.0, -0.5);
+    e.key("Escape");
+    assert_eq!(e.curves_of("arc").len(), 2);
+    e.act("tool", "fillet");
+    e.click(2.0, 0.0);
+    assert_eq!(e.curves_of("arc").len(), 3);
+    assert_eq!(e.count(|c| matches!(c, Constraint::Tangent { .. })), 2);
+    e.dialog("prompt", Value::Text("0.05".into()));
+    assert!(e.report().converged, "{:?}", e.report());
+    assert_eq!(e.sketch().regions().unwrap().len(), 1);
+}
+
 /// A corner of two lines is rounded: both cut back, an arc tangent to
 /// each between them, its radius a dimension asked for.
 #[test]

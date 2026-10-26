@@ -13,8 +13,9 @@
 //! no reconstruction step that could get an edge wrong.
 //!
 //! Pipeline:
-//! 1. Sample the outer boundary and every hole (as before), and simplify
-//!    away redundant collinear points.
+//! 1. The outer boundary and every hole come as polygons: the samples of
+//!    the face's edges, shared with the faces across them (see
+//!    [`super::mesh`]).
 //! 2. Pick a uniform grid resolution: start from `n`, and keep doubling it
 //!    until every cell's flat approximation is within a curvature-derived
 //!    tolerance of the true surface (so a flat face stays coarse and a
@@ -66,7 +67,7 @@ use geop_core_math::{
     solvers::refine::{Refine, refine},
     vector::{Vector2, Vector3},
 };
-use geop_core_topology::{Face, Model, boundary::BoundaryType, uv_loop::sample_loop_to_polygon};
+use geop_core_topology::Face;
 
 use crate::clip::{Point, clip_to_rect, is_convex, subtract_convex};
 
@@ -95,19 +96,6 @@ pub(crate) fn dist_point_to_segment(p: [f64; 3], a: [f64; 3], b: [f64; 3]) -> f6
     };
     let closest = [a[0] + ab[0] * t, a[1] + ab[1] * t, a[2] + ab[2] * t];
     distance(p, closest)
-}
-
-fn dist_point_to_segment2(p: Point, a: Point, b: Point) -> f64 {
-    let ab = [b[0] - a[0], b[1] - a[1]];
-    let len2 = ab[0] * ab[0] + ab[1] * ab[1];
-    let ap = [p[0] - a[0], p[1] - a[1]];
-    let t = if len2 > 1e-18 {
-        ((ap[0] * ab[0] + ap[1] * ab[1]) / len2).clamp(0.0, 1.0)
-    } else {
-        0.0
-    };
-    let closest = [a[0] + ab[0] * t, a[1] + ab[1] * t];
-    ((p[0] - closest[0]).powi(2) + (p[1] - closest[1]).powi(2)).sqrt()
 }
 
 /// A face's `(u, v)` domain, in plain `f64`, and a clamp into it — see
@@ -205,37 +193,6 @@ impl<'a> Samples<'a> {
     }
 }
 
-/// Drop every polygon vertex that's collinear (within a tolerance relative
-/// to the local segment length) with its immediate neighbors — see
-/// `grid`'s use: `sample_loop_to_polygon` samples every loop at a fixed
-/// density so genuinely curved boundaries come through faithfully, but
-/// that leaves a dead-straight edge (most edges in this crate's test
-/// shapes) represented by dozens of exactly collinear points, which would
-/// otherwise bloat the boundary ring `clip` has to test every grid cell
-/// against for no benefit.
-fn simplify_polygon(poly: &[Vector2]) -> Vec<Vector2> {
-    let n = poly.len();
-    if n <= 3 {
-        return poly.to_vec();
-    }
-    let f64_pt = |p: Vector2| [p[0].to_f64(), p[1].to_f64()];
-    let keep: Vec<bool> = (0..n)
-        .map(|i| {
-            let prev = f64_pt(poly[(i + n - 1) % n]);
-            let cur = f64_pt(poly[i]);
-            let next = f64_pt(poly[(i + 1) % n]);
-            let seg_len = ((next[0] - prev[0]).powi(2) + (next[1] - prev[1]).powi(2)).sqrt();
-            seg_len < 1e-12 || dist_point_to_segment2(cur, prev, next) > seg_len * 1e-9
-        })
-        .collect();
-    let result: Vec<Vector2> = (0..n).filter(|&i| keep[i]).map(|i| poly[i]).collect();
-    if result.len() >= 3 {
-        result
-    } else {
-        poly.to_vec()
-    }
-}
-
 /// The worst deviation, over a `nu x nv` grid spanning `[min, max]`,
 /// between the surface's actual point at a cell edge's midpoint and the
 /// straight chord between its corners — reported per direction, since a
@@ -272,47 +229,21 @@ fn worst_grid_deviation(
     Ok(worst)
 }
 
-/// Triangulate `face`'s trimmed `(u, v)` region: a uniform grid (its
-/// resolution chosen from the face's own curvature — see the module doc
-/// comment), each cell clipped exactly against the trim boundary. The
+/// Triangulate the region of a face's `(u, v)` domain inside `outer` and
+/// outside every one of `holes` — its trim loops, as polygons: a uniform
+/// grid (its resolution chosen from the face's own curvature — see the
+/// module doc comment), each cell clipped exactly against the trim. The
 /// triangles' corners are in `(u, v)`, as `samples` takes them.
 pub(crate) fn triangulate_face(
-    model: &Model,
-    face: &Face,
+    outer: &[Point],
+    holes: &[Vec<Point>],
     n: usize,
     samples: &mut Samples,
 ) -> GeopResult<Vec<[Point; 3]>> {
-    let BoundaryType::Loop(outer_anchor) = face.outer else {
-        return Ok(Vec::new());
-    };
-    let outer = simplify_polygon(&sample_loop_to_polygon(model, outer_anchor, n.max(2))?);
-    let holes = face
-        .holes
-        .iter()
-        .filter_map(|b| match b {
-            BoundaryType::Loop(anchor) => Some(*anchor),
-            BoundaryType::Vertex(_) => None,
-        })
-        .map(|anchor| {
-            Ok(simplify_polygon(&sample_loop_to_polygon(
-                model,
-                anchor,
-                n.max(2),
-            )?))
-        })
-        .collect::<GeopResult<Vec<_>>>()?;
     if outer.len() < 3 {
         return Ok(Vec::new());
     }
-
-    let outer_f64: Vec<Point> = outer
-        .iter()
-        .map(|p| [p[0].to_f64(), p[1].to_f64()])
-        .collect();
-    let holes_f64: Vec<Vec<Point>> = holes
-        .iter()
-        .map(|h| h.iter().map(|p| [p[0].to_f64(), p[1].to_f64()]).collect())
-        .collect();
+    let (outer_f64, holes_f64) = (outer, holes);
 
     let Some((min, max)) = bounds(outer_f64.iter().copied()) else {
         return Ok(Vec::new());
@@ -357,7 +288,7 @@ pub(crate) fn triangulate_face(
     .either();
     let (nu, nv) = (cells[0], cells[1]);
 
-    Ok(triangulate_region(&outer_f64, &holes_f64, min, max, nu, nv))
+    Ok(triangulate_region(outer_f64, holes_f64, min, max, nu, nv))
 }
 
 /// The region inside the simple polygon `outer` and outside every one of
@@ -736,7 +667,7 @@ mod tests {
     fn flat_face_stays_coarse() {
         let topology = &test_cube_model();
         let face = topology.faces.values().next().unwrap();
-        let tris = crate::face_triangles_uv(topology, face, 32).unwrap();
+        let tris = crate::face_triangles_uv(topology, face, 32).unwrap().0;
         // Zero curvature never triggers a resolution doubling, so the grid
         // stays at the minimum whatever quality was asked for: a flat face
         // is approximated exactly by any grid, and its trim is clipped
@@ -753,7 +684,7 @@ mod tests {
     fn triangulation_covers_exact_area() {
         let topology = &test_cube_model();
         let face = topology.faces.values().next().unwrap();
-        let tris = crate::face_triangles_uv(topology, face, 8).unwrap();
+        let tris = crate::face_triangles_uv(topology, face, 8).unwrap().0;
         let total: f64 = tris.iter().map(|(a, b, c)| triangle_area(*a, *b, *c)).sum();
         assert!(
             (total - 1.0).abs() < 1e-6,

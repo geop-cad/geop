@@ -74,6 +74,7 @@ pub fn extrusion(sketch: &str, extent: Extents, combine: Combine) -> ExtrudeArgs
         sketch: whole_sketch(sketch),
         extent,
         output: Output::Solid(combine),
+        draft: 0.0,
     }
 }
 

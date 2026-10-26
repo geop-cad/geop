@@ -196,7 +196,12 @@ fn walls_too_thick_are_refused() {
     let (mut part, solid) = unit_box();
     let namer = Namer::new("shell", "s").unwrap();
     let error = shell(&mut part, &namer, solid, &[], Scalar::from_f64(0.6)).unwrap_err();
-    assert!(error.root_message().contains("too thick"), "{error:?}");
+    // An inner edge turns around, or shrinks to nothing.
+    let message = error.root_message();
+    assert!(
+        message.contains("turns around") || message.contains("shrinks"),
+        "{error:?}"
+    );
 }
 
 #[test]
@@ -210,11 +215,11 @@ fn a_sphere_closed_all_round() {
     assert!(corners(&part).contains(&[-500, 0, 0]));
     // Moved along curved faces, the vertices are still as sharp as the
     // rounding of a few steps, and of carrying the faces' arcs on past
-    // their ends for room (see `extended`).
+    // their ends for room, before the offset and after (see `room`).
     for vertex in part.topology().vertices.values() {
         for k in 0..3 {
             assert!(
-                vertex.point[k].width().to_f64() < 1e-8,
+                vertex.point[k].width().to_f64() < 1e-7,
                 "{:?}",
                 vertex.point
             );

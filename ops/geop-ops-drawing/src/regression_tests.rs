@@ -60,6 +60,7 @@ fn diameter_of_a_hole_extruded_through_all() {
                 ..Extents::blind(0.0)
             },
             output: Output::Solid(Combine::cut("block(plate)")),
+            draft: 0.0,
         },
     );
     let built = build(&program);

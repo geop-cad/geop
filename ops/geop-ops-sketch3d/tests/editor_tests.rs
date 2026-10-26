@@ -577,7 +577,12 @@ fn a_3d_sketch_picks_without_drawing_the_part_again() {
     let points: Vec<[f64; 3]> = (args.sketch.points.values())
         .map(|p| p.at.to_array().map(|c| c.to_f64()))
         .collect();
-    assert_eq!(points, [[0.5, 0.5, 1.0]]);
+    // Where the click meets the face as drawn: its mesh meets the hole's
+    // wall along the rim's samples, points of the rim's curve, which lie
+    // in the top's plane to the last bits of their enclosures.
+    assert_eq!(points.len(), 1);
+    let off = (0..3).map(|k| (points[0][k] - [0.5, 0.5, 1.0][k]).abs());
+    assert!(off.fold(0.0, f64::max) < 1e-12, "{points:?}");
 }
 
 /// The default view of an empty part, as the browser sends it — 1920 x

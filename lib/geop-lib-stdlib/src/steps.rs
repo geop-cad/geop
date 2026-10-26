@@ -157,6 +157,7 @@ pub fn extrude(
             sketch: whole_sketch(sketch),
             extent,
             output: Output::Solid(combine),
+            draft: 0.0,
         },
     );
 }

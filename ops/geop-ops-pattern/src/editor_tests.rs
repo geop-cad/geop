@@ -208,3 +208,24 @@ fn a_body_is_moved_by_its_gizmo() {
         args.translation
     );
 }
+
+/// A new scale takes the newest solid as it opens; doubled along `x` in
+/// the dialog, it builds the box twice as long.
+#[test]
+fn new_scale_doubles_the_box_along_x() {
+    let mut editor = editor_with(registry(), drilled_box());
+    editor.handle(Command::New {
+        kind: "scale_body".into(),
+    });
+    handled(&mut editor, dialog("x", Value::Number(2.0)));
+    let update = handled(&mut editor, Command::Commit);
+    let program = update.program.expect("the program changed");
+    assert!(
+        program.steps.iter().all(|s| s.error.is_none()),
+        "{:?}",
+        program.steps
+    );
+    let args: crate::ScaleBodyArgs = args(editor.program().steps.last().unwrap());
+    assert_eq!(args.factors, [2.0, 1.0, 1.0]);
+    assert_eq!(args.bodies.len(), 1);
+}

@@ -385,6 +385,7 @@ impl Net<4> {
 impl Net<3> {
     /// The polynomial as a surface, weights one, to evaluate and
     /// differentiate (see [`NurbSurface3D::partials`]).
+    #[cfg(test)]
     pub fn surface(&self) -> GeopResult<NurbSurface3D> {
         let (p, q) = self.degrees();
         let knots = |(lo, hi): (Scalar, Scalar), n: usize| {
