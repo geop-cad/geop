@@ -55,7 +55,37 @@ impl NurbSurface<4> {
     /// Relative to one of the control points acting there ([`centered`]),
     /// so an interval `(u, v)` gives a point as wide as the patch is, not as
     /// far from the origin as it lies.
+    ///
+    /// Over a box of `(u, v)` that is also the mean value form, the point
+    /// at the box's middle plus the partials over the box times the half
+    /// widths, and the two intersected: both enclose the same points. Taken
+    /// directly, `A / w` over a box divides two enclosures that cannot be
+    /// correlated, and the quotient widens with how far the point lies from
+    /// the span's control point times how much the weight changes: a
+    /// cylinder evaluated at a foot point a micron wide came out ten
+    /// microns wide along its axis, and a shell's copy of an edge each time
+    /// eight times as wide as the edge.
     pub fn evaluate(&self, u: Scalar, v: Scalar) -> GeopResult<Vector3> {
+        let direct = self.evaluate_at(u, v)?;
+        if u.is_sharp() && v.is_sharp() {
+            return Ok(direct);
+        }
+        // Only ever tighter: where the partials over the box cannot be had,
+        // as at a pole or past the domain, the direct enclosure stands.
+        let (um, vm) = (u.midpoint(), v.midpoint());
+        let (Ok(middle), Ok((su, sv))) = (self.evaluate_at(um, vm), self.derivatives(u, v)) else {
+            return Ok(direct);
+        };
+        let (du, dv) = (u.sub(um), v.sub(vm));
+        Ok(Vector3::from_array(std::array::from_fn(|c| {
+            let mean = middle[c].add(su[c].mul(du)).add(sv[c].mul(dv));
+            direct[c].intersect(mean)
+        })))
+    }
+
+    /// [`Self::evaluate`] directly: the homogeneous point over `(u, v)`
+    /// divided by its weight there.
+    fn evaluate_at(&self, u: Scalar, v: Scalar) -> GeopResult<Vector3> {
         let (p, q) = (self.degree_u, self.degree_v);
         let nv = self.num_v;
         let span_u = find_span(p, &self.knot_vector_u, self.num_u - 1, u)?;

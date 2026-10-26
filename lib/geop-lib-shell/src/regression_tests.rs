@@ -370,23 +370,47 @@ fn pipe_faces(part: &NamedModel, solid: SolidId) -> Vec<FaceId> {
         .collect()
 }
 
+/// The widest control point of an edge of `body`.
+fn widest_edge(part: &NamedModel, body: Body) -> f64 {
+    let model = part.topology();
+    let mut widest: f64 = 0.;
+    for f in model.body_faces(body).unwrap() {
+        for e in model.face_edges(f) {
+            for p in &model.get_edge(e).unwrap().curve.control_points {
+                for k in 0..3 {
+                    widest = widest.max(p[k].width().to_f64());
+                }
+            }
+        }
+    }
+    widest
+}
+
 /// The pipe of the tee, without the branch, offset outward and thickened:
 /// a sheet with holes where the branch stood, bordered by the edges where
 /// the two cylinders cross. Those are free edges of the sheet, used by one
 /// face; the copy of each runs along the same pcurve on the face's offset.
 /// The thickened sheet gets a wall along each.
+///
+/// The copy of a free edge is fitted through foot points of the edge's
+/// points on the new surface, evaluated over the box of `(u, v)` that a
+/// point of the edge projects to. Evaluated directly, a cylinder's `A / w`
+/// over that box came out ten times wider than the point along the axis,
+/// each copy eight times as wide as its edge, and the thickened sheet's
+/// past the `1e-4` an entity may carry.
 #[test]
-#[ignore = "bug: thickening the offset sheet is refused — the copy of a pipe-end quarter circle (free edge, carried to its foot points by the rebuild's border) is found crossing the neighbouring quarter's end wall, which lies in the same plane x = 1; the offset alone builds. Not yet traced to whether the copy leaves the plane or the crossing search is ambiguous on coplanar faces"]
 fn the_pipe_of_a_tee_offset_and_thickened() {
     let (mut part, solid) = pipe_tee();
     let faces = pipe_faces(&part, solid);
     assert!(!faces.is_empty());
     let namer = Namer::new("offset", "o").unwrap();
+    let tee = widest_edge(&part, Body::Solid(solid));
     let sheet = offset_faces(&mut part, &namer, &faces, Scalar::from_f64(0.1))
         .unwrap_or_else(|e| panic!("{e:?}"));
     assert_valid(&part);
+    let offset = widest_edge(&part, Body::Sheet(sheet.shells[0]));
     let namer = Namer::new("thicken", "t").unwrap();
-    thicken(
+    let thick = thicken(
         &mut part,
         &namer,
         sheet.shells[0],
@@ -395,6 +419,14 @@ fn the_pipe_of_a_tee_offset_and_thickened() {
     )
     .unwrap_or_else(|e| panic!("{e:?}"));
     assert_valid(&part);
+    // Each copy of an edge is about as wide as the edge: its points are
+    // foot points of the edge's, which a surface evaluated over a box of
+    // (u, v) took eight times as wide (measured: 2.0e-6, 2.7e-6, 5.3e-6).
+    let thickened = widest_edge(&part, Body::Solid(thick));
+    assert!(
+        offset < 2. * tee && thickened < 2. * offset,
+        "widest edges: the tee {tee:e}, offset {offset:e}, thickened {thickened:e}"
+    );
 }
 
 /// A 2 x 2 x 1 block drilled through, upright, at `(0.35, 1)` with a hole of
