@@ -834,3 +834,27 @@ fn fillet_of_a_rib_root_running_into_a_post() {
     assert_eq!(at([-8.0, 1.05, 2.05]), PointClassification::Inside);
     assert_eq!(at([-8.0, 1.7, 2.7]), PointClassification::Outside);
 }
+
+/// A thin plate, 0.15 thick, every edge rounded by 0.1 (a user rounding
+/// "everything" on a sheet-metal-like part): the balls rounding the two
+/// corners at either end of an upright edge touch it 0.1 from each end,
+/// past each other. Refused, naming the corner, rather than built with
+/// two corner patches overlapping. (What would build it is one patch for
+/// both corners — four faces round the short edge — which is missing.)
+#[test]
+fn fillet_of_every_edge_of_a_plate_thinner_than_two_radii_is_refused() {
+    let mut program = Program::new();
+    program.push(
+        "plate",
+        PrimitiveArgs::block([0.0, 0.0, 0.0], [1.0, 1.0, 0.15]),
+    );
+    let before = program.build_model(registry).unwrap();
+    let edges = edges_with_middle(&before, |_| true);
+    assert_eq!(edges.len(), 12, "{edges:?}");
+    program.push("round", FilletArgs::constant(edges, 0.1));
+    let Err(error) = program.build_model(registry) else {
+        panic!("the plate's edges rounded past each other are not refused");
+    };
+    let error = format!("{error:?}");
+    assert!(error.contains("too large for the edge"), "{error}");
+}

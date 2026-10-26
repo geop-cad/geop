@@ -536,7 +536,7 @@ fn place(
     match best {
         Some((_, station)) => Ok(station),
         None => Err(GeopError::new(format!(
-            "the ball of radius {:?} touches no pair of the faces along the chain truly at {p:?}: it would touch a face beyond them, or none — each pair tried, and how far off its foot points it leaves the ball: {tried:?}",
+            "the blend may be too large for its faces: the ball of radius {:?} touches no pair of the faces along the chain truly at {p:?}, it would touch a face beyond them, or none — each pair tried, and how far off its foot points it leaves the ball: {tried:?}",
             sr.abs(),
         ))),
     }
@@ -2383,6 +2383,19 @@ pub(crate) fn plan_rolled(
             setback: Scalar::from_f64(position),
         });
     }
+    // The balls rounding the corners at both ends meet the chain in order,
+    // or the blend between them has no length: a short edge between two
+    // rounded corners, the fillet too large for it.
+    if let [Some((start, _)), Some((end, _))] = &at_corners
+        && start >= end
+    {
+        let vertices = chain.vertices(topology)?;
+        return Err(GeopError::new(format!(
+            "the fillet is too large for the edge: the balls rounding the corners at its ends, vertices {} and {}, meet it at {start} and {end} along it (its vertices at whole positions), past each other",
+            vertices[0],
+            vertices.last().expect("vertices")
+        )));
+    }
     let decided_ends = chain_ends(topology, &chain, bend, meeting_ends, run_out)?;
     let (run_on, trims) = run_ons(model, &chain, &law, side, &decided_ends)?;
     let halve = halving(topology, &chain, &corners)?;
@@ -2903,6 +2916,15 @@ fn assemble(
                     station.cap = Some(Cap { plane, flat });
                 }
                 End::RunOut { .. } => {
+                    // The station in the plane it crosses, exactly: where
+                    // along the edge it is is a free choice, and the ball's
+                    // center, sharpened, put it a rounding off the plane —
+                    // its contact a rounding off the corner of the face the
+                    // plane bounds, where a blend of that face's other edge
+                    // may already have put a vertex.
+                    let row = &mut stations[index];
+                    row.points = flat.map(|p| embed(&p, &plane));
+                    row.vertices = flat_vertices.map(|p| embed(&p, &plane).head::<3>());
                     // As far again as the tool is wide, out of the solid
                     // through the plane, as a straight blend runs out.
                     let width = [station.contact[0], station.contact[1], station.apex]
