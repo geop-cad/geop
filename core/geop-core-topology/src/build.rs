@@ -434,7 +434,17 @@ impl BodySpec {
                 [_] => {}
                 [a, b] if a != b => {}
                 [_, _] => return fail(format!("edge {e} is used twice in the same sense")),
-                _ => return fail(format!("edge {e} is used {} times", uses.len())),
+                // Where two lumps of a solid touch along an edge, it is
+                // used by four faces, as many one way as the other.
+                _ if senses.len() % 2 == 0
+                    && 2 * senses.iter().filter(|&&s| s == Sense::Forward).count()
+                        == senses.len() => {}
+                _ => {
+                    return fail(format!(
+                        "edge {e} is used {} times, not as often one way as the other",
+                        uses.len()
+                    ));
+                }
             }
         }
         if let Some(v) = vertex_used.iter().position(|used| !used) {

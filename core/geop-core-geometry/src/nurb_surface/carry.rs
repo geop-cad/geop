@@ -49,6 +49,17 @@ impl UvMap {
     /// to `(m (w x) + w shift, w)`, linear in it, so the mapped curve is
     /// exactly the curve mapped, rational or not.
     pub fn apply_to(&self, curve: &NurbCurve2D) -> GeopResult<NurbCurve2D> {
+        // The identity multiplies nothing: rounding would only widen.
+        let exactly = |s: Scalar, x: f64| s.is_sharp() && s.to_f64() == x;
+        if exactly(self.m[0][0], 1.0)
+            && exactly(self.m[1][1], 1.0)
+            && exactly(self.m[0][1], 0.0)
+            && exactly(self.m[1][0], 0.0)
+            && exactly(self.shift[0], 0.0)
+            && exactly(self.shift[1], 0.0)
+        {
+            return Ok(curve.clone());
+        }
         let points = (curve.control_points.iter())
             .map(|cp| {
                 let w = cp[2];
@@ -144,6 +155,14 @@ impl NurbSurface3D {
     /// its degree. So they are compared there, and only there; within the
     /// enclosures' widths, as everything is.
     pub fn carrying(&self, other: &Self) -> GeopResult<Option<(Self, UvMap)>> {
+        // The very same patch — faces cut from one face — needs no map.
+        if self.could_be_equal(other) {
+            let identity = UvMap {
+                m: [[Scalar::ONE, Scalar::ZERO], [Scalar::ZERO, Scalar::ONE]],
+                shift: Vector2::zero(),
+            };
+            return Ok(Some((self.clone(), identity)));
+        }
         let ((u0, u1), (v0, v1)) = (other.domain_u(), other.domain_v());
         let corners = [
             other.evaluate(u0, v0)?,

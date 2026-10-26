@@ -73,7 +73,8 @@ fn merged(part: &NamedModel) -> NamedModel {
     let mut part = part.clone();
     for name in part.solid_names() {
         let solid = part.solid_id(&name).unwrap();
-        part.merge_faces_on_one_surface(solid.into()).unwrap();
+        part.merge_faces_on_one_surface(solid.into(), |_, _| true)
+            .unwrap();
     }
     assert_valid(&part);
     part

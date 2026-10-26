@@ -265,19 +265,23 @@ impl NamedModel {
     /// What is made one keeps the name of the oldest of what it is made
     /// of; the names of the others stand for it from then on (see
     /// [`crate::names::NameRegistry::alias`]), so a step that refers to any
-    /// of them still
-    /// finds it. An edge between two faces made one is gone, and so is its
-    /// name; so is a vertex dropped.
-    pub fn merge_faces_on_one_surface(&mut self, body: Body) -> GeopResult<Body> {
+    /// of them still finds it. An edge between two faces made one is gone,
+    /// and so is its name; so is a vertex dropped. Only faces `may_merge`
+    /// lets are asked whether they lie on one surface.
+    pub fn merge_faces_on_one_surface(
+        &mut self,
+        body: Body,
+        may_merge: impl Fn(FaceId, FaceId) -> bool,
+    ) -> GeopResult<Body> {
         let (spec, names) = self.body_record(body)?;
-        let (merged, map) = spec.merged()?;
-        if merged.faces.len() == spec.faces.len() && merged.edges.len() == spec.edges.len() {
-            return Ok(body);
-        }
         // The very entities `spec` was made from, index for index.
         let mut faces = self.topology().body_faces(body)?;
         faces.sort();
         let (_, sources) = self.topology().body_spec(&faces, false)?;
+        let (merged, map) = spec.merged(|f, g| may_merge(sources.faces[f], sources.faces[g]))?;
+        if merged.faces.len() == spec.faces.len() && merged.edges.len() == spec.edges.len() {
+            return Ok(body);
+        }
         let face_into: Vec<Option<usize>> = map.faces.iter().map(|&f| Some(f)).collect();
         let faces = self.merged_names(&sources.faces, &face_into, merged.faces.len())?;
         let edges = self.merged_names(&sources.edges, &map.edges, merged.edges.len())?;

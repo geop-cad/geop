@@ -46,9 +46,17 @@ impl BodySpec {
     /// vertex that only two edges of the same two faces meet at dropped,
     /// the two edges made one, the first in order. Also says where each
     /// entity went.
-    pub fn merged(&self) -> GeopResult<(BodySpec, Merged)> {
+    ///
+    /// Only faces `may_merge` lets — asked of the two faces of the original
+    /// that first stand for them — are asked whether they lie on one
+    /// surface: a boolean asks only of faces cut from one face, which it
+    /// knows; an edit, of all.
+    pub fn merged(
+        &self,
+        may_merge: impl Fn(usize, usize) -> bool,
+    ) -> GeopResult<(BodySpec, Merged)> {
         let mut work = Work::new(self);
-        while work.merge_one_pair()? {}
+        while work.merge_one_pair(&may_merge)? {}
         while work.join_one_pair()? {}
         work.compacted()
     }
@@ -67,6 +75,9 @@ struct Work<'a> {
     /// Per edge: the edge it is part of, none if it went between two faces
     /// made one.
     edge_into: Vec<Option<usize>>,
+    /// Pairs of faces found not to make one face, as they are: asked again
+    /// only once one of them changes.
+    apart: std::collections::HashSet<(usize, usize)>,
 }
 
 impl<'a> Work<'a> {
@@ -77,6 +88,7 @@ impl<'a> Work<'a> {
             face_into: (0..spec.faces.len()).collect(),
             edges: spec.edges.iter().cloned().map(Some).collect(),
             edge_into: (0..spec.edges.len()).map(Some).collect(),
+            apart: Default::default(),
         }
     }
 
@@ -113,7 +125,7 @@ impl<'a> Work<'a> {
 
     /// Makes one pair of faces across an edge, on one surface, one face.
     /// Whether it found one.
-    fn merge_one_pair(&mut self) -> GeopResult<bool> {
+    fn merge_one_pair(&mut self, may_merge: &impl Fn(usize, usize) -> bool) -> GeopResult<bool> {
         let uses = self.uses();
         for faces in &uses {
             let [f, g] = faces.as_slice() else { continue };
@@ -121,7 +133,15 @@ impl<'a> Work<'a> {
                 continue;
             }
             let (keep, gone) = ((*f).min(*g), (*f).max(*g));
-            if let Some(face) = self.merged_face(keep, gone, &uses)? {
+            if !may_merge(keep, gone) || self.apart.contains(&(keep, gone)) {
+                continue;
+            }
+            let Some(face) = self.merged_face(keep, gone, &uses)? else {
+                self.apart.insert((keep, gone));
+                continue;
+            };
+            {
+                self.apart.retain(|&(a, b)| a != keep && b != keep);
                 self.faces[keep] = Some(face);
                 self.faces[gone] = None;
                 for into in self.face_into.iter_mut() {
@@ -491,7 +511,7 @@ mod tests {
         let solid = test_cube_solid(&mut model);
         let faces = model.solid_faces(solid).unwrap();
         let (spec, _) = model.body_spec(&faces, true).unwrap();
-        let (merged, map) = spec.merged().unwrap();
+        let (merged, map) = spec.merged(|_, _| true).unwrap();
         assert_eq!(merged.faces.len(), 6);
         assert_eq!(merged.edges.len(), 12);
         assert_eq!(merged.vertices.len(), 8);
