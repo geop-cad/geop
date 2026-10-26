@@ -109,7 +109,7 @@ Verdicts:
 | **Sweep frame modes**: binormal law curve `curZ`, translational, fixed direction | `N_CreateSweepScale` `curZ`, `SmSweepOptions::bTranslationalSweep` (`inc/SmPrimitiveCreation.h`) | `Orientation::{FollowPath, FixedNormal}` | worse (no fixed-binormal or law mode) |
 | **Scale and twist laws** | `curS` (3-axis scale vector as a function of t), `pScaleReference` / `pScaleCurve` in `CreateCurveSweep` | linear twist and `end_scale` only, or rails | worse |
 | Sweep tolerance (approximation error control) | `E` in `N_CreateSweepScale`, `dAppoxTol3d` | `SECTIONS_PER_KNOT_SPAN = 4` (`path_sweep.rs:117`) fixed, no error measured | worse |
-| **Path corner at an arc or spline (mitre)** | `CreateSweepAlongPlanarPath` `SmPrimitiveCreation.cpp:5722`: sweeps each segment extended past the corner, cuts both at the bisector plane, using a brep intersection when they are not lines | line-line mitre only. A corner at an arc or spline is refused (`path_sweep.rs:21`, test `corner_at_an_arc_is_refused`) | **worse** |
+| **Path corner at an arc or spline (mitre)** | `CreateSweepAlongPlanarPath` `SmPrimitiveCreation.cpp:5722`: sweeps each segment extended past the corner, cuts both at the bisector plane, using a brep intersection when they are not lines | each wall on the surface it sweeps along its own curve, the body rebuilt where they cross (`path_sweep.rs` `sweep_along`); off a planar path a joint of the profile is two vertices, one per side (`apart_at_corner`). A circle round a corner out of the plane is an ignored reproducer: its walls touch inside a station edge | par |
 | Profile wider than the path's bend | none (merge option `m_bDoMerge`) | `clear_of_bends` refuses it by name (`path_sweep.rs:1271`) | better (geop) |
 | Pipe sweep (circle of radius r) | `CreatePipeSweep` `:6853` | sweep with a circle profile | par |
 | Loft (skin primitive): degree, approximation tolerance, caps | `CreateSkinPrimitive` `:6290`, `:6323`, `CreateSkinFromFaces:6711` | `loft.rs` (matched points, corners, guides, ruled for 2, cubic for 3+) | geop better at matching. Options worse |
@@ -228,7 +228,9 @@ reproducer first, then the fix.
 - **Test:** a rectangle with rounded corners whose fillet radius is smaller than the inset, drafted
   inward: the corners must turn into cones to a point.
 
-**3. Path sweep corner at an arc or spline.**
+**3. Path sweep corner at an arc or spline.** Done: walls on their own swept surfaces, rebuilt
+(`geop_lib_shell::rebuilt`), sharp or smooth profiles, joints taken apart off a planar path. Left:
+a circle whose walls touch inside a station edge (`sweep_a_pipe_round_a_corner_out_of_the_plane`).
 - **SMLib:** `SmPrimitiveCreation.cpp:5722` `CreateSweepAlongPlanarPath`:
   - extends every path segment past the corner and sweeps each one;
   - cuts both bodies by the bisector plane, whose normal is the average of the two tangents, flipped

@@ -223,14 +223,11 @@ fn sweep_a_hollow_square_round_corners_at_a_spline() {
 }
 
 /// A round pipe round a corner where a line meets an arc: valid, the
-/// cylinder and the torus meeting where they cross.
+/// cylinder and the torus meeting where they cross. Each joint of the
+/// circle travels at its height above the path's plane either side, so its
+/// paths before and after the corner cross where the walls do, at one
+/// point: the corner's vertex. At the top and the bottom the walls touch.
 #[test]
-#[ignore = "bug: refused (`sweep_along`, a smooth profile round a corner at an arc). \
-    The walls are rebuilt on their swept surfaces as for a square tube, but the \
-    mitred station shares one vertex per profile joint between both sides, and \
-    a circle's seams, swept along the line and along the arc, cross the other \
-    side's surface at different points: the station needs a vertex for each \
-    side's seams on the crossing curve, which the skin does not build."]
 fn sweep_a_pipe_round_a_corner_into_an_arc() {
     let mut program = Program::new();
     program.push(
@@ -241,6 +238,121 @@ fn sweep_a_pipe_round_a_corner_into_an_arc() {
     program.push("pipe", swept("profile", "path"));
     let part = program.build_model(registry).unwrap();
     assert_valid(&part);
+}
+
+/// A round pipe round the same corner, the circle drawn as two half arcs
+/// joined at points neither in the path's plane nor at its top: their
+/// paths either side still meet where the walls cross, and the walls touch
+/// within the circle's curves.
+#[test]
+fn sweep_a_pipe_of_two_arcs_round_a_corner_into_an_arc() {
+    let mut program = Program::new();
+    program.push(
+        "profile",
+        AddSketchArgs::on(on_origin(FrameAxis::X), two_arcs()),
+    );
+    program.push("path", AddSketchArgs::on(on_origin(FrameAxis::Z), kinked()));
+    program.push("pipe", swept("profile", "path"));
+    let part = program.build_model(registry).unwrap();
+    assert_valid(&part);
+}
+
+/// A round pipe round a corner where a line meets an arc in a plane the
+/// line does not lie in (see [`sweep_round_a_corner_out_of_the_plane`]).
+#[test]
+#[ignore = "bug: the walls either side touch at the two points of the circle on the axis \
+    the path turns about through the corner, where their crossing is an X, not a smooth \
+    curve. Each lies inside a station edge (c1#1 and c1#3 here; in the planar case at a \
+    joint, where the vertex sits on it), exactly halfway along by symmetry, which is where \
+    `rebuilt` asks whether an edge is a seam (`Rebuild::seam`, its faces touching there) \
+    and where its trace samples (`meet` singular). Testing the ends too broke seams ending \
+    at a cone's apex. The two-arc circle passes only because nothing samples the X. Such a \
+    point should be a vertex of the corner, which `rebuilt` cannot place yet: one smooth \
+    surface across the corner, two faces."]
+fn sweep_a_pipe_round_a_corner_out_of_the_plane() {
+    sweep_round_a_corner_out_of_the_plane(disc([0.0, 0.0], 0.3));
+}
+
+/// The circle of [`sweep_a_pipe_of_two_arcs_round_a_corner_into_an_arc`]
+/// round the corner out of the plane: each joint a vertex where its path
+/// before the corner crosses the walls after it, and one where its path
+/// after crosses those before, an edge of the crossing between them.
+#[test]
+fn sweep_a_pipe_of_two_arcs_round_a_corner_out_of_the_plane() {
+    // The circle is drawn in four arcs, cut where it crosses the axes.
+    assert_eq!(
+        sweep_round_a_corner_out_of_the_plane(two_arcs()),
+        4 + 4 + 4 * 2
+    );
+}
+
+/// A square tube round the corner out of the plane: four walls meet at a
+/// point only where a corner of the square lies on the axis the path turns
+/// about; each other corner is two vertices, as a joint of the circle is.
+#[test]
+fn sweep_a_square_round_a_corner_out_of_the_plane() {
+    // Two corners lie on the axis the path turns about: the turn keeps
+    // them where they are, and their paths either side meet.
+    assert_eq!(
+        sweep_round_a_corner_out_of_the_plane(square(0.25)),
+        4 + 4 + 2 + 2 * 2
+    );
+}
+
+/// `profile` swept along `x` to `(2, 0, 0)`, then a quarter arc in the
+/// plane `x = 2`, turning towards `(0, 1, 1)`: a corner at an arc the line
+/// does not lie in the plane of. Valid; how many vertices it has.
+fn sweep_round_a_corner_out_of_the_plane(profile: Sketch) -> usize {
+    let mut path = geop_ops_model::sketch3d::Sketch3d::new();
+    let h = 0.5f64.sqrt();
+    let p = [
+        [0.0, 0.0, 0.0],
+        [2.0, 0.0, 0.0],
+        [2.0, h, 1.0 - h],
+        [2.0, 2.0 * h, 0.0],
+    ]
+    .map(|p| path.add_point(geop_core_math::vector::Vector3::from_array(p.map(n))));
+    path.add_line(p[0], p[1]);
+    path.add_arc(p[1], p[2], p[3]);
+    let mut program = Program::new();
+    program.push(
+        "profile",
+        AddSketchArgs::on(on_origin(FrameAxis::X), profile),
+    );
+    program.push(
+        "path",
+        geop_ops_sketch3d::AddSketch3dArgs {
+            sketch: path,
+            references: Vec::new(),
+        },
+    );
+    program.push(
+        "pipe",
+        SweepArgs {
+            path: Some(PathRef::Sketch3d(sketch3d_path("path"))),
+            ..swept("profile", "path")
+        },
+    );
+    let part = program.build_model(registry).unwrap();
+    assert_valid(&part);
+    let model = part.topology();
+    (model.vertices.keys())
+        .filter(|&&v| part.name(v).unwrap().starts_with("sweep(pipe"))
+        .count()
+}
+
+/// A circle of radius `0.3` about the origin, drawn as two half arcs
+/// joined half a radian round from the axes.
+fn two_arcs() -> Sketch {
+    let mut circle = Sketch::new();
+    let (r, at) = (0.3, 0.5f64);
+    let p = [
+        circle.add_point(n(r * at.cos()), n(r * at.sin())),
+        circle.add_point(n(-r * at.cos()), n(-r * at.sin())),
+    ];
+    circle.add_arc(p[0], p[1], n(PI));
+    circle.add_arc(p[1], p[0], n(PI));
+    circle
 }
 
 /// A line along `x` to `(2, 0)`, then a quarter arc to `(1, 1)` turning
@@ -388,8 +500,7 @@ fn sweep_an_open_profile_as_faces() {
     assert_eq!(part.topology().faces.len(), 2 * 3);
 }
 
-/// The profile and the path must be two sketches; a round profile cannot
-/// be swept round a corner into an arc.
+/// The profile and the path must be two sketches.
 #[test]
 fn sweep_refuses_what_it_cannot_sweep() {
     let mut program = Program::new();
@@ -399,19 +510,6 @@ fn sweep_refuses_what_it_cannot_sweep() {
     );
     program.push("same", swept("profile", "profile"));
     assert!(program.build_model(registry).is_err());
-
-    let kinked = kinked();
-    let mut program = Program::new();
-    program.push(
-        "profile",
-        AddSketchArgs::on(on_origin(FrameAxis::X), disc([0.0, 0.0], 0.3)),
-    );
-    program.push("path", AddSketchArgs::on(on_origin(FrameAxis::Z), kinked));
-    program.push("pipe", swept("profile", "path"));
-    let Err(error) = program.build_model(registry) else {
-        panic!("built");
-    };
-    assert!(error.root_message().contains("corner"), "{error:?}");
 }
 
 /// A square below, a circle above: a solid of four ruled walls and two

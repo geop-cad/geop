@@ -41,7 +41,12 @@
 
 use std::collections::HashMap;
 
-use geop_core_geometry::{nurb_curve::NurbCurve3D, nurb_surface::NurbSurface3D};
+use geop_core_geometry::{
+    intersection::crossing_points,
+    nurb_curve::{NurbCurve2D, NurbCurve3D},
+    nurb_surface::NurbSurface3D,
+    search::PROJECT_ITERATIONS,
+};
 use geop_core_math::{
     geop_error::{GeopError, GeopResult, WithContext},
     plain::{P3, add, cross, cross2, dot, inverse2, normalize, scale, solve2, sub},
@@ -51,7 +56,10 @@ use geop_core_math::{
     vector::{Vector2, Vector3, Vector4},
     with_context,
 };
-use geop_core_topology::build::{BodySpec, BuiltBody};
+use geop_core_topology::{
+    Curve2, Sense,
+    build::{BodySpec, BuiltBody},
+};
 use geop_ops_model::{BodyNames, Chain, NamedModel, Namer, Profile};
 use serde::{Deserialize, Serialize};
 
@@ -1386,10 +1394,18 @@ pub fn starting_near(
 }
 
 /// Rebuilds a body some of whose faces were put on new surfaces, around
-/// them: [`geop_lib_shell::rebuilt`], which this crate cannot depend on
-/// (its tests sweep their solids), handed in by the caller. `None` where
-/// the caller has none: a corner at an arc or a spline is then refused.
-pub type Rebuild = fn(&BodySpec, &BodyNames, &[bool], &[bool]) -> GeopResult<BodySpec>;
+/// them: [`geop_lib_shell::rebuilt`] and [`geop_lib_shell::room`], which
+/// this crate cannot depend on (its tests sweep their solids), handed in by
+/// the caller. `None` where the caller has none: a corner at an arc or a
+/// spline is then refused.
+#[derive(Clone, Copy, Debug)]
+pub struct Rebuild {
+    /// A new surface given room around it, as `rebuilt` asks of each.
+    pub room: fn(NurbSurface3D) -> GeopResult<NurbSurface3D>,
+    /// The body rebuilt around the faces marked replaced, and the vertices
+    /// marked to reseat.
+    pub rebuilt: fn(&BodySpec, &BodyNames, &[bool], &[bool]) -> GeopResult<BodySpec>,
+}
 
 /// Sweeps `loops` — the first the outer loop, counter-clockwise in
 /// `plane`'s `(u, v)`, the rest holes in it, clockwise — along `chain`,
@@ -1402,11 +1418,12 @@ pub type Rebuild = fn(&BodySpec, &BodyNames, &[bool], &[bool]) -> GeopResult<Bod
 /// wall, as it does between two lines. Each wall there is then put on the
 /// surface the profile, carried rigidly, sweeps along its own curve, and
 /// the body rebuilt around them (`rebuild`): the walls either side of the
-/// corner meet where they cross, each corner of the profile where its two
-/// walls on either side do. That needs a profile of sharp corners — a
-/// smooth one's joints, swept either side, end at different points of the
-/// crossing — and is refused for one, naming the joint, as for a path
-/// that twists, scales or follows rails round such a corner.
+/// corner meet where they cross. A joint of the profile is where its paths
+/// either side cross the walls on the other side: for a planar path, one
+/// point, since both paths run at the joint's height above the path's
+/// plane; otherwise two, one each, joined by a piece of the crossing (see
+/// [`apart_at_corner`]). Refused, by name, for a path that twists, scales
+/// or follows rails round such a corner.
 ///
 /// Named after the profiles' curves `X` and joints `P` and the chain's
 /// curves `C` and joints `J` (see [`crate::sweep::sweep`]): the walls `N(X,C)`, their
@@ -1448,14 +1465,6 @@ pub fn sweep_along(
             .map(|&k| &chain.joint_names[k])
             .collect::<Vec<_>>()
     );
-    for lp in loops {
-        if let Some(joint) = smooth_joint(&lp.profile)? {
-            return Err(GeopError::new(format!(
-                "path sweep: the path turns a corner at {} at an arc or a spline, and the profile runs on smoothly at {joint}: a corner like that is swept with a profile of sharp corners only — make the path tangent there",
-                chain.joint_names[first]
-            )));
-        }
-    }
     let drawn: Vec<SweepLoop> = if path.along_normal {
         loops.iter().map(SweepLoop::reversed).collect()
     } else {
@@ -1491,29 +1500,193 @@ pub fn sweep_along(
     let mut replaced = vec![false; spec.faces.len()];
     for (f, name) in names.faces.iter().enumerate() {
         if let Some(surface) = swept.remove(name) {
-            spec.faces[f].surface = surface;
+            spec.faces[f].surface = (rebuild.room)(surface).with_context(ctx)?;
             replaced[f] = true;
         }
     }
+    let mut names = names;
+    for &k in &along.rebuilt {
+        for lp in &drawn {
+            let closed = lp.profile.is_closed();
+            let joints = lp.profile.curves.len() + usize::from(closed) - 1;
+            for i in (0..joints).map(|i| i + usize::from(!closed)) {
+                let corner = Corner {
+                    station: k,
+                    frame: &along.rigid[(k + n - 1) % n][1],
+                    axis: (chain.curves[(k + n - 1) % n].tangent(Scalar::ONE)?)
+                        .prod_cross(&chain.curves[k].tangent(Scalar::ZERO)?),
+                };
+                apart_at_corner(&mut spec, &mut names, namer, path, &lp.profile, &corner, i)
+                    .with_context(ctx)?;
+            }
+        }
+    }
     let reseat = vec![false; spec.vertices.len()];
-    let spec = rebuild(&spec, &names, &replaced, &reseat).with_context(ctx)?;
+    let spec = (rebuild.rebuilt)(&spec, &names, &replaced, &reseat).with_context(ctx)?;
     model.build_body(spec, names).with_context(ctx)
 }
 
-/// A joint of `profile` where it runs on smoothly — one of its curves
-/// arriving the way the next leaves — if it has one.
-fn smooth_joint(profile: &Profile) -> GeopResult<Option<String>> {
-    let n = profile.curves.len();
-    let joints = if profile.is_closed() { n } else { n - 1 };
-    for j in 0..joints {
-        let (a, b) = (&profile.curves[j], &profile.curves[(j + 1) % n]);
-        let (arriving, leaving) = (a.tangent(Scalar::ONE)?, b.tangent(Scalar::ZERO)?);
-        let cross = arriving[0].mul(leaving[1]).sub(arriving[1].mul(leaving[0]));
-        if cross.could_be_equal(Scalar::ZERO) {
-            return Ok(Some(profile.joint_names[(j + 1) % n].clone()));
+/// A corner of the path at an arc or a spline: its station, the frame the
+/// profile is carried to it in along the curve before it, and the axis the
+/// path turns about there.
+struct Corner<'a> {
+    station: usize,
+    frame: &'a Frame,
+    axis: Vector3,
+}
+
+/// The vertex of joint `i` of `profile` at the corner at `corner.station` of
+/// `path`, in `spec`, named by `names` — the walls either side on the
+/// surfaces the profile sweeps along each curve, with room — taken apart
+/// where the joint's paths either side cross the walls on the other side
+/// at two points: one vertex where the path before the corner crosses, one
+/// where the path after it does, and an edge between them, where a wall
+/// before the corner crosses one after it.
+///
+/// Which of the walls after the corner the path before it crosses — that
+/// of the curve arriving at the joint, or of the one leaving it — says
+/// which comes first along the profile, and so which two walls the new
+/// edge parts.
+///
+/// Where a wall before the corner touches the wall of its curve after it
+/// at the joint — the profile's normal there along the axis the path turns
+/// about, which the turn leaves as it is — the joint's paths cross the
+/// walls on the other side tangentially, at no point a search can isolate:
+/// the vertex stays one, where the smooth surface across the corner meets
+/// the others (see [`Rebuild`]).
+fn apart_at_corner(
+    spec: &mut BodySpec,
+    names: &mut BodyNames,
+    namer: &Namer,
+    path: &Path,
+    profile: &Profile,
+    corner: &Corner<'_>,
+    i: usize,
+) -> GeopResult<()> {
+    let k = corner.station;
+    let m = profile.curves.len();
+    let arriving = (i + m - 1) % m;
+    for tangent in [
+        profile.curves[arriving].tangent(Scalar::ONE)?,
+        profile.curves[i].tangent(Scalar::ZERO)?,
+    ] {
+        let normal =
+            (corner.frame.e1.prod_scalar(tangent[1])).sub(&corner.frame.e2.prod_scalar(tangent[0]));
+        let along = normal.prod_cross(&corner.axis);
+        if (0..3).all(|c| along[c].could_be_equal(Scalar::ZERO)) {
+            return Ok(());
         }
     }
-    Ok(None)
+    let before = (k + path.spans.len() - 1) % path.spans.len();
+    let (Some(span_before), Some(span_after)) = (&path.span_names[before], &path.span_names[k])
+    else {
+        return Ok(());
+    };
+    let (joint, station) = (&profile.joint_names[i], &path.station_names[k]);
+    let (arriving_name, leaving_name) = (&profile.curve_names[arriving], &profile.curve_names[i]);
+    let index = |of: &[String], name: String| {
+        of.iter()
+            .position(|n| *n == name)
+            .ok_or_else(|| GeopError::new(format!("path sweep: nothing named {name}")))
+    };
+    let v = index(&names.vertices, namer.name(&[joint, station]))?;
+    let face = |curve: &str, span: &str| index(&names.faces, namer.name(&[curve, span]));
+    let [before_in, before_out, after_in, after_out] = [
+        face(arriving_name, span_before)?,
+        face(leaving_name, span_before)?,
+        face(arriving_name, span_after)?,
+        face(leaving_name, span_after)?,
+    ];
+    let edge = |name: String| index(&names.edges, name);
+    let path_after = edge(namer.name(&[joint, span_after]))?;
+    let [station_in, station_out] = [
+        edge(namer.name(&[arriving_name, station]))?,
+        edge(namer.name(&[leaving_name, station]))?,
+    ];
+    // The joint's path along a span: the leaving curve's wall where the
+    // curve starts, carried on. Where it crosses the walls on the other
+    // side nearest the corner — each within its curve's own stretch of
+    // it — and whether that is the arriving curve's wall.
+    let mitred = spec.vertices[v];
+    let crossing = |along: usize, walls: [usize; 2]| -> GeopResult<(Vector3, bool)> {
+        let start = profile.curves[i].domain().0;
+        let seam = spec.faces[along].surface.iso_curve(false, start)?;
+        let mut best: Option<(Vector3, bool, f64)> = None;
+        for (wall, curve) in walls.into_iter().zip([arriving, i]) {
+            let (from, to) = profile.curves[curve].domain();
+            for (point, uv) in crossing_points(&seam, &spec.faces[wall].surface)? {
+                if uv[1].definitely_less(from) || uv[1].definitely_greater(to) {
+                    continue;
+                }
+                let distance = point.sub(&mitred).norm_sq().to_f64();
+                if best.as_ref().is_none_or(|(.., d)| distance < *d) {
+                    best = Some((point, curve == arriving, distance));
+                }
+            }
+        }
+        best.map(|(p, arrives, _)| (p, arrives)).ok_or_else(|| {
+            GeopError::new(format!(
+                "the path of {joint} along {} does not cross the walls on the other side of the corner {station}",
+                names.faces[along]
+            ))
+        })
+    };
+    let (on_before, before_arrives) = crossing(before_out, [after_in, after_out])?;
+    let (on_after, after_arrives) = crossing(after_out, [before_in, before_out])?;
+    if on_before.could_be_equal(&on_after) {
+        return Ok(());
+    }
+    // The path before the corner crossing the arriving curve's wall after
+    // it comes first: past it, the wall before is the leaving curve's, the
+    // one after still the arriving one's.
+    let first_before = match (before_arrives, after_arrives) {
+        (true, false) => true,
+        (false, true) => false,
+        _ => {
+            return Err(GeopError::new(format!(
+                "the paths of {joint} either side of the corner {station} cross the walls on the other side at {on_before:?} and {on_after:?}, which does not tell which comes first along the profile: not supported"
+            )));
+        }
+    };
+    let around = spec.vertex_faces()?;
+    // A line between the two vertices on each face around, run either way.
+    let mut pcurves: HashMap<usize, [Curve2; 2]> = HashMap::new();
+    for &(f, uv) in &around[v] {
+        let surface = &spec.faces[f].surface;
+        let at = |p: Vector3| -> GeopResult<Vector2> {
+            let (u, w) = surface.project_in_domain(
+                p,
+                uv[0].sharpen(),
+                uv[1].sharpen(),
+                PROJECT_ITERATIONS,
+            )?;
+            Ok(Vector2::from_array([u, w]))
+        };
+        let (a, b) = (at(on_before)?, at(on_after)?);
+        pcurves.insert(f, [NurbCurve2D::line(a, b)?, NurbCurve2D::line(b, a)?]);
+    }
+    let moved = if first_before {
+        [(path_after, false), (station_out, false)]
+    } else {
+        [(path_after, false), (station_in, true)]
+    };
+    spec.vertices[v] = on_before;
+    let line = NurbCurve3D::line(on_before, on_after)?;
+    spec.split_vertex(v, &moved, on_after, line, |f, sense| {
+        let [forward, reversed] = pcurves.get(&f).ok_or_else(|| {
+            GeopError::new(format!("path sweep: face {f} is not around the corner"))
+        })?;
+        Ok(match sense {
+            Sense::Forward => forward.clone(),
+            Sense::Reversed => reversed.clone(),
+        })
+    })?;
+    names.vertices[v] = namer.name(&[joint, station, span_before]);
+    names
+        .vertices
+        .push(namer.name(&[joint, station, span_after]));
+    names.edges.push(namer.name(&[joint, station]));
+    Ok(())
 }
 
 #[cfg(test)]
