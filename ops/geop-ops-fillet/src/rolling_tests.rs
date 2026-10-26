@@ -512,10 +512,11 @@ fn cube_corner_rounded_with_a_varying_radius() {
 }
 
 /// The same edges with a radius from 0.1 to 0.2 along each: they meet the
-/// corner with different radii, as they run to or from it — refused, there
-/// being no one ball to round it with.
+/// corner with different radii, as they run to or from it. There is no one
+/// ball to round it with: the corner is bevelled, each fillet run out past
+/// it and the boolean meeting them.
 #[test]
-fn cube_corner_with_mixed_radii_is_refused() {
+fn cube_corner_with_mixed_radii_is_bevelled() {
     let model = unit_cube();
     let edges: Vec<String> = ["cube(b,c0,start)", "cube(b,c3,start)", "cube(b,p0)"]
         .map(String::from)
@@ -527,6 +528,10 @@ fn cube_corner_with_mixed_radii_is_refused() {
             at_vertices: Vec::new(),
         },
     };
-    let why = refusal(model, &edges, shape);
-    assert!(why.contains("with the radii"), "{why}");
+    let mut model = model;
+    blended(&mut model, &edges, &shape);
+    assert!(
+        !(model.topology().faces.keys()).any(|&f| model.name_of(f).unwrap().ends_with(",corner)"))
+    );
+    assert!(!has_vertex(&model, [0.0, 0.0, 1.0]));
 }

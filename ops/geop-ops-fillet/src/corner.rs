@@ -26,16 +26,18 @@
 //! a convex corner and inside at a concave one, where the boolean cuts or
 //! fills nothing but the region between the faces and the ball.
 //!
-//! Where the radius varies along the edges, they have to meet the corner
-//! with one radius — the corner's vertex given a radius of its own, say —
-//! the ball's, which each fillet then reaches where it meets the ball.
+//! Where the radius varies along the edges and they meet the corner with
+//! one radius — the corner's vertex given a radius of its own, say — that
+//! is the ball's, which each fillet then reaches where it meets the ball.
+//! Where they meet it with different radii, no one ball touches the three
+//! faces at once: the corner is bevelled, each fillet ending on its own as
+//! where not every edge is filleted, and the boolean meeting them.
 //!
 //! A corner where every edge is filleted but more than three meet, or the
-//! fillets meet with different radii, or the edges bend different ways — a
-//! pocket's rim, its upright edge filled in where the rim is cut away — is
-//! refused by name rather than left with the fillets crossing in a point
-//! or overlapping. A chamfered corner is left to its chamfers, which cross
-//! in a point.
+//! edges bend different ways — a pocket's rim, its upright edge filled in
+//! where the rim is cut away — is refused by name rather than left with the
+//! fillets overlapping. A chamfered corner is left to its chamfers, which
+//! cross in a point.
 
 use geop_core_geometry::{
     meet::{Offset, meet},
@@ -179,11 +181,11 @@ pub(crate) fn plan_corners(
                     .at_end(usize::from(at_end)),
             });
         }
+        // Fillets meeting with different radii have no one ball to round
+        // the corner with: it is bevelled, each tool ending on its own and
+        // the boolean meeting them, as when not every edge is filleted.
         if at_corner.iter().any(|&r| r != at_corner[0]) {
-            return Err(GeopError::new(format!(
-                "every edge at the corner is filleted, but with the radii {at_corner:?} there: a corner is only rounded where its fillets meet with one radius — give the corner's vertex a radius of its own"
-            )))
-            .with_context(ctx);
+            continue;
         }
         let corner = plan_corner(
             model,
