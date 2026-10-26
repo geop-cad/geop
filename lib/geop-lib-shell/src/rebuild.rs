@@ -298,12 +298,14 @@ impl<'a> Rebuild<'a> {
             // there, or else its foot point on the new surface.
             let at_pole = surface.pole_at(uv[0], uv[1]).is_some();
             let (u, w) = if self.replaced[f] && !at_pole {
-                let (u, w) = surface.project_in_domain(
-                    seed,
-                    uv[0].sharpen(),
-                    uv[1].sharpen(),
-                    PROJECT_ITERATIONS,
-                )?;
+                let (u, w) = surface
+                    .project_in_domain(seed, uv[0].sharpen(), uv[1].sharpen(), PROJECT_ITERATIONS)
+                    .map_err(|e| {
+                        e.with_context(format!(
+                            "projecting {seed:?} onto the new surface of face {} from {uv:?}",
+                            self.names.faces[f]
+                        ))
+                    })?;
                 (u.sharpen(), w.sharpen())
             } else {
                 (uv[0], uv[1])
@@ -330,24 +332,23 @@ impl<'a> Rebuild<'a> {
             }
             return Ok(*pole);
         }
-        let groups = tangent_groups(&pieces)?;
+        let groups = tangent_groups(&pieces)
+            .map_err(|e| e.with_context(format!("grouping its faces' surfaces at {pieces:?}")))?;
+        // On the border of a sheet, where an edge bounds one face only,
+        // nothing but the surfaces holds the vertex: where they meet nearest
+        // to where it was is as good as any point of them, a free choice.
+        let on_border = (self.spec.edge_uses().iter().zip(&self.spec.edges))
+            .any(|(uses, edge)| uses.len() == 1 && (edge.start == v || edge.end == v));
+        let fewer = |determined: GeopResult<Vector3>| match determined {
+            Err(_) if on_border => nearest(seed, &pieces, &groups),
+            determined => determined,
+        };
         match groups.len() {
-            0 | 1 => self.within(faces),
-            2 => self.on_seam(v, faces, &pieces, &groups),
-            _ => {
-                let mut offsets: Vec<Offset> = groups
-                    .iter()
-                    .map(|group| Offset {
-                        pieces: group.iter().map(|&i| pieces[i]).collect(),
-                        offset: Scalar::ZERO,
-                    })
-                    .collect();
-                // Where it was is only where to start looking — a free
-                // choice, so sharp: a seed as wide as the union of points
-                // joined across a gap would carry its width into the answer.
-                meet(seed.sharpen(), &mut offsets, &[])
-            }
+            0 | 1 => fewer(self.within(faces)),
+            2 => fewer(self.on_seam(v, faces, &pieces, &groups)),
+            _ => nearest(seed, &pieces, &groups),
         }
+        .map_err(|e| e.with_context(format!("where its {} smooth surfaces meet", groups.len())))
     }
 
     /// Where a vertex goes that lies within one smooth surface, its faces
@@ -454,8 +455,21 @@ impl<'a> Rebuild<'a> {
             };
             for (t, uv) in hits {
                 let (t, uv) = refine_crossing(curve, surface, t, uv);
-                let on_curve = curve.evaluate(t)?;
-                let on_surface = surface.evaluate(uv[0], uv[1])?;
+                let ctx = |e: GeopError| {
+                    e.with_context(format!(
+                        "the seam crossing surface {i} at t={t:?}, uv={uv:?}, the surface's domain {:?} x {:?}",
+                        surface.domain_u(),
+                        surface.domain_v()
+                    ))
+                };
+                let on_curve = curve.evaluate(t).map_err(ctx)?;
+                // At a pole the collapsed parameter says nothing — the
+                // crossing's enclosure of it may run the whole row — and
+                // the point is the pole.
+                let on_surface = match surface.pole_at(uv[0], uv[1]) {
+                    Some(pole) => pole,
+                    None => surface.evaluate(uv[0], uv[1]).map_err(ctx)?,
+                };
                 if !on_curve.could_be_equal(&on_surface) {
                     continue;
                 }
@@ -476,6 +490,64 @@ impl<'a> Rebuild<'a> {
         })
     }
 
+    /// The new curve of `edge`, on the border of a sheet, bounding only
+    /// the face `f` of the use `(f, sense, pcurve)`: its pcurve there, its
+    /// ends shifted to where its moved vertices are on the face's surface,
+    /// on that surface — straight, where it was straight and that lies on
+    /// the surface.
+    fn border(
+        &self,
+        edge: &EdgeSpec,
+        (f, sense, pcurve): (usize, Sense, &Curve2),
+    ) -> GeopResult<Curve3> {
+        let (start, end) = (self.points[edge.start], self.points[edge.end]);
+        let surface = &self.surfaces[f];
+        let mut curve = None;
+        if edge.curve.degree == 1 && edge.curve.control_points.len() == 2 {
+            let line = NurbCurve3D::line(start, end)?;
+            if surface_missed(&line, [f], &self.surfaces)?.is_none() {
+                curve = Some(line);
+            }
+        }
+        let curve = match curve {
+            Some(line) => line,
+            None => {
+                let along = match sense {
+                    Sense::Forward => pcurve.clone(),
+                    Sense::Reversed => pcurve.reverse(),
+                };
+                let (a, b) = along.ends()?;
+                let foot = |p: &Vector3, seed: Vector2| -> GeopResult<Vector2> {
+                    let (u, v) = surface.project_in_domain(
+                        *p,
+                        seed[0].sharpen(),
+                        seed[1].sharpen(),
+                        PROJECT_ITERATIONS,
+                    )?;
+                    Ok(Vector2::from_array([u, v]))
+                };
+                let (shift0, shift1) = (foot(&start, a)?.sub(&a), foot(&end, b)?.sub(&b));
+                let (t0, t1) = along.domain();
+                let at = |frac: Scalar| -> GeopResult<Vector3> {
+                    let uv = along
+                        .evaluate(Scalar::interpolate(t0, t1, frac).sharpen())?
+                        .add(&shift0.prod_scalar(Scalar::ONE.sub(frac)))
+                        .add(&shift1.prod_scalar(frac));
+                    surface.evaluate(uv[0], uv[1])
+                };
+                fitted(at, (start, end), |_| Ok(()))
+                    .map_err(|e| e.with_context("fitting it on its face's new surface"))?
+            }
+        };
+        if let Some((_, middle)) = surface_missed(&curve, [f], &self.surfaces)? {
+            return Err(GeopError::new(format!(
+                "its new curve from {start:?} to {end:?} is not on face {} at {middle:?}",
+                self.names.faces[f]
+            )));
+        }
+        Ok(curve)
+    }
+
     /// The new curve of edge `e`, used by the faces `uses`, if it changes.
     fn curve(&self, e: usize, uses: &[(usize, Sense, &Curve2)]) -> GeopResult<Option<Curve3>> {
         let edge = &self.spec.edges[e];
@@ -485,13 +557,21 @@ impl<'a> Rebuild<'a> {
         if !changed {
             return Ok(None);
         }
+        let (start, end) = (self.points[edge.start], self.points[edge.end]);
+        if edge.start != edge.end && start.could_be_equal(&end) {
+            return Err(GeopError::new(format!(
+                "moved this far, it shrinks to a point at {start:?}: a face it bounds would vanish"
+            )));
+        }
+        if let [border] = uses {
+            return self.border(edge, *border).map(Some);
+        }
         let [(f, f_sense, f_pcurve), (g, g_sense, g_pcurve)] = uses else {
             return Err(GeopError::new(format!(
-                "it bounds {} faces, not two: only an edge between two faces can be moved",
+                "it bounds {} faces, not one or two: moving it is not supported",
                 uses.len()
             )));
         };
-        let (start, end) = (self.points[edge.start], self.points[edge.end]);
         let faces = [*f, *g];
         let curve = if let Some(seam) = &self.seams[e] {
             restricted(seam, start, end)?
@@ -809,6 +889,31 @@ fn side_is_pole(surface: &NurbSurface3D, along_u: bool, at_end: bool) -> GeopRes
         }
     }
     Ok(true)
+}
+
+/// The point nearest `seed` where the smooth surfaces `groups` of `pieces`
+/// all meet (see [`meet`]). Where it was is only where to start looking —
+/// a free choice, so sharp: a seed as wide as the union of points joined
+/// across a gap would carry its width into the answer.
+fn nearest(
+    seed: Vector3,
+    pieces: &[(&NurbSurface3D, (Scalar, Scalar))],
+    groups: &[Vec<usize>],
+) -> GeopResult<Vector3> {
+    let mut offsets: Vec<Offset> = groups
+        .iter()
+        .map(|group| Offset {
+            pieces: group.iter().map(|&i| pieces[i]).collect(),
+            offset: Scalar::ZERO,
+        })
+        .collect();
+    meet(seed.sharpen(), &mut offsets, &[])
+}
+
+/// The part of `curve`, carried on past its ends or cut back, from `start`
+/// to `end`, both on it: what is left of an edge whose ends move along it.
+pub(crate) fn along(curve: &Curve3, start: Vector3, end: Vector3) -> GeopResult<Curve3> {
+    restricted(&carried_on(curve, |_| Ok(true))?, start, end)
 }
 
 /// The part of `longer`, a seam carried on past its ends, from `start` to
