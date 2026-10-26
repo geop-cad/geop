@@ -16,13 +16,24 @@
 //!
 //! What is left used by one face only is an open edge. With none, the
 //! sheets close up into a solid, its faces turned to point out of it.
-//! Edges that meet only in part — one running along part of another — are
-//! not joined: they are open edges, and a solid asked for is refused,
-//! naming them.
+//!
+//! An edge that runs along two of another sheet — a T-junction, where a
+//! vertex of that sheet lies inside the edge — is first split there
+//! (`split_at_junctions`), so the edges meet end to end. Otherwise edges
+//! that meet only in part are not joined: they are open edges, and a solid
+//! asked for is refused, naming them.
+//!
+//! Sheets made to some accuracy — another system's, a file's — meet only
+//! to within it. The user can state it, as a gap: then what is within the
+//! gap of each other is joined, and, once the sheets close up, every vertex
+//! joined is moved to where the surfaces around it meet and every edge
+//! from it to where its two faces do (`geop_lib_shell::rebuilt`). The gap is
+//! never guessed, nor grown until things join.
 
 use geop_core_editor::{
     edit_form::{EditForm, FormState},
     editable::{Context, OperationGroup, OperationInfo, OperationTier},
+    editing::{Number, Unit},
     part_operation,
     part_operation::PartOperation,
 };
@@ -31,19 +42,22 @@ use std::collections::HashMap;
 
 use geop_core_geometry::{
     contains::curve::curve_could_contain,
-    search::{MAX_NODES, min_subdivision_size},
+    nurb_surface::NurbSurface3D,
+    search::{MAX_NODES, PROJECT_ITERATIONS, min_subdivision_size},
 };
 use geop_core_math::{
     geop_error::{GeopError, GeopResult},
     scalars::Scalar,
     solvers::walk::{Take, flood},
     union_find::UnionFind,
+    vector::{Vector3, Vector4},
 };
 use geop_core_topology::{
-    Body, ShellId,
-    build::{BodySpec, CoedgeOn, EdgeSpec, FaceSpec},
+    Body, Curve2, Curve3, Sense, ShellId,
+    build::{BodySpec, CoedgeOn, CoedgeSpec, EdgeSpec, FaceSpec},
     validation::{Outward, ValidationParameters, normal_points_outward},
 };
+use geop_lib_shell::rebuilt;
 use geop_ops_model::{BodyNames, Face, ModelOperation, NamedModel, Namer, build_model};
 use serde::{Deserialize, Serialize};
 
@@ -62,6 +76,11 @@ pub struct KnitArgs {
     /// Whether the result must close up into a solid.
     #[serde(default)]
     pub solid: bool,
+    /// How far apart edges and vertices of the sheets may be and still be
+    /// joined: the accuracy the sheets were made to. None, to join only
+    /// what meets.
+    #[serde(default)]
+    pub gap: f64,
 }
 
 part_operation!(Knit(KnitArgs));
@@ -84,6 +103,7 @@ impl PartOperation for Knit {
         KnitArgs {
             faces: Vec::new(),
             solid: true,
+            gap: 0.0,
         }
     }
 
@@ -110,6 +130,8 @@ impl PartOperation for Knit {
         f.checkbox("solid", "close into a solid", args.solid, |edit, solid| {
             edit.args.solid = solid
         });
+        let gap = Number::new("gap", args.gap, Unit::Length).range(0.0, 1.0);
+        f.number("gap", gap, |edit, gap| edit.args.gap = gap);
         f
     }
 }
@@ -124,19 +146,33 @@ impl ModelOperation for Knit {
                 sheets.push(sheet);
             }
         }
-        knit(model, &namer, &sheets, args.solid)?;
+        if !(args.gap.is_finite() && args.gap >= 0.0) {
+            return Err(GeopError::new(format!(
+                "a gap is a distance of zero or more, not {}",
+                args.gap
+            )));
+        }
+        knit(
+            model,
+            &namer,
+            &sheets,
+            args.solid,
+            Scalar::from_f64(args.gap),
+        )?;
         Ok(())
     }
 }
 
-/// Joins `sheets` (see the module docs) and returns what they became: a
-/// solid named `namer`'s root once they close up, a sheet otherwise — an
-/// error naming the open edges, if `solid` asks for one.
+/// Joins `sheets` (see the module docs), what is within `gap` of each
+/// other as one, and returns what they became: a solid named `namer`'s
+/// root once they close up, a sheet otherwise — an error naming the open
+/// edges, if `solid` asks for one.
 pub fn knit(
     part: &mut NamedModel,
     namer: &Namer,
     sheets: &[ShellId],
     solid: bool,
+    gap: Scalar,
 ) -> GeopResult<Body> {
     if sheets.is_empty() {
         return Err(GeopError::new(
@@ -155,15 +191,24 @@ pub fn knit(
             sheet_of_face.push(k);
         }
     }
-    let (spec, sources) = model.body_spec(&faces, false)?;
+    let (mut spec, sources) = model.body_spec(&faces, false)?;
     let BodyNames {
-        vertices: vertex_names,
-        edges: edge_names,
+        vertices: mut vertex_names,
+        edges: mut edge_names,
         faces: face_names,
         ..
     } = part.source_names(&sources)?;
+    let near = Near { gap };
+    split_at_junctions(
+        &mut spec,
+        &sheet_of_face,
+        &mut vertex_names,
+        &mut edge_names,
+        namer,
+        near,
+    )?;
 
-    let joined = Joined::new(&spec, &sheet_of_face, &vertex_names, &edge_names)?;
+    let joined = Joined::new(&spec, &sheet_of_face, &vertex_names, &edge_names, near)?;
     let (mut out, uses) = joined.spec(&spec)?;
     let open: Vec<&str> = uses
         .iter()
@@ -192,6 +237,21 @@ pub fn knit(
         solid: out.solid.then(|| namer.root()),
     };
     turn_consistently(&mut out, &names)?;
+    // Joined across a gap, a vertex is the union of the points joined and
+    // an edge the first of the curves: wide, and off the faces by as much
+    // as the gap. Closed up, every vertex joined moves to where the
+    // surfaces around it meet, every edge from it to where its faces do
+    // (see `geop_lib_shell::rebuilt`), and the width comes back down to
+    // how well the surfaces agree.
+    if gap.definitely_greater(Scalar::ZERO) && out.solid {
+        let reseat: Vec<bool> = (0..out.vertices.len())
+            .map(|v| (joined.vertex.iter()).filter(|&&w| w == v).count() > 1)
+            .collect();
+        let kept = vec![false; out.faces.len()];
+        out = rebuilt(&out, &names, &kept, &reseat).map_err(|e| {
+            e.with_context("moving what was joined across the gap onto where the surfaces meet")
+        })?;
+    }
     let consumed: Vec<Body> = sheets.iter().map(|&s| Body::Sheet(s)).collect();
     part.delete_bodies(&consumed)?;
     let built = part.build_body(out, names)?;
@@ -246,6 +306,7 @@ impl Joined {
         sheet_of_face: &[usize],
         vertex_names: &[String],
         edge_names: &[String],
+        near: Near,
     ) -> GeopResult<Self> {
         // The sheet each vertex and edge is of.
         let mut vertex_sheet = vec![usize::MAX; spec.vertices.len()];
@@ -269,7 +330,7 @@ impl Joined {
         for i in 0..n {
             for j in i + 1..n {
                 if vertex_sheet[i] != vertex_sheet[j]
-                    && spec.vertices[i].could_be_equal(&spec.vertices[j])
+                    && near.points(&spec.vertices[i], &spec.vertices[j])
                 {
                     groups.union(i, j);
                 }
@@ -309,7 +370,8 @@ impl Joined {
             let candidates = &between[&key];
             for (i, &a) in candidates.iter().enumerate() {
                 for &b in &candidates[i + 1..] {
-                    if edge_sheet[a] == edge_sheet[b] || !coincide(&spec.edges[a], &spec.edges[b])?
+                    if edge_sheet[a] == edge_sheet[b]
+                        || !coincide(&spec.edges[a], &spec.edges[b], near)?
                     {
                         continue;
                     }
@@ -412,13 +474,193 @@ impl Joined {
 }
 
 /// Whether two edges between the same vertices are one: the middle of each
-/// lies on the other's curve.
-fn coincide(a: &EdgeSpec, b: &EdgeSpec) -> GeopResult<bool> {
+/// lies on the other's curve, as far as `near` tells.
+fn coincide(a: &EdgeSpec, b: &EdgeSpec, near: Near) -> GeopResult<bool> {
     let middle = |e: &EdgeSpec| e.curve.evaluate(e.curve.mid_parameter()?);
-    let on = |e: &EdgeSpec, p| -> GeopResult<bool> {
-        Ok(curve_could_contain(&e.curve, &p, MAX_NODES, min_subdivision_size())?.is_some())
-    };
+    let on = |e: &EdgeSpec, p| -> GeopResult<bool> { Ok(near.on_curve(&e.curve, &p)?.is_some()) };
     Ok(on(b, middle(a)?)? && on(a, middle(b)?)?)
+}
+
+/// How far apart what is joined may be: the gap the sheets were made with,
+/// which the user states — nothing is guessed. Without one, only what
+/// could be at one point, as the enclosures say, is joined.
+#[derive(Clone, Copy, Debug)]
+struct Near {
+    gap: Scalar,
+}
+
+impl Near {
+    /// `p` grown by the gap in every direction: every point within it.
+    fn grown(&self, p: &Vector3) -> Vector3 {
+        Vector3::from_array(std::array::from_fn(|k| {
+            p[k].sub(self.gap).union(p[k].add(self.gap))
+        }))
+    }
+
+    /// Whether `a` and `b` could be within the gap of each other.
+    fn points(&self, a: &Vector3, b: &Vector3) -> bool {
+        self.grown(a).could_be_equal(b)
+    }
+
+    /// Where on `curve` a point within the gap of `p` could be, if any.
+    fn on_curve(&self, curve: &Curve3, p: &Vector3) -> GeopResult<Option<Scalar>> {
+        curve_could_contain(curve, &self.grown(p), MAX_NODES, min_subdivision_size())
+    }
+}
+
+/// Splits every edge of one sheet at each vertex of another that lies on
+/// it, inside it — a T-junction: one sheet's edge running along the edges
+/// of two of another — so the edges meet end to end and join. The split
+/// point is the edge's own, refined to its point nearest the vertex: the
+/// edge's two pieces run on exactly as it did, their shared end a vertex
+/// of its own sheet, which joins the other's vertex as any two do. The
+/// new vertex and the piece from it on are named `K(E,V)` for the knit
+/// `K`, the edge `E` and the vertex `V`; the edge keeps its name for the
+/// piece up to it.
+fn split_at_junctions(
+    spec: &mut BodySpec,
+    sheet_of_face: &[usize],
+    vertex_names: &mut Vec<String>,
+    edge_names: &mut Vec<String>,
+    namer: &Namer,
+    near: Near,
+) -> GeopResult<()> {
+    let mut edge_sheet = vec![usize::MAX; spec.edges.len()];
+    let mut vertex_sheet = vec![usize::MAX; spec.vertices.len()];
+    for (f, face) in spec.faces.iter().enumerate() {
+        for c in face.loops().into_iter().flatten() {
+            let (a, b) = spec.ends(c.on)?;
+            vertex_sheet[a] = sheet_of_face[f];
+            vertex_sheet[b] = sheet_of_face[f];
+            if let CoedgeOn::Edge(e, _) = c.on {
+                edge_sheet[e] = sheet_of_face[f];
+            }
+        }
+    }
+    let mut e = 0;
+    while e < spec.edges.len() {
+        let mut split = None;
+        for (v, &point) in spec.vertices.iter().enumerate() {
+            let edge = &spec.edges[e];
+            if vertex_sheet[v] == edge_sheet[e]
+                || near.points(&point, &spec.vertices[edge.start])
+                || near.points(&point, &spec.vertices[edge.end])
+            {
+                continue;
+            }
+            let Some(t) = near.on_curve(&edge.curve, &point)? else {
+                continue;
+            };
+            let t = edge.curve.closest_parameter_from(&point, t.sharpen())?;
+            let (t0, t1) = edge.curve.domain();
+            if t.definitely_greater(t0)
+                && t.definitely_less(t1)
+                && near.points(&edge.curve.evaluate(t)?, &point)
+            {
+                split = Some((v, t));
+                break;
+            }
+        }
+        match split {
+            Some((v, t)) => {
+                let name = namer.piece(&edge_names[e], &vertex_names[v]);
+                split_edge(spec, e, t)?;
+                vertex_sheet.push(edge_sheet[e]);
+                vertex_names.push(name.clone());
+                edge_sheet.push(edge_sheet[e]);
+                edge_names.push(name);
+                // The piece up to the vertex may meet another.
+            }
+            None => e += 1,
+        }
+    }
+    Ok(())
+}
+
+/// Splits the edge `e` of `spec` at its parameter `t`, sharp: a new vertex
+/// there, `e` running up to it and a new edge on from it, and every coedge
+/// along `e` two, its pcurve split where it passes the vertex's foot point
+/// on its face.
+fn split_edge(spec: &mut BodySpec, e: usize, t: Scalar) -> GeopResult<()> {
+    let edge = spec.edges[e].clone();
+    let (t0, t1) = edge.curve.domain();
+    let (first, second) = (edge.curve.sub_curve(t0, t)?, edge.curve.sub_curve(t, t1)?);
+    let point = edge.curve.evaluate(t)?;
+    let v = spec.vertices.len();
+    spec.vertices.push(point);
+    spec.edges[e] = EdgeSpec {
+        curve: first,
+        start: edge.start,
+        end: v,
+    };
+    let next = spec.edges.len();
+    spec.edges.push(EdgeSpec {
+        curve: second,
+        start: v,
+        end: edge.end,
+    });
+    for face in &mut spec.faces {
+        let surface = face.surface.clone();
+        for lp in std::iter::once(&mut face.outer).chain(face.holes.iter_mut()) {
+            let Some(k) = lp
+                .iter()
+                .position(|c| matches!(c.on, CoedgeOn::Edge(x, _) if x == e))
+            else {
+                continue;
+            };
+            let coedge = lp[k].clone();
+            let CoedgeOn::Edge(_, sense) = coedge.on else {
+                unreachable!("found on an edge")
+            };
+            let (before, after) = split_pcurve(&surface, &coedge.pcurve, &point)?;
+            let pieces = match sense {
+                Sense::Forward => [(e, before), (next, after)],
+                Sense::Reversed => [(next, before), (e, after)],
+            };
+            lp.splice(
+                k..=k,
+                pieces.map(|(edge, pcurve)| CoedgeSpec {
+                    on: CoedgeOn::Edge(edge, sense),
+                    pcurve,
+                }),
+            );
+        }
+    }
+    Ok(())
+}
+
+/// `pcurve`, on `surface`, split where it passes `point`'s foot point: at
+/// its parameter nearest that `(u, v)`, found as a curve in space lying in
+/// the plane `z = 0`.
+fn split_pcurve(
+    surface: &NurbSurface3D,
+    pcurve: &Curve2,
+    point: &Vector3,
+) -> GeopResult<(Curve2, Curve2)> {
+    let (s0, s1) = pcurve.domain();
+    let middle = pcurve.evaluate(pcurve.mid_parameter()?)?;
+    let (u, v) = surface.project(
+        *point,
+        middle[0].sharpen(),
+        middle[1].sharpen(),
+        PROJECT_ITERATIONS,
+    )?;
+    let lifted = Curve3::try_new(
+        pcurve.degree,
+        (pcurve.control_points.iter())
+            .map(|cp| Vector4::from_array([cp[0], cp[1], Scalar::ZERO, cp[2]]))
+            .collect(),
+        pcurve.knot_vector.clone(),
+    )?;
+    let target = Vector3::from_array([u, v, Scalar::ZERO]);
+    let s = lifted.closest_parameter_from(&target, pcurve.mid_parameter()?.sharpen())?;
+    if !(s.definitely_greater(s0) && s.definitely_less(s1)) {
+        return Err(GeopError::new(format!(
+            "the pcurve does not pass the split point's foot point {:?} inside it",
+            (u, v)
+        )));
+    }
+    Ok((pcurve.sub_curve(s0, s)?, pcurve.sub_curve(s, s1)?))
 }
 
 /// Whether the closed edge `b` runs round the other way than `a`, which it

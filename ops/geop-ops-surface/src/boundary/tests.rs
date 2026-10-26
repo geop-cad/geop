@@ -383,6 +383,7 @@ fn fill_and_knit(n: usize, lift: f64) {
     let args = crate::KnitArgs {
         faces: faces.iter().map(named).collect(),
         solid: false,
+        gap: 0.0,
     };
     let part = apply_to_model::<crate::Knit>(part, "k", &args).unwrap();
     assert_valid_sheets(&part);

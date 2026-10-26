@@ -342,7 +342,10 @@ impl<'a> Rebuild<'a> {
                         offset: Scalar::ZERO,
                     })
                     .collect();
-                meet(seed, &mut offsets, &[])
+                // Where it was is only where to start looking — a free
+                // choice, so sharp: a seed as wide as the union of points
+                // joined across a gap would carry its width into the answer.
+                meet(seed.sharpen(), &mut offsets, &[])
             }
         }
     }
