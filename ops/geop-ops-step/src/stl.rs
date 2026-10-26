@@ -27,7 +27,7 @@ use serde::{Deserialize, Serialize};
 /// `I` where every edge is shared by two triangles, a sheet otherwise;
 /// each face, edge and vertex named `import_stl(I,fK)`, `eK`, `vK` in the
 /// order the merged mesh has them. Corners at the very same coordinates are
-/// one; the file's text form (ASCII STL) is read.
+/// one; the file is read in either form, text (ASCII STL) or binary.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub struct ImportStl;
 
@@ -103,16 +103,16 @@ impl ModelOperation for ImportStl {
         if args.file.is_empty() {
             return Err(GeopError::new("choose an STL file to import")).with_context(ctx);
         }
-        let (_, text) = reader.read_file(&args.file).with_context(ctx)?;
+        let (_, bytes) = reader.read_bytes(&args.file).with_context(ctx)?;
         let namer = Namer::new("import_stl", step)?;
-        add_mesh(model, &namer, &text).with_context(ctx)
+        add_mesh(model, &namer, &bytes).with_context(ctx)
     }
 }
 
-/// Adds the mesh of the ASCII STL text `text` to `model`, named by
-/// `namer` (see [`ImportStl`]).
-pub fn add_mesh(model: &mut NamedModel, namer: &Namer, text: &str) -> GeopResult<()> {
-    let (points, triangles) = read_stl(text)?;
+/// Adds the mesh of the STL file `file` — its bytes, in either form — to
+/// `model`, named by `namer` (see [`ImportStl`]).
+pub fn add_mesh(model: &mut NamedModel, namer: &Namer, file: &[u8]) -> GeopResult<()> {
+    let (points, triangles) = read_stl(file)?;
     let spec = BodySpec::of_triangles(&points, &triangles)?;
     let (spec, _) = spec.merged(|_, _| true)?;
     let named = |prefix: &str, n: usize| -> Vec<String> {
@@ -130,42 +130,68 @@ pub fn add_mesh(model: &mut NamedModel, namer: &Namer, text: &str) -> GeopResult
     Ok(())
 }
 
-/// The corners and triangles of the ASCII STL text `text`: each `facet`'s
-/// three `vertex` lines, corners at the very same coordinates one. The
-/// facets' normals are not read — the order of the corners says which way
-/// a triangle faces.
-pub fn read_stl(text: &str) -> GeopResult<(Vec<Vector3>, Vec<[usize; 3]>)> {
-    let mut points: Vec<Vector3> = Vec::new();
-    let mut index: std::collections::HashMap<[u64; 3], usize> = Default::default();
-    let mut triangles = Vec::new();
-    let mut corners: Vec<usize> = Vec::with_capacity(3);
+/// The corners and triangles of the STL file `file`, corners at the very
+/// same coordinates one. Binary where its length is that of a binary STL
+/// of as many triangles as its header says — 84 bytes and 50 a triangle,
+/// which a text file starting `solid` (as some binary headers do too) all
+/// but never is — and text (ASCII STL) otherwise. The facets' normals are
+/// not read: the order of the corners says which way a triangle faces.
+pub fn read_stl(file: &[u8]) -> GeopResult<(Vec<Vector3>, Vec<[usize; 3]>)> {
+    let mut mesh = Mesh::default();
+    let count = file
+        .get(80..84)
+        .map(|n| u32::from_le_bytes([n[0], n[1], n[2], n[3]]) as usize);
+    if let Some(count) = count
+        && file.len() == 84 + 50 * count
+    {
+        for (k, facet) in file[84..].chunks_exact(50).enumerate() {
+            let corner = |c: usize| {
+                let at = 12 + 12 * c;
+                [0, 1, 2].map(|i| {
+                    let b = &facet[at + 4 * i..at + 4 * i + 4];
+                    f64::from(f32::from_le_bytes([b[0], b[1], b[2], b[3]]))
+                })
+            };
+            let corners = [corner(0), corner(1), corner(2)];
+            let mut triangle = [0; 3];
+            for (t, xyz) in triangle.iter_mut().zip(corners) {
+                *t = mesh.corner(xyz).ok_or_else(|| {
+                    GeopError::new(format!("triangle {k}: a corner is no number: {xyz:?}"))
+                })?;
+            }
+            mesh.triangles.push(triangle);
+        }
+        return Ok((mesh.points, mesh.triangles));
+    }
+    let Ok(text) = std::str::from_utf8(file) else {
+        return Err(GeopError::new(format!(
+            "the file is no STL: not text, and {} bytes are no binary STL of {} triangles",
+            file.len(),
+            count.map_or("its".to_string(), |n| n.to_string())
+        )));
+    };
     if !text.trim_start().starts_with("solid") {
         return Err(GeopError::new(
-            "the file is no ASCII STL (it does not start with `solid`): binary STL is not read",
+            "the file is no STL: its text does not start with `solid`, and its length is no binary STL's",
         ));
     }
+    let mut corners: Vec<usize> = Vec::with_capacity(3);
     for (number, line) in text.lines().enumerate() {
         let mut words = line.split_whitespace();
         match words.next() {
             Some("vertex") => {
-                let mut xyz = [0.0f64; 3];
+                let mut xyz = [f64::NAN; 3];
                 for c in &mut xyz {
-                    *c = words
-                        .next()
-                        .and_then(|w| w.parse::<f64>().ok())
-                        .filter(|v| v.is_finite())
-                        .ok_or_else(|| {
-                            GeopError::new(format!(
-                                "line {}: a vertex is three numbers: {line:?}",
-                                number + 1
-                            ))
-                        })?;
+                    if let Some(v) = words.next().and_then(|w| w.parse::<f64>().ok()) {
+                        *c = v;
+                    }
                 }
-                let key = xyz.map(|c| (c + 0.0).to_bits());
-                let p = *index.entry(key).or_insert_with(|| {
-                    points.push(Vector3::from_array(xyz.map(Scalar::from_f64)));
-                    points.len() - 1
-                });
+                let p = mesh.corner(xyz).ok_or_else(|| {
+                    GeopError::new(format!(
+                        "line {}: a vertex is three numbers: {line:?}",
+                        number + 1
+                    ))
+                })?;
                 corners.push(p);
             }
             Some("endloop") => {
@@ -176,13 +202,37 @@ pub fn read_stl(text: &str) -> GeopResult<(Vec<Vector3>, Vec<[usize; 3]>)> {
                         corners.len()
                     )));
                 };
-                triangles.push([a, b, c]);
+                mesh.triangles.push([a, b, c]);
                 corners.clear();
             }
             _ => {}
         }
     }
-    Ok((points, triangles))
+    Ok((mesh.points, mesh.triangles))
+}
+
+/// A mesh being read: its corners, each once, and its triangles.
+#[derive(Default)]
+struct Mesh {
+    points: Vec<Vector3>,
+    index: std::collections::HashMap<[u64; 3], usize>,
+    triangles: Vec<[usize; 3]>,
+}
+
+impl Mesh {
+    /// The corner at `xyz`, the one there already if there is: none if a
+    /// coordinate is no finite number.
+    fn corner(&mut self, xyz: [f64; 3]) -> Option<usize> {
+        if !xyz.iter().all(|c| c.is_finite()) {
+            return None;
+        }
+        let key = xyz.map(|c| (c + 0.0).to_bits());
+        let points = &mut self.points;
+        Some(*self.index.entry(key).or_insert_with(|| {
+            points.push(Vector3::from_array(xyz.map(Scalar::from_f64)));
+            points.len() - 1
+        }))
+    }
 }
 
 #[cfg(test)]
@@ -219,17 +269,102 @@ mod tests {
     fn a_cube_mesh_is_a_box() {
         let mut model = NamedModel::new();
         let namer = Namer::new("import_stl", "i").unwrap();
-        add_mesh(&mut model, &namer, &cube_stl()).unwrap();
+        add_mesh(&mut model, &namer, cube_stl().as_bytes()).unwrap();
         assert_valid(&model);
         let solid = model.solid_id("import_stl(i)").unwrap();
         assert_eq!(model.topology().solid_faces(solid).unwrap().len(), 6);
         assert_eq!(model.topology().edges.len(), 12);
     }
 
-    /// Binary STL is refused, saying so.
+    /// The cube's triangles as a binary STL: an 80-byte header — starting
+    /// `solid`, as some exporters write it — the count, and 50 bytes a
+    /// triangle.
+    fn cube_binary() -> Vec<u8> {
+        let (points, triangles) = read_stl(cube_stl().as_bytes()).unwrap();
+        let mut file = b"solid cube, binary".to_vec();
+        file.resize(80, b' ');
+        file.extend((triangles.len() as u32).to_le_bytes());
+        for triangle in &triangles {
+            file.extend([0u8; 12]);
+            for &corner in triangle {
+                for c in points[corner].to_array() {
+                    file.extend((c.to_f64() as f32).to_le_bytes());
+                }
+            }
+            file.extend([0u8; 2]);
+        }
+        file
+    }
+
+    /// The same cube read from a binary STL: the same box.
     #[test]
-    fn binary_stl_is_refused() {
-        let error = read_stl("\u{0}\u{1}binary").unwrap_err();
-        assert!(format!("{error}").contains("binary"), "{error}");
+    fn a_binary_cube_mesh_is_the_same_box() {
+        let binary = cube_binary();
+        assert_eq!(binary.len(), 84 + 50 * 12);
+        assert_eq!(
+            read_stl(&binary).unwrap(),
+            read_stl(cube_stl().as_bytes()).unwrap()
+        );
+        let mut model = NamedModel::new();
+        let namer = Namer::new("import_stl", "i").unwrap();
+        add_mesh(&mut model, &namer, &binary).unwrap();
+        assert_valid(&model);
+        let solid = model.solid_id("import_stl(i)").unwrap();
+        assert_eq!(model.topology().solid_faces(solid).unwrap().len(), 6);
+    }
+
+    /// A binary STL chosen in the dialog's file field, stored next to the
+    /// program as the front end stores a file of bytes — a `data:` URL of
+    /// them — is offered, read and imported: a solid named after the step.
+    #[test]
+    fn a_binary_stl_chosen_in_the_dialog_is_imported() {
+        use geop_core_editor::{
+            editing::{Control, Value},
+            editor::{Command, Editor},
+            registry::Registry,
+            testing::{dialog, handled},
+        };
+        let registry = geop_ops_model::register(Registry::default())
+            .and_then(crate::register)
+            .unwrap();
+        let mut editor = Editor::new(registry, std::collections::BTreeMap::new());
+        let stored = geop_core_program::workspace::content(cube_binary());
+        assert!(stored.starts_with(geop_core_program::workspace::BYTES_PREFIX));
+        let files = std::collections::BTreeMap::from([("cube.stl".to_string(), Some(stored))]);
+        assert!(editor.handle(Command::Files { files }).error.is_none());
+        let update = editor.handle(Command::Load {
+            program: geop_core_program::program::Program::new(),
+            path: Some("part.geop".into()),
+        });
+        assert!(update.error.is_none(), "{:?}", update.error);
+        let update = editor.handle(Command::New {
+            kind: "import_stl".into(),
+        });
+        let step = update.step.expect("a step is edited");
+        let Some(Control::File { options, .. }) = step.presentation.dialog.get("file") else {
+            panic!("the file is a file field");
+        };
+        assert!(options.iter().any(|o| o.value == "cube.stl"), "{options:?}");
+        let update = editor.handle(dialog("file", Value::Choice("cube.stl".into())));
+        let step = update.step.expect("a step is edited");
+        assert!(step.error.is_none(), "{:?}", step.error);
+        handled(&mut editor, Command::Commit);
+        let scene = editor.handle(Command::Show).scene.expect("the scene");
+        assert_eq!(scene.part.solids, ["import_stl(import_stl1)"]);
+    }
+
+    /// What is neither form is refused, saying so: bytes of no binary
+    /// STL's length, text not starting `solid`, a vertex short of a
+    /// number.
+    #[test]
+    fn what_is_no_stl_is_refused() {
+        let mut short = cube_binary();
+        short.pop();
+        let error = read_stl(&short).unwrap_err();
+        assert!(format!("{error}").contains("no binary STL"), "{error}");
+        let error = read_stl(b"facet").unwrap_err();
+        assert!(format!("{error}").contains("`solid`"), "{error}");
+        let error = read_stl(b"solid\nvertex 1 2\n").unwrap_err();
+        assert!(format!("{error}").contains("three numbers"), "{error}");
     }
 }
