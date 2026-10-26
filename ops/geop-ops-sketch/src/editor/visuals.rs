@@ -260,7 +260,7 @@ pub(super) fn visuals(
     let mut anchors: Vec<P2> = Vec::new();
     for (&id, c) in &sketch.constraints {
         let formula = args.formulas.contains_key(&id);
-        let Some((text, at)) = constraints::glyph(sketch, c, formula) else {
+        let Some((text, at)) = constraints::glyph(sketch, c, formula, s.turned) else {
             continue;
         };
         let dimension = constraints::value(c).is_some();
@@ -309,9 +309,9 @@ pub(super) fn visuals(
     {
         let (picks, _) = selected(sketch, selection);
         if let Some(c) = tool
-            .build(sketch, &picks)
+            .build(sketch, &picks, s.turned)
             .and_then(|cs| cs.into_iter().next())
-            && let Some((text, _)) = constraints::glyph(sketch, &c, false)
+            && let Some((text, _)) = constraints::glyph(sketch, &c, false, s.turned)
         {
             dimension_visuals(&mut out, frame, "placing", sketch, &c, cursor, Style::Draft);
             out.push(Visual::new(

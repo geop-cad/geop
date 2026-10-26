@@ -2436,3 +2436,47 @@ fn a_projected_spline_shows_no_inner_control_points() {
         "its inner control points are not"
     );
 }
+
+/// Seen turned a quarter, the sketch's `x` running up the screen, what is
+/// horizontal on screen is its `y`: a line along `x` is marked and listed
+/// vertical, and the horizontal tool makes a line run across the screen.
+#[test]
+fn horizontal_and_vertical_are_named_as_seen() {
+    let mut e = drawing();
+    e.lines(&[[0.5, 0.5], [1.5, 0.5]]);
+    let along_x = e.line_between([0.5, 0.5], [1.5, 0.5]).unwrap();
+    assert!(e.has(|c| matches!(c, Constraint::Horizontal { line } if *line == along_x)));
+    let glyphs = |e: &Editor| -> Vec<String> {
+        e.presentation
+            .visuals
+            .iter()
+            .filter_map(|v| match &v.shape {
+                Shape::Label { text, .. } => Some(text.clone()),
+                _ => None,
+            })
+            .collect()
+    };
+    assert!(glyphs(&e).contains(&"H".to_string()), "{:?}", glyphs(&e));
+
+    e.send(StepEditEvent::View {
+        up: Vector3::from_array([Scalar::ONE, Scalar::ZERO, Scalar::ZERO]),
+    });
+    assert!(glyphs(&e).contains(&"V".to_string()), "{:?}", glyphs(&e));
+    assert!(!glyphs(&e).contains(&"H".to_string()), "{:?}", glyphs(&e));
+
+    e.lines(&[[0.0, 1.5], [1.0, 2.0]]);
+    let slanted = e.line_between([0.0, 1.5], [1.0, 2.0]).unwrap();
+    e.click(0.5, 1.75);
+    e.act("constrain", "horizontal");
+    assert!(
+        e.has(|c| matches!(c, Constraint::Vertical { line } if *line == slanted)),
+        "across the screen is along the sketch's y: {:?}",
+        e.sketch().constraints
+    );
+
+    // Seen upright again, the names are the sketch's own.
+    e.send(StepEditEvent::View {
+        up: Vector3::from_array([Scalar::ZERO, Scalar::ONE, Scalar::ZERO]),
+    });
+    assert!(glyphs(&e).contains(&"H".to_string()), "{:?}", glyphs(&e));
+}

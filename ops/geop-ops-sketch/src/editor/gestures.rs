@@ -3,7 +3,7 @@
 //! sketch.
 
 use geop_core_editor::editing::hit::no_instances;
-use geop_core_math::scalars::Scalar;
+use geop_core_math::{scalars::Scalar, vector::Vector3};
 use geop_core_program::numeric::NumericInput;
 
 use super::{
@@ -218,7 +218,7 @@ impl Editing<'_> {
     /// place.
     fn apply_constraint(&mut self, tool: ConstraintTool, at: Option<P2>) {
         let (picks, _) = selected(self.sketch(), self.selection);
-        let Some(constraints) = tool.build(self.sketch(), &picks) else {
+        let Some(constraints) = tool.build(self.sketch(), &picks, self.s.turned) else {
             return;
         };
         let mut next = self.sketch().clone();
@@ -229,7 +229,7 @@ impl Editing<'_> {
             let first = ids.first().copied();
             if let (Some(id), Some(at)) = (first, at)
                 && let Some((_, anchor)) =
-                    constraints::glyph(self.sketch(), &self.sketch().constraints[&id], false)
+                    constraints::glyph(self.sketch(), &self.sketch().constraints[&id], false, false)
             {
                 self.args.labels.insert(id, sub(at, anchor));
             }
@@ -361,7 +361,7 @@ impl Editing<'_> {
             .sketch()
             .constraints
             .get(&id)
-            .and_then(|c| constraints::glyph(self.sketch(), c, false))
+            .and_then(|c| constraints::glyph(self.sketch(), c, false, false))
         else {
             return;
         };
@@ -681,6 +681,10 @@ impl Editing<'_> {
             CanvasEvent::Confirm => self.confirm(),
             CanvasEvent::Delete => self.delete_selection(),
             CanvasEvent::Hover { pointer, shift } => self.hover(pointer, *shift),
+            CanvasEvent::View { up } => {
+                let along = |axis: &Vector3| axis.prod_dot(up).abs();
+                self.s.turned = along(self.frame.u()).definitely_greater(along(self.frame.v()));
+            }
             CanvasEvent::Leave => {
                 self.s.cursor = None;
                 self.s.snap = None;

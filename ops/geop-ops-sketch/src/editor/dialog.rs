@@ -335,7 +335,7 @@ pub(super) fn draw_dialog<'a>(
             d.on(key.clone(), move |edit, value| {
                 editing(view, edit, |e| e.constraint(id, &value))
             });
-            let mut item = ListItem::new(key, constraints::name(c));
+            let mut item = ListItem::new(key, constraints::name(c, s.turned));
             item.selected = selected_constraints.contains(&id);
             item.removable = true;
             item.tone = if failed.contains(&id) {
@@ -359,7 +359,7 @@ pub(super) fn draw_dialog<'a>(
     if let Some(id) = s.prompt
         && let Some(c) = sketch.constraints.get(&id)
         && let Some(value) = constraints::value(c)
-        && let Some((_, at)) = constraints::glyph(sketch, c, false)
+        && let Some((_, at)) = constraints::glyph(sketch, c, false, false)
     {
         d.on("prompt", move |edit, value| {
             if let Value::Text(text) = value {
@@ -368,7 +368,7 @@ pub(super) fn draw_dialog<'a>(
         });
         d.form.prompt = Some(Prompt {
             key: "prompt".into(),
-            label: constraints::name(c),
+            label: constraints::name(c, s.turned),
             value: (args.formulas.get(&id))
                 .map(|f| f.to_string())
                 .unwrap_or_else(|| format!("{}", (value * 1e6).round() / 1e6)),
