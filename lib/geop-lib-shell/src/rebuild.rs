@@ -325,21 +325,23 @@ impl<'a> Rebuild<'a> {
             pieces.push((surface, (u, w)));
         }
         // A vertex at a pole of its faces — on the axis of a revolved face —
-        // is the pole of their new surfaces: the topology puts it there.
+        // is the pole of their new surfaces: the topology puts it there. A
+        // face with a pole among faces without — a rounded box's corner
+        // patch at the blends' ends — is no such vertex: the faces without
+        // say where it goes, and the conditions below read the pole's
+        // normal as its limit.
         let poles: Vec<_> = (pieces.iter())
             .map(|(s, (u, w))| s.pole_at(*u, *w))
             .collect();
-        if let Some(pole) = poles.iter().flatten().next() {
+        if let Some(pole) = poles.iter().flatten().next()
+            && poles.iter().all(Option::is_some)
+        {
             if !poles
                 .iter()
                 .all(|p| p.is_some_and(|p| p.could_be_equal(pole)))
             {
-                let names: Vec<&str> = (faces.iter().zip(&poles))
-                    .filter(|(_, p)| p.is_none())
-                    .map(|(&(f, _), _)| self.names.faces[f].as_str())
-                    .collect();
                 return Err(GeopError::new(format!(
-                    "it is at a pole of some of its faces and not of {names:?}, or of poles apart ({poles:?}): moving it there is not supported"
+                    "it is at poles apart of its faces ({poles:?}): moving it there is not supported"
                 )));
             }
             return Ok(*pole);

@@ -8,13 +8,22 @@
 //! anything.
 //!
 //! **The inner side.** Every face kept is offset inward by the thickness
-//! (see [`NurbSurface3D::offset`]), every face taken away stays where it is:
+//! (see [`NurbSurface3D::offset`]: any surface, fitted and enclosed where it
+//! is no plane or revolution), every face taken away stays where it is:
 //! its inner copy is what the opening leaves of it. The inner side is the
 //! solid rebuilt on those surfaces ([`crate::rebuilt`]): a vertex moves to
 //! where the offsets of the faces around it meet, an edge to where the
 //! offsets of its two faces meet, whatever curve that is. A vertex on the
 //! axis of a revolved face, at its pole, moves to the pole of the face's
 //! inner copy: for a cone's apex, the offset cone's apex.
+//!
+//! **Faces that collapse.** A face whose offset collapses — every point
+//! of it past its centre of curvature, a blend narrower than the walls are
+//! thick, or the corner patch where such blends meet — has no inner copy.
+//! The solid is contracted before it is rebuilt ([`Contracted`]): a
+//! collapsed blend's edges along the faces it rounds, where it is tangent
+//! to them, share one copy, where those faces' offsets meet — a sharp inner
+//! corner; its edges across it vanish, and their ends share one vertex.
 //!
 //! **The opening.** Where a face `F` is taken away, its inner copy `F'`
 //! lies on `F`'s own surface, inside it, and what is left of `F` is `F`
@@ -27,6 +36,11 @@
 //! come out as several faces — a face taken away together with the faces
 //! on two opposite sides of it leaves two strips.
 //!
+//! A face taken away that every face kept around it runs smoothly into —
+//! the top of a box whose top edges are rounded — leaves no rim: the walls
+//! end where it was, each of its edges a free edge of the face kept there,
+//! with an end face along it as a sheet's border has ([`smoothly_open`]).
+//!
 //! **The result.** The faces kept, their inner copies turned around, and
 //! the rims, as one solid. Without an opening, the inner side is a void of
 //! its own: a second shell.
@@ -38,10 +52,8 @@
 //! a straight edge from each of its vertices to that vertex's inner copy.
 //! The inner side alone is the sheet offset ([`offset_faces`]).
 //!
-//! What it does not do (yet): offset faces that are neither planes nor
-//! surfaces of revolution with a straight or circular meridian (see
-//! [`NurbSurface3D::offset`]), take away part of a smooth surface —
-//! a face tangent to one that stays — take away a face that meets one kept
+//! What it does not do (yet): take away a face tangent to faces kept along
+//! some of its edges and not others, take away a face that meets one kept
 //! at an inward corner — a pocket's floor, a step, the face a boss stands
 //! on: the wall kept there is thickened away from the face, so the inner
 //! copy reaches past it and the opening is no longer the face less its
@@ -73,7 +85,7 @@ use geop_core_topology::{
 };
 use geop_ops_model::{BodyNames, NamedModel, Namer};
 
-use crate::rebuild::{along, rebuilt, room, smooth_along, tangent_to_kept};
+use crate::rebuild::{along, rebuilt, room, smooth_along};
 
 /// Seed of the ray casting that finds which outer loop a hole lies in:
 /// any gives the same answer (see `pcurves_contain`), a constant keeps it
@@ -390,7 +402,7 @@ fn contract(
     spec: &BodySpec,
     names: &BodyNames,
     kept: &[bool],
-    collapsed: &[bool],
+    gone: &[bool],
     copy: &[Copy],
 ) -> GeopResult<Contracted> {
     // Vertices joined by an edge that vanishes share their copy.
@@ -415,14 +427,14 @@ fn contract(
         ..Default::default()
     };
     let mut index = vec![None; spec.vertices.len()];
-    let mut vertex = vec![0; spec.vertices.len()];
+    let mut vertex = Vec::with_capacity(spec.vertices.len());
     for v in 0..spec.vertices.len() {
         let r = root(&mut group, v);
-        vertex[v] = *index[r].get_or_insert_with(|| {
+        vertex.push(*index[r].get_or_insert_with(|| {
             out.vertices.push(spec.vertices[r]);
             out_names.vertices.push(names.vertices[r].clone());
             out.vertices.len() - 1
-        });
+        }));
     }
     let mut edge = vec![None; spec.edges.len()];
     for (e, original) in spec.edges.iter().enumerate() {
@@ -457,7 +469,7 @@ fn contract(
     let mut coedge = HashMap::new();
     let mut out_kept = Vec::new();
     for (f, original) in spec.faces.iter().enumerate() {
-        if collapsed[f] {
+        if gone[f] {
             continue;
         }
         let mut loops = Vec::new();
@@ -518,6 +530,54 @@ fn contract(
     })
 }
 
+/// Per face taken away, whether it is smoothly open: tangent along every
+/// edge to the face kept there. Its walls do not stand on it, they end
+/// where it was — each edge a free edge of the face kept, whose wall gets
+/// an end face along it as a sheet's border does — and nothing is left of
+/// it: the open top of a box whose top edges are rounded. A face taken
+/// away tangent to faces kept along some edges and not others, or one
+/// that meets another face taken away, is refused: its rim would end on a
+/// smooth surface.
+fn smoothly_open(spec: &BodySpec, names: &BodyNames, removed: &[bool]) -> GeopResult<Vec<bool>> {
+    let mut tangent = vec![0usize; spec.faces.len()];
+    let mut other = vec![0usize; spec.faces.len()];
+    for (e, at) in spec.edge_uses().iter().enumerate() {
+        let [a, b] = match *at.as_slice() {
+            [a, b] if a.0 != b.0 => [a.0, b.0],
+            _ => continue,
+        };
+        match (removed[a], removed[b]) {
+            (false, false) => {}
+            (true, true) => {
+                other[a] += 1;
+                other[b] += 1;
+            }
+            _ => {
+                let gone = if removed[a] { a } else { b };
+                if smooth_along(spec, &spec.edges[e], a, b)? {
+                    tangent[gone] += 1;
+                } else {
+                    other[gone] += 1;
+                }
+            }
+        }
+    }
+    (0..spec.faces.len())
+        .map(|f| {
+            if tangent[f] == 0 {
+                return Ok(false);
+            }
+            if other[f] > 0 {
+                return Err(GeopError::new(format!(
+                    "face {} is taken away tangent to a face kept along {} of its edges, and not along {}: the walls cannot end on a smooth surface, which is not supported",
+                    names.faces[f], tangent[f], other[f]
+                )));
+            }
+            Ok(true)
+        })
+        .collect()
+}
+
 /// A coedge of the solid: face `f`, its loop `l` (0 the outer one), and
 /// the `k`-th coedge of that.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -563,8 +623,11 @@ struct Hollow<'a> {
     /// Per edge: whether both its faces are taken away.
     open_edge: Vec<bool>,
     /// Per edge: whether it is free, used by one face only — an edge of a
-    /// sheet's border, which gets a wall.
+    /// sheet's border — or one of a face smoothly open: it gets a wall.
     free_edge: Vec<bool>,
+    /// Per face: whether it is taken away smoothly open (see
+    /// [`smoothly_open`]): nothing is left of it, and it has no copy.
+    smooth: Vec<bool>,
     /// The inner side: the solid rebuilt with every face kept on its offset
     /// and every face taken away on its own surface, each with room around
     /// it — its vertices, edges and pcurves where the walled ones go — and
@@ -604,12 +667,7 @@ impl<'a> Hollow<'a> {
         // [`rebuilt`]). One taken away cannot run smoothly into one kept:
         // the walls would have to end on a smooth surface.
         let kept: Vec<bool> = removed.iter().map(|&r| !r).collect();
-        if let Some((f, g, e)) = tangent_to_kept(spec, &kept)? {
-            return Err(GeopError::new(format!(
-                "face {} is taken away where it is tangent to face {}, kept, along edge {}: the walls cannot end on a smooth surface",
-                names.faces[g], names.faces[f], names.edges[e]
-            )));
-        }
+        let smooth = smoothly_open(spec, names, &removed)?;
         let mut offsets = spec.clone();
         let mut collapsed = vec![false; spec.faces.len()];
         for (f, face) in offsets.faces.iter_mut().enumerate() {
@@ -627,7 +685,10 @@ impl<'a> Hollow<'a> {
             }
         }
         let copy = collapse_edges(spec, names, &collapsed)?;
-        let copies = contract(&offsets, names, &kept, &collapsed, &copy)?;
+        let gone: Vec<bool> = (0..spec.faces.len())
+            .map(|f| collapsed[f] || smooth[f])
+            .collect();
+        let copies = contract(&offsets, names, &kept, &gone, &copy)?;
         let reseat = vec![false; copies.spec.vertices.len()];
         let inner = rebuilt(&copies.spec, &copies.names, &copies.kept, &reseat)
             .map_err(|e| e.with_context("building the walls' inner side"))?;
@@ -637,7 +698,12 @@ impl<'a> Hollow<'a> {
             removed,
             walled,
             open_edge,
-            free_edge: uses.iter().map(|&n| n == 1).collect(),
+            // An edge of a face smoothly open is a free edge of the face kept
+            // there: its wall ends in an end face along it.
+            free_edge: (0..spec.edges.len())
+                .map(|e| uses[e] == 1 || spec.edge_uses()[e].iter().any(|&(f, ..)| smooth[f]))
+                .collect(),
+            smooth,
             inner,
             copies,
             pieces: Vec::new(),
@@ -817,6 +883,9 @@ impl<'a> Hollow<'a> {
         let mut inner_faces = Vec::new();
         for (f, face) in spec.faces.iter().enumerate() {
             let name = &self.names.faces[f];
+            if self.smooth[f] {
+                continue;
+            }
             if self.removed[f] {
                 let rims = self.rims(f, &at)?;
                 let several = rims.len() > 1;
@@ -873,11 +942,11 @@ impl<'a> Hollow<'a> {
         // inner copy, `side[v]`.
         let mut side: Vec<Option<usize>> = vec![None; spec.vertices.len()];
         let mut walls = Vec::new();
-        for (_, c) in self.coedges() {
+        for (here, c) in self.coedges() {
             let CoedgeOn::Edge(e, sense) = c.on else {
                 continue;
             };
-            if !self.free_edge[e] {
+            if !self.free_edge[e] || self.removed[here.f] {
                 continue;
             }
             let (x, y) = spec.ends(c.on)?;
