@@ -215,13 +215,17 @@ impl NurbSurface<4> {
 
     /// The point the boundary row at the start (`first`) or end of the
     /// `u` (`u_fixed`) or `v` domain collapses to, and the row next to it.
-    /// `None` if that row is no pole.
+    /// `None` if that row is no pole. Every point of the row encloses the
+    /// pole, so the pole is what they share: no wider than the narrowest.
     fn pole(&self, u_fixed: bool, first: bool) -> Option<(Vector3, Vec<Vector<4>>)> {
         let [edge, next] = self.boundary_rows(u_fixed, first)?;
         let edge = dehomogenize::<4, 3>(&edge);
+        let shared = edge.iter().fold(edge[0], |shared, p| {
+            Vector3::from_array(std::array::from_fn(|k| shared[k].intersect(p[k])))
+        });
         edge.iter()
-            .all(|p| p.could_be_equal(&edge[0]))
-            .then(|| (edge[0], next))
+            .all(|p| p.could_be_equal(&shared))
+            .then_some((shared, next))
     }
 
     /// The boundary rows `(u, v)` touches, as `(u_fixed, first)`.
@@ -291,6 +295,13 @@ impl NurbSurface<4> {
                 if first { "start" } else { "end" }
             ))
         }))
+    }
+
+    /// Whether the boundary row at the start (`first`) or end of the `u`
+    /// (`u_fixed`) or `v` domain is an apex: a pole with no single normal,
+    /// its spokes not in one plane, like a cone's tip.
+    pub(crate) fn is_apex(&self, u_fixed: bool, first: bool) -> bool {
+        matches!(self.pole_normal(u_fixed, first), Some(Err(_)))
     }
 
     /// Unit surface normal at `(u, v)`, `normalize(∂Scalar/∂u × ∂Scalar/∂v)`.

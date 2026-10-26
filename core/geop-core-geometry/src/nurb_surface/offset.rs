@@ -1,269 +1,255 @@
-//! Offsetting a surface along its normal, exactly.
+//! Offsetting a surface along its normal.
 //!
 //! The offset of a NURBS surface is in general not a NURBS surface at all.
-//! It is one, with the very same parametrization, for the surfaces the
-//! kernel's solids are mostly made of:
+//! Every surface's offset is fitted in its own basis, and widened to
+//! enclose the true one by a bound proven over the whole domain (see
+//! `offset_fit`): exact to the rounding where the offset is a NURBS of that
+//! basis, as a plane's, a cylinder's, a cone's, a sphere's or a torus's
+//! is, and no branch on what kind of surface it is.
 //!
-//! - a plane, moved along its normal;
-//! - a surface of revolution whose meridian — the profile turned around the
-//!   axis — is a straight line (a cylinder, a cone, a flat ring) or a
-//!   circular arc (a sphere, a torus): its offset turns the meridian's
-//!   offset, which is again a line or a concentric arc.
-//!
-//! Every other surface's offset is fitted, and widened to enclose the true
-//! one by a bound proven over the whole domain (see `offset_fit`).
+//! **An apex.** A surface whose row collapses to a point with no tangent
+//! plane — a cone's tip — has no normal there, and next to it its offset
+//! is no surface the patch could take: on one side the offset rows pass
+//! through each other across the axis (a fold), on the other they leave a
+//! hole round it. A shell or a moved face wants the offset cone, closed in
+//! its own apex. So the surface is first cut back to where its offset's
+//! row closes to a point, or carried on through its apex, the continued
+//! patch's normal continued with it, to there; and parametrized over its
+//! old domain again, so that the apex stays where it was in `(u, v)`.
 
 use geop_core_math::{
     geop_error::{GeopError, GeopResult},
     scalars::Scalar,
-    vector::Vector3,
 };
 
-use super::NurbSurface3D;
-use crate::{
-    nurb_curve::{NurbCurve, dehomogenize},
-    shape::Axis,
-};
+use super::{NurbSurface3D, net::Side};
 
-/// Whether the surface's normal points along a direction, from `along`,
-/// the two dotted: it must be definitely positive or definitely negative.
-fn points_along(along: Scalar) -> GeopResult<bool> {
-    if along.definitely_greater(Scalar::ZERO) {
-        Ok(true)
-    } else if along.definitely_less(Scalar::ZERO) {
-        Ok(false)
-    } else {
-        Err(GeopError::new(format!(
-            "NurbSurface::offset: cannot tell which way the normal points: {along:?}"
-        )))
-    }
+/// How a surface was moved before it was offset so that its offset closes
+/// at an apex: the side its offset's row closes along, and where the apex
+/// itself is across that side, if the surface was carried on through it
+/// (otherwise it was cut back short of it).
+pub(super) struct Closing {
+    pub side: Side,
+    pub apex: Option<Scalar>,
 }
 
-/// `distance` if `along`, else its opposite.
-fn signed(distance: Scalar, along: bool) -> Scalar {
-    if along { distance } else { distance.neg() }
-}
+/// How many secant steps the parameter where an offset closes is sought
+/// with: it converges to the last bit in a handful, and stops where the
+/// rest could be zero or a step repeats.
+const CLOSING_STEPS: usize = 64;
 
 impl NurbSurface3D {
     /// The surface `distance` along its normal — against it for a negative
     /// distance — with the same parametrization: the offset of the point at
     /// `(u, v)` is at `(u, v)` of the result, so a trim loop's `(u, v)` stay
-    /// meaningful on it. A cone's apex, which has no normal, goes to the
-    /// offset cone's apex, so a pole stays a pole; along the meridians
-    /// from it the points then move a little along the meridian too.
-    ///
-    /// Exact for a plane and for a surface of revolution whose meridian is a
-    /// line or a circular arc (see the module docs); fitted and enclosed
-    /// for any other.
+    /// meaningful on it. An apex is the exception (see the module docs):
+    /// it goes to the offset's apex, at the same `(u, v)`, and along the
+    /// lines from it the points move along those lines too.
     ///
     /// `None` where the offset collapses: every point of the surface passes
     /// its centre of curvature, as a cylinder shrunk past its axis, a
     /// sphere or a torus's tube past its centre, so the offset has no
     /// area — a blend narrower than the walls a shell builds are thick.
-    /// Fails where only part of it would: a cone shrunk past its apex,
-    /// a free-form surface past a centre of curvature somewhere.
+    /// Fails where only part of it would, where the offset folds, and at an
+    /// apex whose offset does not close in a point.
     pub fn offset(&self, distance: Scalar) -> GeopResult<Option<Self>> {
-        if let Some(plane) = self.as_plane()? {
-            return Ok(Some(self.translate(plane.normal.prod_scalar(distance))));
+        if distance.is_zero() {
+            return Ok(Some(self.clone()));
         }
-        for along_u in [true, false] {
-            if let Some(axis) = self.revolution_along(along_u)? {
-                match self.offset_revolution(&axis, along_u, distance)? {
-                    Exact::Surface(surface) => return Ok(Some(surface)),
-                    Exact::Collapses => return Ok(None),
-                    Exact::Fitted => {}
-                }
-            }
+        let ctx =
+            |e: GeopError| e.with_context(format!("NurbSurface::offset(distance={distance:?})"));
+        match self.closed(distance).map_err(ctx)? {
+            Some((surface, closing)) => surface.fitted_offset(distance, Some(&closing)),
+            None => self.fitted_offset(distance, None),
         }
-        self.fitted_offset(distance)
     }
 
-    /// [`NurbSurface3D::offset`] of a surface of revolution around `axis`
-    /// whose control rows along `u` (`along_u`) or along `v` are arcs.
-    ///
-    /// Such a net is the meridian's control points `(h_j, r_j)` — height
-    /// along the axis, distance from it — turned: the `i`-th point of row
-    /// `j` is `o + h_j a + r_j D_i`, with `D_i` the `i`-th control point of
-    /// the unit circle the rows share (corner points of it lie further out
-    /// than 1), and its weight the meridian's times the circle's. That map
-    /// is affine in `(h, r)` for each `i`, so turning the offset meridian's
-    /// control points gives the offset surface. The net is checked to be
-    /// exactly that, point for point, before anything is built from it.
-    fn offset_revolution(&self, axis: &Axis, along_u: bool, distance: Scalar) -> GeopResult<Exact> {
-        let (rows, len) = if along_u {
-            (self.num_v, self.num_u)
-        } else {
-            (self.num_u, self.num_v)
-        };
-        let index = |i: usize, j: usize| {
-            if along_u {
-                i * self.num_v + j
-            } else {
-                j * self.num_v + i
+    /// At an apex, this surface cut back to, or carried on through the
+    /// apex to, where its offset by `distance` closes in a point, over its
+    /// own domain again (see the module docs). `None` without an apex.
+    fn closed(&self, distance: Scalar) -> GeopResult<Option<(Self, Closing)>> {
+        let apexes: Vec<Side> = Side::ALL
+            .into_iter()
+            .filter(|s| self.is_apex(s.u_fixed, !s.at_end))
+            .collect();
+        let side = match apexes.as_slice() {
+            [] => return Ok(None),
+            [side] => *side,
+            _ => {
+                return Err(GeopError::new(format!(
+                    "the surface has apexes at {apexes:?}: offsetting more than one is not supported"
+                )));
             }
         };
-        let (o, a) = (axis.point, axis.direction);
-        // A point's height along the axis, and the way from the axis to it.
-        let meridian = |p: &Vector3| {
-            let d = p.sub(&o);
-            let h = d.prod_dot(&a);
-            (h, d.sub(&a.prod_scalar(h)))
+        let across_u = side.u_fixed;
+        let ((lo, hi), (other_lo, other_hi), breaks) = if across_u {
+            (self.domain_u(), self.domain_v(), self.breakpoints_u())
+        } else {
+            (self.domain_v(), self.domain_u(), self.breakpoints_v())
         };
-        let points = dehomogenize::<4, 3>(&self.control_points);
-
-        let mut h = Vec::with_capacity(rows);
-        let mut r = Vec::with_capacity(rows);
-        let mut circle: Option<Vec<Vector3>> = None;
-        for j in 0..rows {
-            // A row's first control point is on its circle: the row is a
-            // clamped arc.
-            let (hj, radial) = meridian(&points[index(0, j)]);
-            let r2 = radial.norm_sq();
-            let rj = if r2.could_be_equal(Scalar::ZERO) {
-                Scalar::ZERO
+        let (apex, far) = if side.at_end { (hi, lo) } else { (lo, hi) };
+        // Room through the apex: as far as the span next to it is long, a
+        // free choice.
+        let n = breaks.len();
+        let room = if side.at_end {
+            breaks[n - 1].sub(breaks[n - 2])
+        } else {
+            breaks[1].sub(breaks[0])
+        }
+        .sharpen();
+        let longer = self.extended(across_u, side.at_end, room)?;
+        // Where the offset's row closes: `O_t = S_t + d N_t = 0`, `t` along
+        // the side, so `S_t·S_t − d N·S_tt = 0` on the parameter line
+        // through the middle of the side — a free choice of line; that the
+        // whole row closes there is checked on the offset. That vanishes at
+        // the apex too, once: divided by the distance from it, what is left
+        // runs nearly straight through the root, which secant steps find.
+        let middle = other_lo.add(other_hi).div(Scalar::TWO)?.sharpen();
+        let closes = |x: Scalar| -> GeopResult<Scalar> {
+            let (u, v) = if across_u { (x, middle) } else { (middle, x) };
+            let s = longer.partials(u, v, 2)?;
+            let (along, bend) = if across_u {
+                (s[0][1], s[0][2])
             } else {
-                let rj = r2.sqrt()?;
-                if circle.is_none() {
-                    let inv = Scalar::ONE.div(rj)?;
-                    circle = Some(
-                        (0..len)
-                            .map(|i| meridian(&points[index(i, j)]).1.prod_scalar(inv))
-                            .collect(),
-                    );
-                }
-                rj
+                (s[1][0], s[2][0])
             };
-            h.push(hj);
-            r.push(rj);
-        }
-        let circle = circle.ok_or_else(|| {
-            GeopError::new("NurbSurface::offset: every row of the surface is a pole")
-        })?;
-        let turned = |hj: Scalar, rj: Scalar, i: usize| {
-            o.add(&a.prod_scalar(hj)).add(&circle[i].prod_scalar(rj))
+            // Past the apex the carried-on patch faces the other way.
+            let past = if side.at_end {
+                x.definitely_greater(apex)
+            } else {
+                x.definitely_less(apex)
+            };
+            let normal = longer.normal(u, v)?;
+            let normal = if past { normal.neg() } else { normal };
+            along
+                .prod_dot(&along)
+                .sub(distance.mul(normal.prod_dot(&bend)))
+                .div(x.sub(apex))
         };
-        for j in 0..rows {
-            for i in 0..len {
-                if !turned(h[j], r[j], i).could_be_equal(&points[index(i, j)]) {
-                    return Err(GeopError::new(format!(
-                        "NurbSurface::offset: control point ({i}, {j}) of the surface of revolution is not its meridian turned: {:?}",
-                        points[index(i, j)]
-                    )));
-                }
-            }
-        }
-
-        // The meridian, in the plane of `(h, r)`, weighted as the rows are.
-        let weight = |j: usize| self.control_points[index(0, j)][3];
-        let (degree, knots) = if along_u {
-            (self.degree_v, self.knot_vector_v.clone())
+        let inward = if side.at_end { room.neg() } else { room };
+        let mut a = apex.add(inward.div(Scalar::from_i64(4))?).sharpen();
+        let mut b = apex.add(inward.div(Scalar::TWO)?).sharpen();
+        let (mut ka, mut kb) = (closes(a)?, closes(b)?);
+        let (reach_lo, reach_hi) = if side.at_end {
+            (far, apex.add(room))
         } else {
-            (self.degree_u, self.knot_vector_u.clone())
+            (apex.sub(room), far)
         };
-        let profile = NurbCurve::try_new(
-            degree,
-            (0..rows)
-                .map(|j| Vector3::from_array([h[j], r[j], Scalar::ZERO]).homogeneous(weight(j)))
-                .collect(),
-            knots,
-        )?;
-
-        // Which way the surface's own normal points, in the meridian plane
-        // through the middle of the patch.
-        let ((u0, u1), (v0, v1)) = (self.domain_u(), self.domain_v());
-        let (um, vm) = (u0.add(u1).div(Scalar::TWO)?, v0.add(v1).div(Scalar::TWO)?);
-        let x = self.evaluate(um, vm)?;
-        let normal = self.normal(um, vm)?;
-        let (hx, radial) = meridian(&x);
-        let rx = radial.norm();
-        let er = radial.normalize()?;
-        let in_space = |dh: Scalar, dr: Scalar| a.prod_scalar(dh).add(&er.prod_scalar(dr));
-
-        let offset: Vec<(Scalar, Scalar)> = if let Some(line) = profile.as_line()? {
-            // The meridian's normal, turned to point the way the surface's
-            // does: every control point moves `distance` along it, but an
-            // apex. An apex has no normal, and its offset is the offset
-            // cone's apex: where the moved meridian meets the axis, `d / r'`
-            // along it for the meridian's unit direction `(h', r')`. Moved
-            // along the meridian's normal, it would leave the axis, and the
-            // offset would have a hole round it or pass through itself. A
-            // disc's pole moves along the axis anyway (`dr` is zero).
-            let (nh, nr) = (line.direction[1].neg(), line.direction[0]);
-            let d = signed(distance, points_along(normal.prod_dot(&in_space(nh, nr)))?);
-            let (dh, dr) = (nh.mul(d), nr.mul(d));
-            (0..rows)
-                .map(|j| {
-                    if r[j].could_be_equal(Scalar::ZERO) && !dr.could_be_equal(Scalar::ZERO) {
-                        Ok((h[j].sub(d.div(line.direction[1])?), Scalar::ZERO))
+        for _ in 0..CLOSING_STEPS {
+            if kb.could_be_equal(Scalar::ZERO) {
+                break;
+            }
+            let slope = kb.sub(ka).div(b.sub(a))?;
+            let next = b.sub(kb.div(slope)?).sharpen();
+            if next.could_be_equal(b) {
+                break;
+            }
+            if !next.definitely_greater(reach_lo) || !next.definitely_less(reach_hi) {
+                return Err(GeopError::new(format!(
+                    "the offset by {distance:?} closes past the apex at {apex:?} farther than {room:?}, or not before the far side {far:?}: at {next:?}"
+                )));
+            }
+            if next.could_be_equal(apex) {
+                return Err(GeopError::new(format!(
+                    "the offset by {distance:?} closes at the apex itself, {apex:?}"
+                )));
+            }
+            (a, ka) = (b, kb);
+            b = next;
+            kb = closes(b)?;
+        }
+        // Cut back short of the apex, or carried on through it.
+        let inside = if side.at_end {
+            b.definitely_less(apex)
+        } else {
+            b.definitely_greater(apex)
+        };
+        let (surface, apex_inside) = if inside {
+            (self, None)
+        } else {
+            (&longer, Some(apex))
+        };
+        let (c0, c1) = if side.at_end { (far, b) } else { (b, far) };
+        let whole = (other_lo, other_hi);
+        let piece = if across_u {
+            surface.sub_surface((c0, c1), whole)?
+        } else {
+            surface.sub_surface(whole, (c0, c1))?
+        };
+        // Over the old domain again: `c0 ↦ lo`, `c1 ↦ hi`, affinely.
+        let scale = hi.sub(lo).div(c1.sub(c0))?;
+        let map = |k: Scalar| lo.add(k.sub(c0).mul(scale));
+        let relabel = |knots: &[Scalar], degree: usize| -> Vec<Scalar> {
+            let len = knots.len();
+            knots
+                .iter()
+                .enumerate()
+                .map(|(i, &k)| {
+                    if i <= degree {
+                        lo
+                    } else if i >= len - degree - 1 {
+                        hi
                     } else {
-                        Ok((h[j].add(dh), r[j].add(dr)))
+                        map(k)
                     }
                 })
-                .collect::<GeopResult<_>>()?
-        } else if let Some(arc) = profile.as_arc()? {
-            // The concentric arc: every control point scaled about the
-            // center, by more where the normal points away from it.
-            let (hc, rc) = (arc.circle.center[0], arc.circle.center[1]);
-            let radius = arc.circle.radius;
-            let outward = in_space(hx.sub(hc), rx.sub(rc));
-            let scaled = radius.add(signed(distance, points_along(normal.prod_dot(&outward))?));
-            if !scaled.definitely_greater(Scalar::ZERO) {
-                return Ok(Exact::Collapses);
-            }
-            let k = scaled.div(radius)?;
-            (0..rows)
-                .map(|j| (hc.add(h[j].sub(hc).mul(k)), rc.add(r[j].sub(rc).mul(k))))
                 .collect()
-        } else {
-            return Ok(Exact::Fitted);
         };
-        if offset
-            .iter()
-            .all(|(_, rj)| !rj.definitely_greater(Scalar::ZERO))
-        {
-            return Ok(Exact::Collapses);
-        }
-        if offset
-            .iter()
-            .any(|(_, rj)| rj.definitely_less(Scalar::ZERO))
-        {
-            return Err(GeopError::new(format!(
-                "NurbSurface::offset: offsetting by {distance:?} takes the surface of revolution across its axis"
-            )));
-        }
-
-        let mut control_points = self.control_points.clone();
-        for (j, &(hj, rj)) in offset.iter().enumerate() {
-            for i in 0..len {
-                let w = self.control_points[index(i, j)][3];
-                control_points[index(i, j)] = turned(hj, rj, i).homogeneous(w);
-            }
-        }
-        Self::try_new(
-            self.degree_u,
-            self.degree_v,
-            control_points,
-            self.knot_vector_u.clone(),
-            self.knot_vector_v.clone(),
-        )
-        .map(Exact::Surface)
+        let (knots_u, knots_v) = if across_u {
+            (
+                relabel(&piece.knot_vector_u, piece.degree_u),
+                piece.knot_vector_v.clone(),
+            )
+        } else {
+            (
+                piece.knot_vector_u.clone(),
+                relabel(&piece.knot_vector_v, piece.degree_v),
+            )
+        };
+        // The apex inside is where the carried-on piece was joined on, a
+        // knot: the relabelled knot itself, so that the Greville points
+        // there find it.
+        let apex_inside =
+            match apex_inside {
+                Some(apex) => {
+                    let (old, new) = if across_u {
+                        (&piece.knot_vector_u, &knots_u)
+                    } else {
+                        (&piece.knot_vector_v, &knots_v)
+                    };
+                    let i = old.iter().position(|k| k.could_be_equal(apex)).ok_or_else(|| {
+                    GeopError::new(format!(
+                        "the apex at {apex:?} is no knot of the surface carried on through it"
+                    ))
+                })?;
+                    Some(new[i])
+                }
+                None => None,
+            };
+        let closed = Self::try_new(
+            piece.degree_u,
+            piece.degree_v,
+            piece.control_points,
+            knots_u,
+            knots_v,
+        )?;
+        Ok(Some((
+            closed,
+            Closing {
+                side,
+                apex: apex_inside,
+            },
+        )))
     }
-}
-
-/// What the exact offset of a surface of revolution is.
-enum Exact {
-    Surface(NurbSurface3D),
-    /// Every point passes the axis or the meridian's centre.
-    Collapses,
-    /// None: the meridian is neither a line nor a circular arc, so the
-    /// offset is fitted.
-    Fitted,
 }
 
 #[cfg(test)]
 mod tests {
     use crate::test_fixtures::knots;
-    use geop_core_math::{scalars::Scalar, vector::Vector4};
+    use geop_core_math::{
+        scalars::Scalar,
+        vector::{Vector3, Vector4},
+    };
 
     use super::*;
 
@@ -296,6 +282,27 @@ mod tests {
         }
     }
 
+    /// Whether `offset` is `surface`'s offset by `distance` (see
+    /// [`assert_offset`]) on `surface`'s own net, as narrow as the rounding
+    /// of the polynomials that bound it (measured: up to `1.2e-13`).
+    fn assert_exact(surface: &NurbSurface3D, offset: &NurbSurface3D, distance: f64) {
+        assert_offset(surface, offset, distance);
+        assert_eq!(
+            (offset.degree_u, offset.degree_v, offset.num_u, offset.num_v),
+            (
+                surface.degree_u,
+                surface.degree_v,
+                surface.num_u,
+                surface.num_v
+            )
+        );
+        for cp in &offset.control_points {
+            for k in 0..4 {
+                assert!(cp[k].width().to_f64() < 2e-13, "{cp:?}");
+            }
+        }
+    }
+
     #[test]
     fn planes_move_along_their_normal() {
         let flat = NurbSurface3D::try_new(
@@ -311,12 +318,12 @@ mod tests {
             knots(&[0., 0., 1., 1.]),
         )
         .unwrap();
-        assert_offset(
+        assert_exact(
             &flat,
             &flat.offset(Scalar::from_f64(0.3)).unwrap().unwrap(),
             0.3,
         );
-        assert_offset(
+        assert_exact(
             &flat,
             &flat.offset(Scalar::from_f64(-0.3)).unwrap().unwrap(),
             -0.3,
@@ -345,7 +352,7 @@ mod tests {
     fn cylinders_change_radius() {
         let cylinder = quarter_cylinder();
         for d in [0.5, -0.5, -1.5] {
-            assert_offset(
+            assert_exact(
                 &cylinder,
                 &cylinder.offset(Scalar::from_f64(d)).unwrap().unwrap(),
                 d,
@@ -371,7 +378,7 @@ mod tests {
             knots(&[0., 0., 1., 1.]),
         )
         .unwrap();
-        assert_offset(
+        assert_exact(
             &cone,
             &cone.offset(Scalar::from_f64(-0.25)).unwrap().unwrap(),
             -0.25,
@@ -401,12 +408,12 @@ mod tests {
         )
         .unwrap();
         // Its natural normal: whichever way, the offset follows it.
-        assert_offset(
+        assert_exact(
             &sphere,
             &sphere.offset(Scalar::from_f64(0.5)).unwrap().unwrap(),
             0.5,
         );
-        assert_offset(
+        assert_exact(
             &sphere,
             &sphere.offset(Scalar::from_f64(-0.5)).unwrap().unwrap(),
             -0.5,
@@ -434,12 +441,12 @@ mod tests {
             knots(&[0., 0., 0., 1., 1., 1.]),
         )
         .unwrap();
-        assert_offset(
+        assert_exact(
             &torus,
             &torus.offset(Scalar::from_f64(0.25)).unwrap().unwrap(),
             0.25,
         );
-        assert_offset(
+        assert_exact(
             &torus,
             &torus.offset(Scalar::from_f64(-0.25)).unwrap().unwrap(),
             -0.25,

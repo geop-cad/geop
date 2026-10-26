@@ -221,13 +221,18 @@ fn a_sphere_closed_all_round() {
     assert_eq!(part.topology().get_solid(solid).unwrap().shells.len(), 2);
     assert!(corners(&part).contains(&[1000, 0, 1500]));
     assert!(corners(&part).contains(&[-500, 0, 0]));
-    // Moved along curved faces, the vertices are still as sharp as the
-    // rounding of a few steps, and of carrying the faces' arcs on past
-    // their ends for room, before the offset and after (see `room`).
+    // Moved along curved faces, the vertices are as sharp as the offset
+    // sphere's control points: its enclosure is bounded by polynomials, a
+    // few hundred roundings wide (measured: 1.4e-12, at the equator, where
+    // the corner points also make the spans the arcs were carried on by for
+    // room). Those spans, their weights falling off, widen only the points
+    // they are made of, and their bound is taken coefficient by coefficient,
+    // not as the numerator's largest over the denominator's least: as one
+    // pad for the whole patch they made this vertex 1e-7 wide.
     for vertex in part.topology().vertices.values() {
         for k in 0..3 {
             assert!(
-                vertex.point[k].width().to_f64() < 1e-7,
+                vertex.point[k].width().to_f64() < 5e-12,
                 "{:?}",
                 vertex.point
             );

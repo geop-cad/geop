@@ -933,8 +933,9 @@ fn turns_around(guide: &Curve3, points: &[Vector3]) -> GeopResult<()> {
 /// `surface` with room around it: [`extended`] where it is straight, and
 /// carried on past each side where it is not ([`NurbSurface3D::extended`])
 /// by as much of its parameter as its end span is long that way — or by a
-/// half, a quarter or an eighth of that where more would carry it too far,
-/// an arc round past where its weights stay positive. Not past a side
+/// half, a quarter or an eighth of that where more would carry it too far:
+/// an arc round past where its weights stay positive, a free-form patch
+/// past where it folds back on itself and has no normal. Not past a side
 /// that is a single point, a pole: the pole would end up inside the patch,
 /// where it has no normal. How much room is a free choice; the patch's own
 /// size is room enough unless a face moves as far as it is wide.
@@ -968,7 +969,9 @@ pub fn room(surface: NurbSurface3D) -> GeopResult<NurbSurface3D> {
                 breaks[1].sub(breaks[0])
             };
             for _ in 0..4 {
-                if let Ok(longer) = surface.extended(along_u, at_end, by.sharpen()) {
+                if let Ok(longer) = surface.extended(along_u, at_end, by.sharpen())
+                    && longer.has_normal_everywhere()?
+                {
                     surface = longer;
                     break;
                 }

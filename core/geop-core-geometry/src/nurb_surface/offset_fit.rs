@@ -5,31 +5,36 @@
 //! cylinder or a free-form blend.
 //!
 //! The offset `O = S + d N` keeps `S`'s parametrization. It is fitted as
-//! `S` plus a shift `D` in `S`'s own rational basis (refined, raised to at
-//! least cubic): `D`'s homogeneous control points interpolate `W d N`, `W`
-//! the basis's weight, at the Greville points. `S + D` is then a NURBS
-//! surface with `S`'s weights, its control points `S`'s moved by `D`'s.
-//! Where the offset is itself such a surface — a plane's, a sphere's — the
-//! fit is it, to the rounding.
+//! `S` plus a shift `D` in `S`'s own rational basis — first as it is, and
+//! where that cannot follow the offset, refined and raised to cubic: `D`'s
+//! homogeneous control points interpolate `W d N`, `W` the basis's weight,
+//! at the Greville points. `S + D` is then a NURBS surface with `S`'s
+//! weights, its control points `S`'s moved by `D`'s. Where `W N` is itself
+//! a polynomial of the basis — a plane's, a cylinder's, a cone's, a
+//! sphere's, a torus's — the fit is the offset, to the rounding, and the
+//! net keeps its degrees and its layout.
 //!
 //! **The bound.** What the fit misses is `E = D − d N`. Over one span
 //! `S = A / w` is a ratio of polynomials, `D = e / w`, and the normal is
 //! `N = m / |m|` for the polynomial field `m` of `net::normal_field`, a
-//! pole's factor divided out of it. The square root is the one thing that
-//! is not polynomial, so it is fitted too: a polynomial `g ≈ 1 / |m|` over
-//! each box. Then
+//! pole's factor divided out of it. Split `D = a N + b` with `b ⟂ N`:
 //!
 //! ```text
-//! E = (e − d w m g) / w + d m g (1 − 1 / √r),    r = g² (m·m),
+//! |b|² = |e × m|² / (w² m·m),    a² − d² = (e·e − d² w²) / w² − |b|²,
 //! ```
 //!
-//! and `|m g| = √r`, so `|E| ≤ |F| / w + |d| |√r − 1|` with `F` the
-//! polynomial `e − d w m g`. Every one of `F`, `w` and `r` is bounded over
-//! the box by its Bernstein coefficients' hull. A box whose bound is wider
-//! than [`OFFSET_DRIFT`] is split in four, and the hulls close in on the
+//! and where `a` has the sign of `d` (`d (e·m) > 0`), `|a − d| = |a² − d²|
+//! / |a + d| ≤ (|e·e − d² w²| / w² + |b|²) / |d|`. So `|E| ≤ |a − d| + |b|`
+//! is bounded by polynomials alone: each ratio over a box by the largest
+//! ratio of the Bernstein coefficients of its numerator and denominator,
+//! the sign of `e·m` by its coefficients' hull. Where the fit is exact,
+//! `e × m` and `e·e − d² w²` are zero as polynomials, and the bound is the
+//! rounding. A box whose bound is wider than
+//! [`OFFSET_DRIFT`] is split in four, and the hulls close in on the
 //! polynomials' ranges as the square of the box's size. Every control
-//! point is then widened by the largest bound: the basis is non-negative
-//! and sums to one, so the surface is widened by exactly that everywhere.
+//! point is then widened by the largest bound over the boxes its basis
+//! function covers: the basis is non-negative and sums to one, so the
+//! surface is widened by at least the bound everywhere.
 //!
 //! **Where the offset is regular.** Along a principal direction the offset
 //! scales the surface by `1 − d κ`: regular where both factors are
@@ -39,17 +44,18 @@
 //! definite, and so `G = w⁴ (I − d II)`, `G_ab = P_a·P_b − d (w² / |m|)
 //! J_ab`, with the polynomials `P_a = w A_a − w_a A = w² S_a` and
 //! `J_ab = (w A_ab − w_ab A)·m`: its first entry and its determinant
-//! positive. With `1 / |m|` enclosed over the box by `g / √r`, each entry
-//! is a polynomial with an interval factor, and its sign is its
+//! positive. `1 / |m|` is enclosed over a box by the hull of `m·m`, and
+//! each entry is a polynomial with an interval factor, whose sign is its
 //! coefficients': positive, negative, or undecided, and the box is split.
-//! At a pole `P_t` along the collapsed side vanishes with the factor, and
-//! the entries are divided by it, as `m` is.
 //!
-//! A box-by-box Taylor form over the surface's partials came first, and
-//! took over a minute for a rounded box's corner patches: interval
-//! derivatives of the normal over a box are as wide as their terms, a
-//! hundred times the result. The hulls of polynomials have no such
-//! dependency.
+//! At a pole `P_t` along the collapsed side vanishes with the factor, and
+//! the entries are divided by it, as `m` is: twice where `J_tt` vanishes
+//! twice too, a smooth pole like a sphere's, and once at an apex, a
+//! cone's, where the curvature round it grows as one over the distance.
+//! Along a side where the *offset* closes to a point (see `offset`), `G`
+//! has a null vector, the side's own direction: there the entries that
+//! vanish are taken by the mean value theorem, their derivative across the
+//! side, and the determinant divided by the distance from it.
 
 use geop_core_math::{
     geop_error::{GeopError, GeopResult},
@@ -59,15 +65,16 @@ use geop_core_math::{
 
 use super::{
     NurbSurface3D,
-    net::{Net, Side, dot, normal_field, poles, product, scale},
+    net::{Net, Side, cross, dot, normal_field, poles, product, scale},
+    offset::Closing,
 };
 use crate::{nurb_curve::solve_interpolation_system, spline::breakpoints};
 
-/// How far a fitted offset may drift from the true offset, per coordinate,
-/// before its spans are split finer, and how small each box's bound is
-/// made (see the module docs). It bounds effort and how wide the offset
-/// comes out, not whether it encloses the true one: what the fit misses is
-/// padded on, however much that is.
+/// How far a fitted offset may drift from the true offset before its spans
+/// are split finer, and how small each box's bound is made (see the module
+/// docs). It bounds effort and how wide the offset comes out, not whether
+/// it encloses the true one: what the fit misses is padded on, however
+/// much that is.
 const OFFSET_DRIFT: f64 = 1e-6;
 
 /// The most pieces each span of the surface is split into for the fit:
@@ -85,15 +92,15 @@ const MAX_OFFSET_BOXES: usize = 1 << 14;
 /// factor `1 − d κ` comes within the box's width of zero.
 const REGULAR_SPLITS: usize = 6;
 
+/// The degree in each direction of the polynomial fitted to `1 / |m|` over
+/// a box: its error falls as the box's size to this plus one.
+const INVERSE_DEGREE: usize = 3;
+
 /// How often a span's box is split in four while the bound on what the fit
 /// misses there is wider than [`OFFSET_DRIFT`]; then it is taken as it is.
 /// Bounds effort and how wide the offset may come out, not whether it
 /// encloses the true one.
 const BOUND_SPLITS: usize = 4;
-
-/// The degree in each direction of the polynomial fitted to `1 / |m|` over
-/// a box: its error falls as the box's size to this plus one.
-const INVERSE_DEGREE: usize = 3;
 
 /// The polynomials over one span of the surface and of a shift fitted onto
 /// its offset (see the module docs): `S`'s weight `w`, the normal field
@@ -107,12 +114,15 @@ struct Fit {
 
 /// The polynomials over one span of the surface that tell where its offset
 /// is regular: `P_a·P_b` and `J_ab` for `uu`, `uv`, `vv`, each divided by a
-/// pole's factor as often as it vanishes there, with `w` and `m`.
+/// pole's factor as often as both vanish there, with `w` and `m`; and what
+/// `G_uv²` is multiplied by in the determinant where `G_tt` was divided by
+/// an apex's factor once only, not twice.
 struct Shape {
     w: Net<1>,
     m: Net<3>,
     first: [Net<1>; 3],
     second: [Net<1>; 3],
+    twist: Option<Net<1>>,
 }
 
 /// `net` divided `times` times by the factor vanishing along `side`; an
@@ -152,189 +162,6 @@ fn inverse_length(m: &Net<3>) -> GeopResult<Option<(Net<1>, Scalar)>> {
     };
     let r = g.product(&g, product)?.product(&squared, product)?.hull()[0];
     Ok(r.definitely_greater(Scalar::ZERO).then_some((g, r)))
-}
-
-impl Fit {
-    fn new(surface: &NurbSurface3D, shift: &NurbSurface3D) -> GeopResult<Self> {
-        let (_, w, m, _) = parts(surface)?;
-        let (e, _) = Net::of(shift, false)?.split();
-        Ok(Fit { w, m, e })
-    }
-
-    /// What the fit misses over the box `u` × `v` (see the module docs),
-    /// per coordinate: `|e − d w m g| / w + |d| |√r − 1|`. `None` where the
-    /// box is too wide to bound it.
-    fn missed(
-        &self,
-        distance: Scalar,
-        u: (Scalar, Scalar),
-        v: (Scalar, Scalar),
-    ) -> GeopResult<Option<[Scalar; 3]>> {
-        let w = self.w.restricted(u, v)?;
-        let m = self.m.restricted(u, v)?;
-        let w_range = w.hull()[0];
-        let Some((g, r)) = inverse_length(&m)? else {
-            return Ok(None);
-        };
-        if !w_range.definitely_greater(Scalar::ZERO) {
-            return Ok(None);
-        }
-        let f = self
-            .e
-            .restricted(u, v)?
-            .minus(
-                &w.product(&m, scale)?
-                    .product(&g, |x, y| x.prod_scalar(y[0]))?
-                    .scaled(distance),
-            )?
-            .hull();
-        let stray = distance.abs().mul(r.sqrt()?.sub(Scalar::ONE).abs());
-        let mut pad = [Scalar::ZERO; 3];
-        for k in 0..3 {
-            pad[k] = f[k].abs().div(w_range)?.add(stray).upper();
-        }
-        Ok(Some(pad))
-    }
-}
-
-impl Shape {
-    fn new(patch: &NurbSurface3D) -> GeopResult<Self> {
-        let (a, w, m, sides) = parts(patch)?;
-        // `P_a = w A_a − w_a A` and `w A_ab − w_ab A`.
-        let along = |t: bool| -> GeopResult<Net<3>> {
-            w.product(&a.derivative(t)?, scale)?
-                .minus(&w.derivative(t)?.product(&a, scale)?)
-        };
-        let (p_u, p_v) = (along(true)?, along(false)?);
-        let across = |s: bool, t: bool| -> GeopResult<Net<1>> {
-            let a_st = a.derivative(s)?.derivative(t)?;
-            let w_st = w.derivative(s)?.derivative(t)?;
-            w.product(&a_st, scale)?
-                .minus(&w_st.product(&a, scale)?)?
-                .product(&m, dot)
-        };
-        let mut first = [
-            p_u.product(&p_u, dot)?,
-            p_u.product(&p_v, dot)?,
-            p_v.product(&p_v, dot)?,
-        ];
-        let mut second = [
-            across(true, true)?,
-            across(true, false)?,
-            across(false, false)?,
-        ];
-        // Along a pole's side `P_t` vanishes and the tangent across it does
-        // not: an entry with `t` twice has its factor twice, with `t` once,
-        // once — in `I` and in `II` alike.
-        for &side in &sides {
-            let t = if side.u_fixed { 2 } else { 0 };
-            first[t] = divide(&first[t], side, 2)?;
-            second[t] = divide(&second[t], side, 2)?;
-            first[1] = divide(&first[1], side, 1)?;
-            second[1] = divide(&second[1], side, 1)?;
-        }
-        Ok(Shape {
-            w,
-            m,
-            first,
-            second,
-        })
-    }
-
-    /// Whether the offset by `distance` is regular over the box `u` × `v`
-    /// (see the module docs): `Some(true)` everywhere, `Some(false)`
-    /// nowhere, `None` undecided.
-    fn regular(
-        &self,
-        distance: Scalar,
-        u: (Scalar, Scalar),
-        v: (Scalar, Scalar),
-    ) -> GeopResult<Option<bool>> {
-        let w = self.w.restricted(u, v)?;
-        let Some((g, r)) = inverse_length(&self.m.restricted(u, v)?)? else {
-            return Ok(None);
-        };
-        // `G_ab = P_a·P_b − (d / √r) w² g J_ab`.
-        let c = w.product(&w, product)?.product(&g, product)?;
-        let factor = distance.div(r.sqrt()?)?;
-        let entry = |k: usize| -> GeopResult<Net<1>> {
-            let second = c.product(&self.second[k].restricted(u, v)?, product)?;
-            self.first[k]
-                .restricted(u, v)?
-                .minus(&second.scaled(factor))
-        };
-        let (g11, g12, g22) = (entry(0)?, entry(1)?, entry(2)?);
-        let det = g11
-            .product(&g22, product)?
-            .minus(&g12.product(&g12, product)?)?
-            .hull()[0];
-        let g11 = g11.hull()[0];
-        Ok(
-            if g11.definitely_greater(Scalar::ZERO) && det.definitely_greater(Scalar::ZERO) {
-                Some(true)
-            } else if g11.definitely_less(Scalar::ZERO) || det.definitely_less(Scalar::ZERO) {
-                Some(false)
-            } else {
-                None
-            },
-        )
-    }
-}
-
-/// The boxes of `surface`'s spans, each split in four until `decide` says
-/// something of it — told, after `splits` splits, that it is the last
-/// chance; what it said of each, in turn, to `take`. Refused where it says
-/// nothing then, or past [`MAX_OFFSET_BOXES`] boxes, naming the box.
-fn over_boxes<T, S>(
-    surface: &NurbSurface3D,
-    what: &str,
-    splits: usize,
-    mut prepare: impl FnMut(((Scalar, Scalar), (Scalar, Scalar))) -> GeopResult<S>,
-    mut decide: impl FnMut(&S, (Scalar, Scalar), (Scalar, Scalar), bool) -> GeopResult<Option<T>>,
-    mut take: impl FnMut(T, (Scalar, Scalar), (Scalar, Scalar)),
-) -> GeopResult<()> {
-    let bu = breakpoints(&surface.knot_vector_u, surface.degree_u, surface.num_u);
-    let bv = breakpoints(&surface.knot_vector_v, surface.degree_v, surface.num_v);
-    let half = Scalar::from_f64(0.5);
-    let mut boxes = 0usize;
-    for su in bu.windows(2) {
-        for sv in bv.windows(2) {
-            let span = ((su[0], su[1]), (sv[0], sv[1]));
-            let piece = prepare(span)
-                .map_err(|e| e.with_context(format!("the span u={:?}, v={:?}", span.0, span.1)))?;
-            let mut stack = vec![(span.0, span.1, 0usize)];
-            while let Some((u, v, depth)) = stack.pop() {
-                boxes += 1;
-                if boxes > MAX_OFFSET_BOXES {
-                    return Err(GeopError::new(format!(
-                        "{what} was not decided within {MAX_OFFSET_BOXES} boxes; the last one u={u:?}, v={v:?}"
-                    )));
-                }
-                let last = depth >= splits;
-                if let Some(said) = decide(&piece, u, v, last)
-                    .map_err(|e| e.with_context(format!("{what} over u={u:?}, v={v:?}")))?
-                {
-                    take(said, u, v);
-                    continue;
-                }
-                if last {
-                    return Err(GeopError::new(format!(
-                        "{what} could not be decided over u={u:?}, v={v:?}, split {splits} times"
-                    )));
-                }
-                let (cu, cv) = (
-                    Scalar::fraction(u.0, u.1, half),
-                    Scalar::fraction(v.0, v.1, half),
-                );
-                for a in [(u.0, cu), (cu, u.1)] {
-                    for b in [(v.0, cv), (cv, v.1)] {
-                        stack.push((a, b, depth + 1));
-                    }
-                }
-            }
-        }
-    }
-    Ok(())
 }
 
 /// A polynomial of degree [`INVERSE_DEGREE`] over `squared`'s box that
@@ -394,20 +221,477 @@ fn inverse_root(squared: &Net<1>) -> GeopResult<Option<Net<1>>> {
     }))
 }
 
+/// The factor `t` (`1 − t`) that vanishes along `side`, over the box of
+/// `like`, as a polynomial of degree one across it.
+fn side_factor(side: Side, like: &Net<1>) -> Net<1> {
+    let one = Vector::from_array([Scalar::ONE]);
+    let zero = Vector::from_array([Scalar::ZERO]);
+    let across = if side.at_end {
+        vec![one, zero]
+    } else {
+        vec![zero, one]
+    };
+    let c = if side.u_fixed {
+        across.into_iter().map(|x| vec![x]).collect()
+    } else {
+        vec![across]
+    };
+    Net {
+        c,
+        u: like.u,
+        v: like.v,
+    }
+}
+
+impl Fit {
+    fn new(surface: &NurbSurface3D, shift: &NurbSurface3D) -> GeopResult<Self> {
+        let (_, w, m, _) = parts(surface)?;
+        let (e, _) = Net::of(shift, false)?.split();
+        Ok(Fit { w, m, e })
+    }
+
+    /// What the fit misses over the box `u` × `v` (see the module docs):
+    /// `|b| + (|e·e − d² w²| / w² + |b|²) / |d|`, with `|b|² = |e × m|² /
+    /// (w² m·m)`. `None` where the box is too wide to bound it.
+    fn missed(
+        &self,
+        distance: Scalar,
+        u: (Scalar, Scalar),
+        v: (Scalar, Scalar),
+    ) -> GeopResult<Option<Scalar>> {
+        let w = self.w.restricted(u, v)?;
+        let m = self.m.restricted(u, v)?;
+        let e = self.e.restricted(u, v)?;
+        let along = e.product(&m, dot)?.hull()[0].mul(distance);
+        if !along.definitely_greater(Scalar::ZERO) {
+            return Ok(None);
+        }
+        let w_squared = w.product(&w, product)?;
+        let across = e.product(&m, cross)?;
+        let Some(b_squared) = ratio_bound(
+            &across.product(&across, dot)?,
+            &w_squared.product(&m.product(&m, dot)?, product)?,
+        )?
+        else {
+            return Ok(None);
+        };
+        let Some(length) = ratio_bound(
+            &e.product(&e, dot)?
+                .minus(&w_squared.scaled(distance.mul(distance)))?,
+            &w_squared,
+        )?
+        else {
+            return Ok(None);
+        };
+        let b = b_squared.sqrt()?;
+        let along = length.add(b_squared).div(distance.abs())?;
+        Ok(Some(b.add(along).upper()))
+    }
+}
+
+/// A bound on `|num| / den` over their box, for `den` positive there: the
+/// largest ratio of their Bernstein coefficients at a common degree, as
+/// `Σ B_i a_i ≤ max_i (a_i / d_i) Σ B_i d_i` for positive `d_i`. Unlike the
+/// ratio of their hulls, it does not take the numerator's largest value
+/// over the denominator's least where the two are far apart, as across a
+/// span of weights that fall off. `None` where a coefficient of `den` is
+/// not definitely positive.
+fn ratio_bound(num: &Net<1>, den: &Net<1>) -> GeopResult<Option<Scalar>> {
+    let (p, q) = (
+        num.c.len().max(den.c.len()) - 1,
+        num.c[0].len().max(den.c[0].len()) - 1,
+    );
+    let (num, den) = (num.raised(p, q)?, den.raised(p, q)?);
+    let mut bound = Scalar::ZERO;
+    for (a, d) in num.c.iter().flatten().zip(den.c.iter().flatten()) {
+        if !d[0].definitely_greater(Scalar::ZERO) {
+            return Ok(None);
+        }
+        bound = bound.max(a[0].abs().upper().div(d[0])?.upper());
+    }
+    Ok(Some(bound))
+}
+
+impl Shape {
+    fn new(patch: &NurbSurface3D) -> GeopResult<Self> {
+        let (a, w, m, sides) = parts(patch)?;
+        // `P_a = w A_a − w_a A` and `w A_ab − w_ab A`.
+        let along = |t: bool| -> GeopResult<Net<3>> {
+            w.product(&a.derivative(t)?, scale)?
+                .minus(&w.derivative(t)?.product(&a, scale)?)
+        };
+        let (p_u, p_v) = (along(true)?, along(false)?);
+        let across = |s: bool, t: bool| -> GeopResult<Net<1>> {
+            let a_st = a.derivative(s)?.derivative(t)?;
+            let w_st = w.derivative(s)?.derivative(t)?;
+            w.product(&a_st, scale)?
+                .minus(&w_st.product(&a, scale)?)?
+                .product(&m, dot)
+        };
+        let mut first = [
+            p_u.product(&p_u, dot)?,
+            p_u.product(&p_v, dot)?,
+            p_v.product(&p_v, dot)?,
+        ];
+        let mut second = [
+            across(true, true)?,
+            across(true, false)?,
+            across(false, false)?,
+        ];
+        // Along a pole's side `P_t` vanishes and the tangent across it does
+        // not: `P_t·P_t` has its factor twice, `P_t·P_s` once. `J_tt` has it
+        // twice at a smooth pole, once at an apex; `J_ts` once.
+        let mut twist: Option<Net<1>> = None;
+        for &side in &sides {
+            let t = if side.u_fixed { 2 } else { 0 };
+            let once = divide(&second[t], side, 1)?;
+            let (twice, times) = match once.divided(side)? {
+                Some(twice) => (twice, 2),
+                None => (once, 1),
+            };
+            second[t] = twice;
+            first[t] = divide(&first[t], side, times)?;
+            second[1] = second[1].divided(side)?.ok_or_else(|| {
+                GeopError::new(format!(
+                    "the surface twists at its apex at {side:?}: its offset is not regular there"
+                ))
+            })?;
+            first[1] = divide(&first[1], side, 1)?;
+            if times == 1 {
+                // `det G / t = G'_tt G_ss − t G'_ts²`.
+                let factor = side_factor(side, &first[1]);
+                twist = Some(match twist {
+                    Some(f) => f.product(&factor, product)?,
+                    None => factor,
+                });
+            }
+        }
+        Ok(Shape {
+            w,
+            m,
+            first,
+            second,
+            twist,
+        })
+    }
+
+    /// Whether the offset by `distance` is regular over the box `u` × `v`
+    /// (see the module docs): `Some(true)` everywhere, `Some(false)`
+    /// nowhere, `None` undecided. `closes` is the side of the span where
+    /// the offset closes to a point, if it does there; `flipped`, whether
+    /// the span lies past an apex the surface was carried on through (see
+    /// `offset`).
+    fn regular(
+        &self,
+        distance: Scalar,
+        u: (Scalar, Scalar),
+        v: (Scalar, Scalar),
+        closes: Option<Side>,
+        flipped: bool,
+    ) -> GeopResult<Option<bool>> {
+        let w = self.w.restricted(u, v)?;
+        let m = self.m.restricted(u, v)?;
+        // The entries with `1 / |m|` as a polynomial `g / √r` fitted over
+        // the box (see [`inverse_length`]).
+        let Some((fitted, r)) = inverse_length(&m)? else {
+            return Ok(None);
+        };
+        let factor = distance.div(r.sqrt()?)?;
+        let c = w.product(&w, product)?.product(&fitted, product)?;
+        let g = (0..3)
+            .map(|i| {
+                self.first[i].restricted(u, v)?.minus(
+                    &c.product(&self.second[i].restricted(u, v)?, product)?
+                        .scaled(factor),
+                )
+            })
+            .collect::<GeopResult<Vec<_>>>()?;
+        let twist = self
+            .twist
+            .as_ref()
+            .map(|t| t.restricted(u, v))
+            .transpose()?;
+        let (t, s) = match closes {
+            Some(side) if side.u_fixed => (2, 0),
+            _ => (0, 2),
+        };
+        // Past an apex the offset keeps its way round where the surface
+        // turns over: one factor `1 − d κ` changes sign with it there.
+        let verdict = |diagonal: Scalar, det: Scalar| {
+            let det = if flipped { det.neg() } else { det };
+            if diagonal.definitely_greater(Scalar::ZERO) && det.definitely_greater(Scalar::ZERO) {
+                Some(true)
+            } else if diagonal.definitely_less(Scalar::ZERO) || det.definitely_less(Scalar::ZERO) {
+                Some(false)
+            } else {
+                None
+            }
+        };
+        let squared = g[1].product(&g[1], product)?;
+        let squared = match &twist {
+            Some(t) => squared.product(t, product)?,
+            None => squared,
+        };
+        let det = g[0].product(&g[2], product)?.minus(&squared)?.hull()[0];
+        let said = verdict(g[s].hull()[0], det);
+        let Some(side) = closes.filter(|_| said.is_none()) else {
+            return Ok(said);
+        };
+        // The offset's row along `side` is a point: `G e_t = 0` there, `t`
+        // the side's own direction. So by the mean value theorem `G_tt = x
+        // G'_tt` and `G_ts = x G'_ts`, `x` the distance across from the
+        // side (negative from the end), the primes enclosing the
+        // derivatives across over the box carried on to the side, and
+        // `det G / x = G'_tt G_ss − G'_ts G_ts`. Undecided as its entries
+        // are near the side, the box is decided so.
+        let across = side.u_fixed;
+        let (eu, ev) = match (side.u_fixed, side.at_end) {
+            (true, false) => ((self.w.u.0, u.1), v),
+            (true, true) => ((u.0, self.w.u.1), v),
+            (false, false) => (u, (self.w.v.0, v.1)),
+            (false, true) => (u, (v.0, self.w.v.1)),
+        };
+        let w = self.w.restricted(eu, ev)?;
+        let m = self.m.restricted(eu, ev)?;
+        // `G_ab = P_a·P_b − d ρ K_ab`, `K_ab = w² g J_ab`, `ρ = 1 / √r`
+        // and `r = g² (m·m)` near one, so `∂ρ = −ρ³ ∂r / 2` is small.
+        let Some((fitted, _)) = inverse_length(&m)? else {
+            return Ok(None);
+        };
+        let r = fitted
+            .product(&fitted, product)?
+            .product(&m.product(&m, dot)?, product)?;
+        let rho = Scalar::ONE.div(r.hull()[0].sqrt()?)?;
+        let drho = rho
+            .mul(rho)
+            .mul(rho)
+            .mul(r.derivative(across)?.hull()[0])
+            .div(Scalar::TWO)?
+            .neg();
+        let c = w.product(&w, product)?.product(&fitted, product)?;
+        let derivative = |i: usize| -> GeopResult<Scalar> {
+            let k = c.product(&self.second[i].restricted(eu, ev)?, product)?;
+            Ok(self.first[i]
+                .restricted(eu, ev)?
+                .derivative(across)?
+                .minus(&k.derivative(across)?.scaled(distance.mul(rho)))?
+                .minus(&k.scaled(distance.mul(drho)))?
+                .hull()[0])
+        };
+        let x = if side.at_end {
+            Scalar::ONE.neg()
+        } else {
+            Scalar::ONE
+        };
+        let ts = g[1].hull()[0];
+        let ts = match &twist {
+            Some(f) => ts.mul(f.hull()[0]),
+            None => ts,
+        };
+        let det = x.mul(
+            derivative(t)?
+                .mul(g[s].hull()[0])
+                .sub(derivative(1)?.mul(ts)),
+        );
+        Ok(verdict(g[s].hull()[0], det))
+    }
+}
+
+/// The boxes of `surface`'s spans, each split in four until `decide` says
+/// something of it — told, after `splits` splits, that it is the last
+/// chance; what it said of each, in turn, to `take`. Refused where it says
+/// nothing then, or past [`MAX_OFFSET_BOXES`] boxes, naming the box.
+fn over_boxes<T, S>(
+    surface: &NurbSurface3D,
+    what: &str,
+    splits: usize,
+    mut prepare: impl FnMut(((Scalar, Scalar), (Scalar, Scalar))) -> GeopResult<S>,
+    mut decide: impl FnMut(&S, (Scalar, Scalar), (Scalar, Scalar), bool) -> GeopResult<Option<T>>,
+    mut take: impl FnMut(T, (Scalar, Scalar), (Scalar, Scalar)),
+) -> GeopResult<()> {
+    let bu = breakpoints(&surface.knot_vector_u, surface.degree_u, surface.num_u);
+    let bv = breakpoints(&surface.knot_vector_v, surface.degree_v, surface.num_v);
+    let half = Scalar::from_f64(0.5);
+    let mut boxes = 0usize;
+    for su in bu.windows(2) {
+        for sv in bv.windows(2) {
+            let span = ((su[0], su[1]), (sv[0], sv[1]));
+            let piece = prepare(span)
+                .map_err(|e| e.with_context(format!("the span u={:?}, v={:?}", span.0, span.1)))?;
+            let mut stack = vec![(span.0, span.1, 0usize)];
+            while let Some((u, v, depth)) = stack.pop() {
+                boxes += 1;
+                if boxes > MAX_OFFSET_BOXES {
+                    return Err(GeopError::new(format!(
+                        "{what} was not decided within {MAX_OFFSET_BOXES} boxes; the last one u={u:?}, v={v:?}"
+                    )));
+                }
+                let last = depth >= splits;
+                if let Some(said) = decide(&piece, u, v, last)
+                    .map_err(|e| e.with_context(format!("{what} over u={u:?}, v={v:?}")))?
+                {
+                    take(said, u, v);
+                    continue;
+                }
+                if last {
+                    return Err(GeopError::new(format!(
+                        "{what} could not be decided over u={u:?}, v={v:?}, split {splits} times"
+                    )));
+                }
+                let (cu, cv) = (
+                    Scalar::fraction(u.0, u.1, half),
+                    Scalar::fraction(v.0, v.1, half),
+                );
+                for a in [(u.0, cu), (cu, u.1)] {
+                    for b in [(v.0, cv), (cv, v.1)] {
+                        stack.push((a, b, depth + 1));
+                    }
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
+/// A surface offset, and how: `distance` along its normal, the normal
+/// continued through the apex `closing` names, if it has one inside (see
+/// [`Closing`]).
+struct Offsetting<'a> {
+    surface: &'a NurbSurface3D,
+    distance: Scalar,
+    closing: Option<&'a Closing>,
+}
+
+impl Offsetting<'_> {
+    /// Whether the parameter across the closing side, `x`, lies past the
+    /// apex inside, on the closing side's side of it: where the surface
+    /// is its own continuation through the apex, its normal the other way.
+    fn flipped(&self, u: Scalar, v: Scalar) -> bool {
+        let Some(Closing {
+            side,
+            apex: Some(apex),
+        }) = self.closing
+        else {
+            return false;
+        };
+        let x = if side.u_fixed { u } else { v };
+        if side.at_end {
+            x.definitely_greater(*apex)
+        } else {
+            x.definitely_less(*apex)
+        }
+    }
+
+    /// The distance to offset by over the box `u` × `v`, inside one span:
+    /// against the surface's own normal past an apex inside.
+    fn distance_over(&self, u: (Scalar, Scalar), v: (Scalar, Scalar)) -> GeopResult<Scalar> {
+        Ok(if self.flipped_over(u, v)? {
+            self.distance.neg()
+        } else {
+            self.distance
+        })
+    }
+
+    /// Whether the box `u` × `v`, inside one span, lies past an apex inside.
+    fn flipped_over(&self, u: (Scalar, Scalar), v: (Scalar, Scalar)) -> GeopResult<bool> {
+        let mid = |(a, b): (Scalar, Scalar)| a.add(b).div(Scalar::TWO);
+        Ok(self.flipped(mid(u)?, mid(v)?))
+    }
+
+    /// The shift `d N` at `(u, v)`, the normal continued through an apex
+    /// inside: at the apex itself its limit along the parameter line, from
+    /// the side that is not flipped.
+    fn shift(&self, u: Scalar, v: Scalar) -> GeopResult<Vector3> {
+        if let Some(Closing {
+            side,
+            apex: Some(apex),
+        }) = self.closing
+        {
+            let x = if side.u_fixed { u } else { v };
+            if x.could_be_equal(*apex) {
+                // Next to a collapsed `v` row `S_u ≈ (v − v₀) S_uv`, next to
+                // a collapsed `u` row `S_v ≈ (u − u₀) S_uv`.
+                let s = self.surface.partials(u, v, 2)?;
+                let limit = if side.u_fixed {
+                    s[1][0].prod_cross(&s[1][1])
+                } else {
+                    s[1][1].prod_cross(&s[0][1])
+                };
+                // The side not flipped is after the apex for a closing
+                // side at the start.
+                let limit = if side.at_end { limit.neg() } else { limit };
+                return Ok(limit.normalize()?.prod_scalar(self.distance));
+            }
+        }
+        let normal = self.surface.normal(u, v)?;
+        Ok(normal.prod_scalar(if self.flipped(u, v) {
+            self.distance.neg()
+        } else {
+            self.distance
+        }))
+    }
+
+    /// The side the span `u` × `v` touches where the offset closes.
+    fn closes_over(&self, u: (Scalar, Scalar), v: (Scalar, Scalar)) -> Option<Side> {
+        let side = self.closing?.side;
+        let (x, (lo, hi)) = if side.u_fixed {
+            (u, self.surface.domain_u())
+        } else {
+            (v, self.surface.domain_v())
+        };
+        let touches = if side.at_end {
+            x.1.could_be_equal(hi)
+        } else {
+            x.0.could_be_equal(lo)
+        };
+        touches.then_some(side)
+    }
+}
+
 impl NurbSurface3D {
+    /// Whether the surface has a normal everywhere: its normal field, a
+    /// pole's factor divided out, definitely not zero over every span, each
+    /// split in four up to [`REGULAR_SPLITS`] times. `false` where it
+    /// vanishes, or could: a patch carried on so far that it folds back on
+    /// itself, its offset no surface.
+    pub fn has_normal_everywhere(&self) -> GeopResult<bool> {
+        let mut everywhere = true;
+        over_boxes(
+            self,
+            "whether the surface has a normal",
+            REGULAR_SPLITS,
+            |(u, v)| Ok(parts(&self.sub_surface(u, v)?)?.2),
+            |m, u, v, last| {
+                let m = m.restricted(u, v)?;
+                let squared = m.product(&m, dot)?.hull()[0];
+                Ok(if squared.definitely_greater(Scalar::ZERO) {
+                    Some(true)
+                } else {
+                    last.then_some(false)
+                })
+            },
+            |has, _, _| everywhere &= has,
+        )?;
+        Ok(everywhere)
+    }
+
     /// The surface `distance` along its normal, fitted and widened to
     /// enclose it (see the module docs), with the same parametrization;
     /// `None` where it collapses (see [`NurbSurface3D::offset`]). Fails
-    /// where the surface has no normal, or the offset folds.
-    pub(super) fn fitted_offset(&self, distance: Scalar) -> GeopResult<Option<Self>> {
+    /// where the surface has no normal, or the offset folds. `closing`
+    /// says where the surface was moved so that its offset closes at an
+    /// apex.
+    pub(super) fn fitted_offset(
+        &self,
+        distance: Scalar,
+        closing: Option<&Closing>,
+    ) -> GeopResult<Option<Self>> {
         let ctx = |e: GeopError| e.with_context(format!("fitted_offset(distance={distance:?})"));
-        let mut base = self.clone();
-        while base.degree_u < 3 {
-            base = base.elevate_degree(true).map_err(ctx)?;
-        }
-        while base.degree_v < 3 {
-            base = base.elevate_degree(false).map_err(ctx)?;
-        }
+        let offsetting = Offsetting {
+            surface: self,
+            distance,
+            closing,
+        };
         // Regular, collapsed or folded is the surface's and the distance's
         // to say, over its own spans, before anything is fitted.
         let (mut regular, mut collapsed) = (None, None);
@@ -415,9 +699,16 @@ impl NurbSurface3D {
             self,
             "whether the offset is regular",
             REGULAR_SPLITS,
-            |(u, v)| Shape::new(&self.sub_surface(u, v)?),
-            |shape, u, v, last| {
-                let said = shape.regular(distance, u, v)?;
+            |(u, v)| {
+                Ok((
+                    Shape::new(&self.sub_surface(u, v)?)?,
+                    offsetting.distance_over(u, v)?,
+                    offsetting.flipped_over(u, v)?,
+                    offsetting.closes_over(u, v),
+                ))
+            },
+            |(shape, distance, flipped, closes), u, v, last| {
+                let said = shape.regular(*distance, u, v, *closes, *flipped)?;
                 if said.is_none() && last {
                     return Err(GeopError::new(format!(
                         "the offset by {distance:?} could fold over itself over u={u:?}, v={v:?}: a factor 1 − d κ could be zero there"
@@ -446,46 +737,70 @@ impl NurbSurface3D {
         }
         // How finely to fit is a matter of effort, so it is chosen from a
         // look at the fit between its points; whether the fit encloses the
-        // offset is the bound's to say, over every box, after.
-        let mut pieces = 1;
-        let (net, shift) = loop {
-            let net = base.refined(pieces).map_err(ctx)?;
-            let shift = net.fitted_shift(self, distance).map_err(ctx)?;
-            if pieces < MAX_OFFSET_PIECES && !shift.fits(self, distance).map_err(ctx)? {
-                pieces *= 2;
-                continue;
+        // offset is the bound's to say, over every box, after. The
+        // surface's own net first: where it can follow the offset, the
+        // offset keeps its degrees and its layout.
+        let own = self.fitted_shift(&offsetting).map_err(ctx)?;
+        let (net, shift) = if own.fits(&offsetting).map_err(ctx)? {
+            (self.clone(), own)
+        } else {
+            let mut base = self.clone();
+            while base.degree_u < 3 {
+                base = base.elevate_degree(true).map_err(ctx)?;
             }
-            break (net, shift);
+            while base.degree_v < 3 {
+                base = base.elevate_degree(false).map_err(ctx)?;
+            }
+            let mut pieces = 1;
+            loop {
+                let net = base.refined(pieces).map_err(ctx)?;
+                let shift = net.fitted_shift(&offsetting).map_err(ctx)?;
+                if pieces < MAX_OFFSET_PIECES && !shift.fits(&offsetting).map_err(ctx)? {
+                    pieces *= 2;
+                    continue;
+                }
+                break (net, shift);
+            }
         };
         let drift = Scalar::from_f64(OFFSET_DRIFT);
-        let mut pad = [Scalar::ZERO; 3];
+        let mut bounds = Vec::new();
         over_boxes(
             &shift,
             "the bound on what the fit misses",
             BOUND_SPLITS,
-            |(u, v)| Fit::new(&self.sub_surface(u, v)?, &shift.sub_surface(u, v)?),
+            |(u, v)| {
+                Ok((
+                    Fit::new(&self.sub_surface(u, v)?, &shift.sub_surface(u, v)?)?,
+                    offsetting.distance_over(u, v)?,
+                ))
+            },
             // Split while the bound is wider than the drift, and take it
             // as it is once splitting no longer pays: it is honest either
             // way, only wider.
-            |fit, u, v, last| {
+            |(fit, distance), u, v, last| {
                 Ok(fit
-                    .missed(distance, u, v)?
-                    .filter(|p| last || p.iter().all(|k| !k.definitely_greater(drift))))
+                    .missed(*distance, u, v)?
+                    .filter(|p| last || !p.definitely_greater(drift)))
             },
-            |missed, _, _| {
-                for k in 0..3 {
-                    pad[k] = pad[k].max(missed[k]);
-                }
-            },
+            |missed, u, v| bounds.push((u, v, missed)),
         )
-        .map_err(|e| ctx(e).with_context(format!("each span split into {pieces} for the fit")))?;
-        Ok(Some(net.shifted(&shift, &pad)))
+        .map_err(|e| ctx(e).with_context(format!("the shift fitted on {net:?}")))?;
+        let offset = net.shifted(&shift, &bounds);
+        if let Some(closing) = closing
+            && !poles(&offset)?.contains(&closing.side)
+        {
+            return Err(ctx(GeopError::new(format!(
+                "the offset of the apex does not close in a point along its side {:?}: the offsets of the surface round it do not meet in one point",
+                closing.side
+            ))));
+        }
+        Ok(Some(offset))
     }
 
-    /// Whether this shift is within half [`OFFSET_DRIFT`] of `surface`'s offset
-    /// by `distance` halfway between its Greville points, in the middle of
-    /// each span: a look, to choose how finely to fit, not a bound.
-    fn fits(&self, surface: &NurbSurface3D, distance: Scalar) -> GeopResult<bool> {
+    /// Whether this shift is within half [`OFFSET_DRIFT`] of the offset
+    /// halfway between its Greville points, in the middle of each span: a
+    /// look, to choose how finely to fit, not a bound.
+    fn fits(&self, offsetting: &Offsetting) -> GeopResult<bool> {
         let drift = Scalar::from_f64(OFFSET_DRIFT / 2.);
         let middles = |knots: &[Scalar], degree: usize, n: usize| -> GeopResult<Vec<Scalar>> {
             let b = breakpoints(knots, degree, n);
@@ -496,9 +811,7 @@ impl NurbSurface3D {
         };
         for u in middles(&self.knot_vector_u, self.degree_u, self.num_u)? {
             for v in middles(&self.knot_vector_v, self.degree_v, self.num_v)? {
-                let e = self
-                    .evaluate(u, v)?
-                    .sub(&surface.normal(u, v)?.prod_scalar(distance));
+                let e = self.evaluate(u, v)?.sub(&offsetting.shift(u, v)?);
                 if (0..3).any(|k| e[k].abs().definitely_greater(drift)) {
                     return Ok(false);
                 }
@@ -508,18 +821,21 @@ impl NurbSurface3D {
     }
 
     /// The shift that moves this surface, as a net to fit on, onto the
-    /// offset of `surface` by `distance`: in this net's rational basis, its
-    /// homogeneous control points interpolating `W d N` at the Greville
-    /// points, `W` the net's weight there. Its control points are sharp: a
-    /// fit is a free choice, what it misses is bounded afterwards.
-    fn fitted_shift(&self, surface: &NurbSurface3D, distance: Scalar) -> GeopResult<Self> {
+    /// offset: in this net's rational basis, its homogeneous control points
+    /// interpolating `W d N` at the Greville points, `W` the net's weight
+    /// there. Its control points are sharp: a fit is a free choice, what it
+    /// misses is bounded afterwards.
+    fn fitted_shift(&self, offsetting: &Offsetting) -> GeopResult<Self> {
         let greville = |knots: &[Scalar], degree: usize, n: usize| -> GeopResult<Vec<Scalar>> {
             (0..n)
                 .map(|i| {
                     let sum = knots[i + 1..=i + degree]
                         .iter()
                         .fold(Scalar::ZERO, |a, &k| a.add(k));
-                    Ok(sum.div(Scalar::from_i64(degree as i64))?.sharpen())
+                    // Inside the domain: a division by the degree rounds
+                    // out of it at an end.
+                    let mean = sum.div(Scalar::from_i64(degree as i64))?.sharpen();
+                    Ok(mean.max(knots[degree]).min(knots[n]))
                 })
                 .collect()
         };
@@ -532,8 +848,10 @@ impl NurbSurface3D {
             let values = gv
                 .iter()
                 .map(|&v| {
-                    let normal = surface.normal(u, v)?;
-                    Ok(normal.prod_scalar(distance.mul(self.weight(u, v)?)))
+                    let shift = offsetting.shift(u, v).map_err(|e| {
+                        e.with_context(format!("the shift at the Greville point {:?}", (u, v)))
+                    })?;
+                    Ok(shift.prod_scalar(self.weight(u, v)?))
                 })
                 .collect::<GeopResult<Vec<Vector3>>>()?;
             rows.push(solve_interpolation_system(
@@ -569,18 +887,40 @@ impl NurbSurface3D {
     }
 
     /// This net moved by `shift` (homogeneous control points added, the
-    /// weights kept) and widened by `pad` in each coordinate.
-    fn shifted(&self, shift: &NurbSurface3D, pad: &[Scalar; 3]) -> Self {
+    /// weights kept) and widened in each coordinate by the largest of the
+    /// `bounds` over the boxes its basis function is not zero on: wherever
+    /// the surface is evaluated, every control point it is made of is then
+    /// widened by at least the bound there, and the basis sums to one. A
+    /// span carried on far, its weights small, widens only the points it
+    /// is made of.
+    #[allow(clippy::type_complexity)]
+    fn shifted(
+        &self,
+        shift: &NurbSurface3D,
+        bounds: &[((Scalar, Scalar), (Scalar, Scalar), Scalar)],
+    ) -> Self {
+        let support = |knots: &[Scalar], degree: usize, i: usize, (a, b): (Scalar, Scalar)| {
+            knots[i].definitely_less(b) && a.definitely_less(knots[i + degree + 1])
+        };
         let control_points = self
             .control_points
             .iter()
             .zip(&shift.control_points)
-            .map(|(cp, s)| {
+            .enumerate()
+            .map(|(index, (cp, s))| {
+                let (i, j) = (index / self.num_v, index % self.num_v);
+                let pad = bounds
+                    .iter()
+                    .filter(|(u, v, _)| {
+                        support(&self.knot_vector_u, self.degree_u, i, *u)
+                            && support(&self.knot_vector_v, self.degree_v, j, *v)
+                    })
+                    .fold(Scalar::ZERO, |pad, (_, _, missed)| pad.max(*missed));
                 let w = cp[3];
                 let mut out = *cp;
+                let d = pad.mul(w);
                 for k in 0..3 {
                     let moved = cp[k].add(s[k]);
-                    let d = pad[k].mul(w);
                     out[k] = moved.sub(d).union(moved.add(d));
                 }
                 out
@@ -655,7 +995,12 @@ mod tests {
         let distance = Scalar::from_f64(0.1);
         let error = |pieces: usize| {
             let net = surface.refined(pieces).unwrap();
-            let shift = net.fitted_shift(&surface, distance).unwrap();
+            let offsetting = Offsetting {
+                surface: &surface,
+                distance,
+                closing: None,
+            };
+            let shift = net.fitted_shift(&offsetting).unwrap();
             let mut worst: f64 = 0.;
             for a in 0..=13 {
                 for b in 0..=13 {
@@ -701,7 +1046,6 @@ mod tests {
     /// A rational surface fitted, not taken exactly: a torus patch, whose
     /// offset the fit has to enclose like any other.
     #[test]
-    #[ignore = "slow: 10 s — run with `cargo test -- --ignored`"]
     fn a_rational_patch_is_fitted() {
         let r2 = std::f64::consts::FRAC_1_SQRT_2;
         let ring = [(2., 0., 1.), (2., 2., r2), (0., 2., 1.)];
@@ -719,7 +1063,10 @@ mod tests {
         let k = knots(&[0., 0., 0., 1., 1., 1.]);
         let torus = NurbSurface3D::try_new(2, 2, control_points, k.clone(), k).unwrap();
         for d in [0.25, -0.25] {
-            let fitted = torus.fitted_offset(Scalar::from_f64(d)).unwrap().unwrap();
+            let fitted = torus
+                .fitted_offset(Scalar::from_f64(d), None)
+                .unwrap()
+                .unwrap();
             assert_encloses(&torus, &fitted, d, 5e-5);
         }
     }
@@ -729,11 +1076,13 @@ mod tests {
     /// field with the pole's factor divided out is (see `net`). Fitted,
     /// not taken as a revolution.
     #[test]
-    #[ignore = "slow: 8 s — run with `cargo test -- --ignored`"]
     fn a_patch_with_a_pole_is_fitted() {
         let sphere = crate::test_fixtures::sphere_octant();
         for d in [0.2, -0.2] {
-            let fitted = sphere.fitted_offset(Scalar::from_f64(d)).unwrap().unwrap();
+            let fitted = sphere
+                .fitted_offset(Scalar::from_f64(d), None)
+                .unwrap()
+                .unwrap();
             assert_encloses(&sphere, &fitted, d, 5e-5);
         }
     }
@@ -746,7 +1095,7 @@ mod tests {
         let sphere = crate::test_fixtures::sphere_octant();
         assert!(
             sphere
-                .fitted_offset(Scalar::from_f64(-1.5))
+                .fitted_offset(Scalar::from_f64(-1.5), None)
                 .unwrap()
                 .is_none()
         );

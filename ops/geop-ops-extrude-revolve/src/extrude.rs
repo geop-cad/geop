@@ -400,10 +400,20 @@ fn drafted_wall(
         // square to the plane keeps its weights, and a row's weights kept
         // the same numbers keep the wall a polynomial along its height.
         let weight = point[3];
-        let moved = wall
+        let offset = wall
             .offset(height.mul(slope).neg())?
-            .ok_or_else(|| GeopError::new("the draft makes a wall collapse at this height"))?
-            .control_points[k];
+            .ok_or_else(|| GeopError::new("the draft makes a wall collapse at this height"))?;
+        // The offset is on the wall's own net where it can be (a plane's, a
+        // cylinder's); a free-form wall's is fitted on a finer one, and has
+        // no control point of the wall's to take.
+        if (offset.degree_u, offset.degree_v, offset.num_u, offset.num_v)
+            != (wall.degree_u, wall.degree_v, wall.num_u, wall.num_v)
+        {
+            return Err(GeopError::new(
+                "a wall whose offset is not on its own net, a free-form one, is not drafted",
+            ));
+        }
+        let moved = offset.control_points[k];
         let at = moved.dehomogenized()?.prod_scalar(weight);
         *point = Vector4::from_array([at[0], at[1], at[2], weight]);
     }
