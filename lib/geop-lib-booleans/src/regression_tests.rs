@@ -229,3 +229,89 @@ fn steinmetz_cylinders_with_a_node_inside_a_face() {
         }
     }
 }
+
+/// A prism standing 2 high on a profile whose bottom side is the cubic
+/// `y = x³` from `(-1, -1)` to `(1, 1)` (the rest of it up to `y = 2`), and
+/// a block below the plane `y + z = 0`, the plane through the origin square
+/// to `(0, 1, 1)`. The cubic edge along the prism's foot crosses that plane
+/// at the origin, at its inflection, where it runs along the plane: it is
+/// tangent to the plane there and still crosses it, from below to above.
+/// The prism's faces cross the plane there all the same — the foot along
+/// `y = 0`, the cubic wall along `z = -x³` — so the curves the plane cuts
+/// end at the origin, and need a vertex there, which only that edge's
+/// crossing makes.
+#[test]
+fn cubic_edge_crossing_a_plane_at_its_inflection() {
+    use geop_core_geometry::nurb_curve::NurbCurve2D;
+    use geop_core_math::{
+        primitives::{CoordinateSystem, Pose},
+        vector::Vector3,
+    };
+    use geop_lib_sweep::{SweepLoop, extrude, polyline, shapes::v2};
+    use geop_ops_model::Profile;
+    let build = || {
+        let mut model = NamedModel::new();
+        let s = Scalar::from_f64;
+        let point = |x: f64, y: f64| Vector3::from_array([s(x), s(y), Scalar::ONE]);
+        let cubic = NurbCurve2D::try_new(
+            3,
+            vec![
+                point(-1.0, -1.0),
+                point(-1.0 / 3.0, 1.0),
+                point(1.0 / 3.0, -1.0),
+                point(1.0, 1.0),
+            ],
+            [0.0, 0.0, 0.0, 0.0, 1.0, 1.0, 1.0, 1.0].map(s).to_vec(),
+        )
+        .unwrap();
+        let mut profile = vec![cubic];
+        profile.extend(
+            polyline(&[v2(1.0, 1.0), v2(1.0, 2.0), v2(-1.0, 2.0), v2(-1.0, -1.0)]).unwrap(),
+        );
+        let plane = CoordinateSystem::try_new(
+            v3(0.0, 0.0, 0.0),
+            v3(1.0, 0.0, 0.0),
+            v3(0.0, 1.0, 0.0),
+            v3(0.0, 0.0, 1.0),
+        )
+        .unwrap();
+        let namer = Namer::new("prism", "p").unwrap();
+        let prism = extrude(
+            &mut model,
+            &namer,
+            Some(&namer.root()),
+            &plane,
+            Scalar::ZERO,
+            Scalar::TWO,
+            &[SweepLoop::plain(Profile::closed(profile))],
+        )
+        .unwrap()
+        .solid
+        .unwrap();
+        let cut = block(&mut model, "cut", [-3.0, -3.0, -3.0], [3.0, 0.0, 3.0]);
+        let turn = Pose::rotation_about(
+            &v3(0.0, 0.0, 0.0),
+            &v3(1.0, 0.0, 0.0),
+            Scalar::PI.div(Scalar::from_f64(4.0)).unwrap(),
+        )
+        .unwrap();
+        model
+            .transform_body(Body::Solid(cut), &turn.motion())
+            .unwrap();
+        (model, prism, cut)
+    };
+    // The plane cuts a wedge off the prism, below the foot's `y = 0` and
+    // the wall's `z = -x³`, for `x < 0`: both what is left and what is cut
+    // off are some of the prism, not all of it nor none.
+    let (model, prism, _) = build();
+    let whole = volume(&model, prism);
+    for op in [BooleanOp::Difference, BooleanOp::Intersection] {
+        let (mut model, prism, cut) = build();
+        let result = combined(&mut model, prism, cut, op);
+        let v = volume(&model, result);
+        assert!(
+            v.definitely_greater(Scalar::ZERO) && v.definitely_less(whole),
+            "{op:?}: {v:?} of {whole:?}"
+        );
+    }
+}

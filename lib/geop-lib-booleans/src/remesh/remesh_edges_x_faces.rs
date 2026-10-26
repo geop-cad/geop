@@ -51,13 +51,14 @@ use geop_core_math::{
     matrix::Matrix,
     scalars::Scalar,
     solvers::{
+        bisect::bisect,
         iterate::{Repeat, Step, iterate},
         linear::solve_linear_system,
         probe::{Probe, attempts},
         refine::{Refine, Refined, refine},
         repeat::{self, repeat, rewrite},
     },
-    vector::{Vector, Vector3},
+    vector::{Vector, Vector2, Vector3},
     with_context,
 };
 use geop_core_topology::{
@@ -691,13 +692,28 @@ fn find_piercing_crossing(
                 // it, as soon as curve tangents came out a little tighter.
                 // A crossing is regular only if the curve is transversal
                 // all over the box its root may be in.
-                if let (Ok(tangent), Ok(normal)) = (
+                //
+                // Running along the face is not yet touching it, though: at
+                // an inflection the curve is tangent to the face and still
+                // crosses it, and the curves the faces meet in end there. So
+                // a tangential box is a crossing after all where the curve
+                // lies on definitely different sides of the face just
+                // outside it (see `odd_crossing`), at the parameter that
+                // separates the sides.
+                let t = if let (Ok(tangent), Ok(normal)) = (
                     edge.curve.tangent(box_t),
                     face.surface.normal(box_uv[0], box_uv[1]),
                 ) && tangent.prod_dot(&normal).could_be_equal(Scalar::ZERO)
                 {
-                    continue;
-                }
+                    match odd_crossing(&edge.curve, &face.surface, box_t, box_uv)
+                        .with_context(&pair_ctx)?
+                    {
+                        Some(t) => t,
+                        None => continue,
+                    }
+                } else {
+                    t
+                };
                 // A `t` that isn't *definitely* strictly inside the domain
                 // could be the domain bound itself — i.e. the crossing may
                 // be the edge's own start or end vertex, which is a shared
@@ -727,6 +743,80 @@ fn find_piercing_crossing(
         }
     }
     Ok(None)
+}
+
+/// Where `curve` crosses `surface` within the parameter box `box_t`, if it
+/// does there while running along the surface's tangent plane: a bracket
+/// of parameters on whose ends the curve lies on definitely different sides
+/// of the surface, each end the last one told on its side. `None` where it
+/// touches without crossing
+/// — the same side on both ends, two spheres meeting at a point — or where
+/// the sides cannot be told at all: the curve lying on the surface, which
+/// is the coincidence phase's to imprint, or a box reaching an end of the
+/// curve, which is a vertex.
+///
+/// The side of `C(t)` is the sign of `(C(t) - S(f)) · n` at its foot
+/// point `f`, projected from `uv`, with `n` the normal at the sharp middle
+/// `m` of the foot point's box: `C(t) - S(f)` runs along the normal at `f`,
+/// which points the way `n` does. `S(f)` is taken in its mean-value form,
+/// `S(m) + S_u (f_u - m_u) + S_v (f_v - m_v)`, the derivatives over the box:
+/// across `n` they are as small as the box, so the box's width enters the
+/// offset squared. Evaluated over the box directly, `S` carries the box's
+/// width along the surface into every coordinate, and the offset a hundred
+/// times the width of the data — at a contact of order three, a vertex 1e-4
+/// wide. The parameters asked are the
+/// box's outer bounds and the bisection's middles, all sharp: where a side
+/// is asked is a free choice. The bracket's ends are not the answer to the
+/// question "where does it cross"; the bracket is, and its width is the
+/// honest one: at a contact of order three the side flips by `t³`, and
+/// stays told until that sinks below the width the evaluation carries.
+fn odd_crossing(
+    curve: &NurbCurve<4>,
+    surface: &NurbSurface3D,
+    box_t: Scalar,
+    uv: Vector2,
+) -> GeopResult<Option<Scalar>> {
+    const PROJECTION_ITERATIONS: usize = 20;
+    let (t0, t1) = curve.domain();
+    let (lo, hi) = (box_t.lower(), box_t.upper());
+    if !lo.definitely_greater(t0) || !hi.definitely_less(t1) {
+        return Ok(None);
+    }
+    let mut seed = (uv[0].midpoint(), uv[1].midpoint());
+    // A side that cannot be computed — no foot point, no normal — is one
+    // that cannot be told.
+    let mut side = |t: Scalar| -> Option<bool> {
+        let point = curve.evaluate(t).ok()?;
+        let (u, v) = (surface.project(point, seed.0, seed.1, PROJECTION_ITERATIONS)).ok()?;
+        let (mu, mv) = (u.sharpen(), v.sharpen());
+        let normal = surface.normal(mu, mv).ok()?;
+        let (su, sv) = surface.derivatives(u, v).ok()?;
+        let offset = (point.sub(&surface.evaluate(mu, mv).ok()?).prod_dot(&normal))
+            .sub(su.prod_dot(&normal).mul(u.sub(mu)))
+            .sub(sv.prod_dot(&normal).mul(v.sub(mv)));
+        seed = (mu, mv);
+        offset.definite_sign()
+    };
+    let (Some(below), Some(above)) = (side(lo), side(hi)) else {
+        return Ok(None);
+    };
+    if below == above {
+        return Ok(None);
+    }
+    // From each side in turn: the last parameter definitely on that side,
+    // a middle not told so counted with the other. One bisection that
+    // stopped at the first middle it could not tell would keep a bracket
+    // as wide as the steps before it, however near that middle the
+    // crossing is.
+    let below_until = bisect(lo, hi, usize::MAX, true, |t| {
+        Ok::<_, GeopError>(Some(side(t) == Some(below)))
+    })?
+    .lo;
+    let above_from = bisect(lo, hi, usize::MAX, true, |t| {
+        Ok::<_, GeopError>(Some(side(t) != Some(above)))
+    })?
+    .hi;
+    Ok(Some(below_until.union(above_from)))
 }
 
 fn split_piercing_crossings(
