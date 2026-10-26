@@ -76,7 +76,7 @@ Verdicts:
 | Coons patch | `N_CreateCoonsSrf`, `N_CreateCoonsSrfTwist` | `patch.rs:127` `coons` | par |
 | **Coons with cross-boundary derivatives (G1 to curved neighbours)** | `N_CreateCoonsSrfCrossBoundaryDerivs` `NL_SrfAdv.cpp:22012`, `SmTangentField` | `patch.rs` `tangent_to`: exact to flat neighbours; to curved ones leaving them at `TILT` (1e-6 rad) towards their normal, collocated at the Greville abscissae and checked between, refined while it strays | par |
 | Gordon surface | `N_CreateGordonSrf` | `gordon.rs:172` | par |
-| **N-sided G1 hole fill** | `N_FillNSidedHole` `NL_SrfAdv.cpp:18585` (k+1 patches, cross-derivative curves, central tangent plane) | `boundary.rs`: a C0 "honest patchwork" of Coons quads about a flat inner polygon; G1 across the spokes is an ignored reproducer (`five_sided_hole_filled_smoothly`: the inner corners must be flat points) | **worse** |
+| **N-sided G1 hole fill** | `N_FillNSidedHole` `NL_SrfAdv.cpp:18585` (k+1 patches, cross-derivative curves, central tangent plane) | `nurb_surface/fill.rs` `NurbSurface3D::fill(sides, neighbours)`: a quad per side about a flat inner polygon, every edge whole. G1 across the spokes *exactly* (each side's cross derivative `α V + β T` in one polynomial plane field), tangent to the polygon with flat inner corners (degree-5 spokes osculating it), tangent to the faces along the sides (exact to flat ones, `TILT` to curved, the corner twist set from how the face's normal turns, spans halved where it strays) | better (exact G1 inside; SMLib's is to an angle) |
 | Skinning (loft surface): degree, closed C1, approximation tolerance, given params/knots | `N_CreateSkinSrf` `NL_SrfAdv.cpp:7899` (flags `cld`, `deg`, `knotTol`), `...Approx`, `...ApproxTol`, `...Params`, `...Interp` | `lib/geop-lib-sweep/src/loft.rs` (`through` is a cubic Bessel spline), `skin.rs` | worse (see §2) |
 | **Skin with boundary continuity (G1 to adjacent surfaces at the first and last section)** | `N_CreateSkinSrfBoundaryContinuity` `NL_SrfAdv.cpp:13262`, `N_CreateSkinSrfBoundaryDerivs` | none | **missing** |
 | Skin along a spine | `N_CreateSkinSpine` `NL_SrfAdv.cpp:10401` | none (guides at most 3, affine) | missing |
@@ -460,7 +460,15 @@ any curve along a vector.**
   a step-size tunable. That is allowed: it is "how hard the search tries", not correctness. Record the
   section count in context, as `trace_one_side` does.
 
-**17. N-sided G1 hole fill.**
+**17. N-sided G1 hole fill.** *Done* (`NurbSurface3D::fill`, used by `boundary.rs`): the inner
+polygon kept, which keeps every edge of the loop whole, unlike SMLib's split at the edges'
+midpoints. What made it converge, for the next one: the corner where two quads and the polygon
+meet is a flat point (degree-5 spokes, field constant to first order), and the cross derivatives
+either side of a spoke are made in one plane field rather than each made tangent to it. Along a
+curved neighbour the tilt has to start from nothing at the corner with a slope that takes in how
+the face's normal turns (`Neighbour::turning`); collocation alone left a bump there that uniform
+refinement shrank only as `h²`, and halving only the spans that stray fixes it in a few rounds.
+Original plan, for reference:
 - **SMLib:** `N_FillNSidedHole` `NL_SrfAdv.cpp:18585`: k+1 patches meeting at a centre point `CI`
   with a tangent plane `NI` (computed or given), interpolating the boundary curves and the
   cross-derivative curves `der` to within `eps` degrees.

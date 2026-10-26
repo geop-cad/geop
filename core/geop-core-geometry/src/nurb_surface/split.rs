@@ -201,6 +201,17 @@ impl<const D: usize> NurbSurface<D> {
         Ok(out)
     }
 
+    /// The same surface with the knots `at` inserted along `u`, each once:
+    /// more control points to fit on where they are.
+    pub(crate) fn with_knots_u(&self, at: &[Scalar]) -> Self {
+        let mut knots = self.knot_vector_u.clone();
+        let mut rows = self.rows_along(Dir::U);
+        for &t in at {
+            knot_insertion::insert(&mut knots, &mut rows, self.degree_u, t);
+        }
+        self.with_rows(Dir::U, knots, rows)
+    }
+
     /// This surface restricted to `u ∈ [u0, u1]`, `v ∈ [v0, v1]`, with the
     /// same cut rule as `NurbCurve::sub_curve`: only bounds strictly inside
     /// the domain are cut at, so the result covers at least the requested

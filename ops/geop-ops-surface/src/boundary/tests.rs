@@ -473,47 +473,221 @@ fn fill_and_knit(n: usize, lift: f64) {
 /// each spoke share their normal all along it, as SMLib's
 /// `N_FillNSidedHole` does.
 #[test]
-#[ignore = "bug: the fill is a C0 patchwork across its spokes. Making each quadrilateral \
-    tangent (`NurbSurface3D::tangent_to`) to the one before it along their spoke and to \
-    the flat inner polygon along its inner side was tried: spokes leaving the loop's \
-    corners in the plane of its edges there, arriving in the polygon's plane. It rings \
-    at the inner corners and cannot converge, for a reason that is no numerics: where \
-    two quadrilaterals and the flat polygon meet, each tangent to the other two, the \
-    symmetric shape operator of each quadrilateral vanishes on both polygon sides, so \
-    the corner has to be a flat point of both (the vertex enclosure problem). Cubic \
-    spokes arriving in the plane are not flat there; the corner 3 x 3 control points of \
-    each quadrilateral have to lie in the polygon's plane, with spokes of degree five \
-    osculating it. The attempt is in no commit."]
 fn five_sided_hole_filled_smoothly() {
     let n = 5;
     let part = ring_of_strips(n, 0.3);
     let edges: Vec<String> = (0..n).map(|k| format!("strip{k}(e0)")).collect();
     let part = span(part, &edges, &[]).unwrap();
+    assert_valid_sheets(&part);
+    assert_smooth_inside(&part);
+}
+
+/// The faces either side of every edge of the fill that is not on the
+/// loop — a spoke or a side of the inner polygon — share their normal all
+/// along it, to the rounding: they are tangent by construction.
+pub(crate) fn assert_smooth_inside(part: &NamedModel) {
     let model = part.topology();
+    let mut checked = 0;
     for (&edge, e) in &model.edges {
-        if !part.name_of(edge).unwrap().ends_with("spoke)") {
+        let name = part.name_of(edge).unwrap();
+        if !(name.ends_with("spoke)") || name.ends_with("inner)")) {
             continue;
         }
-        let middle = e.curve.evaluate(e.curve.mid_parameter().unwrap()).unwrap();
-        let normals: Vec<Vector3> = (model.coedges_of_edge(edge).iter())
-            .map(|&c| {
-                let face = model.get_coedge(c).unwrap().face;
-                let surface = &model.get_face(face).unwrap().surface;
-                surface
-                    .normal_at(
-                        &middle,
-                        geop_core_geometry::search::MAX_NODES,
-                        geop_core_geometry::search::min_subdivision_size(),
-                    )
-                    .unwrap()
-            })
-            .collect();
-        let off = normals[0].prod_cross(&normals[1]).norm().to_f64();
-        assert!(
-            off < 3.0 * TILT,
-            "across {}: {off:e}",
-            part.name_of(edge).unwrap()
-        );
+        let (t0, t1) = e.curve.domain();
+        for i in 0..=16 {
+            let t = Scalar::interpolate(t0, t1, Scalar::from_ratio(i, 16).unwrap());
+            let at = e.curve.evaluate(t).unwrap();
+            let normals: Vec<Vector3> = (model.coedges_of_edge(edge).iter())
+                .map(|&c| {
+                    let face = model.get_coedge(c).unwrap().face;
+                    let surface = &model.get_face(face).unwrap().surface;
+                    surface
+                        .normal_at(
+                            &at,
+                            geop_core_geometry::search::MAX_NODES,
+                            geop_core_geometry::search::min_subdivision_size(),
+                        )
+                        .unwrap()
+                })
+                .collect();
+            // Equal to what the enclosures resolve: a patch split finely
+            // along a curved neighbour has its normal found less sharply.
+            let off = normals[0].prod_cross(&normals[1]).norm().to_f64();
+            assert!(
+                normals[0].could_be_equal(&normals[1]) || off < 1e-9,
+                "across {name} at {i}/16: {off:e}, {normals:?}"
+            );
+        }
+        checked += 1;
+    }
+    assert!(checked > 0, "no edges inside the fill");
+}
+
+/// Holes of six to eight sides, lifted, filled smoothly.
+#[test]
+fn holes_of_six_to_eight_sides_filled_smoothly() {
+    for n in [6, 7, 8] {
+        let part = ring_of_strips(n, 0.4);
+        let edges: Vec<String> = (0..n).map(|k| format!("strip{k}(e0)")).collect();
+        let part = span(part, &edges, &[]).unwrap();
+        assert_valid_sheets(&part);
+        assert_smooth_inside(&part);
+    }
+}
+
+/// A sheet of the quadrilateral `corners`, named `name(...)`, its edges
+/// `name(e0)` from the first corner to the second and on round.
+fn quad_sheet(part: &mut NamedModel, name: &str, corners: [[f64; 3]; 4]) {
+    coons_sheet(
+        part,
+        name,
+        std::array::from_fn(|k| line(corners[k], corners[(k + 1) % 4])),
+    );
+}
+
+/// The patch of a fill of five or more edges along the edge picked `edge`.
+fn patch_along<'a>(part: &'a NamedModel, edge: &str) -> &'a NurbSurface3D {
+    let face = part.face_id(&format!("boundary(b,{edge},patch)")).unwrap();
+    &part.topology().get_face(face).unwrap().surface
+}
+
+/// A five-sided cover rising from a flat flange, its edge waving in the
+/// flange's plane, made tangent to it along that edge: the patch along it
+/// has the flange's normal all along it, exactly, and the fill is smooth
+/// inside.
+#[test]
+fn five_sided_cover_tangent_to_a_flange() {
+    let mut part = NamedModel::new();
+    // The flange's edge waves in its plane.
+    let lip_curve = NurbCurve::try_new(
+        3,
+        vec![
+            pt(0., 0., 0., 1.),
+            pt(0.3, 0.25, 0., 1.),
+            pt(0.7, -0.25, 0., 1.),
+            pt(1., 0., 0., 1.),
+        ],
+        [0., 0., 0., 0., 1., 1., 1., 1.]
+            .map(Scalar::from_f64)
+            .to_vec(),
+    )
+    .unwrap();
+    coons_sheet(
+        &mut part,
+        "flange",
+        [
+            line([0., 0., 0.], [0., -1., 0.]),
+            line([0., -1., 0.], [1., -1., 0.]),
+            line([1., -1., 0.], [1., 0., 0.]),
+            lip_curve.reverse(),
+        ],
+    );
+    coons_sheet(
+        &mut part,
+        "guide",
+        [
+            lip_curve,
+            rising_arc(1.),
+            line([1., 1., 1.], [0., 1., 1.]),
+            rising_arc(0.).reverse(),
+        ],
+    );
+    quad_sheet(
+        &mut part,
+        "roof",
+        [[1., 1., 1.], [0.5, 1.6, 1.3], [0., 1., 1.], [0.5, 1.2, 2.]],
+    );
+    let lip = "flange(e3)".to_string();
+    let edges = [
+        lip.clone(),
+        "guide(e1)".into(),
+        "roof(e0)".into(),
+        "roof(e1)".into(),
+        "guide(e3)".into(),
+    ];
+    let cover = span(part.clone(), &edges, std::slice::from_ref(&lip)).unwrap();
+    assert_valid_sheets(&cover);
+    assert_smooth_inside(&cover);
+    let up = v3(0., 0., 1.);
+    let along_lip = |surface: &NurbSurface3D| {
+        (0..=16).all(|i| {
+            let u = Scalar::from_ratio(i, 16).unwrap();
+            let n = surface.normal(u, Scalar::ZERO).unwrap();
+            n.prod_cross(&up).norm_sq().could_be_equal(Scalar::ZERO)
+        })
+    };
+    assert!(along_lip(patch_along(&cover, &lip)));
+    // Without tangency too: the spokes leave the corners in the plane of
+    // the edges there, the flange's, and the patch's row next to a side
+    // in one plane blends linearly between them.
+    let plain = span(part, &edges, &[]).unwrap();
+    assert!(along_lip(patch_along(&plain, &lip)));
+}
+
+/// A five-sided cover running on from a quarter cylinder's rim, made
+/// tangent to the cylinder along it: it leaves the cylinder at a millionth
+/// of a radian outwards all along, and is smooth inside.
+#[test]
+fn five_sided_cover_tangent_to_a_cylinder() {
+    let mut part = NamedModel::new();
+    let quarter = |x: f64| {
+        NurbCurve::try_new(
+            2,
+            vec![
+                pt(x, 1., 0., 1.),
+                pt(x, 1., 1., std::f64::consts::SQRT_2 / 2.0),
+                pt(x, 0., 1., 1.),
+            ],
+            [0., 0., 0., 1., 1., 1.].map(Scalar::from_f64).to_vec(),
+        )
+        .unwrap()
+    };
+    coons_sheet(
+        &mut part,
+        "cylinder",
+        [
+            line([0., 1., 0.], [1., 1., 0.]),
+            quarter(1.),
+            line([1., 0., 1.], [0., 0., 1.]),
+            quarter(0.).reverse(),
+        ],
+    );
+    coons_sheet(
+        &mut part,
+        "guide",
+        [
+            line([1., 1., 0.], [2., 1., 0.]),
+            line([2., 1., 0.], [2., 0., 1.]),
+            line([2., 0., 1.], [1., 0., 1.]),
+            quarter(1.).reverse(),
+        ],
+    );
+    quad_sheet(
+        &mut part,
+        "roof",
+        [[2., 1., 0.], [2.6, 0.6, 0.6], [2., 0., 1.], [3., 1., 1.]],
+    );
+    let rim = "cylinder(e1)".to_string();
+    let edges = [
+        rim.clone(),
+        "guide(e2)".into(),
+        "roof(e1)".into(),
+        "roof(e0)".into(),
+        "guide(e0)".into(),
+    ];
+    let cover = span(part, &edges, std::slice::from_ref(&rim)).unwrap();
+    assert_valid_sheets(&cover);
+    assert_smooth_inside(&cover);
+    let surface = patch_along(&cover, &rim);
+    // Along the rim, where the cylinder's normal points out from its axis:
+    // the patch's normal is the cylinder's, but for the tilt.
+    for i in 0..=64 {
+        let u = Scalar::from_ratio(i, 64).unwrap();
+        let p = surface.evaluate(u, Scalar::ZERO).unwrap();
+        let out = v3(0., p[1].to_f64(), p[2].to_f64());
+        let n = surface.normal(u, Scalar::ZERO).unwrap();
+        let off = n.prod_cross(&out).norm().to_f64();
+        assert!(off < 3.0 * TILT, "at {u:?}: {n:?}, off by {off:e}");
     }
 }
 

@@ -109,6 +109,40 @@ impl NurbSurface<4> {
             .add(svv.prod_dot(&n).mul(b).mul(b)))
     }
 
+    /// The unit normal `normalize(Su × Sv)` at `(u, v)` and how fast it
+    /// turns as the point moves on the surface at the velocity `along`, a
+    /// tangent vector there: `dn = (dN − n (n·dN)) / |N|` for `N = Su ×
+    /// Sv`, `dN = (Suu a + Suv b) × Sv + Su × (Suv a + Svv b)`, `(a, b)`
+    /// the parameters' rates that move the point at `along` (its
+    /// components in `Su`, `Sv`, by the first fundamental form). Over a
+    /// box of `(u, v)` an enclosure of both over the box.
+    pub fn normal_turning(
+        &self,
+        u: Scalar,
+        v: Scalar,
+        along: &Vector3,
+    ) -> GeopResult<(Vector3, Vector3)> {
+        let s = self.partials(u, v, 2)?;
+        let (su, sv, suu, suv, svv) = (s[1][0], s[0][1], s[2][0], s[1][1], s[0][2]);
+        let (e, f, g) = (su.prod_dot(&su), su.prod_dot(&sv), sv.prod_dot(&sv));
+        let det = e.mul(g).sub(f.mul(f));
+        let (t_u, t_v) = (along.prod_dot(&su), along.prod_dot(&sv));
+        let a = g.mul(t_u).sub(f.mul(t_v)).div(det)?;
+        let b = e.mul(t_v).sub(f.mul(t_u)).div(det)?;
+        let big = su.prod_cross(&sv);
+        let length = big.norm();
+        let n = big.prod_scalar(Scalar::ONE.div(length)?);
+        let turn = suu
+            .prod_scalar(a)
+            .add(&suv.prod_scalar(b))
+            .prod_cross(&sv)
+            .add(&su.prod_cross(&suv.prod_scalar(a).add(&svv.prod_scalar(b))));
+        let dn = turn
+            .sub(&n.prod_scalar(n.prod_dot(&turn)))
+            .prod_scalar(Scalar::ONE.div(length)?);
+        Ok((n, dn))
+    }
+
     /// The mean curvature at `(u, v)`, signed against the normal
     /// `normalize(Su × Sv)`: half the trace of the second fundamental form
     /// relative to the first,
