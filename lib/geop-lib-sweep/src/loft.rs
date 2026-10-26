@@ -1146,20 +1146,30 @@ fn affine_through(q: &[[f64; 2]], d: &[P3]) -> (P3, [P3; 2]) {
 /// them is; spacing by their distances keeps a section far from the others
 /// from pulling the walls past it. Sections with their centres in one
 /// place are spaced evenly.
-fn through(placed: &[Placed]) -> GeopResult<Vec<Span>> {
-    let n = placed.len() - 1;
+fn through(placed: &[Placed], closed: bool) -> GeopResult<Vec<Span>> {
+    // Spans; stations `0..=n`, the last the first again when `closed`.
+    let n = if closed {
+        placed.len()
+    } else {
+        placed.len() - 1
+    };
+    let station = |s: usize| s % placed.len();
     let centres = placed
         .iter()
         .map(|p| Ok(centre(&p.joints()?)))
         .collect::<GeopResult<Vec<_>>>()?;
     let mut d: Vec<f64> = (0..n)
-        .map(|j| distance(centres[j], centres[j + 1]))
+        .map(|j| distance(centres[j], centres[station(j + 1)]))
         .collect();
     if d.iter().any(|&d| d <= 0.0) {
         d = vec![1.0; n];
     }
     // Rows as coefficients of the sections: `unit(s)` is section `s`.
-    let unit = |s: usize| -> Vec<f64> { (0..=n).map(|k| if k == s { 1.0 } else { 0.0 }).collect() };
+    let unit = |s: usize| -> Vec<f64> {
+        (0..placed.len())
+            .map(|k| if k == station(s) { 1.0 } else { 0.0 })
+            .collect()
+    };
     let combine = |a: &[f64], x: f64, b: &[f64], y: f64| -> Vec<f64> {
         a.iter().zip(b).map(|(a, b)| x * a + y * b).collect()
     };
@@ -1170,8 +1180,16 @@ fn through(placed: &[Placed]) -> GeopResult<Vec<Span>> {
         let w = d[j - 1] + d[j];
         tangent[j] = combine(&chord(j - 1), d[j] / w, &chord(j), d[j - 1] / w);
     }
-    tangent[0] = combine(&chord(0), 2.0, &tangent[1], -1.0);
-    tangent[n] = combine(&chord(n - 1), 2.0, &tangent[n - 1], -1.0);
+    if closed {
+        // Round the seam: the first section's tangent from the last span
+        // and the first, as at any other.
+        let w = d[n - 1] + d[0];
+        tangent[0] = combine(&chord(n - 1), d[0] / w, &chord(0), d[n - 1] / w);
+        tangent[n] = tangent[0].clone();
+    } else {
+        tangent[0] = combine(&chord(0), 2.0, &tangent[1], -1.0);
+        tangent[n] = combine(&chord(n - 1), 2.0, &tangent[n - 1], -1.0);
+    }
     let row = |coefficients: Vec<f64>| -> Vec<(usize, Scalar)> {
         coefficients
             .into_iter()
@@ -1202,13 +1220,29 @@ pub struct Apex {
     pub name: String,
 }
 
+/// How a loft ends: before its first section and after its last, a cap
+/// or a point it comes to (see [`Apex`]) — or nowhere, closing on itself
+/// from its last section round to its first.
+#[derive(Clone, Debug)]
+pub enum Ends {
+    Open([Option<Apex>; 2]),
+    Closed,
+}
+
+impl Ends {
+    /// Capped by the first and last sections.
+    pub const CAPPED: Ends = Ends::Open([None, None]);
+}
+
 /// Lofts through `sections` (see the module docs): closed loops into a solid
 /// named `solid` — capped by the first and last sections — or, without one,
-/// into sheets; open chains into sheets only. `apexes` are points the loft
-/// comes to before its first section and after its last, if any: there it
-/// closes in a point instead of a cap (see [`Apex`]). The tangent of a
-/// smooth loft into an apex is a free choice, as at any end section: from
-/// its neighbours (see [`through`]).
+/// into sheets; open chains into sheets only. Its `ends` may instead be
+/// points the loft comes to before its first section and after its last:
+/// there it closes in a point instead of a cap (see [`Apex`]). The tangent
+/// of a smooth loft into an apex is a free choice, as at any end section:
+/// from its neighbours (see [`through`]). Or the loft closes on itself
+/// ([`Ends::Closed`]), running smoothly on from its last section round to
+/// its first, through three sections or more, with no caps: a ring.
 ///
 /// Named after the first section's curves `X` and joints `P` and the
 /// sections' names `K` (see [`skin`]): the walls `N(X)` — `N(X,K>L)` between
@@ -1221,16 +1255,21 @@ pub fn loft(
     namer: &Namer,
     solid: Option<&str>,
     sections: &[Section],
-    apexes: &[Option<Apex>; 2],
+    ends: &Ends,
     guides: &[Chain<NurbCurve3D>],
 ) -> GeopResult<BuiltBody> {
+    let (apexes, closed) = match ends {
+        Ends::Open(apexes) => (apexes, false),
+        Ends::Closed => (&[None, None], true),
+    };
     let ctx = with_context!(
         "loft({}, through {:?}, apexes {:?})",
         namer.root(),
         sections.iter().map(|s| &s.name).collect::<Vec<_>>(),
         apexes.iter().flatten().map(|a| &a.name).collect::<Vec<_>>()
     );
-    let ends = apexes.iter().flatten().count();
+    let ends_count = apexes.iter().flatten().count();
+    let ends = ends_count;
     if sections.is_empty() || sections.len() + ends < 2 {
         return Err(GeopError::new(format!(
             "loft: needs two profiles or more, or a profile and a point, not {} profile(s) and {ends} point(s)",
@@ -1242,6 +1281,14 @@ pub fn loft(
         return Err(GeopError::new(
             "loft: guides run from the first profile to the last, and a loft to a point has a point at an end: loft to the point without guides",
         ))
+        .with_context(ctx);
+    }
+    if closed && (sections.len() < 3 || !guides.is_empty()) {
+        return Err(GeopError::new(format!(
+            "loft: a loft closing on itself runs through three profiles or more, without guides, not {} profile(s) and {} guide(s)",
+            sections.len(),
+            guides.len()
+        )))
         .with_context(ctx);
     }
     if ends > 0 && !sections[0].profile.is_closed() {
@@ -1273,9 +1320,13 @@ pub fn loft(
             apex.push(true);
         }
     }
-    let spans = placed.len() - 1;
+    let spans = if closed {
+        placed.len()
+    } else {
+        placed.len() - 1
+    };
     let through = if crossed.is_empty() && spans > 1 {
-        Some(through(&placed).with_context(ctx)?)
+        Some(through(&placed, closed).with_context(ctx)?)
     } else {
         None
     };
@@ -1310,14 +1361,13 @@ pub fn loft(
     let path = Path {
         stations: placed.iter().map(|p| p.frame.clone()).collect(),
         spans: span_list,
-        closed: false,
+        closed,
         along_normal: false,
         span_names: if spans == 1 {
             vec![None]
         } else {
-            names
-                .windows(2)
-                .map(|w| Some(format!("{}>{}", w[0], w[1])))
+            (0..spans)
+                .map(|j| Some(format!("{}>{}", names[j], names[(j + 1) % names.len()])))
                 .collect()
         },
         station_names: names,
@@ -1378,7 +1428,7 @@ mod tests {
             &namer,
             Some(&namer.root()),
             sections,
-            &[None, None],
+            &Ends::CAPPED,
             &[],
         )
         .unwrap();
@@ -1420,9 +1470,9 @@ mod tests {
             name: "tip".into(),
         };
         let ends = if at_end {
-            [None, Some(apex)]
+            Ends::Open([None, Some(apex)])
         } else {
-            [Some(apex), None]
+            Ends::Open([Some(apex), None])
         };
         loft(
             &mut model,
@@ -1436,6 +1486,56 @@ mod tests {
         model.check_names().unwrap();
         assert_model_valid(model.topology());
         model
+    }
+
+    /// Circles in four planes round the `z` axis, lofted closed: a ring,
+    /// smooth across every section — the seam too — with no caps.
+    #[test]
+    fn closed_loft_through_four_circles_is_a_ring() {
+        let sections: Vec<Section> = (0..4)
+            .map(|k| {
+                let a = std::f64::consts::FRAC_PI_2 * k as f64;
+                let (c, s) = (a.cos(), a.sin());
+                let at = plane(v3(2.0 * c, 2.0 * s, 0.0), v3(c, s, 0.0), v3(0.0, 0.0, 1.0));
+                section(&format!("s{k}"), at, circle(0.3))
+            })
+            .collect();
+        let mut model = NamedModel::new();
+        let namer = Namer::new("loft", "l").unwrap();
+        loft(
+            &mut model,
+            &namer,
+            Some(&namer.root()),
+            &sections,
+            &Ends::Closed,
+            &[],
+        )
+        .unwrap();
+        model.check_names().unwrap();
+        assert_model_valid(model.topology());
+        let topology = model.topology();
+        assert_eq!(topology.faces.len(), 4 * 4);
+        assert!(model.face_id("loft(l,start)").is_err());
+        assert!(model.face_id("loft(l,s0,c0,s3>s0)").is_ok());
+        // The walls are smooth across the seam: the tangent along the loft
+        // at the seam is the same from either side.
+        let surface = |name: &str| {
+            let face = model.face_id(name).unwrap();
+            topology.get_face(face).unwrap().surface.clone()
+        };
+        let (before, after) = (
+            surface("loft(l,s0,c0,s3>s0)"),
+            surface("loft(l,s0,c0,s0>s1)"),
+        );
+        let half = Scalar::from_f64(0.5);
+        let du = |s: &NurbSurface3D, u: f64| {
+            let (du, _) = s.derivatives(Scalar::from_f64(u), half).unwrap();
+            du.to_f64_array()
+        };
+        let (a, b) = (du(&before, 1.0), du(&after, 0.0));
+        let unit = |v: [f64; 3]| plain::scale(v, 1.0 / plain::dot(v, v).sqrt());
+        let (a, b) = (unit(a), unit(b));
+        assert!(plain::distance(a, b) < 1e-9, "{a:?} {b:?}");
     }
 
     /// The volume of the solid `loft(l)` of `model`, from its faces.
@@ -1593,7 +1693,7 @@ mod tests {
             &namer,
             None,
             &[open("a", level(0.0), line), open("b", level(1.0), arc)],
-            &[None, None],
+            &Ends::CAPPED,
             &[],
         )
         .unwrap();
@@ -1615,7 +1715,7 @@ mod tests {
                 &namer,
                 Some("loft(l)"),
                 &[only],
-                &[None, None],
+                &Ends::CAPPED,
                 &[]
             )
             .is_err()
@@ -1656,7 +1756,7 @@ mod tests {
             &namer,
             Some(&namer.root()),
             sections,
-            &[None, None],
+            &Ends::CAPPED,
             guides,
         )
         .unwrap();
@@ -1780,7 +1880,7 @@ mod tests {
                 &namer,
                 Some("loft(l)"),
                 sections,
-                &[None, None],
+                &Ends::CAPPED,
                 guides,
             )
             .unwrap_err();

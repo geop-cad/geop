@@ -351,7 +351,11 @@ fn loft_a_square_to_a_point_is_a_pyramid() {
     let volume = part.topology().mass_properties(solid).unwrap().volume;
     assert!((volume.to_f64() - 4.0).abs() < 1e-9, "{volume:?}");
 
-    program.push("through", lofted(&["bottom", "tip", "bottom"]));
+    program.push(
+        "upper",
+        AddSketchArgs::on(on_datum("top_plane"), square(0.5)),
+    );
+    program.push("through", lofted(&["bottom", "tip", "upper"]));
     let Err(error) = program.build_model(registry) else {
         panic!("lofted through a point");
     };
@@ -359,6 +363,30 @@ fn loft_a_square_to_a_point_is_a_pyramid() {
         error.root_message().contains("only at its start or end"),
         "{error:?}"
     );
+}
+
+/// Four circles round the `z` axis, lofted through and back to the first:
+/// the loft closes on itself, a ring with no caps.
+#[test]
+fn loft_back_to_its_first_profile_closes_into_a_ring() {
+    let mut program = Program::new();
+    for k in 0..4 {
+        let a = PI / 2.0 * k as f64;
+        let (c, s) = (a.cos(), a.sin());
+        program.push(
+            format!("p{k}"),
+            GivenDatumArgs::plane([2.0 * c, 2.0 * s, 0.0], [-s, c, 0.0]),
+        );
+        program.push(
+            format!("s{k}"),
+            AddSketchArgs::on(on_datum(&format!("p{k}")), disc([0.0, 0.0], 0.3)),
+        );
+    }
+    program.push("ring", lofted(&["s0", "s1", "s2", "s3", "s0"]));
+    let part = program.build_model(registry).unwrap();
+    assert_valid(&part);
+    assert_eq!(part.topology().faces.len(), 4 * 4);
+    assert!(part.face_id("loft(ring,start)").is_err());
 }
 
 /// Through three profiles — a square, a circle, a smaller square — and
