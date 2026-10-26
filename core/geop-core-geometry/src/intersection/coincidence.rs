@@ -113,13 +113,24 @@ pub(crate) fn crossings_between<const D: usize, P, R>(
     Ok(crossings)
 }
 
-/// `count` points spread evenly over the overlaps, by length. `probe` as in
-/// [`find_overlaps`]; a sample it cannot place is skipped.
+/// Points spread evenly over the overlaps, by length: as many as
+/// [`assemble`] has room for under `max_solutions` after the overlaps' ends
+/// and the `crossings` it puts first. `probe` as in [`find_overlaps`]; a
+/// sample it cannot place is skipped.
+///
+/// As many as there is room for, not `max_solutions` cut short: spread for
+/// more than are kept, the ones kept were all at the start of the first
+/// overlap. Three points of a blend's contact 7.6e-7 long, both ends and one
+/// a quarter along, were the three a boolean judged it by, and each was
+/// within a pcurve's width of the edge it continues, so it was never found
+/// to enter the face it lies in. The middle is the point furthest from both.
 pub(crate) fn samples<P>(
     overlaps: &[Overlap<P>],
-    count: usize,
+    crossings: usize,
+    max_solutions: usize,
     mut probe: impl FnMut(Scalar) -> GeopResult<Option<P>>,
 ) -> GeopResult<Vec<Hit<P>>> {
+    let count = max_solutions.saturating_sub(2 * overlaps.len() + crossings);
     let spans: Vec<(Scalar, Scalar)> = overlaps
         .iter()
         .map(|o| (o.start.t.upper(), o.end.t.lower()))

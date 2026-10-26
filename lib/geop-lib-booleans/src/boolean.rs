@@ -21,6 +21,7 @@
 
 use std::collections::{HashMap, HashSet};
 
+use geop_core_geometry::intersection::curve_surface_intersect;
 use geop_core_math::{
     geop_error::{GeopError, GeopResult, WithContext},
     scalars::Scalar,
@@ -303,6 +304,10 @@ fn combine(
     for (faces, from_a, other) in [(&faces_a, true, solid_b), (&faces_b, false, solid_a)] {
         for &face_id in faces {
             let class = classify_face(topology, face_id, other, params, &mut classified)
+                .map_err(|e| {
+                    let names = model.names_mentioned(&e.to_string());
+                    e.with_context(format!("where it names {}", names.join(", ")))
+                })
                 .with_context(&ctx)
                 .with_context(with_context!(
                     "classifying face {face_id} ({:?}, of {})",
@@ -704,8 +709,33 @@ pub(crate) fn classify_face(
             // The face's boundary: which curves were imprinted into it, and
             // so — between the two points — which one was not.
             let loops = model.face_corners(face_id)?;
+            // Where the missing curve may run from: the other solid's edges
+            // at the face's corners that do not bound it, and what the
+            // edge x face search makes of each against the face's surface —
+            // an edge lying on the face that was not imprinted shows here.
+            let other_edges: HashSet<EdgeId> = model.iter_body_edges(other_solid)?.collect();
+            let bounding: HashSet<EdgeId> = model.face_edges(face_id).collect();
+            let mut corners: Vec<_> = loops.iter().flatten().map(|&(v, _)| v).collect();
+            corners.sort();
+            corners.dedup();
+            let mut leaving = Vec::new();
+            for vertex in corners {
+                for edge in model.edges_at_vertex(vertex) {
+                    if !other_edges.contains(&edge) || bounding.contains(&edge) {
+                        continue;
+                    }
+                    let found = curve_surface_intersect(
+                        &model.get_edge(edge)?.curve,
+                        &face.surface,
+                        params.max_edge_intersections,
+                        max_nodes,
+                        epsilon,
+                    );
+                    leaving.push(format!("{edge} at {vertex}: {found:?}"));
+                }
+            }
             return Err(GeopError::new(format!(
-                "classify_face: face {face_id} straddles solid {other_solid}'s boundary — {point:?} is {classification:?}, {other_point:?} is {other:?} — so remesh left an intersection curve unimprinted; the face is bounded by (corners, outer loop first) {loops:?}"
+                "classify_face: face {face_id} straddles solid {other_solid}'s boundary — {point:?} is {classification:?}, {other_point:?} is {other:?} — so remesh left an intersection curve unimprinted; the face is bounded by (corners, outer loop first) {loops:?}; the other solid's edges at its corners, against its surface: {leaving:?}"
             )));
         }
         return Ok(classification);
@@ -1500,7 +1530,7 @@ mod tests {
             .into_iter()
             .find(|&face| {
                 let corners = topology.face_corners(face).unwrap();
-                corners.len() == 1 && corners[0].iter().all(in_rim)
+                corners.len() == 1 && corners[0].iter().all(|(_, p)| in_rim(p))
             })
             .expect("a face of the plate inside the hole's rim");
         (hole, disc)
