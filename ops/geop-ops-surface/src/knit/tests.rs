@@ -39,6 +39,7 @@ fn knit_faces(part: NamedModel, faces: &[String], solid: bool) -> GeopResult<Nam
     let args = KnitArgs {
         faces: faces.iter().map(named).collect(),
         solid,
+        gap: 0.0,
     };
     apply_to_model::<Knit>(part, "k", &args)
 }
@@ -91,4 +92,92 @@ fn faces_that_do_not_meet_are_refused() {
     assert_eq!(top_and_bottom.len(), 2);
     let err = refused(knit_faces(part, &top_and_bottom, false));
     assert!(err.contains("do not hang together"), "{err}");
+}
+
+/// `faces` knit, what is within `gap` of each other as one.
+fn knit_across(part: NamedModel, faces: &[String], gap: f64) -> GeopResult<NamedModel> {
+    let args = KnitArgs {
+        faces: faces.iter().map(named).collect(),
+        solid: true,
+        gap,
+    };
+    apply_to_model::<Knit>(part, "k", &args)
+}
+
+/// The face of `solid` towards `normal`, copied into a sheet named after
+/// `prefix`: its name.
+fn sheet_of(
+    part: &mut NamedModel,
+    solid: geop_core_topology::SolidId,
+    normal: [f64; 3],
+    prefix: &str,
+) -> String {
+    let face = geop_ops_model::testing::face_towards(part, solid, normal);
+    let built = part
+        .copy_faces(&[face], None, |name| format!("{prefix}({name})"))
+        .unwrap();
+    part.name_of(built.faces[0]).unwrap().to_string()
+}
+
+/// A cube's five sides as sheets and its top as two halves: each side
+/// along the halves meets both, end to end with neither — T-junctions,
+/// split where the halves meet, and knit into a box of seven faces.
+#[test]
+fn a_top_in_two_halves_knits_across_t_junctions() {
+    let mut part = NamedModel::new();
+    let cube = block(&mut part, "c", [0.0, 0.0, 0.0], [1.0, 1.0, 1.0]);
+    let left = block(&mut part, "l", [0.0, 0.0, 0.0], [0.5, 1.0, 1.0]);
+    let right = block(&mut part, "r", [0.5, 0.0, 0.0], [1.0, 1.0, 1.0]);
+    let mut faces = Vec::new();
+    for (k, normal) in [
+        [1., 0., 0.],
+        [-1., 0., 0.],
+        [0., 1., 0.],
+        [0., -1., 0.],
+        [0., 0., -1.],
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        faces.push(sheet_of(&mut part, cube, normal, &format!("s{k}")));
+    }
+    faces.push(sheet_of(&mut part, left, [0., 0., 1.], "tl"));
+    faces.push(sheet_of(&mut part, right, [0., 0., 1.], "tr"));
+    part.delete_bodies(&[Body::Solid(cube), Body::Solid(left), Body::Solid(right)])
+        .unwrap();
+    let part = knit_across(part, &faces, 0.0).unwrap();
+    assert_valid_sheets(&part);
+    let solid = part.solid_id("knit(k)").unwrap();
+    assert_eq!(part.topology().solid_faces(solid).unwrap().len(), 7);
+    assert_eq!(part.topology().vertices.len(), 10);
+}
+
+/// The six faces of a cube, one shifted a hundredth of a thousandth off
+/// the others: nothing meets it, unless the gap it is off by is allowed —
+/// then its corners are moved to where the surfaces meet, and the box is
+/// as sharp as the planes agree.
+#[test]
+fn a_face_off_by_a_gap_knits_across_it() {
+    let (mut part, faces) = six_sheets();
+    let face = part.face_id(&faces[2]).unwrap();
+    let sheet = part.topology().get_face(face).unwrap().shell;
+    let shift = geop_core_math::primitives::Motion::translation(geop_lib_sweep::shapes::v3(
+        2e-5, 1e-5, 0.0,
+    ));
+    part.transform_body(Body::Sheet(sheet), &shift).unwrap();
+    let err = refused(knit_across(part.clone(), &faces, 0.0));
+    assert!(err.contains("do not close up"), "{err}");
+    let part = knit_across(part, &faces, 1e-4).unwrap();
+    assert_valid_sheets(&part);
+    let solid = part.solid_id("knit(k)").unwrap();
+    assert_eq!(part.topology().solid_faces(solid).unwrap().len(), 6);
+    for vertex in part.topology().vertices.values() {
+        for k in 0..3 {
+            assert!(
+                vertex.point[k].width().to_f64() < 1e-9,
+                "{:?}",
+                vertex.point
+            );
+        }
+    }
 }

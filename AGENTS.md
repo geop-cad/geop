@@ -1146,6 +1146,34 @@ to infinity. A sketch every point of which a formula places — lines,
 Béziers, arcs whose sweep does not change — is placed in one step for any
 size.
 
+## Carrying a patch on must leave it as it was
+
+A face that moves needs room on its neighbours' surfaces, so the
+rebuild (`geop_lib_shell::rebuilt`, under draft, shell, move, offset,
+replace and delete face, and knit) carries every surface it touches on
+past its sides. `NurbCurve::extended` used to replace the end piece by the
+piece over the longer span, recomputing all its control points by
+extrapolation: a sphere's octant carried on evaluated its old region
+four orders of magnitude wider, and a shell's sphere vertex went from
+`1e-15` to `7e-10` wide. The fix was not to give curved surfaces less
+room but to keep the curve as it was, control point for control point,
+and join the continuation on as a piece of its own at a knot of full
+multiplicity. Room is then free: where the face stays, nothing changed.
+Any operation that only needs *more* of a curve or surface should not
+touch the part it already had.
+
+## One rebuild, and what a face move asks of it
+
+Draft, shell, move, offset, replace and delete face and knit across a gap
+all change some surfaces and keep (or first edit) the topology; they share
+one rebuild that, for any NURBS, re-meets vertices (`meet`, or along a
+seam that stays, or within one smooth surface by the shared
+parametrization), traces edges where their faces meet following the old
+edge, and refuses — naming the edge — an edge that turns around or shrinks
+to a point (a face moved past its neighbour, walls too thick). No branch
+on surface kinds: the shell's lines-and-arcs-only offset went, and with it
+the refusal of every traced edge a boolean or fillet left.
+
 ## A step sized by the tightest bend never arrives
 
 `adaptive_step_size` shortened every marching step so a full turn of the

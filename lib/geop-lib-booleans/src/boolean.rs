@@ -367,10 +367,27 @@ fn combine(
         model.reverse_face(face_id).with_context(&ctx)?;
     }
 
-    model
+    let Some(solid) = model
         .assemble_solid(&[solid_a.into(), solid_b.into()], &keep, namer.root())
-        .with_context(&ctx)
-        .map(Reach::Stopped)
+        .with_context(&ctx)?
+    else {
+        return Ok(Reach::Stopped(None));
+    };
+    // Pieces of one face that end up side by side — split along an edge of
+    // the other solid that is no edge of the result — are made one again:
+    // they lie on the very surface they were cut from.
+    let origin = |f: FaceId| origins.faces.get(&f);
+    let merged = model
+        .merge_faces_on_one_surface(solid.into(), |f, g| {
+            origin(f).is_some() && origin(f) == origin(g)
+        })
+        .with_context(&ctx)?;
+    match merged {
+        geop_core_topology::Body::Solid(solid) => Ok(Reach::Stopped(Some(solid))),
+        geop_core_topology::Body::Sheet(_) => Err(ctx(GeopError::new(
+            "merging the faces of the result on one surface left no solid",
+        ))),
+    }
 }
 
 /// Narrows `decisions` down to the piece of the tool (the faces `tool`) that

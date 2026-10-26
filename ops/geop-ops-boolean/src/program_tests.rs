@@ -288,7 +288,8 @@ fn extrude_up_to_next_from_a_face_of_the_target() {
     assert_eq!(part.solid_names(), ["extrude(post)"]);
     // The post spans the gap, from the lower block's top to the upper one's
     // bottom, and is not left sticking out of the top — where the tool came
-    // out of the upper block again, only its imprint is left on that face.
+    // out of the upper block again, the pieces of that face its imprint cut
+    // are merged back, and no vertex of the post is left there.
     let heights = |of: &str| -> Vec<i64> {
         let mut z: Vec<i64> = part
             .topology()
@@ -301,7 +302,7 @@ fn extrude_up_to_next_from_a_face_of_the_target() {
         z.dedup();
         z
     };
-    assert_eq!(heights("post_sketch"), [1000, 2000, 3000]);
+    assert_eq!(heights("post_sketch"), [1000, 2000]);
     assert_eq!(heights(""), [0, 1000, 2000, 3000]);
 }
 

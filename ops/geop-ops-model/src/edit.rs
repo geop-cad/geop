@@ -16,6 +16,7 @@ use geop_core_topology::{
 };
 
 use super::NamedModel;
+use crate::ids::RefId;
 
 impl NamedModel {
     /// Forwards to [`geop_core_topology::Model::insert_vertex`]: a vertex on
@@ -151,7 +152,7 @@ impl NamedModel {
             .chain(&names.solid);
         let mut seen = HashSet::new();
         for name in all {
-            if !seen.insert(name) || self.names.id_of(name).is_some() {
+            if !seen.insert(name) || self.names.is_taken(name) {
                 return Err(GeopError::new(format!(
                     "NamedModel::build_body: the name {name:?} is taken"
                 )));
@@ -209,7 +210,9 @@ impl NamedModel {
     /// of its entities: what [`NamedModel::copy_body`] builds, kept to build
     /// later.
     pub fn body_record(&self, body: Body) -> GeopResult<(BodySpec, BodyNames)> {
-        let faces = self.topology().body_faces(body)?;
+        // In the order they were made: ids are given in creation order.
+        let mut faces = self.topology().body_faces(body)?;
+        faces.sort();
         let solid = match body {
             Body::Solid(solid) => Some(self.name(solid)?.to_string()),
             Body::Sheet(_) => None,
@@ -251,6 +254,85 @@ impl NamedModel {
             faces: names(self, &sources.faces)?,
             solid: None,
         })
+    }
+
+    /// Takes the topology `body` does not need out of it (see
+    /// [`BodySpec::merged`]): faces that lie on one surface made one, and
+    /// vertices between two edges of the same two faces dropped, the edges
+    /// made one. Returns the body as it is now, rebuilt if anything was
+    /// taken out, the very same otherwise.
+    ///
+    /// What is made one keeps the name of the oldest of what it is made
+    /// of; the names of the others stand for it from then on (see
+    /// [`crate::names::NameRegistry::alias`]), so a step that refers to any
+    /// of them still finds it. An edge between two faces made one is gone,
+    /// and so is its name; so is a vertex dropped. Only faces `may_merge`
+    /// lets are asked whether they lie on one surface.
+    pub fn merge_faces_on_one_surface(
+        &mut self,
+        body: Body,
+        may_merge: impl Fn(FaceId, FaceId) -> bool,
+    ) -> GeopResult<Body> {
+        let (spec, names) = self.body_record(body)?;
+        // The very entities `spec` was made from, index for index.
+        let mut faces = self.topology().body_faces(body)?;
+        faces.sort();
+        let (_, sources) = self.topology().body_spec(&faces, false)?;
+        let (merged, map) = spec.merged(|f, g| may_merge(sources.faces[f], sources.faces[g]))?;
+        if merged.faces.len() == spec.faces.len() && merged.edges.len() == spec.edges.len() {
+            return Ok(body);
+        }
+        let face_into: Vec<Option<usize>> = map.faces.iter().map(|&f| Some(f)).collect();
+        let faces = self.merged_names(&sources.faces, &face_into, merged.faces.len())?;
+        let edges = self.merged_names(&sources.edges, &map.edges, merged.edges.len())?;
+        let vertices =
+            self.merged_names(&sources.vertices, &map.vertices, merged.vertices.len())?;
+        let new_names = BodyNames {
+            vertices: vertices.names,
+            edges: edges.names.clone(),
+            faces: faces.names.clone(),
+            solid: names.solid.clone(),
+        };
+        self.delete_bodies(&[body])?;
+        let built = self.build_body(merged, new_names)?;
+        for merged in [faces, edges] {
+            for (alias, k) in &merged.aliases {
+                self.names.alias(alias.clone(), merged.names[*k].clone())?;
+            }
+        }
+        built.body()
+    }
+
+    /// The names of what [`NamedModel::merge_faces_on_one_surface`] builds
+    /// of the entities `ids`, each made part of the entity `into` says of
+    /// `count`: each named after the oldest — the least id — of what it is
+    /// made of, the names of the others its aliases.
+    fn merged_names<Id: Into<RefId> + Copy + Ord>(
+        &self,
+        ids: &[Id],
+        into: &[Option<usize>],
+        count: usize,
+    ) -> GeopResult<MergedNames> {
+        let mut by: Vec<Vec<Id>> = vec![Vec::new(); count];
+        for (&id, &into) in ids.iter().zip(into) {
+            if let Some(into) = into {
+                by[into].push(id);
+            }
+        }
+        let mut out = MergedNames::default();
+        for (k, mut ids) in by.into_iter().enumerate() {
+            ids.sort();
+            let Some((&oldest, rest)) = ids.split_first() else {
+                return Err(GeopError::new(
+                    "NamedModel::merge_faces_on_one_surface: an entity made of nothing",
+                ));
+            };
+            out.names.push(self.name(oldest)?.to_string());
+            for &id in rest {
+                out.aliases.push((self.name(id)?.to_string(), k));
+            }
+        }
+        Ok(out)
     }
 
     /// Forwards to [`geop_core_topology::Model::transform_body`]. Creates
@@ -317,6 +399,15 @@ impl NamedModel {
         self.names.remove(from);
         Ok(())
     }
+}
+
+/// The names of entities made of others (see
+/// [`NamedModel::merge_faces_on_one_surface`]): each one's own, and the
+/// names of the others that stand for it, with its index.
+#[derive(Default)]
+struct MergedNames {
+    names: Vec<String>,
+    aliases: Vec<(String, usize)>,
 }
 
 /// The names [`NamedModel::build_body`] gives what it builds: one per vertex, edge

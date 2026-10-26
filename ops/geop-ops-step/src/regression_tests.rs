@@ -66,20 +66,24 @@ fn round_trip(part: &NamedModel) {
     }
 }
 
+/// `part` with the topology it does not need taken out of each solid:
+/// faces on one surface made one (see
+/// [`NamedModel::merge_faces_on_one_surface`]).
+fn merged(part: &NamedModel) -> NamedModel {
+    let mut part = part.clone();
+    for name in part.solid_names() {
+        let solid = part.solid_id(&name).unwrap();
+        part.merge_faces_on_one_surface(solid.into(), |_, _| true)
+            .unwrap();
+    }
+    assert_valid(&part);
+    part
+}
+
 /// A row of four unit blocks 0.6 apart, each overlapping the next, joined
 /// into one bar by a linear pattern of a body (the SolidWorks "linear
-/// pattern with merge" tutorial), exported as STEP and imported again.
-///
-/// The pattern builds a valid bar of volume 2.8. Read back from STEP, the
-/// bar fails `assert_valid` with "curve_curve_crossings: exhausted
-/// max_nodes=5000 with 2019 pairs pending; the result would be
-/// incomplete", four times, naming no entity. The same four blocks joined
-/// one by one with four join steps — the same solid, as far as volume and
-/// face count tell — round-trip cleanly, as do patterns of two and three
-/// copies.
-#[test]
-#[ignore = "bug: a linear pattern of 4 overlapping unit blocks joined round-trips through STEP into a body validation cannot check (curve_curve_crossings exhausted, no entity named); 3 copies, and the 4 blocks joined step by step, round-trip cleanly"]
-fn pattern_of_four_overlapping_blocks_joined_round_trips() {
+/// pattern with merge" tutorial).
+fn four_overlapping_blocks() -> NamedModel {
     let mut program = Program::new();
     program.push("a", PrimitiveArgs::block([0.0, 0.0, 0.0], [1.0, 1.0, 1.0]));
     program.push(
@@ -95,23 +99,37 @@ fn pattern_of_four_overlapping_blocks_joined_round_trips() {
             second: None,
         },
     );
-    let part = program.build_model(registry).unwrap();
-    round_trip(&part);
+    program.build_model(registry).unwrap()
+}
+
+/// The bar of [`four_overlapping_blocks`], exported as STEP and imported
+/// again.
+///
+/// The pattern builds a valid bar of volume 2.8. Read back from STEP, the
+/// bar fails `assert_valid` with "curve_curve_crossings: exhausted
+/// max_nodes=5000 with 2019 pairs pending; the result would be
+/// incomplete", four times, naming no entity. The same four blocks joined
+/// one by one with four join steps — the same solid, as far as volume and
+/// face count tell — round-trip cleanly, as do patterns of two and three
+/// copies; and so does the bar with its faces on one surface merged
+/// ([`four_overlapping_blocks_merged_round_trip`]): the union leaves many
+/// coplanar faces, and those are what the import cannot check.
+#[test]
+#[ignore = "bug: a linear pattern of 4 overlapping unit blocks joined round-trips through STEP into a body validation cannot check (curve_curve_crossings exhausted, no entity named); 3 copies, the 4 blocks joined step by step, and the bar with its coplanar faces merged round-trip cleanly"]
+fn pattern_of_four_overlapping_blocks_joined_round_trips() {
+    round_trip(&four_overlapping_blocks());
+}
+
+/// The bar, its faces on one surface merged first, round-trips.
+#[test]
+fn four_overlapping_blocks_merged_round_trip() {
+    round_trip(&merged(&four_overlapping_blocks()));
 }
 
 /// An L bracket (the Onshape part tutorial): an L profile sketched on the
 /// X plane and extruded 20, a slot cut into the upright's outer face, and
-/// the half mirrored across that face and joined into the whole bracket —
-/// exported as STEP and imported again.
-///
-/// The bracket builds valid. Read back from STEP, it fails `assert_valid`
-/// with "curve_curve_crossings: exhausted max_nodes=5000 with 2029 pairs
-/// pending; the result would be incomplete", naming no entity. Without the
-/// slot the mirrored L round-trips cleanly; so does a plain block notched
-/// the same way and mirrored across the notched face.
-#[test]
-#[ignore = "bug: a mirrored L bracket with a slot across the mirror face round-trips through STEP into a body validation cannot check (curve_curve_crossings exhausted, no entity named); without the slot it round-trips cleanly"]
-fn mirrored_l_bracket_with_a_slot_round_trips() {
+/// the half mirrored across that face and joined into the whole bracket.
+fn mirrored_l_bracket() -> NamedModel {
     let mut program = Program::new();
     let mut profile = Sketch::new();
     polygon(
@@ -151,8 +169,28 @@ fn mirrored_l_bracket_with_a_slot_round_trips() {
             plane: Some(SketchPlane::Datum(origin_plane(FrameAxis::Y))),
         },
     );
-    let part = program.build_model(registry).unwrap();
-    round_trip(&part);
+    program.build_model(registry).unwrap()
+}
+
+/// The bracket of [`mirrored_l_bracket`], exported as STEP and imported
+/// again.
+///
+/// The bracket builds valid. Read back from STEP, it fails `assert_valid`
+/// with "curve_curve_crossings: exhausted max_nodes=5000 with 2029 pairs
+/// pending; the result would be incomplete", naming no entity. Without the
+/// slot the mirrored L round-trips cleanly; so does a plain block notched
+/// the same way and mirrored across the notched face, and the bracket with
+/// its faces on one surface merged ([`mirrored_l_bracket_merged_round_trips`]).
+#[test]
+#[ignore = "bug: a mirrored L bracket with a slot across the mirror face round-trips through STEP into a body validation cannot check (curve_curve_crossings exhausted, no entity named); without the slot, or with its coplanar faces merged, it round-trips cleanly"]
+fn mirrored_l_bracket_with_a_slot_round_trips() {
+    round_trip(&mirrored_l_bracket());
+}
+
+/// The bracket, its faces on one surface merged first, round-trips.
+#[test]
+fn mirrored_l_bracket_merged_round_trips() {
+    round_trip(&merged(&mirrored_l_bracket()));
 }
 
 /// A bar cut in two by a slab across its middle is one solid of two lumps,

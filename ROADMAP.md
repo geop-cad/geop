@@ -31,8 +31,19 @@ below is what was missing then, and where each item stands now.
 - Threads: cosmetic (drawn in the view and in drawings) and modelled.
 - Linear and circular patterns and mirrors of bodies and of features (cuts,
   bosses, holes with their threads, picked by a face they made), move/copy
-  body.
+  body, scale body (evenly or along each axis, exact on the NURBS: a circle
+  scaled unevenly is an exact ellipse).
 - Rib, lip and groove, draft on planar faces.
+- Direct edits of any solid, imported ones too: faces moved, pushed or
+  pulled along their normals (taking along the faces they run smoothly
+  into), put on another face's surface, and deleted — holes, bosses,
+  pockets — picked whole by one face of them (defeaturing) — chamfers,
+  fillets and cut corners healed over by the faces
+  around them, or the solid left open; the solid rebuilt face by face
+  around them, for any NURBS faces, every name kept. Faces that lie on
+  one surface (blocks united flush, a pattern of overlapping blocks) merged
+  into one, decided on the NURBS representation; merged names still find
+  the face.
 - Fillets on any edge (rolling ball), tangent chains, variable radius,
   rounded corners where three fillets meet; chamfers on any edge.
 - Sheet metal: base and edge flanges, hems, open and closed corners, cuts
@@ -78,7 +89,8 @@ below is what was missing then, and where each item stands now.
   the dialog; 322 of 361 public corpus files import valid, 299 fully
   (`scripts/fetch_corpus.sh`); an 886-face SolidWorks part in 15 s.
 - URDF export of jointed assemblies for robot simulators.
-- STL download in the web app.
+- STL download in the web app; STL (ASCII) import as a B-rep, the
+  triangles in one plane one face.
 
 ### Editor and front ends
 - Web app and VS Code extension: every operation, inspect and BOM panels,

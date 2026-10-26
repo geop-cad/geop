@@ -48,15 +48,19 @@ fn top_face_at(part: &NamedModel, z: f64) -> String {
 /// vertical edges rounded with radius 10, then shelled from the top with
 /// walls 5 thick.
 ///
-/// The shell is refused: "the edge is neither straight nor circular:
+/// The shell was refused: "the edge is neither straight nor circular:
 /// offsetting it is not supported", naming the edge where a blend meets
 /// the bottom face. That edge is a quarter circle of radius 10 (a rolling
 /// ball between two planes meets a third plane square to both in an arc),
 /// but the fillet's boolean traced it as a fitted curve, so the shell does
 /// not recognise it. Shelling first and rounding afterwards builds (see
 /// `geop-ops-fillet`'s regression tests for what that leaves behind).
+///
+/// Since the shell is built by the general rebuild, which traces every
+/// inner edge where the offsets meet, it builds; the inner quarter circles
+/// are fits enclosing the true arcs, so the volume is right to the fits'
+/// drift, not to the last digit.
 #[test]
-#[ignore = "bug: shelling a box whose vertical edges were rounded is refused — the blends' edges on the caps are quarter circles the fillet left as traced curves, which the shell cannot offset"]
 fn shell_of_a_box_with_rounded_vertical_edges() {
     let mut program = Program::new();
     program.push(
@@ -85,7 +89,7 @@ fn shell_of_a_box_with_rounded_vertical_edges() {
     let outer = 100.0 * 60.0 * 50.0 - 4.0 * corner * 100.0 * 50.0;
     let inner = 90.0 * 50.0 * 45.0 - 4.0 * corner * 25.0 * 45.0;
     assert!(
-        (volume - (outer - inner)).abs() < 1e-6,
+        (volume - (outer - inner)).abs() < 1e-6 * volume,
         "{volume} vs {}",
         outer - inner
     );

@@ -379,6 +379,6 @@ fn too_steep_a_draft_is_refused() {
         panic!("a draft crossing the walls is refused");
     };
     let message = format!("{error}");
-    assert!(message.contains("too steep"), "{message}");
+    assert!(message.contains("would cross"), "{message}");
     assert!(message.contains(RIM), "{message}");
 }

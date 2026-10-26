@@ -196,7 +196,12 @@ fn walls_too_thick_are_refused() {
     let (mut part, solid) = unit_box();
     let namer = Namer::new("shell", "s").unwrap();
     let error = shell(&mut part, &namer, solid, &[], Scalar::from_f64(0.6)).unwrap_err();
-    assert!(error.root_message().contains("too thick"), "{error:?}");
+    // An inner edge turns around, or shrinks to nothing.
+    let message = error.root_message();
+    assert!(
+        message.contains("turns around") || message.contains("shrinks"),
+        "{error:?}"
+    );
 }
 
 #[test]

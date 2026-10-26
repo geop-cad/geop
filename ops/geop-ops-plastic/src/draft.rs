@@ -4,17 +4,15 @@
 //! **Why the faces are replaced, not cut.** A draft only changes the
 //! planes some faces lie in; the solid keeps its topology — every face,
 //! edge and vertex is still there, still between the same neighbours. So
-//! the drafted solid is built directly, the way a shell builds its walls'
-//! inner side ([`geop_lib_shell::shell()`]): each drafted face gets its
-//! tilted plane, each vertex of one moves to where the surfaces around it
-//! now meet, each edge to where its two faces do. The alternative, a
-//! boolean with a wedge per face, would have to put the wedge's tilted face
-//! exactly through the face's edge on the neutral plane — a cut along an
-//! edge that already exists, the one configuration a boolean cannot stay
-//! tight through — and a wedge beside an inward corner would cut into the
-//! neighbour. Replacing the geometry needs neither, keeps every name, and
-//! re-trims the neighbours exactly: a plane's edges are lines between the
-//! moved vertices, a cylinder's are where the tilted plane cuts it.
+//! the drafted solid is rebuilt face by face ([`geop_lib_shell::rebuilt`]):
+//! each drafted face gets its tilted plane, each vertex of one moves to
+//! where the surfaces around it now meet, each edge to where its two faces
+//! do. The alternative, a boolean with a wedge per face, would have to put
+//! the wedge's tilted face exactly through the face's edge on the neutral
+//! plane — a cut along an edge that already exists, the one configuration
+//! a boolean cannot stay tight through — and a wedge beside an inward
+//! corner would cut into the neighbour. Replacing the geometry needs
+//! neither, and keeps every name.
 //!
 //! **The tilt.** A face with outward normal `n` turns about the line where
 //! its plane meets the neutral plane, by the draft angle, so that its normal
@@ -25,53 +23,20 @@
 //!
 //! What it does not do (yet): draft faces that are not planar, faces
 //! parallel to the neutral plane (they have no line to turn about), or
-//! faces next to anything but planes and cylinders — a fillet, a sphere, a
-//! free-form face; nor faces that meet a neighbour tangentially (a fillet
-//! along an edge). An angle so large that an edge turns around is refused.
+//! faces that meet a neighbour tangentially (a fillet along an edge). An
+//! angle so large that an edge turns around, or that a wall's two sides
+//! cross, is refused.
 
-use geop_core_geometry::{
-    intersection::{Intersections, curve_curve_intersect},
-    meet::{Offset, meet, tangent_groups},
-    nurb_curve::NurbCurve3D,
-    nurb_surface::NurbSurface3D,
-    search::{MAX_NODES, PROJECT_ITERATIONS, min_subdivision_size},
-    shape::{Arc, Axis, Circle, Plane},
-};
+use geop_core_geometry::shape::{Axis, Plane};
 use geop_core_math::{
     geop_error::{GeopError, GeopResult, WithContext},
     scalars::Scalar,
-    vector::{Vector2, Vector3, Vector4},
+    vector::{Vector3, Vector4},
     with_context,
 };
-use geop_core_topology::{
-    Curve3, FaceId, SolidId,
-    build::{BodySpec, CoedgeOn, CoedgeSpec, EdgeSpec, FaceSpec},
-    contains::face::{PointClassification, pcurves_contain},
-};
-use geop_lib_shell::{extended, pcurve, surface_missed};
-use geop_ops_model::{BodyNames, NamedModel, Namer};
-
-use crate::common::halfway;
-
-/// The surface a face lies on, as far as a draft cares.
-#[derive(Clone, Debug)]
-enum Kind {
-    Plane(Plane),
-    Cylinder(Axis),
-    Other,
-}
-
-impl Kind {
-    fn of(surface: &NurbSurface3D) -> GeopResult<Self> {
-        if let Some(plane) = surface.as_plane()? {
-            return Ok(Kind::Plane(plane));
-        }
-        if let Some(cylinder) = surface.as_cylinder()? {
-            return Ok(Kind::Cylinder(cylinder.axis));
-        }
-        Ok(Kind::Other)
-    }
-}
+use geop_core_topology::{FaceId, SolidId};
+use geop_lib_shell::{Smooth, replace_faces};
+use geop_ops_model::{NamedModel, Namer};
 
 /// Tilts the planar faces `faces` of one solid by `angle` (in radians, a
 /// quarter turn either way at most) about where each meets the plane
@@ -97,39 +62,30 @@ pub fn draft(
         )))
         .with_context(ctx);
     }
-    let model = part.topology();
-    let Some(&first) = faces.first() else {
-        return Err(GeopError::new("pick the faces to draft")).with_context(ctx);
-    };
-    let solid = part
-        .solid_of_face(first, "only faces of a solid can be drafted")
-        .with_context(ctx)?;
-    let all = model.solid_faces(solid).with_context(ctx)?;
-    if let Some(&f) = faces.iter().find(|f| !all.contains(f)) {
-        return Err(GeopError::new(format!(
-            "face {} is not of the same solid as face {}: draft the faces of one solid at a time",
-            part.name(f)?,
-            part.name(first)?
-        )))
-        .with_context(ctx);
-    }
-    let (spec, sources) = model.body_spec(&all, true).with_context(ctx)?;
-    let names = BodyNames {
-        solid: Some(namer.root()),
-        ..part.source_names(&sources)?
-    };
-    let drafted: Vec<bool> = sources.faces.iter().map(|f| faces.contains(f)).collect();
     let tilt = Tilt {
         neutral,
         cos: angle.cos(),
         sin: angle.sin(),
     };
-    let result = Drafted::new(&spec, &names, &drafted, &tilt)
-        .with_context(ctx)?
-        .result()
-        .with_context(ctx)?;
-    part.replace_with_solid(&[solid.into()], result, names)
-        .with_context(ctx)
+    replace_faces(part, namer, faces, Smooth::Refuse, |name, surface| {
+        let plane = surface.as_plane()?.ok_or_else(|| {
+            GeopError::new(format!(
+                "face {name} is not planar: only planar faces can be drafted"
+            ))
+        })?;
+        let hinge = tilt.hinge(&plane).map_err(|e| {
+            e.with_context(format!(
+                "face {name} is parallel to the neutral plane: it has no line to be drafted about"
+            ))
+        })?;
+        let mut turned = surface.clone();
+        for cp in &mut turned.control_points {
+            *cp = tilt.turn(&hinge, cp);
+        }
+        turned.recompute_aabb();
+        Ok(turned)
+    })
+    .with_context(ctx)
 }
 
 /// How a drafted face turns: about where its plane meets `neutral`, by the
@@ -158,492 +114,4 @@ impl Tilt<'_> {
             .add(&c);
         Vector4::from_array([turned[0], turned[1], turned[2], w])
     }
-}
-
-/// The solid described as a [`BodySpec`], and where drafting moves what.
-struct Drafted<'a> {
-    spec: &'a BodySpec,
-    names: &'a BodyNames,
-    drafted: &'a [bool],
-    /// Per face: the surface it lies on afterwards, with room around it
-    /// wherever its boundary may move.
-    surfaces: Vec<NurbSurface3D>,
-    /// Per face: what that surface is.
-    kinds: Vec<Kind>,
-    /// Per vertex: whether a drafted face meets it, and where it goes.
-    moved: Vec<bool>,
-    points: Vec<Vector3>,
-    /// Per edge: its new curve, if it changes.
-    curves: Vec<Option<Curve3>>,
-}
-
-impl<'a> Drafted<'a> {
-    fn new(
-        spec: &'a BodySpec,
-        names: &'a BodyNames,
-        drafted: &'a [bool],
-        tilt: &Tilt,
-    ) -> GeopResult<Self> {
-        let n_faces = spec.faces.len();
-        for (f, face) in spec.faces.iter().enumerate() {
-            for lp in face.loops() {
-                for c in lp {
-                    if let CoedgeOn::Vertex(v) = c.on
-                        && drafted[f]
-                    {
-                        return Err(GeopError::new(format!(
-                            "face {} comes to a point at vertex {}: only planar faces can be drafted",
-                            names.faces[f], names.vertices[v]
-                        )));
-                    }
-                }
-            }
-        }
-        // Per vertex, each face around it once, with where the vertex is on
-        // the face's surface; per edge, the faces along it.
-        let around = spec.vertex_faces()?;
-        let along: Vec<Vec<usize>> = (spec.edge_uses().iter())
-            .map(|uses| uses.iter().map(|&(f, ..)| f).collect())
-            .collect();
-        let moved: Vec<bool> = around
-            .iter()
-            .map(|faces| faces.iter().any(|&(f, _)| drafted[f]))
-            .collect();
-        let touched: Vec<bool> = (0..n_faces)
-            .map(|f| {
-                drafted[f]
-                    || around
-                        .iter()
-                        .enumerate()
-                        .any(|(v, faces)| moved[v] && faces.iter().any(|&(g, _)| g == f))
-            })
-            .collect();
-
-        let mut kinds = Vec::with_capacity(n_faces);
-        for (f, face) in spec.faces.iter().enumerate() {
-            kinds.push(Kind::of(&face.surface)?);
-            if drafted[f] && !matches!(kinds[f], Kind::Plane(_)) {
-                return Err(GeopError::new(format!(
-                    "face {} is not planar: only planar faces can be drafted",
-                    names.faces[f]
-                )));
-            }
-        }
-        // What a drafted face's neighbours may be, and how they meet it.
-        for (v, faces) in around.iter().enumerate() {
-            let Some(&(d, _)) = faces.iter().find(|&&(f, _)| drafted[f]) else {
-                continue;
-            };
-            if let Some(&(f, _)) = faces
-                .iter()
-                .find(|&&(f, _)| matches!(kinds[f], Kind::Other))
-            {
-                return Err(GeopError::new(format!(
-                    "face {} meets the drafted face {} at vertex {}, and is neither planar nor cylindrical: drafting next to it is not supported",
-                    names.faces[f], names.faces[d], names.vertices[v]
-                )));
-            }
-        }
-        for (e, faces) in along.iter().enumerate() {
-            let [f, g] = faces.as_slice() else {
-                continue;
-            };
-            let (d, other) = match (drafted[*f], drafted[*g]) {
-                (true, _) => (*f, *g),
-                (_, true) => (*g, *f),
-                _ => continue,
-            };
-            if tangent_along(spec, e, d, other)? {
-                return Err(GeopError::new(format!(
-                    "the drafted face {} meets face {} tangentially along edge {} — a fillet or a smooth blend: drafting next to one is not supported",
-                    names.faces[d], names.faces[other], names.edges[e]
-                )));
-            }
-        }
-
-        let mut surfaces = Vec::with_capacity(n_faces);
-        for (f, face) in spec.faces.iter().enumerate() {
-            let surface = if drafted[f] {
-                let Kind::Plane(plane) = &kinds[f] else {
-                    unreachable!("checked above")
-                };
-                let hinge = tilt.hinge(plane).map_err(|e| {
-                    e.with_context(format!(
-                        "face {} is parallel to the neutral plane: it has no line to be drafted about",
-                        names.faces[f]
-                    ))
-                })?;
-                let mut turned = face.surface.clone();
-                for cp in &mut turned.control_points {
-                    *cp = tilt.turn(&hinge, cp);
-                }
-                turned.recompute_aabb();
-                kinds[f] = Kind::Plane(Plane {
-                    point: hinge.point,
-                    normal: plane
-                        .normal
-                        .rotated_about(&hinge.direction, tilt.cos, tilt.sin),
-                });
-                extended(turned)?
-            } else if touched[f] {
-                extended(face.surface.clone())?
-            } else {
-                face.surface.clone()
-            };
-            surfaces.push(surface);
-        }
-
-        let mut points = spec.vertices.clone();
-        for (v, faces) in around.iter().enumerate() {
-            if !moved[v] {
-                continue;
-            }
-            points[v] = move_vertex(spec.vertices[v], faces, &surfaces, &kinds)
-                .map_err(|e| e.with_context(format!("moving vertex {}", names.vertices[v])))?;
-        }
-
-        let mut drafted_solid = Self {
-            spec,
-            names,
-            drafted,
-            surfaces,
-            kinds,
-            moved,
-            points,
-            curves: Vec::new(),
-        };
-        drafted_solid.curves = (0..spec.edges.len())
-            .map(|e| {
-                drafted_solid
-                    .curve(e, &along[e])
-                    .map_err(|err| err.with_context(format!("edge {}", names.edges[e])))
-            })
-            .collect::<GeopResult<_>>()?;
-        Ok(drafted_solid)
-    }
-
-    /// The new curve of edge `e`, between the faces `faces`, if it changes:
-    /// where those faces' surfaces now meet, between its moved vertices.
-    fn curve(&self, e: usize, faces: &[usize]) -> GeopResult<Option<Curve3>> {
-        let edge = &self.spec.edges[e];
-        let changed = self.moved[edge.start]
-            || self.moved[edge.end]
-            || faces.iter().any(|&f| self.drafted[f]);
-        if !changed {
-            return Ok(None);
-        }
-        let (start, end) = (self.points[edge.start], self.points[edge.end]);
-        let closed = edge.start == edge.end;
-        let [f, g] = faces else {
-            return Err(GeopError::new(format!(
-                "it bounds {} faces, not two",
-                faces.len()
-            )));
-        };
-        let unsupported = || {
-            GeopError::new(format!(
-                "it runs between faces {} and {}, which drafting cannot re-intersect",
-                self.names.faces[*f], self.names.faces[*g]
-            ))
-        };
-        let curve = match (&self.kinds[*f], &self.kinds[*g]) {
-            (Kind::Plane(_), Kind::Plane(_)) if !closed => NurbCurve3D::line(start, end)?,
-            (Kind::Plane(plane), Kind::Cylinder(axis))
-            | (Kind::Cylinder(axis), Kind::Plane(plane)) => {
-                if plane
-                    .normal
-                    .prod_dot(&axis.direction)
-                    .could_be_equal(Scalar::ZERO)
-                {
-                    // The plane holds the axis' direction: it meets the
-                    // cylinder along a ruling.
-                    if closed {
-                        return Err(unsupported());
-                    }
-                    NurbCurve3D::line(start, end)?
-                } else {
-                    section(axis, plane, &edge.curve, start, end, closed)?
-                }
-            }
-            (Kind::Cylinder(a), Kind::Cylinder(b))
-                if !closed && a.could_be_parallel(b) && edge.curve.as_line()?.is_some() =>
-            {
-                NurbCurve3D::line(start, end)?
-            }
-            _ => return Err(unsupported()),
-        };
-        // A straight edge turned around: the faces now cross.
-        if let Some(axis) = edge.curve.as_line()?
-            && !end
-                .sub(&start)
-                .prod_dot(&axis.direction)
-                .definitely_greater(Scalar::ZERO)
-        {
-            return Err(GeopError::new(format!(
-                "the draft is too steep: the edge turns around (from {start:?} to {end:?})"
-            )));
-        }
-        // It is only right if it lies on both surfaces: say so if not,
-        // rather than build an edge off its faces.
-        if let Some((face, middle)) = surface_missed(&curve, faces.iter().copied(), &self.surfaces)?
-        {
-            return Err(GeopError::new(format!(
-                "its new curve from {start:?} to {end:?} is not on face {} at {middle:?}",
-                self.names.faces[face]
-            )));
-        }
-        Ok(Some(curve))
-    }
-
-    /// The drafted solid, described whole.
-    fn result(&self) -> GeopResult<BodySpec> {
-        let spec = self.spec;
-        let edges = spec
-            .edges
-            .iter()
-            .zip(&self.curves)
-            .map(|(edge, curve)| EdgeSpec {
-                curve: curve.clone().unwrap_or_else(|| edge.curve.clone()),
-                start: edge.start,
-                end: edge.end,
-            })
-            .collect();
-        let faces = spec
-            .faces
-            .iter()
-            .enumerate()
-            .map(|(f, face)| {
-                let lp = |coedges: &Vec<CoedgeSpec>| self.face_loop(f, coedges);
-                let drafted_face = FaceSpec {
-                    surface: self.surfaces[f].clone(),
-                    outer: lp(&face.outer)?,
-                    holes: face.holes.iter().map(lp).collect::<GeopResult<_>>()?,
-                };
-                // Drafted so far that a wall's two sides cross, the face
-                // between them — a shelled rim — runs into its own hole: a
-                // hole's pcurves cross the outer loop's, or the hole has
-                // left it altogether.
-                if !drafted_face.holes.iter().try_fold(true, |inside, hole| {
-                    Ok::<_, GeopError>(inside && hole_inside(&drafted_face.surface, &drafted_face.outer, hole)?)
-                })? {
-                    return Err(GeopError::new(format!(
-                        "the draft is too steep: face {} runs into its own hole — the sides of a wall would cross",
-                        self.names.faces[f]
-                    )));
-                }
-                Ok(drafted_face)
-            })
-            .collect::<GeopResult<_>>()?;
-        Ok(BodySpec {
-            vertices: self.points.clone(),
-            edges,
-            faces,
-            shells: spec.shells.clone(),
-            solid: true,
-        })
-    }
-
-    /// A loop of face `f`, its pcurves on the face's new surface: each
-    /// coedge that changed fitted anew between `(u, v)` worked out once
-    /// per junction, so the coedges meeting there agree on it exactly.
-    fn face_loop(&self, f: usize, coedges: &[CoedgeSpec]) -> GeopResult<Vec<CoedgeSpec>> {
-        let surface = &self.surfaces[f];
-        // Where each coedge ends.
-        let mut junctions = Vec::with_capacity(coedges.len());
-        for c in coedges {
-            let (_, end) = self.spec.ends(c.on)?;
-            let old = c.pcurve.ends()?.1;
-            junctions.push(if self.moved[end] || self.drafted[f] {
-                let (u, v) = surface.project_in_domain(
-                    self.points[end],
-                    old[0].sharpen(),
-                    old[1].sharpen(),
-                    PROJECT_ITERATIONS,
-                )?;
-                Vector2::from_array([u, v])
-            } else {
-                old
-            });
-        }
-        let n = coedges.len();
-        let mut out = Vec::with_capacity(n);
-        for (k, c) in coedges.iter().enumerate() {
-            let changed = match c.on {
-                CoedgeOn::Edge(e, _) => self.curves[e].is_some(),
-                CoedgeOn::Vertex(v) => self.moved[v],
-            };
-            let pcurve = if !changed && !self.drafted[f] {
-                c.pcurve.clone()
-            } else {
-                let (start, end) = (junctions[(k + n - 1) % n], junctions[k]);
-                let curve = match c.on {
-                    CoedgeOn::Edge(e, sense) => Some(
-                        sense.orient(self.curves[e].as_ref().unwrap_or(&self.spec.edges[e].curve)),
-                    ),
-                    CoedgeOn::Vertex(_) => None,
-                };
-                pcurve(surface, &c.pcurve, curve.as_ref(), start, end).map_err(|e| {
-                    e.with_context(format!("the pcurve on face {}", self.names.faces[f]))
-                })?
-            };
-            out.push(CoedgeSpec { on: c.on, pcurve });
-        }
-        Ok(out)
-    }
-}
-
-/// Whether the faces `f` and `g` could meet tangentially along edge `e`:
-/// their normals, halfway along it, could be parallel.
-fn tangent_along(spec: &BodySpec, e: usize, f: usize, g: usize) -> GeopResult<bool> {
-    let (point, _) = halfway(&spec.edges[e].curve)?;
-    let n_f = spec.faces[f]
-        .surface
-        .normal_at(&point, MAX_NODES, min_subdivision_size())?;
-    let n_g = spec.faces[g]
-        .surface
-        .normal_at(&point, MAX_NODES, min_subdivision_size())?;
-    Ok(n_f.prod_cross(&n_g).norm_sq().could_be_equal(Scalar::ZERO))
-}
-
-/// Where a vertex at `point` goes: where the surfaces of the faces around
-/// it, `faces` (each with where the vertex was on it), now meet — nearest
-/// to where it was (see [`meet`]). Surfaces tangent to each other there
-/// are pieces of one smooth surface, and one condition.
-///
-/// Where only two smooth surfaces meet — a drafted face and a cylinder,
-/// at the seam of a hole through it — the vertex is free to slide along
-/// their intersection. It is the end of the cylinder's seam or ruling
-/// there, so it stays on that: the plane through the cylinder's axis and
-/// the vertex is the third condition.
-fn move_vertex(
-    point: Vector3,
-    faces: &[(usize, Vector2)],
-    surfaces: &[NurbSurface3D],
-    kinds: &[Kind],
-) -> GeopResult<Vector3> {
-    let pieces: Vec<_> = faces
-        .iter()
-        .map(|&(f, at)| (&surfaces[f], (at[0], at[1])))
-        .collect();
-    let mut offsets: Vec<Offset> = tangent_groups(&pieces)?
-        .into_iter()
-        .map(|group| Offset {
-            pieces: group.into_iter().map(|i| pieces[i]).collect(),
-            offset: Scalar::ZERO,
-        })
-        .collect();
-    let mut planes = Vec::new();
-    if offsets.len() < 3 {
-        let axis = faces
-            .iter()
-            .find_map(|&(f, _)| match &kinds[f] {
-                Kind::Cylinder(axis) => Some(axis.clone()),
-                _ => None,
-            })
-            .ok_or_else(|| {
-                GeopError::new(format!(
-                    "only {} surface(s) meet there and none is a cylinder: where it goes is not determined",
-                    offsets.len()
-                ))
-            })?;
-        let radial = point.sub(&axis.project(&point));
-        planes.push((axis.direction.prod_cross(&radial).normalize()?, point));
-    }
-    meet(point, &mut offsets, &planes)
-}
-
-/// Where `plane` cuts the cylinder around `axis`, from `start` to `end` —
-/// all the way round, if `closed` — turning the way `old`, another curve on
-/// the cylinder cut by a plane, did.
-///
-/// Seen along the axis, any plane section of the cylinder is an arc of its
-/// cross-section circle; and the section is that arc lifted along the axis
-/// onto the plane — an affine map, so the rational quadratic arc lifts to
-/// an exact NURBS of the section, an ellipse for a plane at a slant. Which
-/// way round the arc runs is what `old`, seen along the axis, says.
-fn section(
-    axis: &Axis,
-    plane: &Plane,
-    old: &Curve3,
-    start: Vector3,
-    end: Vector3,
-    closed: bool,
-) -> GeopResult<Curve3> {
-    let a = axis.direction;
-    let c = axis.point;
-    // Along the axis onto the cross-section through `c`: `x - a (a . (x -
-    // c))`, homogeneous.
-    let flatten_h = |p: &Vector4| {
-        let x = Vector3::from_array([p[0], p[1], p[2]]);
-        let off = a.prod_dot(&x).sub(a.prod_dot(&c).mul(p[3]));
-        let y = x.sub(&a.prod_scalar(off));
-        Vector4::from_array([y[0], y[1], y[2], p[3]])
-    };
-    let flatten = |x: &Vector3| x.sub(&a.prod_scalar(a.prod_dot(&x.sub(&c))));
-    let mut seen = old.clone();
-    for cp in &mut seen.control_points {
-        *cp = flatten_h(cp);
-    }
-    seen.recompute_aabb();
-    let turning = seen.as_arc()?.ok_or_else(|| {
-        GeopError::new("seen along the cylinder's axis, the edge is no arc: it is no plane section")
-    })?;
-    let (from, to) = (flatten(&start), flatten(&end));
-    let arc = Arc {
-        circle: Circle {
-            center: c,
-            normal: turning.circle.normal,
-            radius: from.sub(&c).norm(),
-        },
-        start: from,
-        end: if closed { from } else { to },
-    }
-    .to_curve()?;
-    // Along the axis onto the plane: `x + a (d - n . x) / (n . a)`.
-    let n = plane.normal;
-    let na = n.prod_dot(&a);
-    let d = n.prod_dot(&plane.point);
-    let mut lifted = arc;
-    for cp in &mut lifted.control_points {
-        let x = Vector3::from_array([cp[0], cp[1], cp[2]]);
-        let rise = d.mul(cp[3]).sub(n.prod_dot(&x)).div(na)?;
-        let y = x.add(&a.prod_scalar(rise));
-        *cp = Vector4::from_array([y[0], y[1], y[2], cp[3]]);
-    }
-    lifted.recompute_aabb();
-    Ok(lifted)
-}
-
-/// Seed of the ray casting that tells whether a hole lies inside its
-/// face's outer loop: any gives the same answer (see `pcurves_contain`).
-const SEED: u64 = 0xD4AF_0000_0000_0001;
-
-/// Whether the loop `hole` lies inside the loop `outer` on `surface`: no
-/// pcurve of the one meets one of the other, and a point of the hole is
-/// inside the outer loop.
-fn hole_inside(
-    surface: &NurbSurface3D,
-    outer: &[CoedgeSpec],
-    hole: &[CoedgeSpec],
-) -> GeopResult<bool> {
-    for h in hole {
-        for o in outer {
-            match curve_curve_intersect(&h.pcurve, &o.pcurve, 1, MAX_NODES, min_subdivision_size())?
-            {
-                Intersections::Found(found) if found.is_empty() => {}
-                _ => return Ok(false),
-            }
-        }
-    }
-    let first = &hole[0].pcurve;
-    let point = first.evaluate(first.mid_parameter()?)?;
-    let pcurves: Vec<_> = outer.iter().map(|c| &c.pcurve).collect();
-    Ok(pcurves_contain(
-        surface,
-        &pcurves,
-        point,
-        MAX_NODES,
-        min_subdivision_size(),
-        SEED,
-    )? == PointClassification::Inside)
 }

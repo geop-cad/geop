@@ -1,3 +1,5 @@
+mod carry;
+pub use carry::UvMap;
 mod closest;
 mod curvature;
 mod evaluate;

@@ -170,7 +170,8 @@ fn off_axis_drilled_revolved_cylinder_opened_at_its_top() {
 /// The hole's wall, 0.3 from its axis at `x = 0.4`, moves to 0.4 from it:
 /// onto the cap's axis. The inner copy of the vertex where the rim crosses
 /// the cap's seam is the inner copy of the cap's pole, and the seam between
-/// them has no inner copy: refused, naming the seam. (It once failed in
+/// them has no inner copy — it shrinks to a point: refused, naming the
+/// seam. (It once failed in
 /// `meet`, at a normal of the cap read a hair off its pole.)
 #[test]
 fn hole_wall_moved_onto_the_axis_of_a_revolved_cap_is_refused() {
@@ -185,7 +186,8 @@ fn hole_wall_moved_onto_the_axis_of_a_revolved_cap_is_refused() {
         let error = shell(&mut part, &namer, solid, &open, Scalar::from_f64(0.1)).unwrap_err();
         let message = error.root_message();
         assert!(
-            message.contains("too thick") && message.contains("cylinder(c,c"),
+            (message.contains("turns around") || message.contains("shrinks"))
+                && format!("{error}").contains("cylinder(c,c"),
             "{error:?}"
         );
     }
@@ -195,10 +197,9 @@ fn hole_wall_moved_onto_the_axis_of_a_revolved_cap_is_refused() {
 /// the drill's side crosses the caps. The boolean fits a cubic through its
 /// march there, as it does for every traced curve (it special-cases no pair
 /// of surface kinds), and the shell offsets only edges it reads as straight
-/// or circular. Shelled like the flush drill once the shell offsets a
-/// general edge.
+/// or circular — as it once did. The general rebuild traces it where the
+/// offsets meet, and it shells like the flush drill.
 #[test]
-#[ignore = "bug: the shell refuses the traced rim of a drill standing out of the caps as neither straight nor circular; the boolean no longer splices an exact arc for a plane across a revolution, so the shell has to offset a general curve"]
 fn drill_standing_out_leaves_a_traced_rim_the_shell_offsets() {
     let (part, solid) = drilled_revolved_cylinder(0.4, 0.25, true);
     let faces = |part: &NamedModel, solid| {

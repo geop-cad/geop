@@ -9,12 +9,12 @@
 //!
 //! **The inner side.** Every face kept is offset inward by the thickness
 //! (see [`NurbSurface3D::offset`]), every face taken away stays where it is:
-//! its inner copy is what the opening leaves of it. A vertex moves to where
-//! the offsets of the faces around it meet, an edge to where the offsets of
-//! its two faces meet — a line from one moved vertex to the other for a
-//! straight edge, an arc around the same axis for a circular one. A vertex
-//! on the axis of a revolved face, at its pole, moves to the pole of the
-//! face's inner copy: for a cone's apex, the offset cone's apex.
+//! its inner copy is what the opening leaves of it. The inner side is the
+//! solid rebuilt on those surfaces ([`crate::rebuilt`]): a vertex moves to
+//! where the offsets of the faces around it meet, an edge to where the
+//! offsets of its two faces meet, whatever curve that is. A vertex on the
+//! axis of a revolved face, at its pole, moves to the pole of the face's
+//! inner copy: for a cone's apex, the offset cone's apex.
 //!
 //! **The opening.** Where a face `F` is taken away, its inner copy `F'`
 //! lies on `F`'s own surface, inside it, and what is left of `F` is `F`
@@ -39,24 +39,23 @@
 //! The inner side alone is the sheet offset ([`offset_faces`]).
 //!
 //! What it does not do (yet): offset faces that are neither planes nor
-//! surfaces of revolution with a straight or circular meridian, edges that
-//! are neither straight nor circular, take away part of a smooth surface —
+//! surfaces of revolution with a straight or circular meridian (see
+//! [`NurbSurface3D::offset`]), take away part of a smooth surface —
 //! a face tangent to one that stays — take away a face that meets one kept
 //! at an inward corner — a pocket's floor, a step, the face a boss stands
 //! on: the wall kept there is thickened away from the face, so the inner
 //! copy reaches past it and the opening is no longer the face less its
-//! inner copy — or open a solid that already has a void. Walls so thick that a straight edge's inner copy turns around are
-//! refused; that the inner side runs into itself otherwise is not noticed.
+//! inner copy — or open a solid that already has a void. Walls so thick
+//! that an inner edge turns around or shrinks to a point are refused; that
+//! the inner side runs into itself otherwise is not noticed.
 
 use std::collections::HashMap;
 
 use geop_core_geometry::{
     intersection::curve_surface_overlaps,
-    meet::{Offset, meet, tangent_groups},
     nurb_curve::{NurbCurve2D, NurbCurve3D, loop_signed_area},
     nurb_surface::NurbSurface3D,
     search::{MAX_NODES, PROJECT_ITERATIONS, min_subdivision_size},
-    shape::{Arc, Circle},
 };
 use geop_core_math::{
     geop_error::{GeopError, GeopResult, WithContext},
@@ -71,6 +70,8 @@ use geop_core_topology::{
     contains::face::{PointClassification, pcurves_contain},
 };
 use geop_ops_model::{BodyNames, NamedModel, Namer};
+
+use crate::rebuild::{along, rebuilt, tangent_to_kept};
 
 /// Seed of the ray casting that finds which outer loop a hole lies in:
 /// any gives the same answer (see `pcurves_contain`), a constant keeps it
@@ -306,9 +307,10 @@ struct Hollow<'a> {
     /// Per edge: whether it is free, used by one face only — an edge of a
     /// sheet's border, which gets a wall.
     free_edge: Vec<bool>,
-    /// Per face: the surface its inner copy lies on — for a face taken
-    /// away, its own — with room around the face (see [`extended`]).
-    inner_surfaces: Vec<NurbSurface3D>,
+    /// The inner side: the solid rebuilt with every face kept on its offset
+    /// and every face taken away on its own surface, each with room around
+    /// it — its vertices, edges and pcurves where the walled ones go.
+    inner: BodySpec,
     /// Per vertex: its inner copy, where it is walled.
     inner_points: Vec<Option<Vector3>>,
     /// Per edge: its inner copy's curve, unless it is open.
@@ -316,9 +318,6 @@ struct Hollow<'a> {
     /// Per open edge: what is left of it at its start and at its end, where
     /// those are walled.
     pieces: Vec<Pieces<Curve3>>,
-    /// Per coedge, the `(u, v)` where it ends on its face's inner surface —
-    /// where it ends at a walled vertex.
-    inner_ends: HashMap<At, Vector2>,
 }
 
 impl<'a> Hollow<'a> {
@@ -343,106 +342,36 @@ impl<'a> Hollow<'a> {
                 }
             }
         }
-        // Per vertex, each face around it once, with where the vertex is on
-        // the face's surface.
-        let around = spec.vertex_faces()?;
-
-        let inner_surfaces =
-            spec.faces
-                .iter()
-                .enumerate()
-                .map(|(f, face)| {
-                    if removed[f] {
-                        return extended(face.surface.clone());
-                    }
-                    let offset = face.surface.offset(thickness.neg()).map_err(|e| {
-                        e.with_context(format!("offsetting face {}", names.faces[f]))
-                    })?;
-                    extended(offset)
-                })
-                .collect::<GeopResult<Vec<_>>>()?;
-
-        let inner_points = (0..spec.vertices.len())
-            .map(|v| {
-                if !walled[v] {
-                    return Ok(None);
-                }
-                // Where the inner surfaces around it meet, nearest to it.
-                // Surfaces tangent to each other there are pieces of one
-                // smooth surface — the quarters of a revolved face meeting
-                // at its pole — and so one condition. One whose face is
-                // taken away cannot be tangent to one whose face is kept:
-                // the walls would have to end on a smooth surface.
-                let pieces: Vec<_> = around[v]
-                    .iter()
-                    .map(|&(f, uv)| (&inner_surfaces[f], (uv[0], uv[1])))
-                    .collect();
-                // A vertex at a pole of its faces — on the axis of a
-                // revolved face — moves to the pole of their inner copies:
-                // the topology puts it there. A cone's apex has no normal,
-                // and the nearest points of the inner cone to it are a
-                // ring round the axis, not its apex.
-                let poles: Vec<_> = pieces.iter().map(|(s, (u, v))| s.pole_at(*u, *v)).collect();
-                if let Some(pole) = poles.iter().flatten().next() {
-                    let removed_at = |i: usize| removed[around[v][i].0];
-                    if (0..pieces.len()).any(|i| removed_at(i) != removed_at(0)) {
-                        return Err(GeopError::new(format!(
-                            "at vertex {}, faces taken away and faces kept meet at a pole: opening part of a revolved face round its axis is not supported",
-                            names.vertices[v]
-                        )));
-                    }
-                    if !poles.iter().all(|p| p.is_some_and(|p| p.could_be_equal(pole))) {
-                        return Err(GeopError::new(format!(
-                            "vertex {} is at a pole of some of its faces' inner copies and not of others, or of poles apart: {poles:?}",
-                            names.vertices[v]
-                        )));
-                    }
-                    return Ok(Some(*pole));
-                }
-                let mut offsets = Vec::new();
-                for group in tangent_groups(&pieces)? {
-                    let f = |i: usize| around[v][i].0;
-                    if group.iter().any(|&i| removed[f(i)] != removed[f(group[0])]) {
-                        return Err(GeopError::new(format!(
-                            "at vertex {}, a face taken away is tangent to one kept: the walls cannot end on a smooth surface",
-                            names.vertices[v]
-                        )));
-                    }
-                    offsets.push(Offset {
-                        pieces: group.iter().map(|&i| pieces[i]).collect(),
-                        offset: Scalar::ZERO,
-                    });
-                }
-                meet(spec.vertices[v], &mut offsets, &[])
-                    .map(Some)
-                    .map_err(|e| {
-                        e.with_context(format!("moving vertex {} inward", names.vertices[v]))
-                    })
-            })
-            .collect::<GeopResult<Vec<_>>>()?;
-
-        // Walls thicker than a face is wide turn its inner copy inside out,
-        // and walls as thick as an edge is long take all of its inner copy:
-        // a straight edge's inner copy then runs the other way, or is a point.
-        for (e, edge) in spec.edges.iter().enumerate() {
-            let (Some(start), Some(end)) = (&inner_points[edge.start], &inner_points[edge.end])
-            else {
-                continue;
-            };
-            let along = spec.vertices[edge.end].sub(&spec.vertices[edge.start]);
-            if edge.curve.as_line()?.is_some()
-                && !end
-                    .sub(start)
-                    .prod_dot(&along)
-                    .definitely_greater(Scalar::ZERO)
-            {
-                return Err(GeopError::new(format!(
-                    "the walls are too thick: the inner copy of edge {} has no length or turns around",
-                    names.edges[e]
-                )));
+        // The inner side is the solid rebuilt with every face kept on its
+        // offset, every face taken away on its own surface (see
+        // [`rebuilt`]). One taken away cannot run smoothly into one kept:
+        // the walls would have to end on a smooth surface.
+        let kept: Vec<bool> = removed.iter().map(|&r| !r).collect();
+        if let Some((f, g, e)) = tangent_to_kept(spec, &kept)? {
+            return Err(GeopError::new(format!(
+                "face {} is taken away where it is tangent to face {}, kept, along edge {}: the walls cannot end on a smooth surface",
+                names.faces[g], names.faces[f], names.edges[e]
+            )));
+        }
+        let mut offsets = spec.clone();
+        for (f, face) in offsets.faces.iter_mut().enumerate() {
+            if kept[f] {
+                face.surface = face
+                    .surface
+                    .offset(thickness.neg())
+                    .map_err(|e| e.with_context(format!("offsetting face {}", names.faces[f])))?;
             }
         }
+        let reseat = vec![false; spec.vertices.len()];
+        let inner = rebuilt(&offsets, names, &kept, &reseat)
+            .map_err(|e| e.with_context("building the walls' inner side"))?;
 
+        let inner_points = (0..spec.vertices.len())
+            .map(|v| walled[v].then(|| inner.vertices[v]))
+            .collect();
+        let inner_curves = (0..spec.edges.len())
+            .map(|e| (!open_edge[e]).then(|| inner.edges[e].curve.clone()))
+            .collect();
         let mut hollow = Self {
             spec,
             names,
@@ -450,19 +379,14 @@ impl<'a> Hollow<'a> {
             walled,
             open_edge,
             free_edge: uses.iter().map(|&n| n == 1).collect(),
-            inner_surfaces,
+            inner,
             inner_points,
-            inner_curves: Vec::new(),
+            inner_curves,
             pieces: Vec::new(),
-            inner_ends: HashMap::new(),
         };
-        hollow.inner_curves = (0..spec.edges.len())
-            .map(|e| hollow.inner_curve(e))
-            .collect::<GeopResult<_>>()?;
         hollow.pieces = (0..spec.edges.len())
             .map(|e| hollow.pieces_of(e))
             .collect::<GeopResult<_>>()?;
-        hollow.inner_ends = hollow.inner_ends()?;
         Ok(hollow)
     }
 
@@ -479,10 +403,6 @@ impl<'a> Hollow<'a> {
         })
     }
 
-    fn coedge(&self, at: At) -> &'a CoedgeSpec {
-        &self.spec.faces[at.f].loops()[at.l][at.k]
-    }
-
     /// The coedge before `at` in its loop.
     fn previous(&self, at: At) -> At {
         let n = self.spec.faces[at.f].loops()[at.l].len();
@@ -492,38 +412,8 @@ impl<'a> Hollow<'a> {
         }
     }
 
-    /// The faces the edge `e` runs between.
-    fn faces_of_edge(&self, e: usize) -> Vec<usize> {
-        self.spec.edge_uses()[e].iter().map(|&(f, ..)| f).collect()
-    }
-
     fn inner_point(&self, v: usize) -> Vector3 {
         self.inner_points[v].expect("a walled vertex has an inner copy")
-    }
-
-    /// The curve of the inner copy of edge `e`, unless it is open — then it
-    /// lies on the edge itself, and is no part of the result.
-    fn inner_curve(&self, e: usize) -> GeopResult<Option<Curve3>> {
-        if self.open_edge[e] {
-            return Ok(None);
-        }
-        let edge = &self.spec.edges[e];
-        let ctx = |err: GeopError| {
-            err.with_context(format!("the inner copy of edge {}", self.names.edges[e]))
-        };
-        let (start, end) = (self.inner_point(edge.start), self.inner_point(edge.end));
-        let curve = shaped_like(&edge.curve, start, end, edge.start == edge.end).map_err(ctx)?;
-        // It is only right if it lies on both inner surfaces: say so if not,
-        // rather than build an edge off its faces.
-        if let Some((f, middle)) =
-            surface_missed(&curve, self.faces_of_edge(e), &self.inner_surfaces).map_err(ctx)?
-        {
-            return Err(ctx(GeopError::new(format!(
-                "its curve from {start:?} to {end:?} is not on the offset of face {} at {middle:?}: offsetting this kind of edge is not supported",
-                self.names.faces[f]
-            ))));
-        }
-        Ok(Some(curve))
     }
 
     /// What is left of the open edge `e` at its start and at its end: from
@@ -533,7 +423,7 @@ impl<'a> Hollow<'a> {
             return Ok((None, None));
         }
         let edge = &self.spec.edges[e];
-        let piece = |from: Vector3, to: Vector3| shaped_like(&edge.curve, from, to, false);
+        let piece = |from: Vector3, to: Vector3| along(&edge.curve, from, to);
         let (s, t) = (edge.start, edge.end);
         Ok((
             self.walled[s]
@@ -545,56 +435,20 @@ impl<'a> Hollow<'a> {
         ))
     }
 
-    /// Where every coedge's inner copy ends on its face's inner surface, at
-    /// a walled vertex: the inner vertex projected onto it, from where the
-    /// coedge ends on the face — one `(u, v)` per junction of a loop, so
-    /// the coedges meeting there agree on it exactly.
-    fn inner_ends(&self) -> GeopResult<HashMap<At, Vector2>> {
-        let mut out = HashMap::new();
-        for (at, c) in self.coedges() {
-            let (_, end) = self.spec.ends(c.on)?;
-            if !self.walled[end] {
-                continue;
-            }
-            let seed = c.pcurve.ends()?.1;
-            let surface = &self.inner_surfaces[at.f];
-            let (u, v) = surface.project_in_domain(
-                self.inner_point(end),
-                seed[0].sharpen(),
-                seed[1].sharpen(),
-                PROJECT_ITERATIONS,
-            )?;
-            out.insert(at, Vector2::from_array([u, v]));
-        }
-        Ok(out)
-    }
-
-    /// Where the inner copy of the coedge `at` starts and ends on its face's
-    /// inner surface.
-    fn inner_pins(&self, at: At) -> (Vector2, Vector2) {
-        (self.inner_ends[&self.previous(at)], self.inner_ends[&at])
-    }
-
     /// The inner copy of the coedge `at`, on its face's inner surface.
-    fn inner_coedge(&self, at: At) -> GeopResult<CoedgeSpec> {
-        let c = self.coedge(at);
-        let (start, end) = self.inner_pins(at);
-        let curve = match c.on {
-            CoedgeOn::Edge(e, sense) => {
-                Some(sense.orient(self.inner_curves[e].as_ref().expect("not open")))
-            }
-            CoedgeOn::Vertex(_) => None,
-        };
-        Ok(CoedgeSpec {
-            on: c.on,
-            pcurve: pcurve(
-                &self.inner_surfaces[at.f],
-                &c.pcurve,
-                curve.as_ref(),
-                start,
-                end,
-            )?,
-        })
+    fn inner_coedge(&self, at: At) -> CoedgeSpec {
+        self.inner.faces[at.f].loops()[at.l][at.k].clone()
+    }
+
+    /// Where the inner copy of the coedge `at` ends on its face's inner
+    /// surface.
+    fn inner_end(&self, at: At) -> GeopResult<Vector2> {
+        Ok(self.inner_coedge(at).pcurve.ends()?.1)
+    }
+
+    /// The surface the inner copy of face `f` lies on.
+    fn inner_surface(&self, f: usize) -> &NurbSurface3D {
+        &self.inner.faces[f].surface
     }
 
     /// The hollowed solid, described whole, and the names of what it is
@@ -708,14 +562,14 @@ impl<'a> Hollow<'a> {
             let inner_loop = |l: usize| -> GeopResult<Vec<CoedgeSpec>> {
                 (0..face.loops()[l].len())
                     .map(|k| {
-                        let mut c = self.inner_coedge(At { f, l, k })?;
+                        let mut c = self.inner_coedge(At { f, l, k });
                         c.on = map(c.on, &at.inner_edge, &at.inner_vertex);
                         Ok(c)
                     })
                     .collect()
             };
             let inner = FaceSpec {
-                surface: self.inner_surfaces[f].clone(),
+                surface: self.inner_surface(f).clone(),
                 outer: inner_loop(0)?,
                 holes: (1..=face.holes.len())
                     .map(inner_loop)
@@ -812,7 +666,7 @@ impl<'a> Hollow<'a> {
             let inner_loop = |l: usize| -> GeopResult<Vec<CoedgeSpec>> {
                 (0..face.loops()[l].len())
                     .map(|k| {
-                        let mut c = self.inner_coedge(At { f, l, k })?;
+                        let mut c = self.inner_coedge(At { f, l, k });
                         c.on = match c.on {
                             CoedgeOn::Edge(e, sense) => CoedgeOn::Edge(edge[e].unwrap(), sense),
                             CoedgeOn::Vertex(v) => CoedgeOn::Vertex(vertex[v].unwrap()),
@@ -822,7 +676,7 @@ impl<'a> Hollow<'a> {
                     .collect()
             };
             out.faces.push(FaceSpec {
-                surface: self.inner_surfaces[f].clone(),
+                surface: self.inner_surface(f).clone(),
                 outer: inner_loop(0)?,
                 holes: (1..=face.holes.len())
                     .map(inner_loop)
@@ -872,7 +726,7 @@ impl<'a> Hollow<'a> {
                     vertex[y].unwrap(),
                 ));
                 // ...and its inner copy, the other way.
-                let inner = self.inner_coedge(here)?;
+                let inner = self.inner_coedge(here);
                 coedges.push((
                     CoedgeSpec {
                         on: CoedgeOn::Edge(at.inner_edge[e].unwrap(), sense.opposite()),
@@ -890,7 +744,7 @@ impl<'a> Hollow<'a> {
             let curves = &self.pieces[e];
             let (start_curve, end_curve) = in_order((&curves.0, &curves.1), sense);
             if let (Some(piece), Some(curve)) = (start_piece, start_curve) {
-                let to = self.inner_ends[&self.previous(here)];
+                let to = self.inner_end(self.previous(here))?;
                 let curve = sense.orient(curve);
                 coedges.push((
                     CoedgeSpec {
@@ -902,7 +756,7 @@ impl<'a> Hollow<'a> {
                 ));
             }
             if let (Some(piece), Some(curve)) = (end_piece, end_curve) {
-                let from = self.inner_ends[&here];
+                let from = self.inner_end(here)?;
                 let curve = sense.orient(curve);
                 coedges.push((
                     CoedgeSpec {
@@ -1024,71 +878,6 @@ impl<'a> Hollow<'a> {
         }
         Ok(faces)
     }
-}
-
-/// A curve shaped like `curve` from `start` to `end` — all the way round
-/// a circle back to `start`, if `closed`: a line for a straight one, an arc
-/// around the same axis for a circular one. Fails for any other curve, and
-/// for an `end` not on the circle around that axis through `start`.
-fn shaped_like(curve: &Curve3, start: Vector3, end: Vector3, closed: bool) -> GeopResult<Curve3> {
-    if curve.as_line()?.is_some() {
-        return NurbCurve3D::line(start, end);
-    }
-    let Some(arc) = curve.as_arc()? else {
-        return Err(GeopError::new(
-            "the edge is neither straight nor circular: offsetting it is not supported",
-        ));
-    };
-    let axis = arc.circle.axis();
-    let center = axis.project(&start);
-    let radius = start.sub(&center).norm();
-    if !closed
-        && !(axis.project(&end).could_be_equal(&center)
-            && end.sub(&center).norm().could_be_equal(radius))
-    {
-        return Err(GeopError::new(format!(
-            "{end:?} is not on the circle around {axis:?} through {start:?}"
-        )));
-    }
-    // Where the copy spans the same angles as the arc — a cylinder's rim
-    // moved along its axis, a disc's rim shrunk — it is the arc's own
-    // control points moved along the axis and scaled about it, weights and
-    // knots kept: the same parametrization, so the ruled surface between
-    // the two, a sheet's wall, is the cylinder, cone or ring between them,
-    // not a twisted one. Where it spans other angles — a sphere's meridian
-    // cut by an offset plane — it is the arc between its ends.
-    let scale = radius.div(arc.circle.radius)?;
-    let control_points = curve
-        .control_points
-        .iter()
-        .map(|cp| {
-            let w = cp[3];
-            let p = cp.dehomogenized()?;
-            let moved = center.add(&p.sub(&arc.circle.center).prod_scalar(scale));
-            Ok(Vector::from_array([
-                moved[0].mul(w),
-                moved[1].mul(w),
-                moved[2].mul(w),
-                w,
-            ]))
-        })
-        .collect::<GeopResult<Vec<_>>>()?;
-    let moved = NurbCurve3D::try_new(curve.degree, control_points, curve.knot_vector.clone())?;
-    let (from, to) = moved.ends()?;
-    let end = if closed { start } else { end };
-    if from.could_be_equal(&start) && to.could_be_equal(&end) {
-        return Ok(moved);
-    }
-    Arc {
-        circle: Circle {
-            center,
-            normal: arc.circle.normal,
-            radius,
-        },
-        start,
-        end,
-    }
-    .to_curve()
 }
 
 /// The first of the faces `faces`, indices into `surfaces`, whose surface

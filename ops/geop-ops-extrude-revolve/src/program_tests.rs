@@ -1643,11 +1643,11 @@ fn extrude_up_to_next() {
     // The post's foot on the sketch, its head on the block's bottom: none of
     // the tool past that is left.
     assert_eq!(heights(&joined), [0, 2000, 3000]);
-    // The block's six faces, the post's four walls and its foot — and the
-    // block's top face in two: the tool, built long enough to reach past
-    // the block, was imprinted on it where it came out again, and the
-    // pieces it leaves are not merged back.
-    assert_eq!(joined.topology().faces.len(), 6 + 4 + 1 + 1);
+    // The block's six faces, the post's four walls and its foot. The tool,
+    // built long enough to reach past the block, was imprinted on the
+    // block's top where it came out again; the pieces of that face it left
+    // are merged back into one.
+    assert_eq!(joined.topology().faces.len(), 6 + 4 + 1);
 
     let cut = on_block(0.0, 1.0, vec![up_to_next(Combine::cut(target()))]).unwrap();
     assert_valid(&cut);

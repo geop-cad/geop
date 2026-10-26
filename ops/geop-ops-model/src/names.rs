@@ -21,6 +21,9 @@ use super::ids::RefId;
 pub struct NameRegistry {
     id_to_name: HashMap<RefId, String>,
     name_to_id: HashMap<String, RefId>,
+    /// Names of entities made part of another, each with that other's
+    /// name: they resolve to it (see [`NameRegistry::alias`]).
+    aliases: HashMap<String, String>,
 }
 
 impl NameRegistry {
@@ -43,8 +46,33 @@ impl NameRegistry {
                 "NameRegistry::insert: name {name:?} is already used by {existing}"
             )));
         }
+        self.aliases.remove(&name);
         self.id_to_name.insert(id, name.clone());
         self.name_to_id.insert(name, id);
+        Ok(())
+    }
+
+    /// Lets `name`, the name of an entity made part of the entity named
+    /// `into` — two faces on one surface made one, two edges joined —
+    /// stand for `into` from now on, so what referred to either still
+    /// finds it. Fails if `name` names an entity of its own.
+    pub fn alias(&mut self, name: impl Into<String>, into: impl Into<String>) -> GeopResult<()> {
+        let name = name.into();
+        if let Some(&id) = self.name_to_id.get(&name) {
+            return Err(GeopError::new(format!(
+                "NameRegistry::alias: {name:?} names {id}, it cannot stand for another"
+            )));
+        }
+        let into = into.into();
+        // What stood for `name` stands for `into` now.
+        let stood: Vec<String> = (self.aliases.iter())
+            .filter(|(_, target)| **target == name)
+            .map(|(alias, _)| alias.clone())
+            .collect();
+        for alias in stood {
+            self.aliases.insert(alias, into.clone());
+        }
+        self.aliases.insert(name, into);
         Ok(())
     }
 
@@ -87,8 +115,16 @@ impl NameRegistry {
         self.id_to_name.get(&id.into()).map(String::as_str)
     }
 
+    /// Whether `name` is an entity's own name — not merely an alias, which
+    /// a new entity may take over.
+    pub fn is_taken(&self, name: &str) -> bool {
+        self.name_to_id.contains_key(name)
+    }
+
+    /// The entity named `name`, or that `name` stands for as an alias.
     pub fn id_of(&self, name: &str) -> Option<RefId> {
-        self.name_to_id.get(name).copied()
+        (self.name_to_id.get(name).copied())
+            .or_else(|| self.name_to_id.get(self.aliases.get(name)?).copied())
     }
 
     /// Every `(id, name)`, in no particular order.
