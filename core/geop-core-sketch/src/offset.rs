@@ -23,10 +23,18 @@
 //! circle about the corner, touching both, says the same. An open chain's
 //! offset ends square to the chain's ends.
 //!
-//! Splines are refused — their offset is no spline — and so is an offset
-//! that would cross itself: an arc offset past its center, a curve too
-//! short for the corners at its ends to fit, pieces of the offset running
-//! into each other.
+//! **Crossings.** Where a piece is too short for the corners at its ends,
+//! or offsets run into each other — offsetting into a notch narrower than
+//! twice the distance — the offset drawn round the chain crosses itself.
+//! It is cut where it does, and what lies nearer the chain than the
+//! distance dropped: what is left runs on from part to part at the
+//! crossings, each part still tied to its source. A part cut off at both
+//! ends from the corners that carry the distance holds it by a circle
+//! about its source's corner touching it, as large as one about the first
+//! part's: one dimension still says how far all of it is.
+//!
+//! Splines are refused — their offset is no spline — and so is an arc
+//! offset past its center, and an offset that leaves nothing.
 
 use geop_core_math::solvers::system::RELATIVE_TOLERANCE;
 use geop_core_math::{
@@ -61,6 +69,25 @@ pub enum Corners {
 pub struct Offsetted {
     pub curves: Vec<CurveId>,
     pub distance: ConstraintId,
+}
+
+/// What a part of an offset drawn round a chain is of: the offset of the
+/// chain's `i`-th piece, or the arc round the corner after it.
+#[derive(Clone, Copy, Debug)]
+enum Of {
+    Piece(usize),
+    Round(usize),
+}
+
+/// A part of an offset drawn round a chain, kept where it was cut at its
+/// crossings: of the `elem`-th thing drawn, running from its start
+/// (`from_start`) or a crossing to its end (`to_end`) or a crossing.
+#[derive(Clone, Copy, Debug)]
+struct Sub {
+    elem: usize,
+    plain: Plain,
+    from_start: bool,
+    to_end: bool,
 }
 
 /// A piece of a chain, along the chain's direction, in plain numbers.
@@ -324,8 +351,7 @@ impl Sketch {
             });
         }
 
-        // Where each offset piece starts and ends, and that it still runs
-        // the way its piece does between them.
+        // Where each offset piece starts and ends.
         let start_of = |i: usize| -> P2 {
             if i == 0 && !chain.closed {
                 return offsets[0].at(0.0);
@@ -344,15 +370,15 @@ impl Sketch {
                 Joint::Round { from, .. } => *from,
             }
         };
-        let mut trimmed: Vec<Plain> = Vec::new();
-        for i in 0..n {
+        // The offset drawn round the chain, before it is trimmed: each
+        // piece's offset between where it starts and ends — the wrong way
+        // round where the piece is too short for its corners — and the arcs
+        // round the corners between them, in order.
+        let mut path: Vec<(Plain, Of)> = Vec::new();
+        for (i, offset) in offsets.iter().enumerate() {
             let (s, e) = (start_of(i), end_of(i));
-            let (u, v) = (
-                unwrapped(&offsets[i], s, true),
-                unwrapped(&offsets[i], e, false),
-            );
-            let piece = match offsets[i] {
-                Plain::Line { .. } if v > u => Some(Plain::Line {
+            let piece = match *offset {
+                Plain::Line { .. } => (plain::distance(s, e) > resolution).then_some(Plain::Line {
                     a: s,
                     b: e,
                     infinite: false,
@@ -360,164 +386,336 @@ impl Sketch {
                 Plain::Round {
                     span: Some((_, sweep)),
                     ..
-                } if v > u => Plain::arc(s, e, sweep * (v - u)),
+                } => {
+                    let (u, v) = (
+                        unwrapped(offset, s, true),
+                        unwrapped(offset, e, false),
+                    );
+                    Plain::arc(s, e, sweep * (v - u))
+                }
                 _ => None,
             };
-            trimmed.push(piece.ok_or_else(|| {
-                GeopError::new(format!(
-                    "{} is too short for an offset of {d}: its offset would turn back on itself",
-                    pieces_of[i].0
-                ))
-            })?);
-        }
-
-        // The offset in order, joining arcs among its pieces: nothing in it
-        // may cross anything but its neighbours, where they meet.
-        let mut path: Vec<(Plain, String)> = Vec::new();
-        for i in 0..n {
-            path.push((trimmed[i], format!("the offset of {}", pieces_of[i].0)));
+            // A piece of no length between its corners leaves its
+            // neighbours meeting there.
+            if let Some(piece) = piece {
+                path.push((piece, Of::Piece(i)));
+            }
             if let Some(Joint::Round { from, to, sweep }) = joint_of.get(i)
                 && let Some(arc) = Plain::arc(*from, *to, *sweep)
             {
-                path.push((
-                    arc,
-                    format!("the arc round the corner after {}", pieces_of[i].0),
-                ));
+                path.push((arc, Of::Round(i)));
             }
         }
         let m = path.len();
-        for a in 0..m {
-            for b in a + 2..m {
-                if chain.closed && a == 0 && b == m - 1 {
-                    continue;
+
+        // Cut where it crosses itself, and keep what is no nearer the chain
+        // than the distance: what a piece too short for its corners, or
+        // offsets running into each other, leave of the offset.
+        let near_end = |plain: &Plain, q: P2| {
+            plain::distance(plain.at(0.0), q) <= resolution
+                || plain::distance(plain.at(1.0), q) <= resolution
+        };
+        let to_chain = |q: P2| {
+            pieces
+                .iter()
+                .map(|p| plain::distance(q, p.at(p.nearest(q))))
+                .fold(f64::INFINITY, f64::min)
+        };
+        let mut subs: Vec<Sub> = Vec::new();
+        for (k, (plain, _)) in path.iter().enumerate() {
+            let mut cuts: Vec<f64> = Vec::new();
+            for (j, (other, _)) in path.iter().enumerate() {
+                if j != k {
+                    cuts.extend(
+                        plain
+                            .crossings(other, false)
+                            .into_iter()
+                            .filter(|&q| !near_end(plain, q))
+                            .map(|q| plain.param(q)),
+                    );
                 }
-                if !path[a].0.crossings(&path[b].0, false).is_empty() {
+            }
+            cuts.sort_by(f64::total_cmp);
+            cuts.dedup_by(|a, b| plain::distance(plain.at(*a), plain.at(*b)) <= resolution);
+            let ts: Vec<f64> = std::iter::once(0.0)
+                .chain(cuts)
+                .chain(std::iter::once(1.0))
+                .collect();
+            for w in ts.windows(2) {
+                let part = plain.part(w[0], w[1]);
+                if to_chain(part.at(0.5)) > d.abs() - resolution {
+                    subs.push(Sub {
+                        elem: k,
+                        plain: part,
+                        from_start: w[0] == 0.0,
+                        to_end: w[1] == 1.0,
+                    });
+                }
+            }
+        }
+        if subs.is_empty() {
+            return Err(GeopError::new(format!(
+                "the offset by {d} leaves nothing: the chain is too short or narrow for it"
+            )));
+        }
+
+        // Each part on to the one starting where it ends: the next of its
+        // piece's own along the path where it reaches its end, else the one
+        // starting at the crossing it was cut at.
+        let mut next: Vec<Option<usize>> = vec![None; subs.len()];
+        for a in 0..subs.len() {
+            let end = subs[a].plain.at(1.0);
+            let open_end = subs[a].to_end && subs[a].elem == m - 1 && !chain.closed;
+            let found: Vec<usize> = (0..subs.len())
+                .filter(|&b| {
+                    let joined = if subs[a].to_end {
+                        subs[b].from_start && subs[b].elem == (subs[a].elem + 1) % m
+                    } else {
+                        !subs[b].from_start
+                    };
+                    b != a && joined && plain::distance(subs[b].plain.at(0.0), end) <= resolution
+                })
+                .collect();
+            match (found.as_slice(), open_end) {
+                (&[b], false) => next[a] = Some(b),
+                ([], true) => {}
+                _ => {
                     return Err(GeopError::new(format!(
-                        "the offset by {d} would cross itself: {} runs into {}",
-                        path[a].1, path[b].1
+                        "the offset by {d}, trimmed where it crosses itself, does not run on from {end:?} as one curve"
                     )));
                 }
             }
         }
-
-        // Built: the points first — one where pieces share it — then the
-        // pieces, then what joins them.
-        let mut starts = Vec::new();
-        let mut ends = Vec::new();
-        let mut shared: Vec<Option<PointId>> = Vec::new();
-        for joint in &joint_of {
-            shared.push(match joint {
-                Joint::Shared { at, .. } => Some(self.new_point_at(*at)),
-                Joint::Round { .. } => None,
-            });
-        }
-        for i in 0..n {
-            let s = match (i, chain.closed) {
-                (0, false) => None,
-                _ => shared[(i + n - 1) % n],
-            };
-            let e = match (i == n - 1, chain.closed) {
-                (true, false) => None,
-                _ => shared[i],
-            };
-            starts.push(s.unwrap_or_else(|| self.new_point_at(trimmed[i].at(0.0))));
-            ends.push(e.unwrap_or_else(|| self.new_point_at(trimmed[i].at(1.0))));
-        }
-        let mut made = Vec::new();
-        let mut offset_curves = Vec::new();
-        let mut distance = None;
-        for i in 0..n {
-            let (source, reversed) = pieces_of[i];
-            let (s, e) = (starts[i], ends[i]);
-            // Each offset runs the way its source does.
-            let (s, e) = if reversed { (e, s) } else { (s, e) };
-            let curve = match (self.curves[&source].kind.clone(), trimmed[i]) {
-                (CurveKind::Line { .. }, _) => self.add_line(s, e),
-                (
-                    CurveKind::Arc { .. },
-                    Plain::Round {
-                        span: Some((_, sweep)),
-                        ..
-                    },
-                ) => self.add_arc(
-                    s,
-                    e,
-                    Scalar::from_f64(if reversed { -sweep } else { sweep }),
-                ),
-                (kind, _) => unreachable!("chained and trimmed as a line or arc: {kind:?}"),
-            };
-            made.push(curve);
-            offset_curves.push(curve);
-            if i == 0 {
-                distance = Some(self.constrain(Constraint::Offset {
-                    a: source,
-                    b: curve,
-                    value,
-                }));
-            } else if let CurveKind::Line { .. } = self.curves[&source].kind {
-                self.constrain(Constraint::Parallel {
-                    a: source,
-                    b: curve,
-                });
-            } else {
-                self.constrain(Constraint::Concentric {
-                    a: source,
-                    b: curve,
-                });
+        let mut previous: Vec<Option<usize>> = vec![None; subs.len()];
+        for (a, b) in next.iter().enumerate() {
+            if let Some(b) = *b {
+                if previous[b].is_some() {
+                    return Err(GeopError::new(format!(
+                        "the offset by {d}, trimmed where it crosses itself, runs into itself at {:?}",
+                        subs[b].plain.at(0.0)
+                    )));
+                }
+                previous[b] = Some(a);
             }
         }
-        for (i, joint) in joint_of.iter().enumerate() {
-            let j = (i + 1) % n;
-            let (oi, oj) = (offset_curves[i], offset_curves[j]);
-            let corner = {
-                let (source, reversed) = pieces_of[i];
-                let (s, e) = self.curves[&source].endpoints().expect("a line or arc");
-                if reversed { s } else { e }
-            };
-            match *joint {
-                Joint::Shared {
-                    by: Held::Tangent, ..
-                } => {
-                    self.constrain(Constraint::Tangent { a: oi, b: oj });
+        // What joins a part to the next across a corner of the chain, not
+        // a crossing: the joint after the piece or arc it is of.
+        let joint_after = |a: usize| -> Option<usize> {
+            if !subs[a].to_end {
+                return None;
+            }
+            match path[subs[a].elem].1 {
+                Of::Piece(i) | Of::Round(i) => Some(i),
+            }
+        };
+
+        // Built: a point where each part ends, shared with the next; then
+        // the parts, each tied to its source; then what joins them.
+        let mut start_point: Vec<Option<PointId>> = vec![None; subs.len()];
+        let mut end_point: Vec<Option<PointId>> = vec![None; subs.len()];
+        for a in 0..subs.len() {
+            let p = self.new_point_at(subs[a].plain.at(1.0));
+            end_point[a] = Some(p);
+            if let Some(b) = next[a] {
+                start_point[b] = Some(p);
+            }
+        }
+        for a in 0..subs.len() {
+            if start_point[a].is_none() {
+                start_point[a] = Some(self.new_point_at(subs[a].plain.at(0.0)));
+            }
+        }
+        let corner_of = |sketch: &Sketch, i: usize| -> PointId {
+            let (source, reversed) = pieces_of[i];
+            let (s, e) = sketch.curves[&source].endpoints().expect("a line or arc");
+            if reversed { s } else { e }
+        };
+        let mut curve_of: Vec<CurveId> = Vec::with_capacity(subs.len());
+        let mut made = Vec::new();
+        let mut distance = None;
+        for a in 0..subs.len() {
+            let (s, e) = (start_point[a].unwrap(), end_point[a].unwrap());
+            let curve = match path[subs[a].elem].1 {
+                Of::Piece(i) => {
+                    let (source, reversed) = pieces_of[i];
+                    // Each offset runs the way its source does.
+                    let (s, e) = if reversed { (e, s) } else { (s, e) };
+                    let curve = match (&self.curves[&source].kind, subs[a].plain) {
+                        (CurveKind::Line { .. }, _) => self.add_line(s, e),
+                        (
+                            CurveKind::Arc { .. },
+                            Plain::Round {
+                                span: Some((_, sweep)),
+                                ..
+                            },
+                        ) => self.add_arc(
+                            s,
+                            e,
+                            Scalar::from_f64(if reversed { -sweep } else { sweep }),
+                        ),
+                        (kind, _) => unreachable!("chained and trimmed as a line or arc: {kind:?}"),
+                    };
+                    if distance.is_none() {
+                        distance = Some(self.constrain(Constraint::Offset {
+                            a: source,
+                            b: curve,
+                            value,
+                        }));
+                    } else if let CurveKind::Line { .. } = self.curves[&source].kind {
+                        self.constrain(Constraint::Parallel {
+                            a: source,
+                            b: curve,
+                        });
+                    } else {
+                        self.constrain(Constraint::Concentric {
+                            a: source,
+                            b: curve,
+                        });
+                    }
+                    curve
                 }
-                Joint::Shared {
-                    by: Held::Square, ..
-                } => {
-                    self.square_end(pieces_of[i].0, corner, ends[i]);
-                }
-                Joint::Shared {
-                    by: Held::Circle, ..
-                } => {
-                    let circle = self.add_circle(corner, value);
-                    self.set_construction(circle, true);
-                    self.constrain(Constraint::Tangent { a: oi, b: circle });
-                    self.constrain(Constraint::Tangent { a: oj, b: circle });
-                }
-                Joint::Round { sweep, .. } => {
-                    let arc = self.add_arc(ends[i], starts[j], Scalar::from_f64(sweep));
-                    made.push(arc);
+                Of::Round(i) => {
+                    let Plain::Round {
+                        span: Some((_, sweep)),
+                        ..
+                    } = subs[a].plain
+                    else {
+                        unreachable!("an arc round a corner");
+                    };
+                    let arc = self.add_arc(s, e, Scalar::from_f64(sweep));
+                    let corner = corner_of(self, i);
                     self.constrain(Constraint::Center {
                         point: corner,
                         curve: arc,
                     });
-                    self.constrain(Constraint::Tangent { a: oi, b: arc });
-                    self.constrain(Constraint::Tangent { a: arc, b: oj });
+                    arc
+                }
+            };
+            curve_of.push(curve);
+            made.push(curve);
+        }
+        // Across the chain's corners, as the offsets meet there; a part
+        // joined so to one whose distance is held holds it too.
+        let mut held = vec![false; subs.len()];
+        let first = (0..subs.len())
+            .find(|&a| matches!(path[subs[a].elem].1, Of::Piece(_)))
+            .ok_or_else(|| {
+                GeopError::new(format!(
+                    "the offset by {d} leaves only arcs round corners: the chain is too short for it"
+                ))
+            })?;
+        held[first] = true;
+        let mut joined: Vec<(usize, usize)> = Vec::new();
+        for a in 0..subs.len() {
+            let (Some(b), Some(i)) = (next[a], joint_after(a)) else {
+                continue;
+            };
+            if !subs[b].from_start {
+                continue;
+            }
+            joined.push((a, b));
+            let (oa, ob) = (curve_of[a], curve_of[b]);
+            match (path[subs[a].elem].1, path[subs[b].elem].1, &joint_of[i]) {
+                (Of::Piece(_), Of::Piece(_), Joint::Shared { by, .. }) => match by {
+                    Held::Tangent => {
+                        self.constrain(Constraint::Tangent { a: oa, b: ob });
+                    }
+                    Held::Square => {
+                        let corner = corner_of(self, i);
+                        self.square_end(pieces_of[i].0, corner, end_point[a].unwrap());
+                    }
+                    Held::Circle => {
+                        let corner = corner_of(self, i);
+                        let circle = self.add_circle(corner, value);
+                        self.set_construction(circle, true);
+                        self.constrain(Constraint::Tangent { a: oa, b: circle });
+                        self.constrain(Constraint::Tangent { a: ob, b: circle });
+                    }
+                },
+                _ => {
+                    self.constrain(Constraint::Tangent { a: oa, b: ob });
+                }
+            }
+        }
+        loop {
+            let mut grew = false;
+            for &(a, b) in &joined {
+                if held[a] != held[b] {
+                    held[a] = true;
+                    held[b] = true;
+                    grew = true;
+                }
+            }
+            if !grew {
+                break;
+            }
+        }
+        // A part cut off from them at crossings holds the distance by a
+        // circle about its source's corner, touching it, as large as one
+        // about the first's: one dimension still says how far all are.
+        let mut reference: Option<CurveId> = None;
+        for a in 0..subs.len() {
+            if held[a] {
+                continue;
+            }
+            let reference = *reference.get_or_insert_with(|| {
+                let first_piece = match path[subs[first].elem].1 {
+                    Of::Piece(i) | Of::Round(i) => i,
+                };
+                let circle = self.add_circle(corner_of(self, first_piece), value);
+                self.set_construction(circle, true);
+                self.constrain(Constraint::Tangent {
+                    a: curve_of[first],
+                    b: circle,
+                });
+                circle
+            });
+            match path[subs[a].elem].1 {
+                Of::Piece(i) => {
+                    let circle = self.add_circle(corner_of(self, i), value);
+                    self.set_construction(circle, true);
+                    self.constrain(Constraint::Tangent {
+                        a: curve_of[a],
+                        b: circle,
+                    });
+                    self.constrain(Constraint::Equal {
+                        a: circle,
+                        b: reference,
+                    });
+                }
+                Of::Round(_) => {
+                    self.constrain(Constraint::Equal {
+                        a: curve_of[a],
+                        b: reference,
+                    });
                 }
             }
         }
         // An open chain's offset ends square to the chain's ends.
         if !chain.closed {
-            for (i, at_start) in [(0, true), (n - 1, false)] {
+            for a in 0..subs.len() {
+                let (k, at_start) = match (subs[a].from_start, subs[a].to_end, subs[a].elem) {
+                    (true, _, 0) if previous[a].is_none() => (0, true),
+                    (_, true, k) if k == m - 1 && next[a].is_none() => (k, false),
+                    _ => continue,
+                };
+                let Of::Piece(i) = path[k].1 else {
+                    continue;
+                };
                 let (source, reversed) = pieces_of[i];
                 let (s, e) = self.curves[&source].endpoints().expect("a line or arc");
                 let end = if at_start != reversed { s } else { e };
-                let image = if at_start { starts[i] } else { ends[i] };
+                let image = if at_start {
+                    start_point[a].unwrap()
+                } else {
+                    end_point[a].unwrap()
+                };
                 self.square_end(source, end, image);
             }
         }
         Ok(Offsetted {
             curves: made,
-            distance: distance.expect("a chain has a first piece"),
+            distance: distance.expect("a part of a piece is kept"),
         })
     }
 
@@ -960,5 +1158,93 @@ mod tests {
             }
         }
         assert!(failures.is_empty(), "{}", failures.join("\n"));
+    }
+
+    /// A 4 x 4 square with a notch 1 wide and 2 deep cut down from the
+    /// middle of its top, offset outward by 0.6: into the notch, its walls'
+    /// offsets cross and its floor's turns back. What is left is trimmed
+    /// where the arcs round the notch's top corners cross, over the notch's
+    /// middle; the rest stays tied to the outline.
+    #[test]
+    fn an_offset_over_a_notch_narrower_than_twice_it_is_trimmed() {
+        let corners = [
+            [0.0, 0.0],
+            [4.0, 0.0],
+            [4.0, 4.0],
+            [2.5, 4.0],
+            [2.5, 2.0],
+            [1.5, 2.0],
+            [1.5, 4.0],
+            [0.0, 4.0],
+        ];
+        let mut s = Sketch::new();
+        let p = corners.map(|q| s.add_point(n(q[0]), n(q[1])));
+        let sides: Vec<CurveId> = (0..8).map(|i| s.add_line(p[i], p[(i + 1) % 8])).collect();
+        for (&point, q) in p.iter().zip(corners) {
+            s.constrain(Constraint::Fix {
+                point,
+                x: n(q[0]),
+                y: n(q[1]),
+            });
+        }
+        let made = s.offset(&sides, n(-0.6), Corners::Round).unwrap();
+        let report = s.solve().unwrap();
+        assert!(report.converged && report.dof == 0, "{report:?}");
+        assert!(
+            near(bounds(&s, &made.curves), [-0.6, -0.6, 4.6, 4.6]),
+            "{:?}",
+            bounds(&s, &made.curves)
+        );
+        // The notch's walls and floor leave nothing; the arcs round its top
+        // corners meet over its middle.
+        let dip = |s: &Sketch, r: f64| {
+            let q = [2.0, 4.0 + (r * r - 0.25f64).sqrt()];
+            made.curves
+                .iter()
+                .flat_map(|c| s.curves[c].points())
+                .any(|p| plain::distance(xy(s, p), q) < 1e-7)
+        };
+        assert!(dip(&s, 0.6));
+        assert_eq!(lines(&s, &made.curves).len(), 5);
+        assert_eq!(made.curves.len(), 5 + 4 + 2);
+        s.enclose().unwrap();
+    }
+
+    /// The notched square's trimmed offset following its dimension, from
+    /// 0.6 to 0.7: the arcs round the notch's corners still cross over its
+    /// middle, higher up.
+    #[test]
+    #[ignore = "bug: the solve stalls at its first step (Stop::Flat with 40 independent rows of 40, the dimension's residual 0.1 left) although the offset at 0.6 is enclosed (Krawczyk) and the configuration at 0.7 is the same one: the two arcs round the notch's corners share their crossing point, each held by its center and one tangency. Not yet traced into the least-squares step."]
+    fn a_trimmed_offset_follows_its_dimension() {
+        let mut s = Sketch::new();
+        let corners = [
+            [0.0, 0.0],
+            [4.0, 0.0],
+            [4.0, 4.0],
+            [2.5, 4.0],
+            [2.5, 2.0],
+            [1.5, 2.0],
+            [1.5, 4.0],
+            [0.0, 4.0],
+        ];
+        let p = corners.map(|q| s.add_point(n(q[0]), n(q[1])));
+        let sides: Vec<CurveId> = (0..8).map(|i| s.add_line(p[i], p[(i + 1) % 8])).collect();
+        for (&point, q) in p.iter().zip(corners) {
+            s.constrain(Constraint::Fix {
+                point,
+                x: n(q[0]),
+                y: n(q[1]),
+            });
+        }
+        let made = s.offset(&sides, n(-0.6), Corners::Round).unwrap();
+        s.solve().unwrap();
+        set(&mut s, made.distance, 0.7);
+        let report = s.solve().unwrap();
+        assert!(report.converged, "{report:?}");
+        assert!(
+            near(bounds(&s, &made.curves), [-0.7, -0.7, 4.7, 4.7]),
+            "{:?}",
+            bounds(&s, &made.curves)
+        );
     }
 }

@@ -258,6 +258,30 @@ impl Plain {
         }
     }
 
+    /// Its part from `t0` to `t1` along it (see [`Plain::param`]): of a
+    /// line, the segment; of an arc or circle, the arc.
+    pub fn part(&self, t0: f64, t1: f64) -> Plain {
+        match *self {
+            Plain::Line { .. } => Plain::Line {
+                a: self.at(t0),
+                b: self.at(t1),
+                infinite: false,
+            },
+            Plain::Round {
+                center,
+                radius,
+                span,
+            } => {
+                let (start, sweep) = span.unwrap_or((0.0, TAU));
+                Plain::Round {
+                    center,
+                    radius,
+                    span: Some((start + t0 * sweep, (t1 - t0) * sweep)),
+                }
+            }
+        }
+    }
+
     /// The polyline from `t0` to `t1` along it (see [`Plain::param`]).
     pub fn polyline(&self, t0: f64, t1: f64) -> Vec<P2> {
         let steps = match self {

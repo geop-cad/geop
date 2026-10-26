@@ -392,4 +392,11 @@ The case: a box with filleted top edges, top removed; or a cup whose rim fillet 
   for a face whose offset does not collapse but whose copy inverts
   (`a_chamfer_narrower_than_the_walls`), 2.11 past the apex inside a face
   (`a_cone_cut_off_short_of_its_tip_shelled_past_it`). 2.15 voids are
-  refused saying why (the void's wall would float free). 2.12 is unchanged.
+  refused saying why (the void's wall would float free).
+- **2.12 (a):** a sketch offset that crosses itself is cut at its crossings
+  and what lies nearer the chain than the distance dropped, instead of
+  refused; a part cut off from the corners holds the distance by an equal
+  construction circle. Left: the solve stalls when such a trimmed offset's
+  dimension is changed (ignored `a_trimmed_offset_follows_its_dimension`);
+  collinear overlaps (`Corners::Extend` over a narrow notch) are refused;
+  several chains at once, decisions in intervals and splines are not done.
