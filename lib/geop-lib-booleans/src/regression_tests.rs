@@ -1,8 +1,8 @@
 //! Booleans that once failed, rebuilt from their solids.
 
 use geop_core_math::scalars::Scalar;
-use geop_core_topology::{Body, SolidId, validation::validate};
-use geop_lib_sweep::shapes::block;
+use geop_core_topology::{Body, SolidId, contains::shell::solid_lumps, validation::validate};
+use geop_lib_sweep::shapes::{block, sphere_solid, v3};
 use geop_ops_model::{BooleanOp, NamedModel, Namer};
 
 use crate::{boolean, remesh::RemeshParams, scenes::validation};
@@ -101,5 +101,63 @@ fn dome_poking_through_a_plate() {
     assert!(
         intersection.definitely_greater(Scalar::ZERO),
         "{intersection:?}"
+    );
+}
+
+/// The lumps of `solid`, each its outer shell's face count and how many
+/// voids it holds.
+fn lumps(model: &NamedModel, solid: SolidId) -> Vec<(usize, usize)> {
+    let params = RemeshParams::default();
+    let topology = model.topology();
+    solid_lumps(
+        topology,
+        solid,
+        params.max_nodes,
+        params.curve_curve_min_subdivision_size,
+        7,
+    )
+    .unwrap()
+    .into_iter()
+    .map(|(outer, voids)| (topology.get_shell(outer).unwrap().faces.len(), voids.len()))
+    .collect()
+}
+
+fn combined(model: &mut NamedModel, a: SolidId, b: SolidId, op: BooleanOp) -> SolidId {
+    let namer = Namer::new("boolean", "b").unwrap();
+    let result = boolean(model, &namer, a, b, op, RemeshParams::default())
+        .unwrap_or_else(|e| panic!("{op:?}: {e:?}"))
+        .unwrap_or_else(|| panic!("{op:?}: empty"));
+    if let Err(errors) = validate(&validation(), model.topology()) {
+        panic!("{op:?}: {} error(s): {}", errors.len(), errors[0]);
+    }
+    result
+}
+
+/// A bar with a slab cut out across its middle falls in two: one solid of
+/// two lumps, each a closed shell of its own, the box's six faces each.
+#[test]
+fn bar_cut_in_two_is_two_lumps() {
+    let mut model = NamedModel::new();
+    let bar = block(&mut model, "bar", [0.0, 0.0, 0.0], [4.0, 1.0, 1.0]);
+    let slab = block(&mut model, "slab", [1.5, -1.0, -1.0], [2.5, 2.0, 2.0]);
+    let result = combined(&mut model, bar, slab, BooleanOp::Difference);
+    assert_eq!(lumps(&model, result), vec![(6, 0), (6, 0)]);
+    assert!(volume(&model, result).could_be_equal(Scalar::from_f64(3.0)));
+}
+
+/// A block less a sphere inside it keeps the sphere's room as a void: one
+/// lump, the block's six faces, holding one void.
+#[test]
+fn block_less_a_sphere_inside_it_has_a_void() {
+    let mut model = NamedModel::new();
+    let cube = block(&mut model, "cube", [0.0, 0.0, 0.0], [4.0, 4.0, 4.0]);
+    let ball = sphere_solid(&mut model, "ball", v3(2.0, 2.0, 2.0), Scalar::ONE).unwrap();
+    let result = combined(&mut model, cube, ball, BooleanOp::Difference);
+    assert_eq!(lumps(&model, result), vec![(6, 1)]);
+    let expected = Scalar::from_f64(64.0).sub(Scalar::PI.mul(Scalar::from_f64(4.0 / 3.0)));
+    let got = volume(&model, result);
+    assert!(
+        got.sub(expected).abs().to_f64() < 1e-6,
+        "{got:?} vs {expected:?}"
     );
 }

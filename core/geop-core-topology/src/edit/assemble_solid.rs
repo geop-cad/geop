@@ -1,4 +1,4 @@
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 
 use imbl::OrdMap;
 
@@ -6,12 +6,19 @@ use crate::{
     Body, CoedgeGeometry, CoedgeId, EdgeId, FaceId, Model, Shell, ShellId, Solid, SolidId,
     VertexId, boundary::BoundaryType,
 };
-use geop_core_math::geop_error::{GeopError, GeopResult};
+use geop_core_math::{
+    geop_error::{GeopError, GeopResult},
+    union_find::UnionFind,
+};
 
 impl Model {
-    /// Replace the bodies `consumed` by one new solid of a single shell made
-    /// of `keep`, which must be faces of those bodies. Every other face they
-    /// owned is deleted, and so is everything no face reaches any more.
+    /// Replace the bodies `consumed` by one new solid bounded by `keep`,
+    /// which must be faces of those bodies: a shell for each connected set
+    /// of them, faces sharing an edge being connected. A boolean that cuts
+    /// a bar in two, or leaves a void inside a block, so keeps two shells,
+    /// each a closed surface of its own (see [`Solid`]). Every other face
+    /// the bodies owned is deleted, and so is everything no face reaches any
+    /// more.
     ///
     /// What a boolean does last, once it has decided which faces survive.
     /// `Ok(None)` (and no solid) when `keep` is empty: the result is empty,
@@ -27,39 +34,51 @@ impl Model {
         consumed: &[Body],
         keep: &[FaceId],
     ) -> GeopResult<Option<SolidId>> {
-        let Some(shell_id) = self.assemble_shell(consumed, keep)? else {
+        let shells = self.assemble_shells(consumed, &connected(self, keep))?;
+        if shells.is_empty() {
             return Ok(None);
-        };
+        }
         let solid_id = self.insert_solid(Solid {
-            shells: vec![shell_id],
+            shells: shells.clone(),
         });
-        self.get_shell_mut(shell_id)?.solid = Some(solid_id);
+        for shell_id in shells {
+            self.get_shell_mut(shell_id)?.solid = Some(solid_id);
+        }
         Ok(Some(solid_id))
     }
 
     /// Like [`Model::assemble_solid`], but `keep` becomes a sheet — faces
-    /// standing on their own — rather than a solid: what is left of a sheet
-    /// once it is trimmed.
+    /// standing on their own, in one shell whether connected or not —
+    /// rather than a solid: what is left of a sheet once it is trimmed.
     pub fn assemble_sheet(
         &mut self,
         consumed: &[Body],
         keep: &[FaceId],
     ) -> GeopResult<Option<ShellId>> {
-        self.assemble_shell(consumed, keep)
+        let groups = if keep.is_empty() {
+            Vec::new()
+        } else {
+            vec![keep.to_vec()]
+        };
+        Ok(self.assemble_shells(consumed, &groups)?.first().copied())
     }
 
-    /// [`Model::assemble_solid`]'s work, short of making the shell of `keep`
-    /// a solid's.
-    fn assemble_shell(
+    /// [`Model::assemble_solid`]'s work, short of making the shells of
+    /// `groups` (one shell each) a solid's.
+    fn assemble_shells(
         &mut self,
         consumed: &[Body],
-        keep: &[FaceId],
-    ) -> GeopResult<Option<ShellId>> {
+        groups: &[Vec<FaceId>],
+    ) -> GeopResult<Vec<ShellId>> {
         let mut consumed_faces: HashSet<FaceId> = HashSet::new();
         for &body in consumed {
             consumed_faces.extend(self.body_faces(body)?);
         }
-        if let Some(face) = keep.iter().find(|f| !consumed_faces.contains(f)) {
+        if let Some(face) = groups
+            .iter()
+            .flatten()
+            .find(|f| !consumed_faces.contains(f))
+        {
             return Err(GeopError::new(format!(
                 "Model::assemble_solid: face {face} is to be kept, but belongs to none of the consumed bodies {consumed:?}"
             )));
@@ -78,24 +97,24 @@ impl Model {
             }
         }
 
-        let kept: HashSet<FaceId> = keep.iter().copied().collect();
+        let kept: HashSet<FaceId> = groups.iter().flatten().copied().collect();
         retain(&mut self.faces, |id| {
             !consumed_faces.contains(id) || kept.contains(id)
         });
 
-        let shell = (!keep.is_empty()).then(|| {
-            self.insert_shell(Shell {
-                faces: keep.to_vec(),
+        let mut shells = Vec::with_capacity(groups.len());
+        for faces in groups {
+            let shell_id = self.insert_shell(Shell {
+                faces: faces.clone(),
                 solid: None,
-            })
-        });
-        if let Some(shell_id) = shell {
-            for &face_id in keep {
+            });
+            for &face_id in faces {
                 self.get_face_mut(face_id)?.shell = shell_id;
             }
+            shells.push(shell_id);
         }
         self.prune_unreachable();
-        Ok(shell)
+        Ok(shells)
     }
 
     /// Move every shell of `from` into `into`, deleting `from`: one solid of
@@ -159,6 +178,35 @@ impl Model {
         }
         retain(&mut self.vertices, |id| live_vertices.contains(id));
     }
+}
+
+/// `faces` in sets connected by the edges they share, each in the order
+/// given, the sets ordered by their first face.
+fn connected(model: &Model, faces: &[FaceId]) -> Vec<Vec<FaceId>> {
+    let mut sets = UnionFind::new(faces.len());
+    let mut first_user: HashMap<EdgeId, usize> = HashMap::new();
+    for (i, &face) in faces.iter().enumerate() {
+        for coedge in model.iterate_face_coedges(face) {
+            let Some(Ok(edge)) = model.coedges.get(&coedge).map(|c| c.edge()) else {
+                continue;
+            };
+            match first_user.get(&edge) {
+                Some(&j) => sets.union(i, j),
+                None => {
+                    first_user.insert(edge, i);
+                }
+            }
+        }
+    }
+    let mut groups = sets.groups();
+    for group in &mut groups {
+        group.sort();
+    }
+    groups.sort_by_key(|g| g[0]);
+    groups
+        .into_iter()
+        .map(|g| g.into_iter().map(|i| faces[i]).collect())
+        .collect()
 }
 
 /// Removes the entries of `map` whose ids `keep` rejects, touching nothing

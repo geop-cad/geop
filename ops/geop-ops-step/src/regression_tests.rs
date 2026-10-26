@@ -153,3 +153,60 @@ fn mirrored_l_bracket_with_a_slot_round_trips() {
     let part = program.build_model(registry).unwrap();
     round_trip(&part);
 }
+
+/// A bar cut in two by a slab across its middle is one solid of two lumps,
+/// and a block with a ball's room left inside it one lump with a void. Each
+/// lump is written as a brep of its own, with the voids inside it, and
+/// read back as a solid: the bar as two solids of six faces, together the
+/// bar's volume, the block as one of two shells.
+#[test]
+fn lumps_and_voids_are_written_as_breps() {
+    let mut program = Program::new();
+    program.push(
+        "bar",
+        PrimitiveArgs::block([0.0, 0.0, 0.0], [4.0, 1.0, 1.0]),
+    );
+    program.push(
+        "slab",
+        PrimitiveArgs::block([1.5, -1.0, -1.0], [2.5, 2.0, 2.0]).cut("block(bar)"),
+    );
+    program.push(
+        "cube",
+        PrimitiveArgs::block([10.0, 0.0, 0.0], [14.0, 4.0, 4.0]),
+    );
+    program.push(
+        "ball",
+        PrimitiveArgs::sphere([12.0, 2.0, 2.0], 1.0).cut("block(cube)"),
+    );
+    let part = program.build_model(registry).unwrap();
+    assert_valid(&part);
+    let text = write_step(&part, "part").unwrap();
+    let bodies = read_step(&text).unwrap_or_else(|e| panic!("reading failed: {e}"));
+    let mut back = NamedModel::new();
+    add_bodies(&mut back, &Namer::new("import", "i").unwrap(), &bodies)
+        .unwrap_or_else(|e| panic!("adding failed: {e}"));
+    assert_valid(&back);
+    let model = back.topology();
+    let mut solids: Vec<(usize, usize, f64)> = (back.solid_names().iter())
+        .map(|name| {
+            let solid = back.solid_id(name).unwrap();
+            (
+                model.get_solid(solid).unwrap().shells.len(),
+                model.solid_faces(solid).unwrap().len(),
+                model.mass_properties(solid).unwrap().volume.to_f64(),
+            )
+        })
+        .collect();
+    solids.sort_by(|a, b| a.0.cmp(&b.0).then(a.2.total_cmp(&b.2)));
+    let ball = 4.0 / 3.0 * std::f64::consts::PI;
+    assert_eq!(solids.len(), 3, "{solids:?}");
+    let (bars, block) = solids.split_at(2);
+    assert_eq!(
+        (bars[0].0, bars[0].1, bars[1].0, bars[1].1),
+        (1, 6, 1, 6),
+        "{solids:?}"
+    );
+    assert!((bars[0].2 + bars[1].2 - 3.0).abs() < 1e-6, "{solids:?}");
+    assert_eq!(block[0].0, 2, "{solids:?}");
+    assert!((block[0].2 - (64.0 - ball)).abs() < 1e-4, "{solids:?}");
+}
