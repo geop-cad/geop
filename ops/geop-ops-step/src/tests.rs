@@ -1566,5 +1566,8 @@ const CONE_WITHOUT_APEX: &str = "
 fn a_cone_without_its_apex_imports() {
     let part = import(&file(".MILLI.,.METRE.", CONE_WITHOUT_APEX));
     let (lo, hi) = bounds(part.topology());
-    assert!((lo[2] + 1.0).abs() < 1e-9 && hi[2].abs() < 1e-9, "{lo:?} {hi:?}");
+    assert!(
+        (lo[2] + 1.0).abs() < 1e-9 && hi[2].abs() < 1e-9,
+        "{lo:?} {hi:?}"
+    );
 }
