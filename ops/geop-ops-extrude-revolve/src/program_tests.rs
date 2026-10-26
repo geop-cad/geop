@@ -222,6 +222,27 @@ fn sweep_a_hollow_square_round_corners_at_a_spline() {
     assert_eq!(part.topology().faces.len(), 8 * 3 + 2);
 }
 
+/// A round pipe round a corner where a line meets an arc: valid, the
+/// cylinder and the torus meeting where they cross.
+#[test]
+#[ignore = "bug: refused (`sweep_along`, a smooth profile round a corner at an arc). \
+    The walls are rebuilt on their swept surfaces as for a square tube, but the \
+    mitred station shares one vertex per profile joint between both sides, and \
+    a circle's seams, swept along the line and along the arc, cross the other \
+    side's surface at different points: the station needs a vertex for each \
+    side's seams on the crossing curve, which the skin does not build."]
+fn sweep_a_pipe_round_a_corner_into_an_arc() {
+    let mut program = Program::new();
+    program.push(
+        "profile",
+        AddSketchArgs::on(on_origin(FrameAxis::X), disc([0.0, 0.0], 0.3)),
+    );
+    program.push("path", AddSketchArgs::on(on_origin(FrameAxis::Z), kinked()));
+    program.push("pipe", swept("profile", "path"));
+    let part = program.build_model(registry).unwrap();
+    assert_valid(&part);
+}
+
 /// A line along `x` to `(2, 0)`, then a quarter arc to `(1, 1)` turning
 /// left: a corner at a right angle where they meet.
 fn kinked() -> Sketch {
@@ -379,14 +400,7 @@ fn sweep_refuses_what_it_cannot_sweep() {
     program.push("same", swept("profile", "profile"));
     assert!(program.build_model(registry).is_err());
 
-    let mut kinked = Sketch::new();
-    let p = [
-        kinked.add_point(n(0.0), n(0.0)),
-        kinked.add_point(n(2.0), n(0.0)),
-        kinked.add_point(n(1.0), n(1.0)),
-    ];
-    kinked.add_line(p[0], p[1]);
-    kinked.add_arc(p[1], p[2], n(PI / 2.0));
+    let kinked = kinked();
     let mut program = Program::new();
     program.push(
         "profile",
