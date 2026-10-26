@@ -363,6 +363,11 @@ steps that geop's STEP `heal` does not:
     edge between two vertices whose enclosures overlap. Port: in `normalize`, merge the
     vertices and drop the edge when the vertex enclosures overlap and the curve's hull
     lies within their union (exact, topological).
+  - **Done (round 2):** `Builder::join_coincident_vertices` makes an edge's two ends one
+    where they and the curve's hull lie within the file's uncertainty, and drops the edge;
+    the vertex is then re-met where its faces meet by `heal`, nothing squeezed. Likewise
+    where one coedge of a loop ends at a vertex and the next starts at another within the
+    uncertainty. Vertices joined by no loop or edge stay two (proximity is not membership).
 - **Coincident vertices** (steps 5/6, `CombineCoincidentVertices`, `SmBrep.cpp:1266`):
   every branch (no edges / shared short edge → squeeze / shared face → temp edge and
   squeeze / nothing shared → glue).
