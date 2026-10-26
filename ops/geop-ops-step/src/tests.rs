@@ -1537,3 +1537,34 @@ fn a_face_of_two_outer_loops_is_two_faces() {
     let part = import(&file(".MILLI.,.METRE.", TWO_SQUARES));
     assert_eq!(counts(part.topology()), (2, 8, 8));
 }
+
+/// A cone written as its base disc and its side, the side bounded by the
+/// base circle alone: its apex is no vertex of the file, only where the
+/// side's surface comes to a point.
+const CONE_WITHOUT_APEX: &str = "
+#100=CARTESIAN_POINT('',(1.,0.,0.));
+#101=VERTEX_POINT('',#100);
+#102=CIRCLE('',#8,1.);
+#103=EDGE_CURVE('',#101,#101,#102,.T.);
+#104=ORIENTED_EDGE('',*,*,#103,.T.);
+#105=EDGE_LOOP('',(#104));
+#106=FACE_OUTER_BOUND('',#105,.T.);
+#107=PLANE('',#8);
+#108=ADVANCED_FACE('base',(#106),#107,.T.);
+#110=ORIENTED_EDGE('',*,*,#103,.F.);
+#111=EDGE_LOOP('',(#110));
+#112=FACE_OUTER_BOUND('',#111,.T.);
+#113=CONICAL_SURFACE('',#8,1.,0.7853981633974483);
+#114=ADVANCED_FACE('side',(#112),#113,.T.);
+#120=CLOSED_SHELL('',(#108,#114));
+#999=MANIFOLD_SOLID_BREP('cone',#120);";
+
+/// The cone's apex, where no loop of the file goes, is a vertex of the
+/// imported solid all the same, where the side's surface comes to a point:
+/// a valid cone of height 1 below its base.
+#[test]
+fn a_cone_without_its_apex_imports() {
+    let part = import(&file(".MILLI.,.METRE.", CONE_WITHOUT_APEX));
+    let (lo, hi) = bounds(part.topology());
+    assert!((lo[2] + 1.0).abs() < 1e-9 && hi[2].abs() < 1e-9, "{lo:?} {hi:?}");
+}
