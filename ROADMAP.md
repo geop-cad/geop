@@ -33,6 +33,10 @@ below is what was missing then, and where each item stands now.
   bosses, holes with their threads, picked by a face they made), move/copy
   body.
 - Rib, lip and groove, draft on planar faces.
+- Direct edits of any solid, imported ones too: faces moved, pushed or
+  pulled along their normals (taking along the faces they run smoothly
+  into) and put on another face's surface; the solid rebuilt face by face
+  around them, for any NURBS faces, every name kept.
 - Fillets on any edge (rolling ball), tangent chains, variable radius,
   rounded corners where three fillets meet; chamfers on any edge.
 - Sheet metal: base and edge flanges, hems, open and closed corners, cuts

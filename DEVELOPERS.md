@@ -47,7 +47,7 @@ apart (see Scripts).
 | `ops/geop-ops-pattern` | patterns, mirrors and moves of bodies and features |
 | `ops/geop-ops-subd` | subdivision surfaces: a control cage, edited with the box modelling tools (extrude, inset, bevel, loop cut, slide, merge, dissolve, bridge, fill, sharp and soft creases, a mirror) and built as its Catmull–Clark limit surface |
 | `ops/geop-ops-surface` | boundary and UV surfaces, offset, thicken, knit, trim and extend |
-| `ops/geop-ops-edit` | delete a body, extract a face, project a sketch onto a face |
+| `ops/geop-ops-edit` | delete a body, extract a face, project a sketch onto a face; direct edits: move, offset (push-pull) and replace faces, the solid rebuilt around them |
 | `ops/geop-ops-assembly` | placing parts, mates and joints, part patterns, the joints panel, the drag tool, the settler, STL and URDF export |
 | `ops/geop-ops-harness` | wire harnesses routed through connectors and clips |
 | `ops/geop-ops-step` | STEP import and export, assemblies as products and occurrences |

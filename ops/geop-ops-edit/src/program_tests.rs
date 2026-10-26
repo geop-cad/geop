@@ -86,3 +86,102 @@ fn project_a_line_ending_on_the_face_fails() {
     let error = error(project_onto_top(mark));
     assert!(error.root_message().contains("end inside"), "{error:?}");
 }
+
+// ── Direct edits ────────────────────────────────────────────────────────────
+
+mod direct {
+    use geop_core_program::{operation_registry::OperationRegistry, program::Program};
+    use geop_lib_fixtures::{PrimitiveArgs, bodies::cylinder, drilled_box};
+    use geop_ops_model::{
+        element,
+        testing::{Built, assert_valid, assert_volume},
+    };
+
+    use crate::{MoveFace, MoveFaceArgs, OffsetFace, OffsetFaceArgs, ReplaceFace, ReplaceFaceArgs};
+
+    fn registry() -> geop_core_math::geop_error::GeopResult<OperationRegistry> {
+        geop_lib_fixtures::registry()?
+            .with(MoveFace)?
+            .with(OffsetFace)?
+            .with(ReplaceFace)
+    }
+
+    /// The top of a box drilled from the top, pulled up a quarter: the
+    /// hole's wall grows with it.
+    #[test]
+    fn drilled_box_top_moved_up() {
+        let mut program = drilled_box();
+        program.push(
+            "m",
+            MoveFaceArgs {
+                faces: vec![element("block(box,end)")],
+                translation: [0.0, 0.0, 0.25],
+            },
+        );
+        let part = program.build_model(registry).unwrap();
+        assert_valid(&part);
+        let hole = std::f64::consts::PI * 0.4 * 0.4;
+        assert_volume(&part, "move_face(m)", 1.25 * 4.0 - 0.75 * hole, 2e-2);
+        assert!(part.face_id("block(box,end)").is_ok());
+    }
+
+    /// A cylinder's wall offset out by a half: a cylinder of radius 1.5.
+    #[test]
+    fn cylinder_wall_offset() {
+        let mut program = cylinder();
+        let part = program.build_model(registry).unwrap();
+        let walls: Vec<_> = part
+            .topology()
+            .faces
+            .iter()
+            .filter(|(_, f)| f.surface.as_plane().unwrap().is_none())
+            .map(|(&id, _)| element(part.name_of(id).unwrap()))
+            .collect();
+        program.push(
+            "o",
+            OffsetFaceArgs {
+                faces: walls,
+                distance: 0.5,
+            },
+        );
+        let part = program.build_model(registry).unwrap();
+        assert_valid(&part);
+        let volume = std::f64::consts::PI * 1.5 * 1.5 * 1.5;
+        assert_volume(&part, "offset_face(o)", volume, 5e-2);
+    }
+
+    /// A box's top put on the top of a taller box beside it: as tall.
+    #[test]
+    fn box_top_replaced_by_a_higher_one() {
+        let mut program = Program::new();
+        program.push("a", PrimitiveArgs::block([0.0; 3], [1.0, 1.0, 1.0]));
+        program.push("b", PrimitiveArgs::block([3.0, 0.0, 0.0], [4.0, 1.0, 2.0]));
+        program.push(
+            "r",
+            ReplaceFaceArgs {
+                face: element("block(a,end)"),
+                with: element("block(b,end)"),
+            },
+        );
+        let part = program.build_model(registry).unwrap();
+        assert_valid(&part);
+        assert_volume(&part, "replace_face(r)", 2.0, 1e-5);
+    }
+
+    /// The top pushed down through the bottom is refused: the sides would
+    /// vanish.
+    #[test]
+    fn box_top_pushed_through_is_refused() {
+        let mut program = Program::new();
+        program.push("a", PrimitiveArgs::block([0.0; 3], [1.0, 1.0, 1.0]));
+        program.push(
+            "o",
+            OffsetFaceArgs {
+                faces: vec![element("block(a,end)")],
+                distance: -1.5,
+            },
+        );
+        let error = program.build_model(registry).unwrap_err();
+        assert!(format!("{error}").contains("turns around"), "{error}");
+    }
+}

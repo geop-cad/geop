@@ -39,10 +39,11 @@ use geop_core_geometry::{
         Intersections, curve_curve_intersect, curve_surface_intersect, refine_crossing,
     },
     meet::{Offset, meet, tangent_groups},
-    nurb_curve::{NurbCurve3D, true_point_fractions},
+    nurb_curve::{NurbCurve, NurbCurve3D, true_point_fractions},
     nurb_surface::NurbSurface3D,
     search::{MAX_NODES, PROJECT_ITERATIONS, min_subdivision_size},
 };
+use geop_core_math::{geop_error::WithContext, with_context};
 use geop_core_math::{
     geop_error::{GeopError, GeopResult},
     scalars::Scalar,
@@ -54,7 +55,8 @@ use geop_core_topology::{
     build::{BodySpec, CoedgeOn, CoedgeSpec, EdgeSpec, FaceSpec, FacesAround},
     contains::face::{PointClassification, pcurves_contain},
 };
-use geop_ops_model::BodyNames;
+use geop_core_topology::{FaceId, SolidId};
+use geop_ops_model::{BodyNames, NamedModel, Namer};
 
 use crate::shell::{extended, pcurve, surface_missed};
 
@@ -71,6 +73,81 @@ const TRACE_DRIFT: f64 = 1e-5;
 /// Seed of the ray casting that tells whether a hole lies inside its
 /// face's outer loop: any gives the same answer (see `pcurves_contain`).
 const SEED: u64 = 0x2EB0_0000_0000_0001;
+
+/// Whether [`replace_faces`] takes along the faces a face it puts on a new
+/// surface runs smoothly into, or refuses.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Smooth {
+    Refuse,
+    Follow,
+}
+
+/// Puts the faces `faces` of one solid of `part` on new surfaces —
+/// `surface(name, old)` gives the one for the face named `name`, on the
+/// surface `old` — and rebuilds the solid around them ([`rebuilt`]): the
+/// result replaces it, named `namer`'s root, and every face, edge and
+/// vertex keeps its name. What a draft, a face moved, offset or replaced
+/// do. A new surface's normal points out of the solid, as the old one's
+/// did.
+///
+/// A face that runs smoothly into a neighbour — a piece of a cylinder
+/// beside the next, a wall into its fillet — takes it along if `smooth`
+/// says to follow: the faces the new surfaces are made for are then every
+/// face the picked ones run smoothly into, on and on. Otherwise that is
+/// refused (see [`tangent_to_kept`]).
+///
+/// Refused, by name: faces of several solids, or of none.
+pub fn replace_faces(
+    part: &mut NamedModel,
+    namer: &Namer,
+    faces: &[FaceId],
+    smooth: Smooth,
+    mut surface: impl FnMut(&str, &NurbSurface3D) -> GeopResult<NurbSurface3D>,
+) -> GeopResult<SolidId> {
+    let ctx = with_context!("replace_faces({}, faces={faces:?})", namer.root());
+    let Some(&first) = faces.first() else {
+        return Err(GeopError::new("pick the faces")).with_context(ctx);
+    };
+    let solid = part
+        .solid_of_face(first, "only faces of a solid can be moved")
+        .with_context(ctx)?;
+    let model = part.topology();
+    let all = model.solid_faces(solid).with_context(ctx)?;
+    if let Some(&f) = faces.iter().find(|f| !all.contains(f)) {
+        return Err(GeopError::new(format!(
+            "face {} is not of the same solid as face {}: pick the faces of one solid at a time",
+            part.name(f)?,
+            part.name(first)?
+        )))
+        .with_context(ctx);
+    }
+    let (mut spec, sources) = model.body_spec(&all, true).with_context(ctx)?;
+    let names = BodyNames {
+        solid: Some(namer.root()),
+        ..part.source_names(&sources)?
+    };
+    let mut replaced: Vec<bool> = sources.faces.iter().map(|f| faces.contains(f)).collect();
+    while let Some((f, g, e)) = tangent_to_kept(&spec, &replaced).with_context(ctx)? {
+        if smooth == Smooth::Follow {
+            replaced[g] = true;
+            continue;
+        }
+        return Err(GeopError::new(format!(
+            "face {} meets face {} tangentially along edge {} — a fillet or a smooth blend: moving a face next to one, without it, is not supported",
+            names.faces[f], names.faces[g], names.edges[e]
+        )))
+        .with_context(ctx);
+    }
+    for (f, face) in spec.faces.iter_mut().enumerate() {
+        if replaced[f] {
+            face.surface = surface(&names.faces[f], &face.surface).with_context(ctx)?;
+        }
+    }
+    let reseat = vec![false; spec.vertices.len()];
+    let result = rebuilt(&spec, &names, &replaced, &reseat).with_context(ctx)?;
+    part.replace_with_solid(&[solid.into()], result, names)
+        .with_context(ctx)
+}
 
 /// The body `spec` rebuilt: the faces marked `replaced` lie on the
 /// surfaces `spec` gives them now, every vertex they reach — and every
@@ -135,6 +212,11 @@ struct Rebuild<'a> {
     /// Per face: the surface it lies on afterwards, with room around it
     /// wherever its boundary may move.
     surfaces: Vec<NurbSurface3D>,
+    /// Per face: whether a vertex of it moves, or it is replaced.
+    touched: Vec<bool>,
+    /// Per edge: the curve it lies on, carried on past its ends, if it is a
+    /// seam within one smooth surface that changes (see [`Rebuild::seam`]).
+    seams: Vec<Option<Curve3>>,
     /// Per vertex: whether it moves, and where to.
     moved: Vec<bool>,
     points: Vec<Vector3>,
@@ -149,18 +231,6 @@ impl<'a> Rebuild<'a> {
         replaced: &'a [bool],
         reseat: &[bool],
     ) -> GeopResult<Self> {
-        for (f, face) in spec.faces.iter().enumerate() {
-            for c in face.loops().into_iter().flatten() {
-                if let CoedgeOn::Vertex(v) = c.on
-                    && replaced[f]
-                {
-                    return Err(GeopError::new(format!(
-                        "face {} comes to a point at vertex {}: a face with a pole cannot be put on another surface",
-                        names.faces[f], names.vertices[v]
-                    )));
-                }
-            }
-        }
         let around = spec.vertex_faces()?;
         let moved: Vec<bool> = (around.iter().enumerate())
             .map(|(v, faces)| reseat[v] || faces.iter().any(|&(f, _)| replaced[f]))
@@ -175,7 +245,7 @@ impl<'a> Rebuild<'a> {
         let surfaces = (spec.faces.iter().zip(&touched))
             .map(|(face, &touched)| {
                 if touched {
-                    extended(face.surface.clone())
+                    room(face.surface.clone())
                 } else {
                     Ok(face.surface.clone())
                 }
@@ -186,10 +256,20 @@ impl<'a> Rebuild<'a> {
             names,
             replaced,
             surfaces,
+            touched,
+            seams: Vec::new(),
             moved,
             points: spec.vertices.clone(),
             curves: Vec::new(),
         };
+        let along: Vec<Vec<(usize, Sense, &Curve2)>> = spec.edge_uses();
+        rebuild.seams = (0..spec.edges.len())
+            .map(|e| {
+                rebuild
+                    .seam(e, &along[e])
+                    .map_err(|err| err.with_context(format!("edge {}", names.edges[e])))
+            })
+            .collect::<GeopResult<_>>()?;
         for (v, faces) in around.iter().enumerate() {
             if rebuild.moved[v] {
                 rebuild.points[v] = rebuild
@@ -197,7 +277,6 @@ impl<'a> Rebuild<'a> {
                     .map_err(|e| e.with_context(format!("moving vertex {}", names.vertices[v])))?;
             }
         }
-        let along: Vec<Vec<(usize, Sense, &Curve2)>> = spec.edge_uses();
         rebuild.curves = (0..spec.edges.len())
             .map(|e| {
                 rebuild
@@ -215,7 +294,10 @@ impl<'a> Rebuild<'a> {
         let mut pieces = Vec::with_capacity(faces.len());
         for &(f, uv) in faces {
             let surface = &self.surfaces[f];
-            let (u, w) = if self.replaced[f] {
+            // Where it was on the face, if the new surface still has a pole
+            // there, or else its foot point on the new surface.
+            let at_pole = surface.pole_at(uv[0], uv[1]).is_some();
+            let (u, w) = if self.replaced[f] && !at_pole {
                 let (u, w) = surface.project_in_domain(
                     seed,
                     uv[0].sharpen(),
@@ -226,20 +308,31 @@ impl<'a> Rebuild<'a> {
             } else {
                 (uv[0], uv[1])
             };
-            if surface.pole_at(u, w).is_some() {
+            pieces.push((surface, (u, w)));
+        }
+        // A vertex at a pole of its faces — on the axis of a revolved face —
+        // is the pole of their new surfaces: the topology puts it there.
+        let poles: Vec<_> = (pieces.iter())
+            .map(|(s, (u, w))| s.pole_at(*u, *w))
+            .collect();
+        if let Some(pole) = poles.iter().flatten().next() {
+            if !poles
+                .iter()
+                .all(|p| p.is_some_and(|p| p.could_be_equal(pole)))
+            {
+                let names: Vec<&str> = (faces.iter().zip(&poles))
+                    .filter(|(_, p)| p.is_none())
+                    .map(|(&(f, _), _)| self.names.faces[f].as_str())
+                    .collect();
                 return Err(GeopError::new(format!(
-                    "it is at a pole of face {}, where the face comes to a point: moving it there is not supported",
-                    self.names.faces[f]
+                    "it is at a pole of some of its faces and not of {names:?}, or of poles apart ({poles:?}): moving it there is not supported"
                 )));
             }
-            pieces.push((surface, (u, w)));
+            return Ok(*pole);
         }
         let groups = tangent_groups(&pieces)?;
         match groups.len() {
-            0 | 1 => Err(GeopError::new(format!(
-                "only {} smooth surface(s) meet there: where it goes is not determined",
-                groups.len()
-            ))),
+            0 | 1 => self.within(faces),
             2 => self.on_seam(v, faces, &pieces, &groups),
             _ => {
                 let mut offsets: Vec<Offset> = groups
@@ -252,6 +345,30 @@ impl<'a> Rebuild<'a> {
                 meet(seed, &mut offsets, &[])
             }
         }
+    }
+
+    /// Where a vertex goes that lies within one smooth surface, its faces
+    /// `faces` — pieces of it, where seams cross — all put on new surfaces that
+    /// keep their parametrization, as a shift or an offset does: where each
+    /// is at the vertex's `(u, v)`, all enclosures of one point, so their
+    /// intersection is too. Not determined otherwise.
+    fn within(&self, faces: &FacesAround) -> GeopResult<Vector3> {
+        let mut point: Option<Vector3> = None;
+        for &(f, uv) in faces {
+            let here = self.surfaces[f].evaluate(uv[0], uv[1])?;
+            point = Some(match point {
+                None => here,
+                Some(p) if p.could_be_equal(&here) => {
+                    Vector3::from_array(std::array::from_fn(|k| p[k].intersect(here[k])))
+                }
+                Some(p) => {
+                    return Err(GeopError::new(format!(
+                        "it lies within one smooth surface, whose pieces now put it at {p:?} and at {here:?}: where it goes is not determined"
+                    )));
+                }
+            });
+        }
+        point.ok_or_else(|| GeopError::new("no face meets there"))
     }
 
     /// Where the vertex `v` goes where only two smooth surfaces meet, the
@@ -270,30 +387,56 @@ impl<'a> Rebuild<'a> {
             groups.iter().position(|group| group.contains(&i))
         };
         let uses = self.spec.edge_uses();
-        let seam = (self.spec.edges.iter().enumerate())
+        let seams: Vec<(usize, &Curve3, usize)> = (self.spec.edges.iter().enumerate())
             .filter(|(_, edge)| edge.start == v || edge.end == v)
-            .find_map(|(e, edge)| {
+            .filter_map(|(e, _)| {
+                let curve = self.seams[e].as_ref()?;
                 let [(f, ..), (g, ..)] = uses[e].as_slice() else {
                     return None;
                 };
                 let group = group_of(*f)?;
-                (group_of(*g) == Some(group) && !self.replaced[*f] && !self.replaced[*g])
-                    .then_some((edge, group))
+                (group_of(*g) == Some(group)).then_some((e, curve, group))
             })
-            .ok_or_else(|| {
-                GeopError::new(
-                    "only two smooth surfaces meet there, and no edge from it runs within one of them that stays: where it goes is not determined",
-                )
-            })?;
-        let (edge, group) = seam;
-        let curve = carried_on(&edge.curve)?;
+            .collect();
         let seed = self.spec.vertices[v];
-        let other = &groups[1 - group];
+        // Every seam from it must cross the other surface at one point:
+        // seams of both surfaces meeting there, which a move takes apart,
+        // leave no vertex where both end.
+        let mut found: Option<(usize, Vector3)> = None;
+        for &(e, curve, group) in &seams {
+            let point = self.crossing(curve, &groups[1 - group], pieces, seed)?;
+            match found {
+                Some((first, at)) if !at.could_be_equal(&point) => {
+                    return Err(GeopError::new(format!(
+                        "it ends the seams {} and {}, which no longer meet: they cross the other surface at {at:?} and at {point:?} — taking them apart is not supported",
+                        self.names.edges[first], self.names.edges[e]
+                    )));
+                }
+                Some(_) => {}
+                None => found = Some((e, point)),
+            }
+        }
+        found.map(|(_, p)| p).ok_or_else(|| {
+            GeopError::new(
+                "only two smooth surfaces meet there, and no edge from it runs within one of them: where it goes is not determined",
+            )
+        })
+    }
+
+    /// Where `curve`, a seam carried on, crosses the surface `other`, a
+    /// group of `pieces`, nearest to `seed`.
+    fn crossing(
+        &self,
+        curve: &Curve3,
+        other: &[usize],
+        pieces: &[(&NurbSurface3D, (Scalar, Scalar))],
+        seed: Vector3,
+    ) -> GeopResult<Vector3> {
         let mut best: Option<(Vector3, f64)> = None;
         for &i in other {
             let (surface, _) = pieces[i];
             let hits = match curve_surface_intersect(
-                &curve,
+                curve,
                 surface,
                 8,
                 MAX_NODES,
@@ -307,7 +450,7 @@ impl<'a> Rebuild<'a> {
                 }
             };
             for (t, uv) in hits {
-                let (t, uv) = refine_crossing(&curve, surface, t, uv);
+                let (t, uv) = refine_crossing(curve, surface, t, uv);
                 let on_curve = curve.evaluate(t)?;
                 let on_surface = surface.evaluate(uv[0], uv[1])?;
                 if !on_curve.could_be_equal(&on_surface) {
@@ -347,27 +490,26 @@ impl<'a> Rebuild<'a> {
         };
         let (start, end) = (self.points[edge.start], self.points[edge.end]);
         let faces = [*f, *g];
-        let curve =
-            if !self.replaced[*f] && !self.replaced[*g] && smooth_along(self.spec, edge, *f, *g)? {
-                self.seam(&edge.curve, start, end)?
-            } else {
-                let straight = (edge.curve.degree == 1 && edge.curve.control_points.len() == 2)
-                    .then(|| NurbCurve3D::line(start, end))
-                    .transpose()?
-                    .filter(|line| {
-                        matches!(surface_missed(line, faces, &self.surfaces), Ok(None))
-                            && turns_around(&edge.curve, &[start, end]).is_ok()
-                    });
-                match straight {
-                    Some(line) => line,
-                    None => self.traced(
-                        &edge.curve,
-                        start,
-                        end,
-                        [(*f, f_sense, *f_pcurve), (*g, g_sense, *g_pcurve)],
-                    )?,
-                }
-            };
+        let curve = if let Some(seam) = &self.seams[e] {
+            restricted(seam, start, end)?
+        } else {
+            let straight = (edge.curve.degree == 1 && edge.curve.control_points.len() == 2)
+                .then(|| NurbCurve3D::line(start, end))
+                .transpose()?
+                .filter(|line| {
+                    matches!(surface_missed(line, faces, &self.surfaces), Ok(None))
+                        && turns_around(&edge.curve, &[start, end]).is_ok()
+                });
+            match straight {
+                Some(line) => line,
+                None => self.traced(
+                    &edge.curve,
+                    start,
+                    end,
+                    [(*f, f_sense, *f_pcurve), (*g, g_sense, *g_pcurve)],
+                )?,
+            }
+        };
         if let Some((face, middle)) = surface_missed(&curve, faces, &self.surfaces)? {
             return Err(GeopError::new(format!(
                 "its new curve from {start:?} to {end:?} is not on face {} at {middle:?}",
@@ -377,27 +519,65 @@ impl<'a> Rebuild<'a> {
         Ok(Some(curve))
     }
 
-    /// The seam `guide`, within one smooth surface, carried on or cut back
-    /// to run from `start` to `end`, both on it.
-    fn seam(&self, guide: &Curve3, start: Vector3, end: Vector3) -> GeopResult<Curve3> {
-        let longer = carried_on(guide)?;
-        let (t0, t1) = guide.domain();
-        let at = |p: &Vector3, seed: Scalar| -> GeopResult<Scalar> {
-            let t = longer.closest_parameter_from(p, seed)?;
-            if !longer.evaluate(t)?.could_be_equal(p) {
-                return Err(GeopError::new(format!(
-                    "the seam, carried on, does not pass through its moved end {p:?}"
-                )));
-            }
-            Ok(t)
+    /// The curve the edge `e`, used by the faces `uses`, lies on if it is a
+    /// seam — its faces pieces of one smooth surface — carried on past its
+    /// ends, so a moved end can be found on it: the edge's own curve where
+    /// both faces stay, the new surface along the edge's pcurve where both
+    /// are put on new surfaces (that keep their parametrization, as a shift
+    /// or an offset does). None for an edge that is no seam, or that
+    /// nothing moves.
+    fn seam(&self, e: usize, uses: &[(usize, Sense, &Curve2)]) -> GeopResult<Option<Curve3>> {
+        let [(f, f_sense, f_pcurve), (g, _, g_pcurve)] = uses else {
+            return Ok(None);
         };
-        let (s, t) = (at(&start, t0)?, at(&end, t1)?);
-        if !t.definitely_greater(s) {
-            return Err(GeopError::new(format!(
-                "its moved ends {start:?} and {end:?} lie the other way round along it: a face it bounds has vanished"
-            )));
+        if !self.touched[*f] && !self.touched[*g] {
+            return Ok(None);
         }
-        longer.sub_curve(s, t)
+        let normal = |f: usize, pcurve: &Curve2| -> GeopResult<Vector3> {
+            let uv = pcurve.evaluate(pcurve.mid_parameter()?)?;
+            self.surfaces[f].normal(uv[0], uv[1])
+        };
+        let smooth = normal(*f, f_pcurve)?
+            .prod_cross(&normal(*g, g_pcurve)?)
+            .norm_sq()
+            .could_be_equal(Scalar::ZERO);
+        if !smooth {
+            return Ok(None);
+        }
+        match (self.replaced[*f], self.replaced[*g]) {
+            (false, false) => Ok(Some(carried_on(&self.spec.edges[e].curve, |_| Ok(true))?)),
+            (true, true) => {
+                let along = match f_sense {
+                    Sense::Forward => (*f_pcurve).clone(),
+                    Sense::Reversed => f_pcurve.reverse(),
+                };
+                let surface = &self.surfaces[*f];
+                // Only as far as the surface goes: its ends in its domain.
+                let ((u0, u1), (v0, v1)) = (surface.domain_u(), surface.domain_v());
+                let pcurve = carried_on(&along, |longer| {
+                    let (a, b) = longer.ends()?;
+                    Ok([a, b].iter().all(|p| {
+                        !p[0].definitely_less(u0)
+                            && !p[0].definitely_greater(u1)
+                            && !p[1].definitely_less(v0)
+                            && !p[1].definitely_greater(v1)
+                    }))
+                })?;
+                let (t0, t1) = pcurve.domain();
+                let at = |frac: Scalar| -> GeopResult<Vector3> {
+                    let uv = pcurve.evaluate(Scalar::interpolate(t0, t1, frac).sharpen())?;
+                    surface.evaluate(uv[0], uv[1])
+                };
+                let ends = (at(Scalar::ZERO)?, at(Scalar::ONE)?);
+                Ok(Some(fitted(at, ends, |_| Ok(())).map_err(|err| {
+                    err.with_context("fitting the seam on its new surface")
+                })?))
+            }
+            _ => Err(GeopError::new(format!(
+                "faces {} and {} are pieces of one smooth surface, and only one of them is put on another surface: not supported",
+                self.names.faces[*f], self.names.faces[*g]
+            ))),
+        }
     }
 
     /// The curve where the surfaces of the two faces in `uses` meet, from
@@ -441,39 +621,8 @@ impl<'a> Rebuild<'a> {
             }
             meet(seed, &mut offsets, &[(normal, seed)])
         };
-        let fraction = |i: usize, n: usize| Scalar::from_ratio(i as i64, n as i64);
-        let refined = refine(FIRST_LEGS, usize::BITS as usize, |legs| -> GeopResult<_> {
-            let mut points = vec![start];
-            for i in 1..legs {
-                points.push(on_both(fraction(i, legs)?)?);
-            }
-            points.push(end);
-            turns_around(guide, &points)?;
-            let mut between = Vec::with_capacity(legs);
-            for i in 0..legs {
-                let mut inside = Vec::new();
-                for &(p, q) in true_point_fractions(i, legs) {
-                    let frac = fraction(i, legs)?.add(Scalar::from_ratio(p, q * legs as i64)?);
-                    inside.push(on_both(frac)?);
-                }
-                between.push(inside);
-            }
-            let curve = NurbCurve3D::interpolate_enclosing(&points, &between, 3)?;
-            let wide = curve
-                .control_points
-                .iter()
-                .any(|p| (0..3).any(|k| p[k].width().to_f64() > TRACE_DRIFT));
-            if wide && 2 * legs <= MOST_LEGS {
-                return Ok(Refine::Finer(2 * legs));
-            }
-            Ok(Refine::Done(curve))
-        })?;
-        match refined {
-            Refined::Done(curve) => Ok(curve),
-            Refined::Exhausted(legs) => Err(GeopError::new(format!(
-                "tracing it where its faces meet: its legs were split past every cap, at {legs}"
-            ))),
-        }
+        fitted(on_both, (start, end), |points| turns_around(guide, points))
+            .map_err(|e| e.with_context("tracing it where its faces meet"))
     }
 
     /// The rebuilt body, described whole.
@@ -527,7 +676,12 @@ impl<'a> Rebuild<'a> {
         for c in coedges {
             let (_, end) = self.spec.ends(c.on)?;
             let old = c.pcurve.ends()?.1;
-            junctions.push(if self.moved[end] || replaced {
+            let kept = |old: Vector2| -> GeopResult<bool> {
+                Ok(surface
+                    .evaluate(old[0], old[1])?
+                    .could_be_equal(&self.points[end]))
+            };
+            junctions.push(if (self.moved[end] || replaced) && !kept(old)? {
                 let (u, v) = surface.project_in_domain(
                     self.points[end],
                     old[0].sharpen(),
@@ -589,18 +743,155 @@ fn turns_around(guide: &Curve3, points: &[Vector3]) -> GeopResult<()> {
     Ok(())
 }
 
+/// `surface` with room around it: [`extended`] where it is straight, and
+/// carried on past each side where it is not ([`NurbSurface3D::extended`])
+/// by as much of its parameter as its domain is long that way — or by a
+/// half, a quarter or an eighth of that where more would carry it too far,
+/// an arc round past where its weights stay positive. Not past a side
+/// that is a single point, a pole: the pole would end up inside the patch,
+/// where it has no normal. How much room is a free choice; the patch's own
+/// size is room enough unless a face moves as far as it is wide.
+fn room(surface: NurbSurface3D) -> GeopResult<NurbSurface3D> {
+    let mut surface = extended(surface)?;
+    for along_u in [true, false] {
+        let (degree, num) = if along_u {
+            (surface.degree_u, surface.num_u)
+        } else {
+            (surface.degree_v, surface.num_v)
+        };
+        if degree == 1 && num == 2 {
+            continue;
+        }
+        for at_end in [false, true] {
+            if side_is_pole(&surface, along_u, at_end)? {
+                continue;
+            }
+            let (lo, hi) = if along_u {
+                surface.domain_u()
+            } else {
+                surface.domain_v()
+            };
+            let mut by = hi.sub(lo);
+            for _ in 0..4 {
+                if let Ok(longer) = surface.extended(along_u, at_end, by.sharpen()) {
+                    surface = longer;
+                    break;
+                }
+                by = by.div(Scalar::TWO)?;
+            }
+        }
+    }
+    Ok(surface)
+}
+
+/// Whether the side of `surface` at the end (`at_end`) or the start of its
+/// `u` (`along_u`) or `v` parameter is a single point: every control point
+/// of that boundary row the same.
+fn side_is_pole(surface: &NurbSurface3D, along_u: bool, at_end: bool) -> GeopResult<bool> {
+    let (nu, nv) = (surface.num_u, surface.num_v);
+    let row: Vec<usize> = if along_u {
+        let i = if at_end { nu - 1 } else { 0 };
+        (0..nv).map(|j| i * nv + j).collect()
+    } else {
+        let j = if at_end { nv - 1 } else { 0 };
+        (0..nu).map(|i| i * nv + j).collect()
+    };
+    let first = surface.control_points[row[0]].dehomogenized()?;
+    for &k in &row[1..] {
+        if !surface.control_points[k]
+            .dehomogenized()?
+            .could_be_equal(&first)
+        {
+            return Ok(false);
+        }
+    }
+    Ok(true)
+}
+
+/// The part of `longer`, a seam carried on past its ends, from `start` to
+/// `end`, both on it.
+fn restricted(longer: &Curve3, start: Vector3, end: Vector3) -> GeopResult<Curve3> {
+    let at = |p: &Vector3| -> GeopResult<Scalar> {
+        let (t, _) = longer.closest_point(p)?;
+        if !longer.evaluate(t)?.could_be_equal(p) {
+            return Err(GeopError::new(format!(
+                "the seam, carried on, does not pass through its moved end {p:?}"
+            )));
+        }
+        Ok(t)
+    };
+    let (s, t) = (at(&start)?, at(&end)?);
+    if !t.definitely_greater(s) {
+        return Err(GeopError::new(format!(
+            "its moved ends {start:?} and {end:?} lie the other way round along it: a face it bounds has vanished"
+        )));
+    }
+    longer.sub_curve(s, t)
+}
+
+/// A cubic from `start` to `end` through the points `at(frac)` of a curve
+/// in between — `frac` the fraction of the way along it — widened to
+/// enclose the curve between them: fitted over [`FIRST_LEGS`] legs, split
+/// finer while the fit is wider than [`TRACE_DRIFT`]. `check` is asked of
+/// each set of points before they are fitted.
+fn fitted(
+    at: impl Fn(Scalar) -> GeopResult<Vector3>,
+    (start, end): (Vector3, Vector3),
+    check: impl Fn(&[Vector3]) -> GeopResult<()>,
+) -> GeopResult<Curve3> {
+    let fraction = |i: usize, n: usize| Scalar::from_ratio(i as i64, n as i64);
+    let refined = refine(FIRST_LEGS, usize::BITS as usize, |legs| -> GeopResult<_> {
+        let mut points = vec![start];
+        for i in 1..legs {
+            points.push(at(fraction(i, legs)?)?);
+        }
+        points.push(end);
+        check(&points)?;
+        let mut between = Vec::with_capacity(legs);
+        for i in 0..legs {
+            let mut inside = Vec::new();
+            for &(p, q) in true_point_fractions(i, legs) {
+                let frac = fraction(i, legs)?.add(Scalar::from_ratio(p, q * legs as i64)?);
+                inside.push(at(frac)?);
+            }
+            between.push(inside);
+        }
+        let curve = NurbCurve3D::interpolate_enclosing(&points, &between, 3)?;
+        let wide = curve
+            .control_points
+            .iter()
+            .any(|p| (0..3).any(|k| p[k].width().to_f64() > TRACE_DRIFT));
+        if wide && 2 * legs <= MOST_LEGS {
+            return Ok(Refine::Finer(2 * legs));
+        }
+        Ok(Refine::Done(curve))
+    })?;
+    match refined {
+        Refined::Done(curve) => Ok(curve),
+        Refined::Exhausted(legs) => Err(GeopError::new(format!(
+            "its legs were split past every cap, at {legs}"
+        ))),
+    }
+}
+
 /// `curve` carried on past both its ends by as much as its domain is long,
 /// or by less where that would carry it too far — an arc round past where
-/// its weights stay positive — as far as a half, a quarter or an eighth of
-/// that: room for an end to move along it. How much is a free choice.
-fn carried_on(curve: &Curve3) -> GeopResult<Curve3> {
+/// its weights stay positive, or past what `within` accepts — as far as a
+/// half, a quarter or an eighth of that: room for an end to move along it.
+/// How much is a free choice.
+fn carried_on<const D: usize>(
+    curve: &NurbCurve<D>,
+    within: impl Fn(&NurbCurve<D>) -> GeopResult<bool>,
+) -> GeopResult<NurbCurve<D>> {
     let (t0, t1) = curve.domain();
     let width = t1.sub(t0);
     let mut out = curve.clone();
     for at_end in [false, true] {
         let mut by = width;
         for _ in 0..4 {
-            if let Ok(longer) = out.extended(at_end, by.sharpen()) {
+            if let Ok(longer) = out.extended(at_end, by.sharpen())
+                && within(&longer)?
+            {
                 out = longer;
                 break;
             }
@@ -639,3 +930,6 @@ fn hole_inside(
         SEED,
     )? == PointClassification::Inside)
 }
+
+#[cfg(test)]
+mod tests;

@@ -35,8 +35,8 @@ use geop_core_math::{
     with_context,
 };
 use geop_core_topology::{FaceId, SolidId};
-use geop_lib_shell::{rebuilt, tangent_to_kept};
-use geop_ops_model::{BodyNames, NamedModel, Namer};
+use geop_lib_shell::{Smooth, replace_faces};
+use geop_ops_model::{NamedModel, Namer};
 
 /// Tilts the planar faces `faces` of one solid by `angle` (in radians, a
 /// quarter turn either way at most) about where each meets the plane
@@ -62,65 +62,30 @@ pub fn draft(
         )))
         .with_context(ctx);
     }
-    let model = part.topology();
-    let Some(&first) = faces.first() else {
-        return Err(GeopError::new("pick the faces to draft")).with_context(ctx);
-    };
-    let solid = part
-        .solid_of_face(first, "only faces of a solid can be drafted")
-        .with_context(ctx)?;
-    let all = model.solid_faces(solid).with_context(ctx)?;
-    if let Some(&f) = faces.iter().find(|f| !all.contains(f)) {
-        return Err(GeopError::new(format!(
-            "face {} is not of the same solid as face {}: draft the faces of one solid at a time",
-            part.name(f)?,
-            part.name(first)?
-        )))
-        .with_context(ctx);
-    }
-    let (mut spec, sources) = model.body_spec(&all, true).with_context(ctx)?;
-    let names = BodyNames {
-        solid: Some(namer.root()),
-        ..part.source_names(&sources)?
-    };
-    let drafted: Vec<bool> = sources.faces.iter().map(|f| faces.contains(f)).collect();
-    if let Some((d, other, e)) = tangent_to_kept(&spec, &drafted).with_context(ctx)? {
-        return Err(GeopError::new(format!(
-            "the drafted face {} meets face {} tangentially along edge {} — a fillet or a smooth blend: drafting next to one is not supported",
-            names.faces[d], names.faces[other], names.edges[e]
-        )))
-        .with_context(ctx);
-    }
     let tilt = Tilt {
         neutral,
         cos: angle.cos(),
         sin: angle.sin(),
     };
-    for (f, face) in spec.faces.iter_mut().enumerate() {
-        if !drafted[f] {
-            continue;
-        }
-        let plane = face.surface.as_plane().with_context(ctx)?.ok_or_else(|| {
+    replace_faces(part, namer, faces, Smooth::Refuse, |name, surface| {
+        let plane = surface.as_plane()?.ok_or_else(|| {
             GeopError::new(format!(
-                "face {} is not planar: only planar faces can be drafted",
-                names.faces[f]
+                "face {name} is not planar: only planar faces can be drafted"
             ))
         })?;
         let hinge = tilt.hinge(&plane).map_err(|e| {
             e.with_context(format!(
-                "face {} is parallel to the neutral plane: it has no line to be drafted about",
-                names.faces[f]
+                "face {name} is parallel to the neutral plane: it has no line to be drafted about"
             ))
         })?;
-        for cp in &mut face.surface.control_points {
+        let mut turned = surface.clone();
+        for cp in &mut turned.control_points {
             *cp = tilt.turn(&hinge, cp);
         }
-        face.surface.recompute_aabb();
-    }
-    let reseat = vec![false; spec.vertices.len()];
-    let result = rebuilt(&spec, &names, &drafted, &reseat).with_context(ctx)?;
-    part.replace_with_solid(&[solid.into()], result, names)
-        .with_context(ctx)
+        turned.recompute_aabb();
+        Ok(turned)
+    })
+    .with_context(ctx)
 }
 
 /// How a drafted face turns: about where its plane meets `neutral`, by the
