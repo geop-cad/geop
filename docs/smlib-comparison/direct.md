@@ -137,6 +137,12 @@ deeper than a neighbour.
 
 ### 2.2 Delete face and heal (close the gap by extending neighbours) — P0
 
+**geop (round 2).** `geop_lib_shell::delete_faces` heals a gap of 3 to 8 sides, left by one face
+or a chain of them (a fillet chain): the faces around the gap close it as some triangulation of
+its polygon of sides, each three meeting at a corner, each two sharing two corners along a new
+edge; every triangulation is tried through `rebuilt` and the first it accepts is kept. No branch
+on the number of sides or on surface kinds.
+
 **SMLib.** `SmFeatureExecutive.cpp:1922 ExtSurfaceRebuild`:
 - Collect the faces along the loop edges.
 - If no loop edge lies on the face's outer loop (the hole is an inner loop of that face):
