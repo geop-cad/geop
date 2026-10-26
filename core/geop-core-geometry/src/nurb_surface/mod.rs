@@ -5,6 +5,7 @@ mod fit_pcurve;
 mod flat;
 pub use flat::FlatPatch;
 mod gordon;
+mod net;
 mod normal;
 mod offset;
 mod offset_fit;

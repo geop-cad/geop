@@ -180,3 +180,37 @@ fn shell_thicker_than_every_rounded_edge() {
         "{volume:?} vs {expected:?}"
     );
 }
+
+/// An enclosure's lid side up: a 10 x 6 x 3 block with its four upright
+/// edges and its four top edges rounded by 1, shelled 0.3 thick, open at
+/// the top. The top is tangent to every blend around it, so the walls do
+/// not stand on it: they end where it was, along its edges, each in an end
+/// face from the edge down to its copy on the blend's inner copy — as a
+/// sheet's free edge gets a wall. Nothing is left of the top.
+#[test]
+#[ignore = "not supported yet: a face taken away tangent to the faces kept around it is refused (the walls cannot end on a smooth surface); the corner patches' offsets are fitted (with their poles) but take over 100 s"]
+fn shell_opened_at_a_top_its_blends_are_tangent_to() {
+    let mut program = Program::new();
+    program.push(
+        "box",
+        PrimitiveArgs::block([0.0, 0.0, 0.0], [10.0, 6.0, 3.0]),
+    );
+    let before = program.build_model(registry).unwrap();
+    let edges = edges_with_middle_where(&before, |m| near(m[2], 3.0) || near(m[2], 1.5));
+    assert_eq!(edges.len(), 8, "{edges:?}");
+    program.push("round", FilletArgs::constant(edges, 1.0));
+    let rounded = program.build_model(registry).unwrap();
+    assert_valid(&rounded);
+    let top = face_name(&rounded, "fillet(round)", [0.0, 0.0, 1.0]);
+    program.push(
+        "s",
+        ShellArgs {
+            solid: solid("fillet(round)"),
+            faces: vec![ElementReference::new(model(), top.clone())],
+            thickness: 0.3.into(),
+        },
+    );
+    let part = program.build_model(registry).unwrap();
+    assert_valid(&part);
+    assert!(part.face_id(&format!("shell(s,{top})")).is_err());
+}

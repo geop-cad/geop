@@ -11,8 +11,11 @@
 //! What the fit misses, `E = D - d N`, is bounded box by box over each
 //! span by its Taylor form to second order, `E(c) + ∇E(c) δ + ½ δᵀ H_E(B) δ`:
 //! the value and gradient at the box's centre `c`, the Hessian over the box
-//! `B`. The Hessian takes the normal's second derivatives, so `S`'s third
-//! ([`NurbSurface3D::partials`]). Of the bound, only the Hessian's part
+//! `B`. The Hessian takes the normal's second derivatives, from the
+//! normal field as a polynomial (see `net`), whose partials over a box
+//! ([`NurbSurface3D::partials`]) are as tight as a box allows, and which a
+//! pole's factor is divided out of: at a pole the parametrization says
+//! nothing, the surface is fine. Of the bound, only the Hessian's part
 //! overestimates, and it shrinks as the cube of the box's size; a box
 //! where it is more than [`OFFSET_DRIFT`] is split. Every control point is
 //! then widened by the largest bound: the basis is non-negative and sums
@@ -32,7 +35,10 @@ use geop_core_math::{
     vector::{Vector, Vector3},
 };
 
-use super::NurbSurface3D;
+use super::{
+    NurbSurface3D,
+    net::{Net, Side, cross, normal_field, poles, scale},
+};
 use crate::{nurb_curve::solve_interpolation_system, spline::breakpoints};
 
 /// How far a fitted offset may drift from the true offset, per coordinate,
@@ -58,8 +64,8 @@ struct Missed {
     pad: [Scalar; 3],
 }
 
-/// The offset's partials over a box or at a point: its normal's first and
-/// second derivatives, from the surface's up to third order.
+/// The normal's first and second derivatives over a box or at a point,
+/// from those of a field `n` in its direction (see [`normal_field`]).
 struct Normals {
     n: Vector3,
     /// `[N_u, N_v]`.
@@ -69,36 +75,19 @@ struct Normals {
 }
 
 impl Normals {
-    /// From the surface's partials `s[k][l]` up to third order (see
-    /// [`NurbSurface3D::partials`]). With `n = S_u × S_v`, `L = |n|` and
-    /// `N = n / L` and `α_a = N·n_a / L`: `N_a = n_a / L − α_a N`, and
-    /// `N_ab = (n_ab − N (N·n_ab)) / L − α_b N_a − α_a N_b − (N_a·N_b) N`.
-    /// Written in `N_a`, not expanded in `n_a`: the expanded terms are
-    /// each a hundred times the result on a bump, and over a box their
-    /// widths, not their values, are what is left of them.
-    fn of(s: &[Vec<Vector3>]) -> GeopResult<Self> {
-        let (su, sv) = (s[1][0], s[0][1]);
-        let (suu, suv, svv) = (s[2][0], s[1][1], s[0][2]);
-        let (suuu, suuv, suvv, svvv) = (s[3][0], s[2][1], s[1][2], s[0][3]);
-        let n = su.prod_cross(&sv);
+    /// From the partials `m[k][l]` of a field `n` in the normal's direction
+    /// up to second order (see [`NurbSurface3D::partials`]). With
+    /// `L = |n|`, `N = n / L` and `α_a = N·n_a / L`: `N_a = n_a / L − α_a N`,
+    /// and `N_ab = (n_ab − N (N·n_ab)) / L − α_b N_a − α_a N_b − (N_a·N_b) N`.
+    /// Written in `N_a`, not expanded in `n_a`: the expanded terms are each
+    /// a hundred times the result on a bump, and over a box their widths,
+    /// not their values, are what is left of them.
+    fn of(m: &[Vec<Vector3>]) -> GeopResult<Self> {
+        let n = m[0][0];
+        let n_a = [m[1][0], m[0][1]];
+        let n_ab = [m[2][0], m[1][1], m[0][2]];
         let inverse = Scalar::ONE.div(n.norm())?;
         let unit = n.prod_scalar(inverse);
-        let n_a = [
-            suu.prod_cross(&sv).add(&su.prod_cross(&suv)),
-            suv.prod_cross(&sv).add(&su.prod_cross(&svv)),
-        ];
-        let two = Scalar::TWO;
-        let n_ab = [
-            suuu.prod_cross(&sv)
-                .add(&suu.prod_cross(&suv).prod_scalar(two))
-                .add(&su.prod_cross(&suuv)),
-            suuv.prod_cross(&sv)
-                .add(&suu.prod_cross(&svv))
-                .add(&su.prod_cross(&suvv)),
-            suvv.prod_cross(&sv)
-                .add(&suv.prod_cross(&svv).prod_scalar(two))
-                .add(&su.prod_cross(&svvv)),
-        ];
         // `α_a = N·n_a / L`, the rate `L` grows at.
         let alpha = [0, 1].map(|a| unit.prod_dot(&n_a[a]).mul(inverse));
         let first = [0, 1].map(|a| n_a[a].prod_scalar(inverse).sub(&unit.prod_scalar(alpha[a])));
@@ -111,6 +100,227 @@ impl Normals {
                 .sub(&unit.prod_scalar(first[a].prod_dot(&first[b])))
         });
         Ok(Normals { n, first, second })
+    }
+}
+
+/// Where a side of a span collapses to a pole, the offset's derivative
+/// along that side divided by the factor that vanishes there (see
+/// `Span::over_box`): `t = (w A_t − w_t A) / factor`, so `S_t / factor =
+/// t / w²`, and `r = (n_t × n) / factor`, so `N_t / factor = (n × r) /
+/// |n|³`.
+struct PoleForm {
+    side: Side,
+    along_u: bool,
+    t: NurbSurface3D,
+    r: NurbSurface3D,
+}
+
+/// One span of a surface and of the shift fitted onto its offset, as what
+/// the bound evaluates over its boxes.
+struct Span {
+    surface: NurbSurface3D,
+    moved: NurbSurface3D,
+    /// Where a side of the span is a pole, the normal field as a
+    /// polynomial, the pole's factor divided out (see [`normal_field`]).
+    /// Elsewhere `S_u × S_v` itself, from the surface's partials: of a
+    /// third of the degree, it is the tighter over a box.
+    normal: Option<NurbSurface3D>,
+    poles: Vec<PoleForm>,
+    u: (Scalar, Scalar),
+    v: (Scalar, Scalar),
+}
+
+impl Span {
+    fn new(surface: NurbSurface3D, moved: NurbSurface3D) -> GeopResult<Self> {
+        let (a, w) = Net::of(&surface)?.split();
+        let sides = poles(&surface)?;
+        let mut field = normal_field(&surface)?;
+        // Without a pole the field is only needed for the forms below.
+        for &side in &sides {
+            field = field.divided(side)?.ok_or_else(|| {
+                GeopError::new(format!(
+                    "the normal field does not vanish along the pole at {side:?}"
+                ))
+            })?;
+        }
+        let mut forms = Vec::new();
+        for &side in &sides {
+            let along_u = !side.u_fixed;
+            let (a_t, w_t) = (a.derivative(along_u)?, w.derivative(along_u)?);
+            let q = w.product(&a_t, scale)?.minus(&w_t.product(&a, scale)?);
+            let p = field.derivative(along_u)?.product(&field, cross)?;
+            let divided = |net: Net<3>| -> GeopResult<NurbSurface3D> {
+                net.divided(side)?
+                    .ok_or_else(|| {
+                        GeopError::new(format!(
+                            "a derivative along the pole at {side:?} does not vanish there"
+                        ))
+                    })?
+                    .surface()
+            };
+            forms.push(PoleForm {
+                side,
+                along_u,
+                t: divided(q)?,
+                r: divided(p)?,
+            });
+        }
+        Ok(Span {
+            u: surface.domain_u(),
+            v: surface.domain_v(),
+            normal: if sides.is_empty() {
+                None
+            } else {
+                Some(field.surface()?)
+            },
+            surface,
+            moved,
+            poles: forms,
+        })
+    }
+
+    /// Over the box `u`, `v`, each with how far it reaches from its centre
+    /// (`δu`, `δv`): the Hessian's part of the bound on what `moved` misses
+    /// of `surface`'s offset by `distance`, `½ δᵀ H_E(B) δ` (see the module
+    /// docs), where it is within [`OFFSET_DRIFT`] and the offset definitely
+    /// does not fold over the box. Where the box is too wide to say — a
+    /// normal or a weight that could be zero over it, a part too wide, a
+    /// fold undecided — which way to split it: along `u` where its part
+    /// is the larger, `None` where neither is.
+    ///
+    /// At a pole both `O_t` along the collapsed side and the factor
+    /// vanish, so `O_t × O_s` does, and whether the offset folds is told
+    /// by `O_t` divided by the factor (see [`PoleForm`]).
+    fn over_box(
+        &self,
+        distance: Scalar,
+        (u, du): (Scalar, Scalar),
+        (v, dv): (Scalar, Scalar),
+    ) -> Bounded {
+        let attempt = || -> GeopResult<Bounded> {
+            let s = self.surface.partials(u, v, 1)?;
+            let m = self.field(u, v)?;
+            let normals = Normals::of(&m)?;
+            // Past a centre of curvature the offset turns against the
+            // surface's normal.
+            let mut o = [
+                s[1][0].add(&normals.first[0].prod_scalar(distance)),
+                s[0][1].add(&normals.first[1].prod_scalar(distance)),
+            ];
+            for form in self.poles.iter().filter(|f| self.touches(f.side, u, v)) {
+                let w = self.surface.weight(u, v)?;
+                let n = normals.n;
+                let cube = n.norm().mul(n.norm_sq());
+                let along = form
+                    .t
+                    .evaluate(u, v)?
+                    .prod_scalar(Scalar::ONE.div(w.mul(w))?)
+                    .add(
+                        &n.prod_cross(&form.r.evaluate(u, v)?)
+                            .prod_scalar(distance.div(cube)?),
+                    );
+                o[if form.along_u { 0 } else { 1 }] = along;
+            }
+            let facing = o[0].prod_cross(&o[1]).prod_dot(&normals.n);
+            if facing.definitely_less(Scalar::ZERO) {
+                return Ok(Bounded::Folds);
+            }
+            let d = self.moved.partials(u, v, 2)?;
+            let hessian = [d[2][0], d[1][1], d[0][2]];
+            let e_ab: Vec<Vector3> = (0..3)
+                .map(|i| hessian[i].sub(&normals.second[i].prod_scalar(distance)))
+                .collect();
+            let square = |t: Scalar| {
+                let reach = t.abs().upper();
+                Scalar::ZERO.union(reach.mul(reach))
+            };
+            let (uu, vv, uv) = (square(du), square(dv), du.mul(dv));
+            let half = Scalar::from_f64(0.5);
+            let drift = Scalar::from_f64(OFFSET_DRIFT);
+            let (mut along_u, mut along_v) = (Scalar::ZERO, Scalar::ZERO);
+            let mut curved = [Scalar::ZERO; 3];
+            let mut within = facing.definitely_greater(Scalar::ZERO);
+            for k in 0..3 {
+                let (pu, pv, puv) = (
+                    e_ab[0][k].mul(uu).mul(half),
+                    e_ab[2][k].mul(vv).mul(half),
+                    e_ab[1][k].mul(uv),
+                );
+                along_u = Scalar::max(along_u, pu.abs().upper());
+                along_v = Scalar::max(along_v, pv.abs().upper());
+                curved[k] = pu.add(pv).add(puv);
+                within &= !curved[k].abs().upper().definitely_greater(drift);
+            }
+            if within {
+                return Ok(Bounded::Within(curved));
+            }
+            let why = format!(
+                "facing {facing:?}, the Hessian's part {curved:?}, the shift's second partials {hessian:?}, the normal's {:?}",
+                normals.second,
+            );
+            Ok(Bounded::Split(
+                if along_u.definitely_greater(along_v) {
+                    Some(true)
+                } else if along_v.definitely_greater(along_u) {
+                    Some(false)
+                } else {
+                    None
+                },
+                why,
+            ))
+        };
+        attempt().unwrap_or_else(|e| Bounded::Split(None, format!("{e:?}")))
+    }
+
+    /// The partials of a field in the normal's direction up to second
+    /// order at `(u, v)`, a point or a box: `n = S_u × S_v` and its
+    /// derivatives from the surface's partials up to third order, or, in a
+    /// span with a pole, the polynomial field. Only there: of three times
+    /// the degree, it is the wider over a box — but `S_u × S_v` near the
+    /// pole is wider still, as small as the distance to it and divided by.
+    fn field(&self, u: Scalar, v: Scalar) -> GeopResult<Vec<Vec<Vector3>>> {
+        if let Some(normal) = &self.normal {
+            return normal.partials(u, v, 2);
+        }
+        let s = self.surface.partials(u, v, 3)?;
+        let (su, sv) = (s[1][0], s[0][1]);
+        let (suu, suv, svv) = (s[2][0], s[1][1], s[0][2]);
+        let (suuu, suuv, suvv, svvv) = (s[3][0], s[2][1], s[1][2], s[0][3]);
+        let two = Scalar::TWO;
+        Ok(vec![
+            vec![
+                su.prod_cross(&sv),
+                suv.prod_cross(&sv).add(&su.prod_cross(&svv)),
+                suvv.prod_cross(&sv)
+                    .add(&suv.prod_cross(&svv).prod_scalar(two))
+                    .add(&su.prod_cross(&svvv)),
+            ],
+            vec![
+                suu.prod_cross(&sv).add(&su.prod_cross(&suv)),
+                suuv.prod_cross(&sv)
+                    .add(&suu.prod_cross(&svv))
+                    .add(&su.prod_cross(&suvv)),
+            ],
+            vec![
+                suuu.prod_cross(&sv)
+                    .add(&suu.prod_cross(&suv).prod_scalar(two))
+                    .add(&su.prod_cross(&suuv)),
+            ],
+        ])
+    }
+
+    /// Whether the box `u` × `v` reaches `side` of the span.
+    fn touches(&self, side: Side, u: Scalar, v: Scalar) -> bool {
+        let (t, (lo, hi)) = if side.u_fixed {
+            (u, self.u)
+        } else {
+            (v, self.v)
+        };
+        if side.at_end {
+            t.could_be_equal(hi)
+        } else {
+            t.could_be_equal(lo)
+        }
     }
 }
 
@@ -271,8 +481,10 @@ impl NurbSurface3D {
                 // One polynomial piece each, so a box's derivatives are
                 // that piece's over it.
                 let span = ((su[0], su[1]), (sv[0], sv[1]));
-                let surface = self.sub_surface(span.0, span.1)?;
-                let moved = shift.sub_surface(span.0, span.1)?;
+                let piece = Span::new(
+                    self.sub_surface(span.0, span.1)?,
+                    shift.sub_surface(span.0, span.1)?,
+                )?;
                 let mut stack = vec![span];
                 let mut undecided = String::new();
                 while let Some(((u0, u1), (v0, v1))) = stack.pop() {
@@ -289,21 +501,19 @@ impl NurbSurface3D {
                     );
                     // At the centre, sharp: a surface with no normal there
                     // has no offset.
-                    let at = surface.partials(cu, cv, 3)?;
+                    let at = piece.field(cu, cv)?;
                     let normals = Normals::of(&at).map_err(|e| {
                         e.with_context(format!(
                             "the surface has no normal at u={cu:?}, v={cv:?}: its offset is not supported there"
                         ))
                     })?;
-                    let moved_at = moved.partials(cu, cv, 1)?;
+                    let moved_at = piece.moved.partials(cu, cv, 1)?;
                     let unit = normals.n.normalize()?;
                     let e = moved_at[0][0].sub(&unit.prod_scalar(distance));
                     let e_u = moved_at[1][0].sub(&normals.first[0].prod_scalar(distance));
                     let e_v = moved_at[0][1].sub(&normals.first[1].prod_scalar(distance));
                     let (du, dv) = (u0.union(u1).sub(cu), v0.union(v1).sub(cv));
-                    let split_u = match Self::over_box(
-                        &surface,
-                        &moved,
+                    let split_u = match piece.over_box(
                         distance,
                         (u0.union(u1), du),
                         (v0.union(v1), dv),
@@ -337,80 +547,6 @@ impl NurbSurface3D {
             }
         }
         Ok(missed)
-    }
-
-    /// Over the box `u`, `v`, each with how far it reaches from its centre
-    /// (`δu`, `δv`): the Hessian's part of the bound on what `moved` misses
-    /// of `surface`'s offset by `distance`, `½ δᵀ H_E(B) δ` (see the module
-    /// docs), where it is within [`OFFSET_DRIFT`] and the offset definitely
-    /// does not fold over the box. Where the box is too wide to say — a
-    /// normal or a weight that could be zero over it, a part too wide, a
-    /// fold undecided — which way to split it: along `u` where its part
-    /// is the larger, `None` where neither is.
-    fn over_box(
-        surface: &NurbSurface3D,
-        moved: &NurbSurface3D,
-        distance: Scalar,
-        (u, du): (Scalar, Scalar),
-        (v, dv): (Scalar, Scalar),
-    ) -> Bounded {
-        let attempt = || -> GeopResult<Bounded> {
-            let s = surface.partials(u, v, 3)?;
-            let normals = Normals::of(&s)?;
-            // Past a centre of curvature the offset turns against the
-            // surface's normal.
-            let o_u = s[1][0].add(&normals.first[0].prod_scalar(distance));
-            let o_v = s[0][1].add(&normals.first[1].prod_scalar(distance));
-            let facing = o_u.prod_cross(&o_v).prod_dot(&normals.n);
-            if facing.definitely_less(Scalar::ZERO) {
-                return Ok(Bounded::Folds);
-            }
-            let d = moved.partials(u, v, 2)?;
-            let hessian = [d[2][0], d[1][1], d[0][2]];
-            let e_ab: Vec<Vector3> = (0..3)
-                .map(|i| hessian[i].sub(&normals.second[i].prod_scalar(distance)))
-                .collect();
-            let square = |t: Scalar| {
-                let reach = t.abs().upper();
-                Scalar::ZERO.union(reach.mul(reach))
-            };
-            let (uu, vv, uv) = (square(du), square(dv), du.mul(dv));
-            let half = Scalar::from_f64(0.5);
-            let drift = Scalar::from_f64(OFFSET_DRIFT);
-            let (mut along_u, mut along_v) = (Scalar::ZERO, Scalar::ZERO);
-            let mut curved = [Scalar::ZERO; 3];
-            let mut within = facing.definitely_greater(Scalar::ZERO);
-            for k in 0..3 {
-                let (pu, pv, puv) = (
-                    e_ab[0][k].mul(uu).mul(half),
-                    e_ab[2][k].mul(vv).mul(half),
-                    e_ab[1][k].mul(uv),
-                );
-                along_u = Scalar::max(along_u, pu.abs().upper());
-                along_v = Scalar::max(along_v, pv.abs().upper());
-                curved[k] = pu.add(pv).add(puv);
-                within &= !curved[k].abs().upper().definitely_greater(drift);
-            }
-            if within {
-                return Ok(Bounded::Within(curved));
-            }
-            let why = format!(
-                "facing {facing:?}, the Hessian's part {curved:?}, the shift's second partials {hessian:?}, the normal's {:?}, the surface's third {:?}",
-                normals.second,
-                [s[3][0], s[2][1], s[1][2], s[0][3]]
-            );
-            Ok(Bounded::Split(
-                if along_u.definitely_greater(along_v) {
-                    Some(true)
-                } else if along_v.definitely_greater(along_u) {
-                    Some(false)
-                } else {
-                    None
-                },
-                why,
-            ))
-        };
-        attempt().unwrap_or_else(|e| Bounded::Split(None, format!("{e:?}")))
     }
 }
 
@@ -571,8 +707,11 @@ mod tests {
             [0, 1, 2].map(|c| n[c].to_f64())
         };
         let at = Normals::of(
-            &surface
-                .partials(Scalar::from_f64(u), Scalar::from_f64(v), 3)
+            &normal_field(&surface)
+                .unwrap()
+                .surface()
+                .unwrap()
+                .partials(Scalar::from_f64(u), Scalar::from_f64(v), 2)
                 .unwrap(),
         )
         .unwrap();
@@ -611,6 +750,20 @@ mod tests {
             diff(&|c| (pp[c] - pm[c] - mp[c] + mm[c]) / (4. * h * h)),
             "N_uv",
         );
+    }
+
+    /// A patch with a pole: a sphere's octant, its rows meeting at the top.
+    /// Its normal there is no `S_u × S_v`, which vanishes; the normal
+    /// field with the pole's factor divided out is (see `net`). Fitted,
+    /// not taken as a revolution.
+    #[test]
+    #[ignore = "slow: 8 s — run with `cargo test -- --ignored`"]
+    fn a_patch_with_a_pole_is_fitted() {
+        let sphere = crate::test_fixtures::sphere_octant();
+        for d in [0.2, -0.2] {
+            let fitted = sphere.fitted_offset(Scalar::from_f64(d)).unwrap();
+            assert_encloses(&sphere, &fitted, d, 5e-5);
+        }
     }
 
     /// A bump bent tighter than the distance it is offset into: the offset
