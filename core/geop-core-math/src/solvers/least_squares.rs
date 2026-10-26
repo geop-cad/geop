@@ -389,9 +389,13 @@ fn step(
     let r = q.len();
 
     // δ_c = Q y, the least-squares correction of every row — `|c + J_c Q
-    // y|` least — by the normal equations of the rows' coefficients in Q:
-    // exactly `R y = -c` where the dependent rows agree with the others, and
-    // as near as first order gets where they do not.
+    // y|` least — by Householder reflections of the rows' coefficients in
+    // Q, not their normal equations, which square how ill-conditioned they
+    // are: exactly `R y = -c` where the dependent rows agree with the
+    // others, and as near as first order gets where they do not. Squared, a
+    // notched outline's trimmed offset — two arcs held to one crossing by a
+    // tangency each — gave a step that met none of the rows it was solved
+    // for, and the solve stopped flat at its first.
     let coefficients_of = |coefficients: &[Scalar]| -> Vec<Scalar> {
         (0..r)
             .map(|j| coefficients.get(j).copied().unwrap_or(Scalar::ZERO))
@@ -402,28 +406,11 @@ fn step(
         .chain(&dependent)
         .map(|(i, coefficients)| (*i, coefficients_of(coefficients)))
         .collect();
-    let normal: Vec<Vec<Scalar>> = (0..r)
-        .map(|a| {
-            (0..r)
-                .map(|b| {
-                    choose(
-                        all.iter()
-                            .fold(Scalar::ZERO, |sum, (_, row)| sum.add(row[a].mul(row[b]))),
-                    )
-                })
-                .collect()
-        })
-        .collect();
-    let rhs_c: Vec<Scalar> = (0..r)
-        .map(|a| {
-            choose(
-                all.iter()
-                    .fold(Scalar::ZERO, |sum, (i, row)| sum.sub(row[a].mul(c[*i]))),
-            )
-        })
-        .collect();
-    let (ln, singular) = cholesky(&normal)?;
-    let y = sharp(&solve_cholesky(&ln, &singular, &rhs_c)?);
+    let rhs: Vec<Scalar> = all.iter().map(|(i, _)| c[*i].neg()).collect();
+    let y = sharp(&least_squares(
+        all.into_iter().map(|(_, row)| row).collect(),
+        rhs,
+    )?);
     let mut delta_c = vec![Scalar::ZERO; k];
     for (t, qt) in q.iter().enumerate() {
         delta_c = minus_scaled(&delta_c, y[t].neg(), qt);
@@ -981,6 +968,58 @@ fn update_curvature(
         }
     }
     Ok(())
+}
+
+/// The `y` with `|rows y - rhs|` least, by Householder reflections, each
+/// value chosen (see [`choose`]): the model's own numbers. A column with
+/// nothing left of it, after the reflections before, is left out — zero in
+/// `y` — as a pivot that could be zero is.
+fn least_squares(rows: Vec<Vec<Scalar>>, rhs: Vec<Scalar>) -> GeopResult<Vec<Scalar>> {
+    let m = rows.len();
+    let r = rows.first().map_or(0, Vec::len);
+    // By columns, the right-hand side the last: each reflection is applied
+    // to every column from the diagonal's on.
+    let mut columns: Vec<Vec<Scalar>> = (0..r)
+        .map(|j| rows.iter().map(|row| row[j]).collect())
+        .collect();
+    columns.push(rhs);
+    let mut left_out = vec![false; r];
+    for j in 0..r.min(m) {
+        let length = norm(&columns[j][j..])?;
+        if !length.definitely_greater(Scalar::ZERO) {
+            left_out[j] = true;
+            continue;
+        }
+        // The reflection taking the column below the diagonal onto it,
+        // `v = x + sign(x₀) |x| e₀`, away from cancelling.
+        let alpha = if columns[j][j].definitely_less(Scalar::ZERO) {
+            length
+        } else {
+            length.neg()
+        };
+        let mut v = columns[j][j..].to_vec();
+        v[0] = choose(v[0].sub(alpha));
+        let vv = choose(dot(&v, &v));
+        if !vv.definitely_greater(Scalar::ZERO) {
+            continue;
+        }
+        for column in &mut columns[j..] {
+            let f = dot(&v, &column[j..]).mul(Scalar::TWO).div(vv)?;
+            for (x, &vt) in column[j..].iter_mut().zip(&v) {
+                *x = choose(x.sub(f.mul(vt)));
+            }
+        }
+    }
+    let rhs = &columns[r];
+    let mut y = vec![Scalar::ZERO; r];
+    for j in (0..r.min(m)).rev() {
+        if left_out[j] || !columns[j][j].definitely_not_equal(Scalar::ZERO) {
+            continue;
+        }
+        let known = (j + 1..r).fold(rhs[j], |sum, t| sum.sub(columns[t][j].mul(y[t])));
+        y[j] = choose(known.div(columns[j][j])?);
+    }
+    Ok(y)
 }
 
 #[cfg(test)]

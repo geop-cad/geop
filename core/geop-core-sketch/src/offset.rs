@@ -1209,9 +1209,11 @@ mod tests {
 
     /// The notched square's trimmed offset following its dimension, from
     /// 0.6 to 0.7: the arcs round the notch's corners still cross over its
-    /// middle, higher up.
+    /// middle, higher up. The solve once stopped flat at its first step:
+    /// its step was solved through normal equations, which squared how
+    /// ill-conditioned the two arcs held to one crossing are, and met none
+    /// of the rows it was solved for.
     #[test]
-    #[ignore = "bug: the solve stalls at its first step (Stop::Flat with 40 independent rows of 40, the dimension's residual 0.1 left) although the offset at 0.6 is enclosed (Krawczyk) and the configuration at 0.7 is the same one: the two arcs round the notch's corners share their crossing point, each held by its center and one tangency. Not yet traced into the least-squares step."]
     fn a_trimmed_offset_follows_its_dimension() {
         let mut s = Sketch::new();
         let corners = [
