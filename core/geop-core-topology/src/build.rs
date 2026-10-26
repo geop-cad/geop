@@ -436,7 +436,7 @@ impl BodySpec {
                 [_, _] => return fail(format!("edge {e} is used twice in the same sense")),
                 // Where two lumps of a solid touch along an edge, it is
                 // used by four faces, as many one way as the other.
-                _ if senses.len() % 2 == 0
+                _ if senses.len().is_multiple_of(2)
                     && 2 * senses.iter().filter(|&&s| s == Sense::Forward).count()
                         == senses.len() => {}
                 _ => {

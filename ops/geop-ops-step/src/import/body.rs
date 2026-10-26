@@ -2002,7 +2002,7 @@ impl Builder<'_> {
             for (k, (outer_loop, holes)) in pieces.into_iter().enumerate() {
                 face_shells[face.shell].push(face_specs.len());
                 face_specs.push((surface.clone(), outer_loop, holes));
-                extents.push(patch.extent.clone());
+                extents.push(patch.extent);
                 let mut name = face.name.clone();
                 if several {
                     name.push(format!("o{k}"));
@@ -3235,6 +3235,12 @@ fn heal(
     Ok((rebuild, healing))
 }
 
+/// A loop of a face: each coedge's edge and pcurve, in order.
+type Loop<T> = Vec<(T, NurbCurve2D)>;
+
+/// A face's loops: its outer one, and its holes.
+type FaceLoops<T> = (Loop<T>, Vec<Loop<T>>);
+
 /// Seed of the ray casting that tells which outer loop a hole lies in: any
 /// gives the same answer (see `pcurves_contain`).
 const SEED: u64 = 0x57E9_0000_0000_0001;
@@ -3246,8 +3252,8 @@ const SEED: u64 = 0x57E9_0000_0000_0001;
 /// Refused where a loop runs neither way, or a hole lies in none.
 fn split_by_outer_loops<T: Clone>(
     surface: &NurbSurface3D,
-    loops: Vec<Vec<(T, NurbCurve2D)>>,
-) -> GeopResult<Vec<(Vec<(T, NurbCurve2D)>, Vec<Vec<(T, NurbCurve2D)>>)>> {
+    loops: Vec<Loop<T>>,
+) -> GeopResult<Vec<FaceLoops<T>>> {
     let areas: Vec<Scalar> = (loops.iter())
         .map(|lp| loop_signed_area(lp.iter().map(|(_, pcurve)| pcurve)))
         .collect::<GeopResult<_>>()?;
