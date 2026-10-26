@@ -259,18 +259,23 @@ fn sweep_a_pipe_of_two_arcs_round_a_corner_into_an_arc() {
 
 /// A round pipe round a corner where a line meets an arc in a plane the
 /// line does not lie in (see [`sweep_round_a_corner_out_of_the_plane`]).
+/// The walls either side touch at the two points of the circle where its
+/// normal is along the axis the path turns about, crossing there in an X,
+/// not along a curve. Inside the circle's quarters `c1#1` and `c1#3`, the
+/// X lay inside an edge of the corner, exactly halfway along, where the
+/// rebuild asked whether the edge is a seam (its faces touching there, it
+/// took it for one) and where a trace of it was singular. Each is a joint
+/// of the profile now, and a vertex of the corner the turn leaves where it
+/// is.
 #[test]
-#[ignore = "bug: the walls either side touch at the two points of the circle on the axis \
-    the path turns about through the corner, where their crossing is an X, not a smooth \
-    curve. Each lies inside a station edge (c1#1 and c1#3 here; in the planar case at a \
-    joint, where the vertex sits on it), exactly halfway along by symmetry, which is where \
-    `rebuilt` asks whether an edge is a seam (`Rebuild::seam`, its faces touching there) \
-    and where its trace samples (`meet` singular). Testing the ends too broke seams ending \
-    at a cone's apex. The two-arc circle passes only because nothing samples the X. Such a \
-    point should be a vertex of the corner, which `rebuilt` cannot place yet: one smooth \
-    surface across the corner, two faces."]
 fn sweep_a_pipe_round_a_corner_out_of_the_plane() {
-    sweep_round_a_corner_out_of_the_plane(disc([0.0, 0.0], 0.3));
+    // The circle in its four quarters and the two points it touches at:
+    // six joints at either end, and at the corner two vertices for each
+    // quarter's joint and one for each touch.
+    assert_eq!(
+        sweep_round_a_corner_out_of_the_plane(disc([0.0, 0.0], 0.3)),
+        6 + 6 + 4 * 2 + 2
+    );
 }
 
 /// The circle of [`sweep_a_pipe_of_two_arcs_round_a_corner_into_an_arc`]
@@ -279,10 +284,12 @@ fn sweep_a_pipe_round_a_corner_out_of_the_plane() {
 /// after crosses those before, an edge of the crossing between them.
 #[test]
 fn sweep_a_pipe_of_two_arcs_round_a_corner_out_of_the_plane() {
-    // The circle is drawn in four arcs, cut where it crosses the axes.
+    // The circle is drawn in four arcs, cut where it crosses the axes, and
+    // joined too where it touches, as a disc is (see
+    // `sweep_a_pipe_round_a_corner_out_of_the_plane`).
     assert_eq!(
         sweep_round_a_corner_out_of_the_plane(two_arcs()),
-        4 + 4 + 4 * 2
+        6 + 6 + 4 * 2 + 2
     );
 }
 

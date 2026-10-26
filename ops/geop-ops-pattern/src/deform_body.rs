@@ -341,8 +341,14 @@ fn divide_across(
             .shells
             .first()
             .ok_or_else(|| GeopError::new("a sheet came out as no shell"))?;
-        imprint_on_face(model, &sheet_namer, face, &[sheet], RemeshParams::default())
-            .map_err(|e| e.with_context(format!("dividing face {name} at the zone's end {t:?}")))?;
+        imprint_on_face(
+            model,
+            &sheet_namer,
+            face,
+            &[Body::Sheet(sheet)],
+            RemeshParams::default(),
+        )
+        .map_err(|e| e.with_context(format!("dividing face {name} at the zone's end {t:?}")))?;
     }
     Ok(())
 }
