@@ -878,8 +878,9 @@ enum ThreadSeen {
 /// The part's cosmetic threads, as drafting draws them, in every
 /// orthographic view seeing their axis from the side or end on: from the
 /// side two thin lines along the thread, at its minor diameter on a shaft
-/// and at its major diameter in a hole; end on, three quarters of a thin
-/// circle at that diameter. Each on [`layer::HIDDEN`] where the threaded
+/// and at its major diameter in a hole, closing in or opening out along a
+/// tapered thread; end on, three quarters of a thin circle at that
+/// diameter, at the end nearer the eye. Each on [`layer::HIDDEN`] where the threaded
 /// face is hidden there, and labelled with its designation in the first
 /// view that draws it. A view seeing the axis obliquely, and the section
 /// view, draw no threads.
@@ -954,6 +955,9 @@ fn draw_thread(
     } else {
         thread.minor_diameter
     } / 2.0;
+    // A tapered thread's radius `along` from its start.
+    let taper = thread.taper.to_f64();
+    let drawn_at = |along: f64| drawn + taper * along;
     let mut labelled = !label;
     for p in placed
         .iter()
@@ -982,24 +986,28 @@ fn draw_thread(
         // point nearest the eye halfway along — on a shaft that is
         // in front, in a hole behind the material round it; end on,
         // where the thread is drawn at its end nearer the eye.
+        let mut end_radius = drawn;
         let (probe, label_at) = match seen {
             ThreadSeen::Side => {
-                let middle = start.add(&along.prod_scalar(Scalar::from_f64(thread.length / 2.0)));
+                let half = thread.length / 2.0;
+                let middle = start.add(&along.prod_scalar(Scalar::from_f64(half)));
+                let radius = thread.radius.add(thread.taper.mul(Scalar::from_f64(half)));
                 (
-                    middle.add(&frame.toward_eye().prod_scalar(thread.radius)),
+                    middle.add(&frame.toward_eye().prod_scalar(radius)),
                     at(&end),
                 )
             }
             ThreadSeen::End => {
-                let near = if frame
+                let (near, drawn) = if frame
                     .direction
                     .dot(&start)
                     .definitely_greater(frame.direction.dot(&end))
                 {
-                    end
+                    (end, drawn_at(thread.length))
                 } else {
-                    start
+                    (start, drawn)
                 };
+                end_radius = drawn;
                 let frame_there = frame_along(near, &along)?;
                 let side = *frame_there.u();
                 let c = at(&near);
@@ -1021,12 +1029,14 @@ fn draw_thread(
         };
         match seen {
             ThreadSeen::Side => {
-                let off = look
-                    .prod_cross(&along)
-                    .normalize()?
-                    .prod_scalar(Scalar::from_f64(drawn));
-                for off in [off, off.neg()] {
-                    sheet.stroke(layer, Shape::Line(at(&start.add(&off)), at(&end.add(&off))));
+                let side = look.prod_cross(&along).normalize()?;
+                let off = |r: f64| side.prod_scalar(Scalar::from_f64(r));
+                let (first, last) = (off(drawn), off(drawn_at(thread.length)));
+                for (first, last) in [(first, last), (first.neg(), last.neg())] {
+                    sheet.stroke(
+                        layer,
+                        Shape::Line(at(&start.add(&first)), at(&end.add(&last))),
+                    );
                 }
             }
             ThreadSeen::End => {
@@ -1036,7 +1046,7 @@ fn draw_thread(
                     layer,
                     Shape::Arc {
                         center: at(&start),
-                        radius: scale * drawn,
+                        radius: scale * end_radius,
                         start: 100f64.to_radians(),
                         end: 10f64.to_radians(),
                     },

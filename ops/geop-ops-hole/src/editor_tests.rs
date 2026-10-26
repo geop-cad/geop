@@ -83,3 +83,44 @@ fn new_hole_from_the_dialog() {
     assert_eq!(scene.part.annotations.len(), 1);
     assert_eq!(scene.part.annotations[0].label, "M5x0.8");
 }
+
+/// A pipe-thread hole made in the dialog: NPT picked as the standard makes
+/// the hole tapped, the dialog says it is reamed to the taper, and the
+/// scene draws its tapered cosmetic thread.
+#[test]
+fn npt_hole_from_the_dialog() {
+    let mut editor = editor_with(registry(), crate::testing::plate(&[[20.0, 20.0]]));
+    editor.handle(Command::New {
+        kind: "hole".into(),
+    });
+    let above = |x: f64, y: f64| pointer([x, y, 50.0], [0.0, 0.0, -1.0]);
+    handled(&mut editor, click_at(above(40.0, 30.0)));
+    editor.handle(dialog("points", Value::Press));
+    handled(&mut editor, click_at(above(20.0, 20.0)));
+    editor.handle(dialog("standard", Value::Choice("npt".into())));
+    let update = editor.handle(dialog("size", Value::Choice("1/8".into())));
+    let step = update.step.expect("the hole is edited");
+    assert!(step.missing.is_empty(), "{:?}", step.missing);
+    let shown = &step.presentation.dialog;
+    match shown.get("kind") {
+        Some(Control::Select { value, .. }) => assert_eq!(value, "tapped"),
+        other => panic!("{other:?}"),
+    }
+    match shown.get("dimensions") {
+        Some(Control::Text { text, .. }) => {
+            assert_eq!(text, "reamed 1:16 from Ø8.737, thread 1/8-27 NPT")
+        }
+        other => panic!("{other:?}"),
+    }
+    handled(&mut editor, Command::Commit);
+    let args = args::<crate::HoleArgs>(editor.program().steps.last().unwrap());
+    assert_eq!(args.kind, crate::HoleKind::Tapped);
+    assert_eq!(args.standard, crate::Standard::Npt { size: "1/8".into() });
+    let scene = editor
+        .handle(Command::Show)
+        .scene
+        .expect("the scene changed");
+    assert_eq!(scene.part.solids, ["hole(hole1)"]);
+    assert_eq!(scene.part.annotations.len(), 1);
+    assert_eq!(scene.part.annotations[0].label, "1/8-27 NPT");
+}

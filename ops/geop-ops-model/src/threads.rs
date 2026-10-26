@@ -29,7 +29,8 @@ use geop_core_program::{
     target::{Target, TargetReference},
 };
 
-/// A thread recorded on a cylindrical face, by its specification and where
+/// A thread recorded on a round face, straight or tapered, by its
+/// specification and where
 /// it lies — kept as geometry, so that it says the same whatever later
 /// steps do to the face it was put on.
 #[derive(Clone, Debug, PartialEq)]
@@ -41,10 +42,16 @@ pub struct CosmeticThread {
     /// Where it starts, on the axis of its face, and the way it runs from
     /// there (a unit vector).
     pub axis: Axis,
-    /// The radius of the face it lies on: where it is drawn.
+    /// The radius of the face it lies on where it starts: where it is
+    /// drawn.
     pub radius: Scalar,
-    /// The thread's nominal (major) diameter, its minor diameter and its
-    /// pitch, as its standard gives them.
+    /// How much that radius, and the thread's diameters, change per unit
+    /// along the axis from where it starts: none for a straight thread, and
+    /// for a pipe thread (NPT) a thirty-second, shrinking into a hole from
+    /// its face, growing along a pipe from its end.
+    pub taper: Scalar,
+    /// The thread's nominal (major) diameter, its minor diameter where it
+    /// starts, and its pitch, as its standard gives them.
     pub major_diameter: f64,
     pub minor_diameter: f64,
     pub pitch: f64,
@@ -57,18 +64,15 @@ pub struct CosmeticThread {
 
 impl CosmeticThread {
     /// The helix it is drawn as: on its face, from where it starts, one
-    /// turn per pitch, as far as it runs.
+    /// turn per pitch, as far as it runs, following the face's taper.
     pub fn helix(&self) -> GeopResult<NurbCurve3D> {
         let frame: CoordinateSystem = frame_along(self.axis.point, &self.axis.direction)?;
-        NurbCurve3D::helix(
-            &frame,
-            self.radius,
-            &Helix::new(
-                Scalar::from_f64(self.pitch),
-                self.length / self.pitch,
-                self.handedness,
-            ),
-        )
+        let helix = Helix::new(
+            Scalar::from_f64(self.pitch),
+            self.length / self.pitch,
+            self.handedness,
+        );
+        NurbCurve3D::helix(&frame, self.radius, &helix.tapered(self.taper))
     }
 
     /// The helix as a polyline, `SEGMENTS_PER_SPAN` segments to a quarter turn.
