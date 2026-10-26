@@ -19,6 +19,13 @@
 //!
 //! For an ISO metric thread that is 5 µm on an M6 (pitch 1 mm), well inside
 //! the tolerance of the thread itself.
+//!
+//! A helix may also be **tapered** ([`Helix::taper`]), its radius growing in
+//! step with its height, as a pipe thread's (NPT) does: on a cone instead of
+//! a cylinder. The radius is then built as the height is, exactly at every
+//! span's end and its middle row at the mean of the two, so the curve leaves
+//! the cone between them as the height leaves the helix, by a fraction of
+//! how much the radius grows in a quarter turn (see the test).
 
 use geop_core_math::{
     geop_error::{GeopError, GeopResult},
@@ -38,16 +45,49 @@ pub enum Handedness {
     Left,
 }
 
+/// The screw motion a helix follows: rising `pitch` per turn through
+/// `turns` turns, turning as `handedness` says, and moving out from the axis
+/// by `taper` for every unit it rises — none for a helix on a cylinder.
+#[derive(Clone, Copy, Debug)]
+pub struct Helix {
+    pub pitch: Scalar,
+    pub turns: f64,
+    pub handedness: Handedness,
+    pub taper: Scalar,
+}
+
+impl Helix {
+    /// The motion along a helix on a cylinder.
+    pub fn new(pitch: Scalar, turns: f64, handedness: Handedness) -> Self {
+        Self {
+            pitch,
+            turns,
+            handedness,
+            taper: Scalar::ZERO,
+        }
+    }
+
+    /// This motion, moving out from the axis by `taper` for every unit it
+    /// rises: on a cone whose radius grows by `taper` per unit of height,
+    /// half a pipe thread's taper on the diameter.
+    pub fn tapered(self, taper: Scalar) -> Self {
+        Self { taper, ..self }
+    }
+}
+
 /// One control row of a helix around `frame.w()` through `frame.origin()`:
 /// a point at distance `r` from the axis, raised by `z` above the row, lies
-/// at `origin + r radial + (rise + z) w`, weighted `weight` — none for a row
-/// at a span's end, whose weight is one.
+/// at `origin + (r + out) radial + (rise + z) w`, weighted `weight` — none
+/// for a row at a span's end, whose weight is one.
 #[derive(Clone, Debug)]
 pub struct HelixRow {
     /// Unit length at a span's end; at a span's middle, as far out as the
     /// tangents of the unit circle at the span's ends meet.
     pub radial: Vector3,
     pub rise: Scalar,
+    /// How far a tapered helix has moved out from its axis here: its taper
+    /// times the rise. None on a cylinder.
+    pub out: Option<Scalar>,
     pub weight: Option<Scalar>,
 }
 
@@ -88,16 +128,16 @@ pub fn arc_span(step: f64) -> (Scalar, Scalar) {
     (weight, Scalar::from_f64(1.0 / (1.0 + cos_step)))
 }
 
-/// The control rows of a helix around `frame.w()`, from `frame.u()`, rising
-/// `pitch` along `w` per turn through `turns` turns, turning as
-/// `handedness` says: `2 n + 1` rows for `n` equal spans of at most a
-/// quarter turn — a span's ends at even indices, its middle in between.
-pub fn helix_rows(
-    frame: &CoordinateSystem,
-    pitch: Scalar,
-    turns: f64,
-    handedness: Handedness,
-) -> GeopResult<Vec<HelixRow>> {
+/// The control rows of a helix around `frame.w()`, from `frame.u()`, moving
+/// as `helix` says along `w`: `2 n + 1` rows for `n` equal spans of at most
+/// a quarter turn — a span's ends at even indices, its middle in between.
+pub fn helix_rows(frame: &CoordinateSystem, helix: &Helix) -> GeopResult<Vec<HelixRow>> {
+    let Helix {
+        pitch,
+        turns,
+        handedness,
+        taper,
+    } = *helix;
     if !(turns.is_finite() && turns > 0.0) {
         return Err(GeopError::new(format!(
             "helix: cannot turn {turns} times: it must be more than none"
@@ -132,21 +172,29 @@ pub fn helix_rows(
             k => total.mul(Scalar::from_ratio(k as i64, spans as i64)?),
         })
     };
+    // Out by the taper times the rise, built as the rise is: none where
+    // there is no taper, rather than multiplied by zero.
+    let out = |rise: Scalar| (!taper.is_zero()).then(|| taper.mul(rise));
     let mut rows = Vec::with_capacity(2 * spans + 1);
     let mut start = HelixRow {
         radial: direction(0.0),
         rise: Scalar::ZERO,
+        out: out(Scalar::ZERO),
         weight: None,
     };
     for k in 0..spans {
+        let rise_end = rise(k + 1)?;
         let end = HelixRow {
             radial: direction((k + 1) as f64 * step),
-            rise: rise(k + 1)?,
+            rise: rise_end,
+            out: out(rise_end),
             weight: None,
         };
+        let rise_middle = start.rise.add(end.rise).div(Scalar::TWO)?;
         let middle = HelixRow {
             radial: start.radial.add(&end.radial).prod_scalar(outwards),
-            rise: start.rise.add(end.rise).div(Scalar::TWO)?,
+            rise: rise_middle,
+            out: out(rise_middle),
             weight: Some(weight),
         };
         rows.push(start);
@@ -159,32 +207,32 @@ pub fn helix_rows(
 
 impl NurbCurve3D {
     /// The helix of `radius` around `frame.w()` through `frame.origin()`:
-    /// starting at `origin + radius u`, rising `pitch` along `w` per turn,
-    /// through `turns` turns — right-handed turning from `u` towards `v`,
-    /// left-handed the other way. One rational quadratic per span of at
-    /// most a quarter turn, exactly on the cylinder, its height within
-    /// 0.53 % of the pitch of the true helix (see the module docs). The
-    /// parameter runs over `[0, 1]`, a span's end at every `k / n`.
-    pub fn helix(
-        frame: &CoordinateSystem,
-        radius: Scalar,
-        pitch: Scalar,
-        turns: f64,
-        handedness: Handedness,
-    ) -> GeopResult<Self> {
-        if !radius.definitely_greater(Scalar::ZERO) {
+    /// starting at `origin + radius u`, moving as `helix` says along `w` —
+    /// right-handed turning from `u` towards `v`, left-handed the other
+    /// way. One rational quadratic per span of at most a quarter turn,
+    /// exactly on the cylinder, its height within 0.53 % of the pitch of
+    /// the true helix (see the module docs); tapered, on the cone as
+    /// closely. The parameter runs over `[0, 1]`, a span's end at every
+    /// `k / n`. Refused where the radius could come to nothing.
+    pub fn helix(frame: &CoordinateSystem, radius: Scalar, helix: &Helix) -> GeopResult<Self> {
+        let rows = helix_rows(frame, helix)?;
+        let radius_at = |row: &HelixRow| row.out.map_or(radius, |out| radius.add(out));
+        if let Some(row) = rows
+            .iter()
+            .find(|row| !radius_at(row).definitely_greater(Scalar::ZERO))
+        {
             return Err(GeopError::new(format!(
-                "helix: the radius {radius:?} must be definitely positive"
+                "helix: the radius {:?} must be definitely positive, starting at {radius:?}",
+                radius_at(row)
             )));
         }
-        let rows = helix_rows(frame, pitch, turns, handedness)?;
         let spans = rows.len() / 2;
         let (origin, w) = (frame.origin(), frame.w());
         let control_points = rows
             .iter()
             .map(|row| {
                 origin
-                    .add(&row.radial.prod_scalar(radius))
+                    .add(&row.radial.prod_scalar(radius_at(row)))
                     .add(&w.prod_scalar(row.rise))
                     .homogeneous(row.weight.unwrap_or(Scalar::ONE))
             })
@@ -219,9 +267,7 @@ mod tests {
             let curve = NurbCurve3D::helix(
                 &frame(),
                 Scalar::from_f64(radius),
-                Scalar::from_f64(pitch),
-                turns,
-                handedness,
+                &Helix::new(Scalar::from_f64(pitch), turns, handedness),
             )
             .unwrap();
             let sign = if handedness == Handedness::Right {
@@ -286,8 +332,57 @@ mod tests {
         use geop_core_math::scalars::Scalar;
         let f = frame();
         let one = Scalar::from_f64(1.0);
-        assert!(NurbCurve3D::helix(&f, one, one, 0.0, Handedness::Right).is_err());
-        assert!(NurbCurve3D::helix(&f, one, Scalar::ZERO, 1.0, Handedness::Right).is_err());
-        assert!(NurbCurve3D::helix(&f, Scalar::ZERO, one, 1.0, Handedness::Right).is_err());
+        let right = |pitch: Scalar, turns: f64| Helix::new(pitch, turns, Handedness::Right);
+        assert!(NurbCurve3D::helix(&f, one, &right(one, 0.0)).is_err());
+        assert!(NurbCurve3D::helix(&f, one, &right(Scalar::ZERO, 1.0)).is_err());
+        assert!(NurbCurve3D::helix(&f, Scalar::ZERO, &right(one, 1.0)).is_err());
+        // Tapered in so far that it would reach its axis.
+        let inwards = right(one, 2.0).tapered(Scalar::from_f64(-0.6));
+        assert!(NurbCurve3D::helix(&f, one, &inwards).is_err());
+    }
+
+    /// A pipe thread's helix, tapered 1 in 32 on the radius: it starts and
+    /// ends where the cone has it, at every quarter turn it is on the cone,
+    /// and in between it stays within a hundredth of what the radius grows
+    /// in a quarter turn.
+    #[test]
+    fn tapered_helix_is_on_its_cone_at_every_quarter_and_close_between() {
+        let (radius, pitch, turns, taper) = (10.0, 1.8, 3.5, 1.0 / 32.0);
+        let helix = Helix::new(Scalar::from_f64(pitch), turns, Handedness::Right)
+            .tapered(Scalar::from_f64(taper));
+        let curve = NurbCurve3D::helix(&frame(), Scalar::from_f64(radius), &helix).unwrap();
+        let off_cone = |p: &Vector3| {
+            let (x, y, z) = (
+                p[0].to_f64() - 1.0,
+                p[1].to_f64() - 2.0,
+                p[2].to_f64() - 3.0,
+            );
+            x.hypot(y) - (radius + taper * z)
+        };
+        let spans = (turns * 4.0).ceil() as i64;
+        for k in 0..=spans {
+            let p = curve
+                .evaluate(Scalar::from_ratio(k, spans).unwrap())
+                .unwrap();
+            assert!(off_cone(&p).abs() < 1e-12, "quarter {k}: {p:?}");
+        }
+        let quarter = taper * pitch / 4.0;
+        let samples = 997;
+        let worst = (0..=samples)
+            .map(|i| {
+                off_cone(
+                    &curve
+                        .evaluate(Scalar::from_ratio(i, samples).unwrap())
+                        .unwrap(),
+                )
+            })
+            .fold(0.0f64, |w, d| w.max(d.abs()));
+        assert!(worst < 1e-2 * quarter, "{worst} against {quarter}");
+        assert!(worst > 0.0);
+        let end = curve.evaluate(Scalar::ONE).unwrap();
+        assert!(
+            off_cone(&end).abs() < 1e-12 && (end[2].to_f64() - 3.0 - pitch * turns).abs() < 1e-12,
+            "{end:?}"
+        );
     }
 }

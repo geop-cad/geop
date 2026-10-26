@@ -1,5 +1,5 @@
-//! [`Shell`]: hollow a solid out to walls of one thickness, open where
-//! faces are picked.
+//! [`Shell`]: hollow a solid out to walls of one thickness — another for
+//! the faces picked for it — open where faces are picked.
 
 use geop_core_editor::{
     edit_form::{EditForm, FormState},
@@ -39,6 +39,20 @@ pub struct ShellArgs {
     /// How thick the walls are, measured inward from the solid's faces: a
     /// number, or a formula of the part's parameters.
     pub thickness: NumericInput,
+    /// Faces whose walls are `other_thickness` thick instead.
+    #[serde(default)]
+    pub other_faces: Vec<ElementReference<NamedModel, Face>>,
+    /// How thick the walls of `other_faces` are.
+    #[serde(default = "default_other_thickness")]
+    pub other_thickness: NumericInput,
+    /// Whether the walls grow outward from the faces instead: the solid
+    /// becomes the hollow.
+    #[serde(default)]
+    pub outward: bool,
+}
+
+fn default_other_thickness() -> NumericInput {
+    NumericInput::Plain(0.2)
 }
 
 part_operation!(Shell(ShellArgs));
@@ -64,6 +78,9 @@ impl PartOperation for Shell {
             solid: ElementReference::new(model(), newest.unwrap_or_default()),
             faces: Vec::new(),
             thickness: NumericInput::Plain(0.1),
+            other_faces: Vec::new(),
+            other_thickness: default_other_thickness(),
+            outward: false,
         }
     }
 
@@ -89,6 +106,7 @@ impl PartOperation for Shell {
                 // The faces opened were of the solid before.
                 if solid != edit.args.solid {
                     edit.args.faces.clear();
+                    edit.args.other_faces.clear();
                 }
                 edit.args.solid = solid;
             },
@@ -106,6 +124,31 @@ impl PartOperation for Shell {
         f.numeric("thickness", thickness.range(0.0, 1.0), |edit, thickness| {
             edit.args.thickness = thickness
         });
+        f.checkbox("outward", "walls outward", args.outward, |edit, b| {
+            edit.args.outward = b
+        });
+        f.pick(
+            "other_faces",
+            "faces of another thickness",
+            before,
+            &args.other_faces,
+            true,
+            |edit, faces| edit.args.other_faces = faces,
+        );
+        f.form.dialog.optional("other_faces");
+        if !args.other_faces.is_empty() {
+            let other = Number::numeric(
+                &args.other_thickness,
+                "their thickness",
+                before,
+                Unit::Length,
+            );
+            f.numeric(
+                "other_thickness",
+                other.range(0.0, 1.0),
+                |edit, thickness| edit.args.other_thickness = thickness,
+            );
+        }
         f
     }
 }
@@ -126,7 +169,16 @@ impl ModelOperation for Shell {
         let faces = (args.faces.iter())
             .map(|face| model.face_id(face.name()))
             .collect::<GeopResult<Vec<_>>>()?;
-        shell(model, &namer, solid, &faces, Scalar::from_f64(thickness))?;
+        let other = args.other_thickness.resolve(reader)?;
+        if !other.is_finite() {
+            return Err(GeopError::new("the other thickness is not a number"));
+        }
+        // Outward is a negative thickness to the shell.
+        let way = |t: f64| Scalar::from_f64(if args.outward { -t } else { t });
+        let thicker = (args.other_faces.iter())
+            .map(|face| Ok((model.face_id(face.name())?, way(other))))
+            .collect::<GeopResult<Vec<_>>>()?;
+        shell(model, &namer, solid, &faces, way(thickness), &thicker)?;
         Ok(())
     }
 }

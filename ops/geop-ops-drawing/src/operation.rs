@@ -50,8 +50,8 @@ use serde::{Deserialize, Serialize};
 use crate::{
     annotation::{Along, Annotation, Candidate, Drawn, EdgeShape, Leader, Pickable, Target},
     drawing::{
-        DrawingArgs, Layout, Projected, Projection, SCALES, SheetSize, arrange, placed_edge,
-        placed_vertex, project, scale_label,
+        DrawingArgs, Layout, Projected, Projection, SCALES, SheetSize, arc_of, arrange,
+        placed_edge, placed_vertex, project, scale_label,
     },
     export::{DrawingExporter, described, drawing},
     layer,
@@ -888,7 +888,7 @@ fn resolve_target(part: &Reader, target: &Target) -> GeopResult<()> {
 
 /// Checks that `edge` is a circular edge of `part`.
 fn circular(part: &Reader, edge: &str) -> GeopResult<()> {
-    match placed_edge(part, edge)?.as_arc()? {
+    match arc_of(&placed_edge(part, edge)?)? {
         Some(_) => Ok(()),
         None => Err(GeopError::new(format!(
             "the edge {edge} is not circular: only a circle has a radius or a centre"

@@ -108,8 +108,7 @@ pub fn rib(
                 namer,
                 Some(&tool_name),
                 plane,
-                Scalar::ZERO,
-                to,
+                &[Scalar::ZERO, to],
                 &loops,
             )
             .with_context(ctx)?;
@@ -122,8 +121,7 @@ pub fn rib(
                 namer,
                 Some(&tool_name),
                 plane,
-                near,
-                far,
+                &[near, far],
                 &[SweepLoop::plain(swept)],
             )
             .with_context(ctx)?;

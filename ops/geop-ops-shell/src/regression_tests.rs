@@ -1,7 +1,7 @@
 //! Programs from bug reports, rebuilt as the smallest programs found that
 //! still fail.
 
-use geop_core_math::geop_error::GeopResult;
+use geop_core_math::{geop_error::GeopResult, scalars::Scalar};
 use geop_core_program::{
     element::ElementReference, operation_registry::OperationRegistry, program::Program,
 };
@@ -10,7 +10,7 @@ use geop_lib_fixtures::PrimitiveArgs;
 use geop_ops_fillet::{Fillet, FilletArgs};
 use geop_ops_model::{
     NamedModel, model, solid,
-    testing::{Built, assert_valid, edges_with_middle_where, face_towards},
+    testing::{Built, apply_to_model, assert_valid, edges_with_middle_where, face_towards},
 };
 
 use crate::{Shell, ShellArgs};
@@ -78,6 +78,9 @@ fn shell_of_a_block_with_a_rounded_upright_edge() {
             solid: solid("fillet(corner)"),
             faces: vec![ElementReference::new(model(), top.clone())],
             thickness: 0.3.into(),
+            other_faces: Vec::new(),
+            other_thickness: 0.2.into(),
+            outward: false,
         },
     );
     let part = program.build_model(registry).unwrap();
@@ -90,4 +93,133 @@ fn shell_of_a_block_with_a_rounded_upright_edge() {
     assert_eq!(faces(&part, id), 2 * (faces(&rounded, outside) - 1) + 1);
     let rim = part.face_id(&format!("shell(s,{top})")).unwrap();
     assert_eq!(part.topology().get_face(rim).unwrap().holes.len(), 1);
+}
+
+/// A 10 x 6 x 3 block with its upright edge at the origin rounded by 0.5,
+/// shelled 1 thick: the blend is narrower than the walls are thick, so its
+/// inner copy has no area — offset by 1, its cylinder of radius 0.5 would
+/// pass its axis. The inner side has no copy of it: the two sides it
+/// rounds meet in a sharp inner corner, a line from the bottom's inner
+/// copy to the top's. Closed all round, the void is the block's inner
+/// box, 8 x 4 x 1; opened at the top, the walls are the block less the box
+/// from 1 up.
+#[test]
+fn shell_thicker_than_a_rounded_edge() {
+    let mut program = Program::new();
+    program.push(
+        "box",
+        PrimitiveArgs::block([0.0, 0.0, 0.0], [10.0, 6.0, 3.0]),
+    );
+    let before = program.build_model(registry).unwrap();
+    let edge = edges_with_middle_where(&before, |m| {
+        near(m[0], 0.0) && near(m[1], 0.0) && near(m[2], 1.5)
+    });
+    assert_eq!(edge.len(), 1, "{edge:?}");
+    program.push("corner", FilletArgs::constant(edge, 0.5));
+    let rounded = program.build_model(registry).unwrap();
+    let top = face_name(&rounded, "fillet(corner)", [0.0, 0.0, 1.0]);
+    let outer = 180.0 - (1.0 - std::f64::consts::PI / 4.0) * 0.25 * 3.0;
+    for (open, void) in [(vec![], 8.0 * 4.0 * 1.0), (vec![top], 8.0 * 4.0 * 2.0)] {
+        let mut program = program.clone();
+        program.push(
+            "s",
+            ShellArgs {
+                solid: solid("fillet(corner)"),
+                faces: open
+                    .into_iter()
+                    .map(|f| ElementReference::new(model(), f))
+                    .collect(),
+                thickness: 1.0.into(),
+                other_faces: Vec::new(),
+                other_thickness: 0.2.into(),
+                outward: false,
+            },
+        );
+        let part = program.build_model(registry).unwrap();
+        assert_valid(&part);
+        let id = part.solid_id("shell(s)").unwrap();
+        let volume = part.topology().mass_properties(id).unwrap().volume;
+        assert!(
+            volume.could_be_equal(Scalar::from_f64(outer - void)),
+            "{volume:?} vs {}",
+            outer - void
+        );
+    }
+}
+
+/// A 10 x 6 x 3 block with every edge rounded by 0.3, shelled 0.5 thick:
+/// every blend is narrower than the walls, the corners' patches too. The
+/// inner side is the sharp box 9 x 5 x 2: each blend's two edges along it
+/// share one copy, where the faces it rounds meet, and each corner patch
+/// leaves one vertex where the three walls' copies meet.
+#[test]
+fn shell_thicker_than_every_rounded_edge() {
+    let mut program = Program::new();
+    program.push(
+        "box",
+        PrimitiveArgs::block([0.0, 0.0, 0.0], [10.0, 6.0, 3.0]),
+    );
+    let before = program.build_model(registry).unwrap();
+    let all = edges_with_middle_where(&before, |_| true);
+    assert_eq!(all.len(), 12, "{all:?}");
+    program.push("round", FilletArgs::constant(all, 0.3));
+    let rounded = program.build_model(registry).unwrap();
+    assert_valid(&rounded);
+    let outer = rounded
+        .topology()
+        .mass_properties(rounded.solid_id("fillet(round)").unwrap())
+        .unwrap()
+        .volume;
+    // The rounded block is built once: its corners' blends take a while.
+    let args = ShellArgs {
+        solid: solid("fillet(round)"),
+        faces: vec![],
+        thickness: 0.5.into(),
+        other_faces: Vec::new(),
+        other_thickness: 0.2.into(),
+        outward: false,
+    };
+    let part = apply_to_model::<Shell>(rounded, "s", &args).unwrap();
+    assert_valid(&part);
+    let id = part.solid_id("shell(s)").unwrap();
+    let volume = part.topology().mass_properties(id).unwrap().volume;
+    let expected = outer.sub(Scalar::from_f64(9.0 * 5.0 * 2.0));
+    assert!(
+        volume.could_be_equal(expected),
+        "{volume:?} vs {expected:?}"
+    );
+}
+
+/// An enclosure's lid side up: a 10 x 6 x 3 block with its four upright
+/// edges and its four top edges rounded by 1, shelled 0.3 thick, open at
+/// the top. The top is tangent to every blend around it, so the walls do
+/// not stand on it: they end where it was, along its edges, each in an end
+/// face from the edge down to its copy on the blend's inner copy — as a
+/// sheet's free edge gets a wall. Nothing is left of the top.
+#[test]
+#[ignore = "slow: 18 s, most of it rounding the eight edges — run with `cargo test -- --ignored`"]
+fn shell_opened_at_a_top_its_blends_are_tangent_to() {
+    let mut program = Program::new();
+    program.push(
+        "box",
+        PrimitiveArgs::block([0.0, 0.0, 0.0], [10.0, 6.0, 3.0]),
+    );
+    let before = program.build_model(registry).unwrap();
+    let edges = edges_with_middle_where(&before, |m| near(m[2], 3.0) || near(m[2], 1.5));
+    assert_eq!(edges.len(), 8, "{edges:?}");
+    program.push("round", FilletArgs::constant(edges, 1.0));
+    let rounded = program.build_model(registry).unwrap();
+    assert_valid(&rounded);
+    let top = face_name(&rounded, "fillet(round)", [0.0, 0.0, 1.0]);
+    let args = ShellArgs {
+        solid: solid("fillet(round)"),
+        faces: vec![ElementReference::new(model(), top.clone())],
+        thickness: 0.3.into(),
+        other_faces: Vec::new(),
+        other_thickness: 0.2.into(),
+        outward: false,
+    };
+    let part = apply_to_model::<Shell>(rounded, "s", &args).unwrap();
+    assert_valid(&part);
+    assert!(part.face_id(&format!("shell(s,{top})")).is_err());
 }

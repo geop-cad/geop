@@ -473,3 +473,36 @@ fn an_assembly_balloons_each_line_once() {
         assert_eq!(labelled, 1, "balloon {item}");
     }
 }
+
+/// A cubic Bézier through a quarter circle's ends and middle, tangent to it
+/// at its ends — the usual approximation, off the circle by 2.7e-4 between
+/// them — is not circular to a drawing; the circle's own quarter is.
+#[test]
+fn a_cubic_near_a_quarter_circle_is_no_arc() {
+    use geop_core_geometry::nurb_curve::NurbCurve3D;
+    use geop_core_geometry::shape::{Arc, Circle};
+    let k = 4.0 / 3.0 * (2f64.sqrt() - 1.0);
+    let s = Scalar::from_f64;
+    let p =
+        |x: f64, y: f64| geop_core_math::vector::Vector4::from_array([s(x), s(y), s(0.0), s(1.0)]);
+    let cubic = NurbCurve3D::try_new(
+        3,
+        vec![p(1.0, 0.0), p(1.0, k), p(k, 1.0), p(0.0, 1.0)],
+        [0.0, 0.0, 0.0, 0.0, 1.0, 1.0, 1.0, 1.0].map(s).to_vec(),
+    )
+    .unwrap();
+    assert!(crate::drawing::arc_of(&cubic).unwrap().is_none());
+    let quarter = Arc {
+        circle: Circle {
+            center: v3(0.0, 0.0, 0.0),
+            normal: v3(0.0, 0.0, 1.0),
+            radius: Scalar::ONE,
+        },
+        start: v3(1.0, 0.0, 0.0),
+        end: v3(0.0, 1.0, 0.0),
+    };
+    let arc = crate::drawing::arc_of(&quarter.to_curve().unwrap())
+        .unwrap()
+        .unwrap();
+    assert!(arc.circle.radius.could_be_equal(Scalar::ONE));
+}

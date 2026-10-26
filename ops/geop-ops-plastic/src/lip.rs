@@ -317,8 +317,7 @@ pub fn lip(
         namer,
         Some(&namer.name(&["tool"])),
         &frame,
-        Scalar::ZERO,
-        size.height,
+        &[Scalar::ZERO, size.height],
         &loops,
     )
     .with_context(ctx)?;
@@ -372,8 +371,7 @@ pub fn groove(
         namer,
         Some(&namer.name(&["tool"])),
         &frame,
-        air,
-        size.height.add(clearance).neg(),
+        &[air, size.height.add(clearance).neg()],
         &loops,
     )
     .with_context(ctx)?;

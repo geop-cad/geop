@@ -8,28 +8,25 @@ use geop_core_editor::{
     part_operation,
     part_operation::PartOperation,
 };
-use std::collections::BTreeMap;
-
+use geop_core_geometry::nurb_surface::NurbSurface3D;
 use geop_core_math::{
     geop_error::{GeopError, GeopResult, WithContext},
     primitives::CoordinateSystem,
     scalars::Scalar,
-    vector::{Vector2, Vector3},
+    vector::{Vector2, Vector3, Vector4},
     with_context,
 };
 use geop_core_program::{numeric::NumericInput, part::StepContext, reader::Reader};
-use geop_core_sketch::{
-    CurveId, PointId, ProfileEdge, ProfileJoint, ProfileLoop, ProfilePiece, Region, Shape, Sketch,
-    offset::Corners, profile::curve_polyline,
-};
-use geop_core_topology::build::BuiltBody;
-use geop_ops_model::sketch::{PlacedSketch, SketchRef, chain_of_pieces, shape_profiles};
+use geop_core_sketch::{Shape, Sketch, profile::curve_polyline};
+use geop_core_topology::{Body, build::BuiltBody};
+use geop_lib_shell::rebuilt;
+use geop_ops_model::sketch::{PlacedSketch, SketchRef, shape_profiles};
 use geop_ops_model::{
-    Extent, ModelOperation, NamedModel, Namer, build_model, reach_past, read_model,
+    BodyNames, Extent, ModelOperation, NamedModel, Namer, build_model, reach_past, read_model,
 };
 use serde::{Deserialize, Serialize};
 
-use geop_lib_sweep::{Level, SweepLoop, drafted, extrude};
+use geop_lib_sweep::{SweepLoop, extrude};
 
 use crate::sweeping::{Extents, Output, Sweeping, build_extents};
 
@@ -42,10 +39,9 @@ use crate::sweeping::{Extents, Output, Sweeping, build_extents};
 ///
 /// How far it goes is an [`Extents`]: a length, or up to the next face of
 /// the solid it is joined to or cut from, on one side of the plane, both
-/// alike, or each its own way. With a draft angle its walls taper: the
-/// area at each end is the sketch's offset inwards by the distance from
-/// the plane times the angle's tangent, the walls ruled between (see
-/// [`draft_levels`]); both ways from the plane, a ridge there.
+/// alike, or each its own way. With a draft angle its walls lean in away
+/// from the plane, each by the angle (see [`drafted`]); both ways from the
+/// plane, a ridge there.
 ///
 /// The faces, edges and vertices are named after the sketch elements they
 /// are swept from (see [`geop_lib_sweep::extrude`]), with `X` a piece of a
@@ -77,7 +73,7 @@ pub struct ExtrudeArgs {
     pub output: Output,
     /// The draft angle of the walls, in degrees: positive narrows the
     /// area away from the sketch's plane, on either side of it, negative
-    /// widens it (see [`draft_levels`]).
+    /// widens it (see [`drafted`]).
     #[serde(default, skip_serializing_if = "is_zero")]
     pub draft: f64,
 }
@@ -205,14 +201,9 @@ impl ModelOperation for Extrude {
         let sketch = &placed.sketch;
         let geometry = sketch.enclose()?;
         let shape = args.output.shape(sketch)?;
-        let region = match (&shape, args.draft) {
-            (_, 0.0) => None,
-            (Shape::Region(region), _) => Some(region.clone()),
-            (Shape::Chain(_), _) => {
-                return Err(GeopError::new(
-                    "a draft narrows an area: an open chain of curves encloses none",
-                ));
-            }
+        let slope = match args.draft {
+            0.0 => None,
+            angle => Some(draft_slope(angle, &args.output, &shape)?),
         };
         let loops: Vec<_> = (shape_profiles(&placed.name, sketch, &geometry, shape)?.into_iter())
             .map(SweepLoop::plain)
@@ -220,11 +211,34 @@ impl ModelOperation for Extrude {
         let extruding = Extruding {
             plane: &placed.plane,
             loops: &loops,
-            draft: region.as_ref().map(|region| (&*placed, region, args.draft)),
+            slope,
         };
         let how = (&args.extent, &args.output);
         build_extents(model, reader, &namer, step, how, &extruding)
     }
+}
+
+/// The tangent of the draft `angle`, in degrees, by which a wall leans in
+/// per unit of height: refused, saying why, where `output` and `shape`
+/// are no solid with an area to narrow, or the angle no lean.
+fn draft_slope(angle: f64, output: &Output, shape: &Shape) -> GeopResult<Scalar> {
+    if matches!(shape, Shape::Chain(_)) {
+        return Err(GeopError::new(
+            "a draft narrows an area: an open chain of curves encloses none",
+        ));
+    }
+    if matches!(output, Output::Faces { .. }) {
+        return Err(GeopError::new(
+            "a draft tapers a solid's walls between its caps: extrude faces without one",
+        ));
+    }
+    if angle.is_nan() || angle.abs() >= 90.0 {
+        return Err(GeopError::new(format!(
+            "a draft of {angle} degrees: walls drafted by less than 90 degrees only"
+        )));
+    }
+    let radians = Scalar::from_f64(angle).degrees_to_radians()?;
+    radians.sin().div(radians.cos())
 }
 
 /// An extrude's loops, swept along the normal of their sketch's `plane`
@@ -232,8 +246,9 @@ impl ModelOperation for Extrude {
 struct Extruding<'a> {
     plane: &'a CoordinateSystem,
     loops: &'a [SweepLoop],
-    /// The sketch, its area and the draft angle, for a drafted extrude.
-    draft: Option<(&'a PlacedSketch, &'a Region, f64)>,
+    /// How far its walls lean in per unit of height, if it is drafted (see
+    /// [`drafted`]).
+    slope: Option<Scalar>,
 }
 
 impl Sweeping for Extruding<'_> {
@@ -250,18 +265,17 @@ impl Sweeping for Extruding<'_> {
         to: f64,
     ) -> GeopResult<BuiltBody> {
         let s = Scalar::from_f64;
-        let Some((placed, region, angle)) = self.draft else {
-            return extrude(model, namer, name, self.plane, s(from), s(to), self.loops);
+        // Drafted through the sketch's plane, the walls lean in away from
+        // it either way: a ridge there.
+        let heights = match self.slope {
+            Some(_) if from * to < 0.0 => vec![s(from), Scalar::ZERO, s(to)],
+            _ => vec![s(from), s(to)],
         };
-        // Through the sketch's plane, the area narrows away from it either
-        // way: a ridge there.
-        let heights = if from * to < 0.0 {
-            vec![from, 0.0, to]
-        } else {
-            vec![from, to]
-        };
-        let levels = draft_levels(placed, region, angle, &heights)?;
-        drafted(model, namer, name, self.plane, &levels)
+        let built = extrude(model, namer, name, self.plane, &heights, self.loops)?;
+        match self.slope {
+            Some(slope) => drafted(model, namer, &built, self.plane, slope),
+            None => Ok(built),
+        }
     }
 
     fn past(&self, hull: &[Vector3], sign: f64) -> GeopResult<f64> {
@@ -290,130 +304,91 @@ impl Sweeping for Extruding<'_> {
     }
 }
 
-/// The loops of `region`, of the sketch `placed`, at each of `heights`
-/// along its plane's normal, drafted by `angle` degrees: each offset in
-/// the plane (see [`Sketch::offset`]) by `|h| tan(angle)`, inwards for a
-/// positive angle — the outer loop shrinking, the holes growing — its
-/// corners extended to meet, each offset curve's joints matched with its
-/// own curve's. A wall is ruled from a curve to its offsets, so it is the
-/// drafted plane or cone wherever the corners at its ends move straight
-/// with the height: between lines, and where a curve runs on tangentially.
-/// Refused, by name, where an offset is: a curve too short for its
-/// corners, an arc offset past its centre, a spline.
-pub(crate) fn draft_levels(
-    placed: &PlacedSketch,
-    region: &Region,
-    angle: f64,
-    heights: &[f64],
-) -> GeopResult<Vec<Level>> {
-    if angle.is_nan() || angle.abs() >= 90.0 {
-        return Err(GeopError::new(format!(
-            "a draft of {angle} degrees: walls drafted by less than 90 degrees only"
-        )));
-    }
-    let slope = angle.to_radians().tan();
-    let mut sketch = placed.sketch.clone();
-    let loops: Vec<&ProfileLoop> = std::iter::once(&region.outer)
-        .chain(&region.holes)
-        .collect();
-    // Per height, per loop: the loop drawn there, and each of its curves
-    // mapped to the sketch's own curve it is the offset of.
-    let mut drawn: Vec<Vec<(ProfileLoop, BTreeMap<CurveId, CurveId>)>> = Vec::new();
-    for &h in heights {
-        let mut level = Vec::new();
-        for lp in &loops {
-            if h == 0.0 {
-                level.push(((*lp).clone(), BTreeMap::new()));
-                continue;
-            }
-            let curves: Vec<CurveId> = lp.edges.iter().map(|e| e.curve).collect();
-            let chain = sketch.chain(&curves)?;
-            let first = &chain.edges[0];
-            let along = lp.edges.iter().find(|e| e.curve == first.curve);
-            // The offset goes to the chain's left: inwards of a loop run as
-            // the area runs it, which the chain may run the other way.
-            let side = if along.is_some_and(|e| e.reversed == first.reversed) {
-                1.0
-            } else {
-                -1.0
-            };
-            let d = h.abs() * slope * side;
-            let ctx = with_context!("drafting by {angle} degrees: offsetting by {d} at height {h}");
-            let offset = sketch
-                .offset(&curves, Scalar::from_f64(d), Corners::Extend)
-                .with_context(ctx)?;
-            let of: BTreeMap<CurveId, CurveId> = (chain.edges.iter().map(|e| e.curve))
-                .zip(offset.curves)
-                .collect();
-            let edges = lp
-                .edges
-                .iter()
-                .map(|e| ProfileEdge {
-                    curve: of[&e.curve],
-                    reversed: e.reversed,
-                })
-                .collect();
-            let back = of.into_iter().map(|(base, off)| (off, base)).collect();
-            level.push((ProfileLoop { edges }, back));
-        }
-        drawn.push(level);
-    }
-    let geometry = sketch.enclose()?;
-    let start = |sketch: &Sketch, e: &ProfileEdge| -> Option<PointId> {
-        let (s, t) = sketch.curves[&e.curve].endpoints()?;
-        Some(if e.reversed { t } else { s })
+/// The solid `built`, extruded straight along the normal of `plane` by
+/// `namer`, drafted: every wall leaning in by `slope` per unit of its
+/// distance from the plane, on either side of it — the outer loop's walls
+/// in, the holes' out — each on its own surface offset by that distance
+/// times `slope` (see [`drafted_wall`]): a line's wall a plane at the
+/// draft angle, an arc's a cone about the arc's axis. The caps stay where
+/// they are, and the solid is rebuilt around the drafted walls
+/// ([`rebuilt`]): each corner where the walls and a cap now meet, each edge
+/// where its two faces do — a hyperbola where an arc's cone meets a line's
+/// plane at a sharp corner. Every entity keeps its name.
+///
+/// Refused, naming the face, where a wall is drafted past its axis — an
+/// arc narrower than the draft narrows it — and, naming the edge, where
+/// the draft narrows a wall away between its neighbours.
+fn drafted(
+    model: &mut NamedModel,
+    namer: &Namer,
+    built: &BuiltBody,
+    plane: &CoordinateSystem,
+    slope: Scalar,
+) -> GeopResult<BuiltBody> {
+    let ctx = with_context!("drafted({}, slope={slope:?})", namer.root());
+    let solid = built
+        .solid
+        .ok_or_else(|| GeopError::new("only a solid is drafted"))
+        .with_context(ctx)?;
+    let (mut spec, sources) = model
+        .topology()
+        .body_spec(&built.faces, true)
+        .with_context(ctx)?;
+    let names = BodyNames {
+        solid: Some(model.name(solid)?.to_string()),
+        ..model.source_names(&sources)?
     };
-    heights
-        .iter()
-        .zip(drawn)
-        .map(|(&h, level)| {
-            let mut profiles = Vec::new();
-            let mut matched = Vec::new();
-            for ((lp, back), base) in level.iter().zip(&loops) {
-                // Named after the sketch's own curves and points.
-                let points: BTreeMap<PointId, PointId> = lp
-                    .edges
-                    .iter()
-                    .zip(&base.edges)
-                    .filter_map(|(e, b)| Some((start(&sketch, e)?, start(&sketch, b)?)))
-                    .collect();
-                let curve = |c: CurveId| back.get(&c).copied().unwrap_or(c);
-                let joint = |j: ProfileJoint| match j {
-                    ProfileJoint::Point(p) => ProfileJoint::Point(*points.get(&p).unwrap_or(&p)),
-                    ProfileJoint::Split { curve: c, index } => ProfileJoint::Split {
-                        curve: curve(c),
-                        index,
-                    },
-                };
-                let pieces: Vec<ProfilePiece> = lp
-                    .to_nurbs(&sketch, &geometry)?
-                    .into_iter()
-                    .map(|p| ProfilePiece {
-                        source: curve(p.source),
-                        start: joint(p.start),
-                        end: joint(p.end),
-                        ..p
-                    })
-                    .collect();
-                // Matched: where one of the sketch's curves meets the next,
-                // or the seam of a circle.
-                let mut at: Vec<usize> = (0..pieces.len())
-                    .filter(|&i| matches!(pieces[i].start, ProfileJoint::Point(_)))
-                    .collect();
-                if at.is_empty() {
-                    at.push(0);
-                }
-                let profile = chain_of_pieces(&placed.name, pieces, true);
-                matched.push(at.iter().map(|&i| profile.joint_names[i].clone()).collect());
-                profiles.push(profile);
-            }
-            Ok(Level {
-                height: Scalar::from_f64(h),
-                loops: profiles,
-                matched,
-            })
-        })
-        .collect()
+    let caps = [namer.name(&["start"]), namer.name(&["end"])];
+    let walls: Vec<bool> = names.faces.iter().map(|f| !caps.contains(f)).collect();
+    for ((face, name), &wall) in spec.faces.iter_mut().zip(&names.faces).zip(&walls) {
+        if wall {
+            face.surface = drafted_wall(&face.surface, plane, slope).map_err(|e| {
+                GeopError::new(format!(
+                    "the draft cannot lean face {name} in that far: {}",
+                    e.root_message()
+                ))
+            })?;
+        }
+    }
+    let reseat = vec![false; spec.vertices.len()];
+    let spec = rebuilt(&spec, &names, &walls, &reseat).with_context(ctx)?;
+    model
+        .delete_bodies(&[Body::Solid(solid)])
+        .with_context(ctx)?;
+    model.build_body(spec, names).with_context(ctx)
+}
+
+/// `wall`, a surface standing square to `plane` with its rows of control
+/// points each at one height, leant in by `slope` per unit of height: each
+/// control point where the wall's offset against its normal by its
+/// distance from the plane times `slope` has it ([`NurbSurface3D::offset`],
+/// which keeps the parametrization). The rows' offsets are what the wall
+/// is at their heights, and between them it is ruled, so the result is the
+/// drafted wall exactly wherever the offset is exact.
+fn drafted_wall(
+    wall: &NurbSurface3D,
+    plane: &CoordinateSystem,
+    slope: Scalar,
+) -> GeopResult<NurbSurface3D> {
+    let mut drafted = wall.clone();
+    for (k, point) in drafted.control_points.iter_mut().enumerate() {
+        let height = point
+            .dehomogenized()?
+            .sub(plane.origin())
+            .prod_dot(plane.w());
+        if height.is_zero() {
+            continue;
+        }
+        // Where the offset has it, at the weight it had: offsetting a wall
+        // square to the plane keeps its weights, and a row's weights kept
+        // the same numbers keep the wall a polynomial along its height.
+        let weight = point[3];
+        let moved = wall.offset(height.abs().mul(slope).neg())?.control_points[k];
+        let at = moved.dehomogenized()?.prod_scalar(weight);
+        *point = Vector4::from_array([at[0], at[1], at[2], weight]);
+    }
+    drafted.recompute_aabb();
+    Ok(drafted)
 }
 
 /// The centre of the box around what `sketch` draws — its profile curves,

@@ -1,7 +1,11 @@
-use geop_core_math::{geop_error::GeopResult, scalars::Scalar, vector::Vector};
+use geop_core_math::{
+    geop_error::{GeopError, GeopResult},
+    scalars::Scalar,
+    vector::Vector,
+};
 
 use super::NurbSurface;
-use crate::{aabb::compute_aabb, knot_insertion};
+use crate::{aabb::compute_aabb, knot_insertion, nurb_curve::NurbCurve};
 
 /// A parameter direction of a tensor-product surface.
 #[derive(Clone, Copy)]
@@ -124,6 +128,43 @@ impl<const D: usize> NurbSurface<D> {
         self.split_in(dir, mid)
     }
 
+    /// The iso-line of the surface at `u = at` (`u_fixed`), or at `v = at`,
+    /// as a curve along the other parameter, on its knots: a row of the
+    /// control net, exactly, where `at` is a clamped end of the domain or a
+    /// knot of full multiplicity, and otherwise the row knot insertion
+    /// makes there. `at` is used exactly as given, as by [`Self::split_u`].
+    /// Fails for an `at` outside the domain, or at an end that is not
+    /// clamped.
+    pub fn iso_curve(&self, u_fixed: bool, at: Scalar) -> GeopResult<NurbCurve<D>> {
+        let (dir, other) = if u_fixed {
+            (Dir::U, Dir::V)
+        } else {
+            (Dir::V, Dir::U)
+        };
+        let (knots, degree) = (self.knots_in(dir), self.degree_in(dir));
+        let n = self.rows_along(dir)[0].len();
+        let (lo, hi) = (knots[degree], knots[n]);
+        let ends = |first: bool| -> GeopResult<Vec<Vector<D>>> {
+            if !knot_insertion::is_clamped_at(knots, degree, first) {
+                return Err(GeopError::new(format!(
+                    "NurbSurface::iso_curve: the domain is not clamped at {at:?}"
+                )));
+            }
+            let i = if first { 0 } else { n - 1 };
+            Ok(self.rows_along(dir).iter().map(|row| row[i]).collect())
+        };
+        let points = if at.is_exactly(lo) {
+            ends(true)?
+        } else if at.is_exactly(hi) {
+            ends(false)?
+        } else {
+            let (before, _) = self.split_in(dir, at)?;
+            let rows = before.rows_along(dir);
+            rows.iter().map(|row| row[row.len() - 1]).collect()
+        };
+        NurbCurve::try_new(self.degree_in(other), points, self.knots_in(other).clone())
+    }
+
     /// Split at the midpoint of the **u** domain.
     pub fn split_u_mid(&self) -> GeopResult<(NurbSurface<D>, NurbSurface<D>)> {
         self.split_in_mid(Dir::U)
@@ -132,6 +173,31 @@ impl<const D: usize> NurbSurface<D> {
     /// Split at the midpoint of the **v** domain.
     pub fn split_v_mid(&self) -> GeopResult<(NurbSurface<D>, NurbSurface<D>)> {
         self.split_in_mid(Dir::V)
+    }
+
+    /// The same surface with every span split into `pieces` in both
+    /// directions, at sharp knots: more control points to fit on.
+    pub(crate) fn refined(&self, pieces: usize) -> GeopResult<Self> {
+        let mut out = self.clone();
+        for dir in [Dir::U, Dir::V] {
+            let degree = out.degree_in(dir);
+            let mut knots = out.knots_in(dir).clone();
+            let mut rows = out.rows_along(dir);
+            let breaks = crate::spline::breakpoints(&knots, degree, rows[0].len());
+            for pair in breaks.windows(2) {
+                for k in 1..pieces {
+                    let f = Scalar::from_ratio(k as i64, pieces as i64)?;
+                    knot_insertion::insert(
+                        &mut knots,
+                        &mut rows,
+                        degree,
+                        Scalar::fraction(pair[0], pair[1], f),
+                    );
+                }
+            }
+            out = out.with_rows(dir, knots, rows);
+        }
+        Ok(out)
     }
 
     /// This surface restricted to `u ∈ [u0, u1]`, `v ∈ [v0, v1]`, with the

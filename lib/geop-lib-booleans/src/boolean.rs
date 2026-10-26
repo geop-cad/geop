@@ -21,6 +21,7 @@
 
 use std::collections::{HashMap, HashSet};
 
+use geop_core_geometry::{intersection::curve_surface_intersect, nurb_surface::NurbSurface3D};
 use geop_core_math::{
     geop_error::{GeopError, GeopResult, WithContext},
     scalars::Scalar,
@@ -300,9 +301,30 @@ fn combine(
     let mut keep: Vec<FaceId> = Vec::new();
     let mut reverse: Vec<FaceId> = Vec::new();
     let mut classified = Classified::default();
-    for (faces, from_a, other) in [(&faces_a, true, solid_b), (&faces_b, false, solid_a)] {
-        for &face_id in faces {
-            let class = classify_face(topology, face_id, other, params, &mut classified)
+    // Every face that could meet the other solid's boundary is classified
+    // at its own interior points, each checked against the others: a face
+    // a missed intersection curve leaves straddling is named. A face whose
+    // trimmed patch is apart from every one of the other solid's cannot
+    // straddle it, and lies on the side of any face it shares an edge with
+    // that is inside or outside, all of the edge being apart from the
+    // other solid's boundary too. Those take their side from such a
+    // neighbour, and only a set of them no classified face borders is
+    // classified, at one face: what a cut leaves untouched — all but a few
+    // faces of a gear once it has many teeth — costs no ray.
+    let (patches_a, patches_b) = (
+        trimmed_patches(topology, &faces_a).with_context(&ctx)?,
+        trimmed_patches(topology, &faces_b).with_context(&ctx)?,
+    );
+    for (patches, from_a, other, others) in [
+        (&patches_a, true, solid_b, &patches_b),
+        (&patches_b, false, solid_a, &patches_a),
+    ] {
+        let classify = |face_id: FaceId, classified: &mut Classified| {
+            classify_face(topology, face_id, other, params, classified)
+                .map_err(|e| {
+                    let names = model.names_mentioned(&e.to_string());
+                    e.with_context(format!("where it names {}", names.join(", ")))
+                })
                 .with_context(&ctx)
                 .with_context(with_context!(
                     "classifying face {face_id} ({:?}, of {})",
@@ -312,8 +334,43 @@ fn combine(
                     } else {
                         "the second solid"
                     }
-                ))?;
+                ))
+        };
+        let mut apart = std::collections::BTreeSet::new();
+        let mut sided = std::collections::VecDeque::new();
+        for (face_id, patch) in patches {
+            if others.iter().any(|(_, o)| patch.could_overlap(o)) {
+                let class = classify(*face_id, &mut classified)?;
+                decisions.insert(*face_id, (class, keeps(op, class, from_a)));
+                sided.push_back((*face_id, class));
+            } else {
+                apart.insert(*face_id);
+            }
+        }
+        loop {
+            while let Some((face_id, class)) = sided.pop_front() {
+                if !matches!(
+                    class,
+                    FaceClassification::Inside | FaceClassification::Outside
+                ) {
+                    continue;
+                }
+                for edge in topology.face_edges(face_id) {
+                    for coedge in topology.coedges_of_edge(edge) {
+                        let next = topology.get_coedge(coedge).with_context(&ctx)?.face;
+                        if apart.remove(&next) {
+                            decisions.insert(next, (class, keeps(op, class, from_a)));
+                            sided.push_back((next, class));
+                        }
+                    }
+                }
+            }
+            let Some(face_id) = apart.pop_first() else {
+                break;
+            };
+            let class = classify(face_id, &mut classified)?;
             decisions.insert(face_id, (class, keeps(op, class, from_a)));
+            sided.push_back((face_id, class));
         }
     }
     if let Some(ToolEnds { start, end, alone }) = up_to_next {
@@ -658,6 +715,50 @@ fn check_closed(
     )))
 }
 
+/// Each of `faces` with the part of its surface over its trim's parameter
+/// box: the box around its pcurves' control points, which holds the loops
+/// and so all the face (a face bounded by a bare vertex is its whole
+/// surface). Its control points' box holds the face, and is apart from
+/// another's where the faces are, however large the surface they were cut
+/// from — a gear's cap cut by every tooth is one surface.
+fn trimmed_patches(model: &Model, faces: &[FaceId]) -> GeopResult<Vec<(FaceId, NurbSurface3D)>> {
+    faces
+        .iter()
+        .map(|&face_id| {
+            let surface = &model.get_face(face_id)?.surface;
+            let mut bounds: Option<[Scalar; 2]> = None;
+            for coedge in model.iterate_face_coedges(face_id) {
+                for p in &model.get_coedge(coedge)?.pcurve.control_points {
+                    let uv = [p[0].div(p[2])?, p[1].div(p[2])?];
+                    bounds = Some(match bounds {
+                        None => uv,
+                        Some(b) => [b[0].union(uv[0]), b[1].union(uv[1])],
+                    });
+                }
+            }
+            let patch = match bounds {
+                Some([u, v]) => {
+                    surface.sub_surface((u.lower(), u.upper()), (v.lower(), v.upper()))?
+                }
+                None => surface.clone(),
+            };
+            Ok((face_id, patch))
+        })
+        .collect()
+}
+
+thread_local! {
+    static FACES_CLASSIFIED: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
+/// How many faces this thread's booleans have classified at points of
+/// their own, against the other solid, ever: what classifying costs grows
+/// with this, so a test can bound the work of a cut by the faces it
+/// touches rather than time it.
+pub fn faces_classified() -> usize {
+    FACES_CLASSIFIED.get()
+}
+
 /// Where `face_id` sits relative to `other_solid`, decided at points strictly
 /// inside the face's trimmed region.
 ///
@@ -693,6 +794,7 @@ pub(crate) fn classify_face(
     params: RemeshParams,
     classified: &mut Classified,
 ) -> GeopResult<FaceClassification> {
+    FACES_CLASSIFIED.set(FACES_CLASSIFIED.get() + 1);
     let face = model.get_face(face_id)?;
     let mut decided: Vec<(FaceClassification, Vector3)> = Vec::new();
     let mut on_boundary = Vec::new();
@@ -721,8 +823,33 @@ pub(crate) fn classify_face(
             // The face's boundary: which curves were imprinted into it, and
             // so — between the two points — which one was not.
             let loops = model.face_corners(face_id)?;
+            // Where the missing curve may run from: the other solid's edges
+            // at the face's corners that do not bound it, and what the
+            // edge x face search makes of each against the face's surface —
+            // an edge lying on the face that was not imprinted shows here.
+            let other_edges: HashSet<EdgeId> = model.iter_body_edges(other_solid)?.collect();
+            let bounding: HashSet<EdgeId> = model.face_edges(face_id).collect();
+            let mut corners: Vec<_> = loops.iter().flatten().map(|&(v, _)| v).collect();
+            corners.sort();
+            corners.dedup();
+            let mut leaving = Vec::new();
+            for vertex in corners {
+                for edge in model.edges_at_vertex(vertex) {
+                    if !other_edges.contains(&edge) || bounding.contains(&edge) {
+                        continue;
+                    }
+                    let found = curve_surface_intersect(
+                        &model.get_edge(edge)?.curve,
+                        &face.surface,
+                        params.max_edge_intersections,
+                        max_nodes,
+                        epsilon,
+                    );
+                    leaving.push(format!("{edge} at {vertex}: {found:?}"));
+                }
+            }
             return Err(GeopError::new(format!(
-                "classify_face: face {face_id} straddles solid {other_solid}'s boundary — {point:?} is {classification:?}, {other_point:?} is {other:?} — so remesh left an intersection curve unimprinted; the face is bounded by (corners, outer loop first) {loops:?}"
+                "classify_face: face {face_id} straddles solid {other_solid}'s boundary — {point:?} is {classification:?}, {other_point:?} is {other:?} — so remesh left an intersection curve unimprinted; the face is bounded by (corners, outer loop first) {loops:?}; the other solid's edges at its corners, against its surface: {leaving:?}"
             )));
         }
         return Ok(classification);
@@ -1517,7 +1644,7 @@ mod tests {
             .into_iter()
             .find(|&face| {
                 let corners = topology.face_corners(face).unwrap();
-                corners.len() == 1 && corners[0].iter().all(in_rim)
+                corners.len() == 1 && corners[0].iter().all(|(_, p)| in_rim(p))
             })
             .expect("a face of the plate inside the hole's rim");
         (hole, disc)

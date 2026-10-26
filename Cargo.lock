@@ -665,6 +665,7 @@ dependencies = [
  "geop-core-topology",
  "geop-lib-booleans",
  "geop-lib-fixtures",
+ "geop-lib-shell",
  "geop-lib-sweep",
  "geop-ops-model",
  "geop-ops-shell",

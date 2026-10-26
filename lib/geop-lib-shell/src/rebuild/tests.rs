@@ -155,7 +155,8 @@ fn cylinder_wall_offset_outward() {
         .collect();
     let mut part = part;
     let solid = replace_faces(&mut part, &namer(), &walls, Smooth::Follow, |_, s| {
-        s.offset(Scalar::from_f64(0.5))
+        Ok(s.offset(Scalar::from_f64(0.5))?
+            .expect("a cylinder grown has an offset"))
     })
     .unwrap();
     assert_valid(&part);

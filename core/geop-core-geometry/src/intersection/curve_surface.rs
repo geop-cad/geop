@@ -351,7 +351,7 @@ pub fn curve_surface_intersect(
         curve_surface_crossings(piece, surface, max_nodes, min_subdivision_size)
     })
     .with_context(&|e: GeopError| ctx(e.with_context("crossing search")))?;
-    let samples = coincidence::samples(&overlaps, max_solutions, |t| {
+    let samples = coincidence::samples(&overlaps, crossings.len(), max_solutions, |t| {
         point_on(curve, surface, t, max_nodes, min_subdivision_size)
     })?;
     Ok(coincidence::assemble(
@@ -576,6 +576,29 @@ mod tests {
         for (t, _) in v {
             assert!(!t.definitely_less(half), "{v:?}");
         }
+    }
+
+    /// A line lying on the plane, asked for three points: its two ends and,
+    /// of the points spread over it, the one there is room for — its
+    /// middle, the point furthest from both ends, not the first of three
+    /// spread a quarter apart. A boolean asks whether an edge enters a face
+    /// at these points; a blend's contact 7.6e-7 long was judged by its
+    /// ends and a point a quarter along, all within a pcurve's width of the
+    /// boundary, and never imprinted
+    /// (`rounding_the_trailing_edge_of_a_lofted_blade` in the fillet).
+    #[test]
+    fn the_point_room_is_left_for_is_the_middle_of_an_overlap() {
+        let r = curve_surface_intersect(
+            &line([0.5, 0.2, 0.], [0.5, 0.8, 0.]),
+            &plane(),
+            3,
+            MAX,
+            Scalar::from_f64(1e-4),
+        )
+        .unwrap();
+        assert!(r.is_coincident() && r.len() == 3, "{r:?}");
+        let middle = |t: &Scalar| (t.to_f64() - 0.5).abs() < 1e-12;
+        assert!(r.as_slice().iter().any(|(t, _)| middle(t)), "{r:?}");
     }
 
     /// Both ends on the plane, the middle above it: two crossings, not an

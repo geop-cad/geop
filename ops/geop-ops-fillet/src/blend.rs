@@ -1208,7 +1208,7 @@ fn sweep_tool(
             };
             let from = run_out(&ends[0])?.map_or(Scalar::ZERO, |r| r.neg());
             let to = run_out(&ends[1])?.map_or(length, |r| length.add(r));
-            extrude(model, namer, Some(&root), &plane, from, to, &loops)?
+            extrude(model, namer, Some(&root), &plane, &[from, to], &loops)?
         }
         Sweep::Round {
             center,

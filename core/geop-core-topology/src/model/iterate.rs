@@ -8,6 +8,10 @@ use geop_core_math::geop_error::{GeopError, GeopResult};
 
 use super::Model;
 
+/// The corners of one boundary of a face, each its vertex and where it is
+/// (see [`Model::face_corners`]).
+pub type Corners = Vec<(VertexId, [f64; 3])>;
+
 impl Model {
     /// The (unordered) coedges referencing a given edge. An edge shared by a
     /// single manifold face pair has exactly two.
@@ -32,12 +36,14 @@ impl Model {
         })
     }
 
-    /// The corners of `face_id`'s boundaries, outer loop first — what an
-    /// error shows of a face, to tell which curves were imprinted into it.
-    pub fn face_corners(&self, face_id: FaceId) -> GeopResult<Vec<Vec<[f64; 3]>>> {
-        let at = |v: VertexId| -> GeopResult<[f64; 3]> {
+    /// The corners of `face_id`'s boundaries, outer loop first, each its
+    /// vertex and where it is — what an error shows of a face, to tell which
+    /// curves were imprinted into it, by vertices a named model can name
+    /// (`names_mentioned`).
+    pub fn face_corners(&self, face_id: FaceId) -> GeopResult<Vec<Corners>> {
+        let at = |v: VertexId| -> GeopResult<(VertexId, [f64; 3])> {
             let p = self.get_vertex(v)?.point;
-            Ok(p.to_f64_array())
+            Ok((v, p.to_f64_array()))
         };
         self.get_face(face_id)?
             .boundaries()

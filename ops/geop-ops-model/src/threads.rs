@@ -13,7 +13,7 @@ use std::collections::BTreeMap;
 use crate::{frame_along, operation_of};
 use geop_core_editor::view::{Annotations, ViewAnnotation, annotations};
 use geop_core_geometry::{
-    nurb_curve::{Handedness, NurbCurve3D},
+    nurb_curve::{Handedness, Helix, NurbCurve3D},
     shape::Axis,
 };
 use geop_core_math::{
@@ -63,9 +63,11 @@ impl CosmeticThread {
         NurbCurve3D::helix(
             &frame,
             self.radius,
-            Scalar::from_f64(self.pitch),
-            self.length / self.pitch,
-            self.handedness,
+            &Helix::new(
+                Scalar::from_f64(self.pitch),
+                self.length / self.pitch,
+                self.handedness,
+            ),
         )
     }
 

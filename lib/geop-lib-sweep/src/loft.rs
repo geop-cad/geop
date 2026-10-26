@@ -94,9 +94,9 @@ pub struct Section {
 
 /// A section as it is skinned: its frame and its profile in it.
 #[derive(Clone, Debug)]
-pub(crate) struct Placed {
-    pub(crate) frame: Frame,
-    pub(crate) profile: Profile,
+struct Placed {
+    frame: Frame,
+    profile: Profile,
 }
 
 impl Placed {
@@ -519,10 +519,7 @@ fn collapsed(next: &Placed, point: &Vector3) -> GeopResult<Placed> {
 /// makes the skinned walls face out. `beyond` are points the loft runs to
 /// before the first section and after the last, if any: which way it runs
 /// through a section next to one is towards it, or from it.
-pub(crate) fn correspond(
-    sections: &[Section],
-    beyond: [Option<[f64; 3]>; 2],
-) -> GeopResult<Vec<Placed>> {
+fn correspond(sections: &[Section], beyond: [Option<[f64; 3]>; 2]) -> GeopResult<Vec<Placed>> {
     let closed = sections[0].profile.is_closed();
     if sections.iter().any(|s| s.profile.is_closed() != closed) {
         return Err(GeopError::new(
