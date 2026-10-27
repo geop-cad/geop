@@ -14,7 +14,7 @@ use geop_ops_model::{
 };
 use geop_ops_sketch::AddSketchArgs;
 
-use crate::{CircularPattern, CircularPatternArgs, Seeds, TurnAxis, feature};
+use crate::{CircularPattern, CircularPatternArgs, Seeds, TurnAxis, body, feature};
 
 /// The operations these programs are written in.
 fn registry() -> GeopResult<OperationRegistry> {
@@ -68,6 +68,42 @@ fn ring_of_24_holes_each_just_overlapping_the_next() {
             reversed: false,
             count: 24.0.into(),
             angle: Spacing::extent(360.0),
+        },
+    );
+    assert_valid(&program.build_model(registry).unwrap());
+}
+
+/// A block turned a quarter round its own upright edge and joined to
+/// itself (a cross of four arms made by patterning one round its corner,
+/// or here just two): the 20 x 20 x 10 block from the origin, patterned
+/// twice round the `Z` axis 90 degrees apart, joined. The copy stands
+/// beside the block, the two sharing their side on the plane `x = 0`
+/// exactly. The join fails:
+///
+/// > loops_contain: could not find a ray direction clear of every vertex
+/// > after many attempts
+///
+/// (between `face_a` and `face_b`, the two coincident sides). Four copies
+/// round the full turn fail alike; the block mirrored in the plane
+/// `x = 0` and joined, the same pair of coincident sides, builds; and so
+/// does the same pattern of a block whose top edge is rounded in its
+/// profile (extruded along `x`).
+#[test]
+#[ignore = "bug: a block patterned round its own upright edge 90 degrees apart and joined fails — \"loops_contain: could not find a ray direction clear of every vertex after many attempts\" — on the two coincident sides; mirrored into the same place, it joins"]
+fn block_turned_a_quarter_round_its_edge_and_joined() {
+    let mut program = Program::new();
+    program.push(
+        "arm",
+        PrimitiveArgs::block([0.0, 0.0, 0.0], [20.0, 20.0, 10.0]),
+    );
+    program.push(
+        "p",
+        CircularPatternArgs {
+            seeds: Seeds::bodies(vec![body("block(arm)")], Combine::join("block(arm)")),
+            axis: Some(TurnAxis::Datum(origin_axis(FrameAxis::Z))),
+            reversed: false,
+            count: 2.0.into(),
+            angle: Spacing::step(90.0),
         },
     );
     assert_valid(&program.build_model(registry).unwrap());
