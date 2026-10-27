@@ -29,7 +29,8 @@
 //! their unknowns (see [`define`]).
 
 use geop_core_program::{
-    element::ElementReference, part::StepContext, reader::Reader, values::StateValue,
+    element::ElementReference, part::StepContext, placed::instance_path, reader::Reader,
+    values::StateValue,
 };
 use std::collections::BTreeMap;
 
@@ -73,8 +74,21 @@ pub fn mates_resolved() -> usize {
 
 /// The size of the placed parts `bodies` — at least one: what a mate
 /// between them turns a turn into a length by.
+///
+/// A part made of parts placed in it — a sub-assembly — is as large as
+/// the largest of them, however deep: drawn whole, it is drawn where its
+/// state puts them, and a constraint reads no target that reads the state.
 fn size(reader: &Reader, bodies: &[&Option<String>]) -> GeopResult<Scalar> {
-    largest((bodies.iter().copied().flatten()).map(|body| drawn(reader, body)))
+    let mut pieces: Vec<String> = (bodies.iter().copied().flatten()).cloned().collect();
+    let mut rigid = Vec::new();
+    while let Some(body) = pieces.pop() {
+        let inside = reader.placed_part(&body)?.instances();
+        match inside.is_empty() {
+            true => rigid.push(body),
+            false => pieces.extend(inside.into_iter().map(|name| instance_path(&body, name))),
+        }
+    }
+    largest(rigid.iter().map(|body| drawn(reader, body)))
 }
 
 /// The geometry `entity` of `mate`, a constraint of `kind`, is to it, in its

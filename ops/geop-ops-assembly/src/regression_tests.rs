@@ -14,7 +14,11 @@ use geop_core_program::{
 };
 use geop_lib_fixtures::{PrimitiveArgs, drilled_box};
 
-use crate::{AddPartArgs, program_tests::editor};
+use geop_lib_constraints::Constraints;
+
+use crate::{
+    AddPartArgs, program_tests::editor, scale_tests::arm_editor, testing::robot_arm::RobotArm,
+};
 
 /// A robot's base held fixed beside a servo held fixed too, its pose saved
 /// with a quaternion of norm 1.09 — a quaternion stands for its rotation
@@ -125,4 +129,26 @@ fn hover(pointer: Pointer) -> Command {
         shift: false,
     };
     Command::Event { event }
+}
+
+/// A gripper — a sub-assembly of a palm and two fingers on sliders —
+/// fastened to an arm's last link by a frame of its own, not of one of its
+/// parts. The mate was refused: what it turns a turn into a length by, the
+/// gripper's size, was read from the gripper as drawn, which is drawn
+/// where its fingers are, so the constraint read a target that reads the
+/// state. A part made of placed parts is as large as the largest of them.
+#[test]
+fn a_gripper_fastened_by_a_frame_of_its_own_holds_where_it_is() {
+    let arm = RobotArm {
+        axes: 1,
+        brackets_per_link: 0,
+        screws_per_bracket: 0,
+    };
+    // The editor loads it, every step built and every mate holding.
+    let editor = arm_editor(&arm);
+    let constraints = Constraints::of(&editor.part()).unwrap();
+    assert!(
+        constraints.get("add_part(gripper,m1)").is_some(),
+        "the gripper is fastened"
+    );
 }

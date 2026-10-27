@@ -298,10 +298,12 @@ fn finger() -> Program {
 }
 
 /// The gripper: the palm, fixed, and two fingers on sliders along its
-/// rails, opened [`OPEN`].
+/// rails, opened [`OPEN`]; its frame `mount` where the palm's is, what it
+/// is fastened by.
 fn gripper() -> Program {
     let mut program = Program::new();
     program.push("palm", placed("palm.geop", Vec::new()).fixed());
+    program.push("mount", frame([0.0; 3], [1.0, 0.0, 0.0], [0.0, 0.0, 1.0]));
     let mut state = StateValues::from([(pose_state("palm"), saved(Pose::identity()))]);
     for k in 0..2 {
         let id = format!("finger{k}");
@@ -485,9 +487,7 @@ pub fn robot_arm(arm: &RobotArm) -> BTreeMap<String, String> {
         }
         (before, far, motor_frame, at) = (id, frames["far"], frames["motor"], world);
     }
-    // The gripper, its palm fastened on the last link's far end. (A mate
-    // on the gripper itself is refused: what it turns a turn into a length
-    // by, the size of the gripper as drawn, reads where its fingers are.)
+    // The gripper, fastened by its own frame on the last link's far end.
     program.push(
         "gripper",
         placed(
@@ -495,7 +495,7 @@ pub fn robot_arm(arm: &RobotArm) -> BTreeMap<String, String> {
             vec![joint(
                 fastened(),
                 datum_of(&before, "far"),
-                datum_of("gripper/palm", "mount"),
+                datum_of("gripper", "mount"),
             )],
         ),
     );

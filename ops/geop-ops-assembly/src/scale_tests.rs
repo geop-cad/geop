@@ -640,7 +640,7 @@ fn dragging_one_of_many_placed_parts_sends_only_it() {
 /// The editor editing the robot arm `arm` (see
 /// [`crate::testing::robot_arm`]), with every file sent, its mates holding
 /// where its state has the parts.
-fn arm_editor(arm: &RobotArm) -> Editor {
+pub(crate) fn arm_editor(arm: &RobotArm) -> Editor {
     let mut files = robot_arm(arm);
     let top = Program::from_json(&files.remove(ARM).unwrap()).unwrap();
     let mut editor = editor();
