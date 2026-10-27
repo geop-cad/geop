@@ -22,7 +22,7 @@ use super::{
     Running, assert_translation, body_at, errors, input_frame, inputs, pin, pose_of, registry,
 };
 use crate::{
-    constraint::{Constraints, make_again},
+    constraint::{Constraints, Remade, made_again},
     solve::{Problem, solve},
     unknown::{Unknown, Unknowns, declare_unknowns},
 };
@@ -188,7 +188,9 @@ fn an_instance_is_solved_in_the_part_it_is_placed_in() {
 /// What a solve reads at every state it tries: each constraint made again
 /// by its step, of the part as built at another state, is the constraint a
 /// run of the program at the state tried makes — the part's own, and an
-/// instance's behind its name — without running the program.
+/// instance's behind its name — without running the program. Asked again
+/// where the state it read is as it was, it is not made again; where that
+/// moved, only its own step's are.
 #[test]
 fn a_constraint_made_again_at_a_state_tried_is_the_one_a_run_there_makes() {
     let inner = vec![
@@ -212,12 +214,22 @@ fn a_constraint_made_again_at_a_state_tried_is_the_one_a_run_there_makes() {
     assert_eq!(errors(&runner.run(&program, &x, &at(0.0))), []);
     let built = Constraints::of(&runner.part.current()).unwrap();
     let tried = at(5.0);
-    let again = {
-        let reader = runner.part.current().trying(&tried);
-        let asked: Vec<_> = built.defining().map(|(_, at)| at).collect();
-        let made: GeopResult<Vec<_>> = make_again(&reader, &asked).into_iter().collect();
+    let remade = Remade::default();
+    let asked: Vec<_> = built.defining().map(|(_, at)| at).collect();
+    let made_at = |state: &StateValues| -> Vec<_> {
+        let reader = runner.part.current().trying(state);
+        let made: GeopResult<Vec<_>> = remade.constraints(&reader, &asked).into_iter().collect();
         made.unwrap()
     };
+    let count = made_again();
+    let again = made_at(&tried);
+    assert_eq!(made_again() - count, 2, "each step's constraints made once");
+    assert_eq!(made_at(&tried), again);
+    assert_eq!(made_again() - count, 2, "and not again where nothing moved");
+    let mut own_moved = tried.clone();
+    own_moved.insert("body".to_string(), body_at([6.0, 1.0, 0.0]));
+    made_at(&own_moved);
+    assert_eq!(made_again() - count, 3, "only the step whose state moved");
 
     assert_eq!(errors(&runner.run(&program, &x, &tried)), []);
     let ran = Constraints::of(&runner.part.current()).unwrap();

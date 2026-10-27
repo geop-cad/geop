@@ -373,11 +373,7 @@ impl<'a> Reader<'a> {
     /// with. Else it is read inside the placed part — the placed program's
     /// own, or none before a step placed it.
     pub fn given_state(&self, name: &str) -> Option<StateValue> {
-        let tried = (self.trying.as_ref()).and_then(|(state, at)| match at.is_empty() {
-            true => state.get(name),
-            false => state.get(&key_behind(at, name)),
-        });
-        let value = tried.or_else(|| self.part.state.get(name)).cloned();
+        let value = self.own_state(name);
         self.record(Read::State(name.to_string(), value.clone()));
         match (value, outermost_instance(name)) {
             (Some(value), _) => Some(value),
@@ -385,6 +381,37 @@ impl<'a> Reader<'a> {
             (None, Some((instance, inside))) => {
                 self.placed_part(instance).ok()?.given_state(inside)
             }
+        }
+    }
+
+    /// The value of the state `name` its part has itself — at the state it
+    /// tries, where that gives one ([`Reader::trying`]): what
+    /// [`Reader::given_state`] reads first, and records.
+    fn own_state(&self, name: &str) -> Option<StateValue> {
+        let tried = (self.trying.as_ref()).and_then(|(state, at)| match at.is_empty() {
+            true => state.get(name),
+            false => state.get(&key_behind(at, name)),
+        });
+        tried.or_else(|| self.part.state.get(name)).cloned()
+    }
+
+    /// Whether every state `reads` read ([`Reader::recorded`]) reads the
+    /// same through it — at the state it tries, if it tries one — in its
+    /// part and in the parts placed in it. Only the state: of the same
+    /// part, built once, as a solve reads it at every state it tries,
+    /// nothing else read can have changed.
+    pub fn reads_same_state(&self, reads: &Reads) -> bool {
+        (reads.0.iter()).all(|read| self.state_holds(read))
+    }
+
+    /// Whether `read`, if of a state, reads the same through it.
+    fn state_holds(&self, read: &Read) -> bool {
+        match read {
+            Read::State(name, value) => self.own_state(name) == *value,
+            Read::Inside { instance, read } => {
+                (self.placed_part(instance)).is_ok_and(|inside| inside.state_holds(read))
+            }
+            _ => true,
         }
     }
 

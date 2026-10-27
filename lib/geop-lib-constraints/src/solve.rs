@@ -10,7 +10,7 @@
 //! defines, run once at the state a solve starts from: at every state it
 //! tries, only the constraints it asks are made again, each by its step's
 //! generator, of the part as built and the state tried
-//! ([`crate::constraint::make_again`]) — no program is run, and the work
+//! ([`crate::constraint::Remade`]) — no program is run, and the work
 //! of a solve step is that of the constraints it asks. What a solve
 //! should prefer among the states the constraints allow is the caller's
 //! too: [`Preference`]s pull — a drag — and every value nothing pulls stays
@@ -47,7 +47,7 @@ use geop_core_program::{
     values::{Settings, StateValue, StateValues},
 };
 
-use crate::constraint::{Constraint, Constraints, DefinedAt, make_again};
+use crate::constraint::{Constraint, Constraints, DefinedAt, Remade};
 
 /// A program to run again at every state a solve tries, with its inputs:
 /// its state is the state tried.
@@ -173,6 +173,8 @@ struct Solving<'r, 'p> {
     index: BTreeMap<String, usize>,
     /// Per constraint, its name, what it asks, and where it is defined.
     constraints: Vec<(String, Bound, DefinedAt)>,
+    /// What the constraints were made again as, at the states tried.
+    remade: Remade,
     preferences: &'p [&'p dyn Preference],
 }
 
@@ -205,6 +207,7 @@ impl<'r, 'p> Solving<'r, 'p> {
             blocks,
             index,
             constraints,
+            remade: Remade::default(),
             preferences: &problem.preferences,
         };
         Ok((solving, values))
@@ -276,7 +279,7 @@ impl Equations for Solving<'_, '_> {
                 Term::Preference(_) => None,
             })
             .collect();
-        let mut made = make_again(&reader, &asked).into_iter();
+        let mut made = self.remade.constraints(&reader, &asked).into_iter();
         (which.iter())
             .map(|term| match term {
                 Term::Constraint(c) => {

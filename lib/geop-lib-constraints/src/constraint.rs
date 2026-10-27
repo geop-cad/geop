@@ -6,14 +6,14 @@
 //! read changes. A solve gathers them all once ([`Constraints::of`]), and
 //! at every state it tries makes only those it asks again, each by its own
 //! step's generator, of the part as built and the state tried
-//! ([`make_again`]): no program is run for it, and no constraint is
+//! ([`Remade`]): no program is run for it, and no constraint is
 //! copied but those asked. No step builds on the constraints of the steps
 //! before it, so a constraint that moves makes no other step's again —
 //! which a target revised by every step would, at a cost growing with the
 //! square of the steps.
 
 use geop_core_math::scalars::Scalar;
-use std::{any::Any, collections::BTreeMap, rc::Rc};
+use std::{any::Any, cell::RefCell, collections::BTreeMap, rc::Rc};
 
 use geop_core_math::{
     geop_error::{GeopError, GeopResult},
@@ -23,7 +23,7 @@ use geop_core_program::{
     element::{ElementReference, HasElements, Kind},
     part::{Make, StepContext},
     placed::key_behind,
-    reader::Reader,
+    reader::{Reader, Reads},
     target::{Target, TargetReference},
 };
 
@@ -103,7 +103,7 @@ struct Defined {
 
 /// Where a constraint is defined: behind the instances `path`, outermost
 /// first, by the step `step` of the part placed there, as `name` — what
-/// makes it alone again (see [`make_again`]).
+/// makes it alone again (see [`Remade`]).
 #[derive(Debug, Clone, PartialEq)]
 pub struct DefinedAt {
     path: Vec<String>,
@@ -121,6 +121,19 @@ impl DefinedAt {
         }
         Ok(inside)
     }
+
+    /// Its step's constraints made again by its generator, `after` reading
+    /// the part it is of after the step, and what that read.
+    fn make(&self, after: &Reader) -> Made {
+        let own = TargetReference::<StepConstraints>::new(format!("{CONSTRAINTS}:{}", self.step));
+        let own = match after.retrieve_element(&ElementReference::whole(own)) {
+            Ok(own) => own,
+            Err(e) => return (Reads::default(), Err(e)),
+        };
+        MADE_AGAIN.set(MADE_AGAIN.get() + 1);
+        let (made, reads) = after.recorded(|reader| (own.again.make)(reader, &*own.again.defining));
+        (reads, made)
+    }
 }
 
 thread_local! {
@@ -128,56 +141,72 @@ thread_local! {
 }
 
 /// How many times this thread has made a step's constraints again at a
-/// state a solve tried ([`make_again`]), ever: what a solve's work grows
-/// with, now that it runs no program for a state it tries, so a test can
-/// bound it by a count rather than time it.
+/// state a solve tried ([`Remade::constraints`]), ever: what a solve's work
+/// grows with, now that it runs no program for a state it tries, so a test
+/// can bound it by a count rather than time it.
 pub fn made_again() -> usize {
     MADE_AGAIN.get()
 }
 
-/// The constraints `which` of the part `reader` reads, as [`Constraints::of`]
-/// names their states — behind their paths — each made again by its step's
-/// generator of what `reader` reads: at the state it tries
-/// ([`Reader::trying`]), the constraints there, without running the
-/// program again. What a solve reads at every state it tries. A step
-/// several of whose constraints are asked is made once.
-///
-/// The make reads only the state and targets that read none — it refuses
-/// any other read ([`define_constraints`]) — so what it makes is what a
-/// run of the program at that state would.
-///
-/// Counted ([`made_again`]).
-pub fn make_again(reader: &Reader, which: &[&DefinedAt]) -> Vec<GeopResult<Constraint>> {
-    let mut made: BTreeMap<(&[String], &str), GeopResult<StepConstraints>> = BTreeMap::new();
-    (which.iter())
-        .map(|at| {
-            let step = (made.entry((&at.path, &at.step))).or_insert_with(|| {
-                let inside = at.inside(reader)?;
-                let own =
-                    TargetReference::<StepConstraints>::new(format!("{CONSTRAINTS}:{}", at.step));
-                let own = inside.retrieve_element(&ElementReference::whole(own))?;
-                let after = inside.after_step(&at.step);
-                MADE_AGAIN.set(MADE_AGAIN.get() + 1);
-                let (again, _) =
-                    after.recorded(|reader| (own.again.make)(reader, &*own.again.defining));
-                again
-            });
-            let step = (step.as_ref()).map_err(|e| GeopError::new(e.to_string()))?;
-            let constraint = step.constraints.get(&at.name).ok_or_else(|| {
-                GeopError::new(format!(
-                    "step `{}` defines no constraint `{}`",
-                    at.step, at.name
-                ))
-            })?;
-            let mut constraint = constraint.clone();
-            for instance in at.path.iter().rev() {
-                constraint.jacobian = (constraint.jacobian.into_iter())
-                    .map(|(state, rows)| (key_behind(instance, &state), rows))
-                    .collect();
-            }
-            Ok(constraint)
-        })
-        .collect()
+/// The constraints a solve made again at the states it tried
+/// ([`Remade::constraints`]), by step, each with the state it read: a step
+/// is made again only where a state it read changed. A solve asks a
+/// pendant's constraints where it was carried, and again where its own
+/// solve starts, from there; and where it ends, as its last step left it.
+#[derive(Default)]
+pub struct Remade(RefCell<BTreeMap<(Vec<String>, String), Made>>);
+
+/// A step's constraints as made again, and what making them read.
+type Made = (Reads, GeopResult<StepConstraints>);
+
+impl Remade {
+    /// The constraints `which` of the part `reader` reads, as
+    /// [`Constraints::of`] names their states — behind their paths — each
+    /// made again by its step's generator of what `reader` reads: at the
+    /// state it tries ([`Reader::trying`]), the constraints there, without
+    /// running the program again. What a solve reads at every state it
+    /// tries. A step several of whose constraints are asked is made once,
+    /// and one whose state read is as it was when last made, not at all.
+    ///
+    /// The make reads only the state and targets that read none — it
+    /// refuses any other read ([`define_constraints`]) — so what it makes
+    /// is what a run of the program at that state would, and only the
+    /// state it read can change what it makes of the same part.
+    ///
+    /// Counted ([`made_again`]).
+    pub fn constraints(
+        &self,
+        reader: &Reader,
+        which: &[&DefinedAt],
+    ) -> Vec<GeopResult<Constraint>> {
+        let mut remade = self.0.borrow_mut();
+        (which.iter())
+            .map(|at| {
+                let after = (at.inside(reader)).map(|inside| inside.after_step(&at.step))?;
+                let key = (at.path.clone(), at.step.clone());
+                let kept =
+                    (remade.get(&key)).is_some_and(|(reads, _)| after.reads_same_state(reads));
+                if !kept {
+                    remade.insert(key.clone(), at.make(&after));
+                }
+                let (_, step) = remade.get(&key).ok_or_else(|| GeopError::new("made"))?;
+                let step = (step.as_ref()).map_err(|e| GeopError::new(e.to_string()))?;
+                let constraint = step.constraints.get(&at.name).ok_or_else(|| {
+                    GeopError::new(format!(
+                        "step `{}` defines no constraint `{}`",
+                        at.step, at.name
+                    ))
+                })?;
+                let mut constraint = constraint.clone();
+                for instance in at.path.iter().rev() {
+                    constraint.jacobian = (constraint.jacobian.into_iter())
+                        .map(|(state, rows)| (key_behind(instance, &state), rows))
+                        .collect();
+                }
+                Ok(constraint)
+            })
+            .collect()
+    }
 }
 
 impl Constraints {
@@ -274,7 +303,7 @@ impl Constraints {
 
 /// The constraints one step defined, by name: its target — and how its
 /// step makes them, to make them again at another state
-/// ([`make_again`]).
+/// ([`Remade`]).
 #[derive(Clone, PartialEq)]
 struct StepConstraints {
     step: String,
