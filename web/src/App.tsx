@@ -7,6 +7,7 @@ import {
   type Command,
   type EditEvent,
   type PickedElement,
+  type Lighting,
   type Inspection,
   type OperationInfo,
   type PartView,
@@ -57,7 +58,10 @@ import { matches, parseChord, pressed, type PaletteEntry } from "./shortcuts";
 
 /** What the pointer sends as it moves: answered as often as it moves, never "busy". */
 function following(command: Command): boolean {
-  return command.command === "event" && ["hover", "leave", "drag", "view"].includes(command.event.type);
+  return (
+    command.command === "light" ||
+    (command.command === "event" && ["hover", "leave", "drag", "view"].includes(command.event.type))
+  );
 }
 
 /** Whether a key press belongs to a field being typed into rather than to the step. */
@@ -127,8 +131,8 @@ function App() {
   const [inspecting, setInspecting] = useState(false);
   /** The section view, if one is on: the view only, never the model. */
   const [section, setSection] = useState<Section | null>(null);
-  /** What the inspect panel lights, beyond what the kernel does. */
-  const [lights, setLights] = useState<PickedElement[]>([]);
+  /** What the kernel says is lit: kept until it sends it again. */
+  const [lit, setLit] = useState<Lighting>({});
 
   // A drag selects text only within the dialog or panel it starts in (see selection.ts).
   const appRef = useRef<HTMLDivElement>(null);
@@ -221,6 +225,7 @@ function App() {
     // kept as it was: nothing it is drawn by renders again.
     setStep((shown) => same(shown, update.step));
     setTool((shown) => same(shown, update.tool));
+    if (update.lit) setLit(update.lit);
     if (kind === "agent") return;
     // An answer asked for is kept; the pick tool's comes with every update.
     const inspection = update.inspection;
@@ -314,10 +319,11 @@ function App() {
     },
   });
 
-  // Any command, run as the app runs it: for the end-to-end checks
-  // (`e2e/`) and the browser's console.
+  // Any command, run as the app runs it, and what is lit now: for the
+  // end-to-end checks (`e2e/`) and the browser's console.
   useEffect(() => {
     (window as unknown as { geopCommand: typeof dispatch }).geopCommand = dispatch;
+    (window as unknown as { geopLit: Lighting }).geopLit = lit;
   });
 
   useEffect(() => {
@@ -930,6 +936,9 @@ function App() {
     setInspecting(false);
   }
 
+  /** Light what a list item or an answer's row points at, while it is pointed at: the kernel says what that lights. */
+  const light = (elements: PickedElement[]) => void dispatch({ command: "light", elements });
+
   const structurePanel = (
     <>
       <section className="panel structure-panel">
@@ -939,7 +948,7 @@ function App() {
           details={program?.details ?? {}}
           enabled={wasmReady}
           onVisibility={(name, visible) => dispatch({ command: "visibility", name, visible })}
-          onLight={setLights}
+          onLight={light}
         />
       </section>
       <section className="panel inspect-panel">
@@ -960,7 +969,7 @@ function App() {
           section={section}
           onSection={setSection}
           size={scene?.part.extent.size ?? 1}
-          onLight={setLights}
+          onLight={light}
         />
       </section>
     </>
@@ -1065,7 +1074,7 @@ function App() {
                 components={components}
                 visuals={presentation?.visuals}
                 gizmo={presentation?.gizmo ?? null}
-                highlights={[...(presentation?.highlights ?? []), ...lights]}
+                lit={lit}
                 section={section && sectionPlane(section, scene.part.extent.center)}
                 pickable={presentation?.pickable}
                 hidden={scene.hidden}

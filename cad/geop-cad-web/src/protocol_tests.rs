@@ -24,7 +24,7 @@ const SAMPLES: &str = concat!(
 );
 
 /// How many kinds of [`Command`] there are: what [`kind`] tells apart.
-const COMMAND_KINDS: usize = 26;
+const COMMAND_KINDS: usize = 27;
 
 /// The kind of `command`. A kind added to [`Command`] does not compile
 /// here until it is named, and [`COMMAND_KINDS`] counted up, and then
@@ -53,6 +53,7 @@ fn kind(command: &Command) -> &'static str {
         Command::Visibility { .. } => "visibility",
         Command::Appearance { .. } => "appearance",
         Command::Isolate { .. } => "isolate",
+        Command::Light { .. } => "light",
         Command::Tool { .. } => "tool",
         Command::Inspect { .. } => "inspect",
         Command::Export { .. } => "export",
@@ -126,6 +127,8 @@ fn session(kinds: &[&str]) -> Vec<Value> {
         json!({ "command": "seek", "marker": 2 }),
         json!({ "command": "seek", "marker": null }),
         json!({ "command": "visibility", "name": "origin", "visible": false }),
+        json!({ "command": "light", "elements": [{ "target": "/:model", "kind": "face", "name": "extrude(box,end)" }] }),
+        json!({ "command": "light", "elements": [] }),
         json!({ "command": "inspect", "inspector": "mass_properties" }),
         json!({ "command": "inspect", "inspector": "measure", "picked": [{ "target": "/:model", "kind": "face", "name": "extrude(box,end)" }] }),
         json!({ "command": "tool", "key": "pick:mass_properties" }),

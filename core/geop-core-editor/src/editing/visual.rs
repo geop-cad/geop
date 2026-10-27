@@ -249,7 +249,9 @@ pub struct Presentation {
     pub layout: Layout,
     pub visuals: Vec<Visual>,
     /// Elements of the part to draw lit: what is picked, what a click would
-    /// pick.
+    /// pick. Not sent: the editor sends what they light
+    /// ([`crate::editor::Update::lit`]).
+    #[serde(skip)]
     pub highlights: Vec<PickedElement>,
     /// What a click in the viewport picks right now: elements of these
     /// kinds.

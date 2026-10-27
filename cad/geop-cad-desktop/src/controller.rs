@@ -22,6 +22,7 @@ use geop_core_editor::{
     editing::{Button, Pointer, Presentation, StepEditEvent, Value},
     editor::{Command, ProgramState, StepState},
     output::{Content, Export, Inspection},
+    view::lit::Lighting,
 };
 use geop_core_program::{element::PickedElement, program::Program};
 
@@ -41,6 +42,8 @@ enum Sent {
     Command(&'static str),
     /// A hover, leave or drag of the pointer: one is answered at a time.
     Pointer,
+    /// What a list points at, to light: nothing to wait for.
+    Light,
     /// A question to an inspector: its answer is kept by its kind.
     Inspect,
     /// What is copied of a step, for the clipboard.
@@ -137,8 +140,11 @@ pub struct Controller {
     /// The last answers of the inspectors asked of the whole part, by
     /// kind, until the part changes.
     pub answers: BTreeMap<String, Inspection>,
-    /// What the panels and lists light, beyond what the editor does.
-    pub lights: Vec<PickedElement>,
+    /// What the editor says is lit (see `Update::lit`).
+    pub lit: Lighting,
+    /// What the panels and lists were last told to light
+    /// (`Command::Light`).
+    lights: Vec<PickedElement>,
     pub section: Option<Section>,
     /// What panicked in the kernel, until the user has read it: the
     /// kernel was started afresh, with the program as it was.
@@ -187,6 +193,7 @@ impl Controller {
             error: None,
             picked: None,
             answers: BTreeMap::new(),
+            lit: Lighting::new(),
             lights: Vec::new(),
             section: None,
             crashed: None,
@@ -240,7 +247,7 @@ impl Controller {
 
     /// Whether commands are waiting for their answers: the app is busy.
     pub fn busy(&self) -> bool {
-        self.sent.values().any(|s| *s != Sent::Pointer)
+        (self.sent.values()).any(|s| !matches!(s, Sent::Pointer | Sent::Light))
     }
 
     /// Whether the editor answered its first command.
@@ -359,6 +366,9 @@ impl Controller {
         }
         self.step = answer.step;
         self.tool = answer.tool;
+        if let Some(lit) = answer.lit {
+            self.lit = lit;
+        }
         match sent {
             Sent::Inspect => {
                 if let Some(inspection) = answer.inspection {
@@ -377,7 +387,7 @@ impl Controller {
             _ => {}
         }
         // A hover's answer says nothing new of what was refused before.
-        if *sent != Sent::Pointer || answer.error.is_some() {
+        if !matches!(sent, Sent::Pointer | Sent::Light) || answer.error.is_some() {
             self.error = answer.error.or(failed);
         }
         self.follow_plane();
@@ -443,14 +453,13 @@ impl Controller {
         self.presentation().is_some_and(|p| p.grab)
     }
 
-    /// Everything lit: what the editor lights, and what the panels do.
-    pub fn highlights(&self) -> Vec<PickedElement> {
-        let mut lit: Vec<PickedElement> = self
-            .presentation()
-            .map(|p| p.highlights.clone())
-            .unwrap_or_default();
-        lit.extend(self.lights.iter().cloned());
-        lit
+    /// Light `elements` too — what an item of the structure or a row of
+    /// an answer points at — telling the editor only when they change.
+    pub fn light(&mut self, elements: Vec<PickedElement>) {
+        if self.lights != elements {
+            self.lights = elements.clone();
+            self.send(Command::Light { elements }, Sent::Light);
+        }
     }
 
     pub fn can_undo(&self) -> bool {
@@ -937,6 +946,7 @@ fn kind(command: &Command) -> &'static str {
         Command::Visibility { .. } => "visibility",
         Command::Appearance { .. } => "appearance",
         Command::Isolate { .. } => "isolate",
+        Command::Light { .. } => "light",
         Command::Tool { .. } => "tool",
         Command::Inspect { .. } => "inspect",
         Command::Export { .. } => "export",

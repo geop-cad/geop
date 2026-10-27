@@ -66,13 +66,9 @@ export function located(e: PickedElement): { instance: string; target: string } 
   return { instance, target: name };
 }
 
-/** The datums `elements` light of `view`, the view of the placed part `instance` (`""` for the part's own): by name as drawn — `origin:x` an axis — behind the instance's path (see [[locatedKey]]). */
-export function litDatums(view: PartView, instance: string, elements: PickedElement[]): string[] {
-  return elements.flatMap((e) => {
-    const at = located(e);
-    if (at.instance !== instance || at.target !== view.datum_target) return [];
-    return [locatedKey(instance, e.name)];
-  });
+/** The datums lit, by name as drawn — `origin:x` an axis — behind their placed part's path (see [[locatedKey]]). */
+export function litDatums(lighting: Lighting): string[] {
+  return Object.entries(lighting).flatMap(([instance, lit]) => lit.datums.map((d) => locatedKey(instance, d)));
 }
 
 /** Whether two elements are the same one. */
@@ -599,8 +595,6 @@ export interface Presentation {
   /** Where the dialog is shown. */
   layout: Layout;
   visuals: Visual[];
-  /** Elements of the part to draw lit. */
-  highlights: PickedElement[];
   /** What a click picks right now: elements of these kinds as drawn (`face`, `datum`, `sketch_curve`). */
   pickable: string[];
   /** A plane to work in, head on. */
@@ -655,6 +649,8 @@ export type Command =
   | { command: "visibility"; name: string; visible: boolean }
   | { command: "appearance"; name: string; color: string | null }
   | { command: "isolate"; names: string[] }
+  /** Light `elements` too — what a list item or an answer's row points at — until lit otherwise; `[]` once it leaves. */
+  | { command: "light"; elements: PickedElement[] }
   /** Something the user did in the panel `key` (see [[ProgramState]] `panels`), which it reads as `payload`. */
   | { command: "panel"; key: string; payload: unknown }
   /**
@@ -867,7 +863,34 @@ export interface Update {
   export: ExportedFile | null;
   /** The pick tool's inspector's answer about its picks, while it is in hand — or the answer to an `inspect` command. */
   inspection: Inspection | null;
+  /** What to draw lit, when it changed: kept until sent again (see [[Lighting]]). */
+  lit: Lighting | null;
 }
+
+/**
+ * What the kernel says is lit of one drawn part (`geop_core_editor::view::lit::Lit`):
+ * its elements by name, a sketch's curves and points by the sketch's name
+ * and their id. A front end draws it, and decides nothing of it.
+ */
+export interface Lit {
+  /** All of it: a placed part hovered or selected whole. */
+  whole: boolean;
+  faces: string[];
+  edges: string[];
+  vertices: string[];
+  solids: string[];
+  /** Steps whose faces are lit. */
+  features: string[];
+  /** Whole sketches, by name. */
+  sketches: string[];
+  curves: [string, string][];
+  sketch_points: [string, string][];
+  /** Datums, by name as drawn. */
+  datums: string[];
+}
+
+/** What is lit, of the part drawn (`""`) and of each part placed in it by its name: only those of which something is. */
+export type Lighting = Record<string, Lit>;
 
 // ── inspecting — see `geop_ops::output::Answer` ───────────────────────────────
 

@@ -230,12 +230,11 @@ pub fn viewport(window: &mut GeopApp, ui: &mut egui::Ui) {
     let _ = response;
 
     // What is drawn.
-    let highlights = app.highlights();
     let section = app.section.and_then(|s| s.plane(app.scene.part.center));
     let shown = Shown {
         kept: &app.scene,
         presentation: app.presentation(),
-        highlights: &highlights,
+        lit: &app.lit,
         plane: app.plane(),
         section,
         dark: window.theme.dark(),

@@ -28,10 +28,7 @@ pub fn part(window: &mut GeopApp, ui: &mut Ui) {
                 .default_open(true)
                 .show(ui, |ui| inspect(window, ui, &mut lights));
             // Lit while pointed at, and no longer once not.
-            let lights = lights.unwrap_or_default();
-            if window.app.lights != lights {
-                window.app.lights = lights;
-            }
+            window.app.light(lights.unwrap_or_default());
         });
 }
 

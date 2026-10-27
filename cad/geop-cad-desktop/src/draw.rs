@@ -23,10 +23,12 @@ use geop_core_editor::{
     editing::{
         GizmoPart, GizmoView, Presentation, Shape, Style, TRIAD, Visual, gizmo::size as gizmo_size,
     },
-    view::{RESOLUTION, lit::Lit},
+    view::{
+        RESOLUTION,
+        lit::{Lighting, Lit},
+    },
 };
 use geop_core_math::{primitives::DatumKind, scalars::Scalar, vector::Vector3};
-use geop_core_program::element::PickedElement;
 
 use crate::{
     camera::{Camera, REACH_PX},
@@ -319,8 +321,6 @@ struct PartStatics<'a> {
     /// Its sketches hidden — unless lit.
     hidden_sketches: BTreeSet<&'a str>,
     lit: Lit,
-    /// Every solid lit: a placed part a visual lights.
-    all_lit: bool,
 }
 
 impl PartStatics<'_> {
@@ -352,10 +352,8 @@ impl PartStatics<'_> {
             let Some(mesh) = meshes.get(&face.mesh) else {
                 continue;
             };
-            let is_lit = self.all_lit
-                || self
-                    .lit
-                    .face(&face.name, face.solid.as_deref(), face.feature.as_deref());
+            let is_lit =
+                (self.lit).face(&face.name, face.solid.as_deref(), face.feature.as_deref());
             let color = if is_lit {
                 color.tint(HIGHLIGHT, 0.7)
             } else {
@@ -462,7 +460,8 @@ impl PartStatics<'_> {
 pub struct Shown<'a> {
     pub kept: &'a Kept,
     pub presentation: Option<&'a Presentation>,
-    pub highlights: &'a [PickedElement],
+    /// What the editor says is lit.
+    pub lit: &'a Lighting,
     pub plane: Option<Frame>,
     pub section: Option<([f64; 3], [f64; 3])>,
     pub dark: bool,
@@ -474,11 +473,11 @@ pub fn drawing(shown: &Shown, camera: &Camera, statics: &Arc<Statics>) -> Drawin
     let kept = shown.kept;
     let visuals: &[Visual] = shown.presentation.map_or(&[], |p| &p.visuals);
     let statics = {
-        let key = statics_key(shown, visuals);
+        let key = statics_key(shown);
         if statics.key == key && key != 0 {
             statics.clone()
         } else {
-            Arc::new(make_statics(shown, visuals, key, statics))
+            Arc::new(make_statics(shown, key, statics))
         }
     };
     let part = &kept.part;
@@ -506,8 +505,9 @@ pub fn drawing(shown: &Shown, camera: &Camera, statics: &Arc<Statics>) -> Drawin
     // The part's own datums, and those of its placed parts, where they are.
     let mut datums: Vec<(String, DatumKind, Frame)> = Vec::new();
     let mut lit_datums: BTreeSet<String> = BTreeSet::new();
-    let own = Lit::of(&part.targets, "", shown.highlights);
-    lit_datums.extend(own.datums);
+    if let Some(own) = shown.lit.get("") {
+        lit_datums.extend(own.datums.iter().cloned());
+    }
     for d in &part.datums {
         datums.push((d.name.clone(), d.kind, d.frame));
     }
@@ -515,8 +515,9 @@ pub fn drawing(shown: &Shown, camera: &Camera, statics: &Arc<Statics>) -> Drawin
         let Some(view) = kept.components.get(&instance.component) else {
             continue;
         };
-        let lit = Lit::of(&view.targets, &instance.name, shown.highlights);
-        lit_datums.extend(lit.datums.iter().map(|d| format!("/{}:{d}", instance.name)));
+        if let Some(lit) = shown.lit.get(&instance.name) {
+            lit_datums.extend(lit.datums.iter().map(|d| format!("/{}:{d}", instance.name)));
+        }
         for d in &view.datums {
             let frame = Frame {
                 origin: instance.frame.point(d.frame.origin),
@@ -581,31 +582,17 @@ pub fn drawing(shown: &Shown, camera: &Camera, statics: &Arc<Statics>) -> Drawin
     drawing
 }
 
-/// What the faces and edges drawn are made of, hashed: the scene, what is
-/// lit, and the placed parts the visuals light.
-fn statics_key(shown: &Shown, visuals: &[Visual]) -> u64 {
+/// What the faces and edges drawn are made of, hashed: the scene and what
+/// is lit.
+fn statics_key(shown: &Shown) -> u64 {
     let mut hasher = std::hash::DefaultHasher::new();
     shown.kept.version.hash(&mut hasher);
-    shown.highlights.hash(&mut hasher);
-    for v in visuals {
-        if let Shape::Instance { name } = &v.shape
-            && matches!(v.style, Style::Hover | Style::Selected)
-        {
-            name.hash(&mut hasher);
-        }
-    }
+    shown.lit.hash(&mut hasher);
     hasher.finish().max(1)
 }
 
-fn make_statics(shown: &Shown, visuals: &[Visual], key: u64, before: &Statics) -> Statics {
+fn make_statics(shown: &Shown, key: u64, before: &Statics) -> Statics {
     let kept = shown.kept;
-    let lit_instances: BTreeSet<&str> = (visuals.iter())
-        .filter(|v| matches!(v.style, Style::Hover | Style::Selected))
-        .filter_map(|v| match &v.shape {
-            Shape::Instance { name } => Some(name.as_str()),
-            _ => None,
-        })
-        .collect();
     let hidden: BTreeSet<&str> = kept.hidden.iter().map(String::as_str).collect();
     let mut faces = HashMap::new();
     let base_key = kept.version.max(1);
@@ -617,8 +604,7 @@ fn make_statics(shown: &Shown, visuals: &[Visual], key: u64, before: &Statics) -
         frame: Frame::WORLD,
         hidden: hidden.clone(),
         hidden_sketches: hidden.clone(),
-        lit: Lit::of(&kept.part.targets, "", shown.highlights),
-        all_lit: false,
+        lit: shown.lit.get("").cloned().unwrap_or_default(),
     };
     own.draw_lit(&kept.meshes, &mut faces, &mut lit);
     if fresh {
@@ -635,7 +621,6 @@ fn make_statics(shown: &Shown, visuals: &[Visual], key: u64, before: &Statics) -
             instance,
             view,
             shown,
-            &lit_instances,
             &kept.meshes,
             &mut faces,
             fresh.then_some(&mut base),
@@ -663,7 +648,6 @@ fn placed(
     instance: &InstanceData,
     view: &PartData,
     shown: &Shown,
-    lit_instances: &BTreeSet<&str>,
     meshes: &HashMap<String, Arc<MeshData>>,
     faces: &mut HashMap<String, (Arc<MeshData>, Vec<FaceInstance>)>,
     base: Option<&mut Layer>,
@@ -678,8 +662,7 @@ fn placed(
         frame: instance.frame,
         hidden: BTreeSet::new(),
         hidden_sketches,
-        lit: Lit::of(&view.targets, &instance.name, shown.highlights),
-        all_lit: lit_instances.contains(instance.name.as_str()),
+        lit: shown.lit.get(&instance.name).cloned().unwrap_or_default(),
     };
     statics.draw_lit(meshes, faces, lit);
     if let Some(base) = base {

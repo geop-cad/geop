@@ -6,12 +6,11 @@ import { CAMERA_FOV, DEFAULT_POSE, REACH_PX, fitPose, worldPerPixel, type Camera
 import { DatumLayer } from "./datums3d";
 import {
   litDatums,
-  locate,
   locatedKey,
   parseKey,
   type DatumInfo,
   type DatumKind,
-  type PickedElement,
+  type Lighting,
   type Frame,
   type PartView,
   type Pointer,
@@ -23,7 +22,7 @@ import {
   type Visual,
   type GizmoView,
 } from "./geop";
-import { CAP_COLOR, applyHighlight, buildSceneGroup, disposeGroup, flatten, frameMatrix, localTo, type Scene } from "./partScene";
+import { CAP_COLOR, applyHighlight, buildSceneGroup, disposeGroup, flatten, frameMatrix, type Scene } from "./partScene";
 import { PlacedLayer, type PlacedLook } from "./placed3d";
 import type { SectionPlane } from "./section";
 import { PlaneGrid } from "./planeGrid";
@@ -50,8 +49,8 @@ interface Props {
   visuals?: Visual[];
   /** A gizmo to move, turn or scale by, drawn over everything. */
   gizmo?: GizmoView | null;
-  /** What to draw highlighted — what is picked, what a click would pick. */
-  highlights?: PickedElement[];
+  /** What to draw lit, as the kernel says: what is picked, what a click would pick, what a list points at. */
+  lit: Lighting;
   /** What a click picks right now: reference geometry of these kinds stands out, the rest fades. */
   pickable?: string[];
   /** Sketches and datums, by name, not to draw. */
@@ -145,7 +144,7 @@ export function SceneViewer({
   components,
   visuals,
   gizmo,
-  highlights,
+  lit,
   pickable,
   hidden,
   plane,
@@ -171,8 +170,8 @@ export function SceneViewer({
   visualsRef.current = visuals ?? [];
   const gizmoRef = useRef(gizmo ?? null);
   gizmoRef.current = gizmo ?? null;
-  const highlightsRef = useRef(highlights ?? []);
-  highlightsRef.current = highlights ?? [];
+  const litRef = useRef(lit);
+  litRef.current = lit;
   const pickableRef = useRef(pickable ?? []);
   pickableRef.current = pickable ?? [];
   const partRef = useRef(part);
@@ -644,7 +643,7 @@ export function SceneViewer({
       // Which datums are drawn, and lit, only when what decides it
       // changed: not every frame — an assembly has a datum per part.
       const datumInputs = [
-        highlightsRef.current,
+        litRef.current,
         instancesRef.current,
         componentsRef.current,
         partRef.current,
@@ -652,14 +651,7 @@ export function SceneViewer({
         datumsRef.current,
       ];
       if (datumInputs.some((input, k) => input !== datumsDrawn.inputs[k])) {
-        const highlighted = highlightsRef.current;
-        const lit = [
-          ...litDatums(partRef.current, "", highlighted),
-          ...instancesRef.current.flatMap((i) => {
-            const view = componentsRef.current[i.component];
-            return view ? litDatums(view, i.name, highlighted) : [];
-          }),
-        ];
+        const lit = litDatums(litRef.current);
         const shown = new Set(lit);
         const hidden = new Set(hiddenRef.current.filter((name) => !shown.has(name)));
         const { extent } = partRef.current;
@@ -773,18 +765,14 @@ export function SceneViewer({
     builtRef.current = scene;
     groupRef.current = group;
     threeScene.add(group);
-    applyHighlight(group, scene, highlightsRef.current, hiddenRef.current);
+    applyHighlight(group, scene, litRef.current[""] ?? null, hiddenRef.current);
   }, [scene]);
 
   // The placed parts: each component built once, its placed parts drawn
   // together, and those lit or partly hidden on their own (see `placed3d.ts`).
-  /** How each placed part looks, as the highlights, what is hidden and the visuals lighting them say. */
+  /** How each placed part looks, as what is lit and what is hidden say. */
   const placedLook = (): ((name: string) => PlacedLook) => {
-    const lit = new Set(
-      visualsRef.current.flatMap((v) =>
-        v.shape === "instance" && (v.style === "hover" || v.style === "selected") ? [v.name] : [],
-      ),
-    );
+    const lit = litRef.current;
     const hidden = new Set(hiddenRef.current);
     // What is hidden of each placed part, by its name: what follows its
     // name — of the sketches it draws, the only thing of it a name hides.
@@ -797,16 +785,11 @@ export function SceneViewer({
       hiddenIn.set(instance, list);
     }
     const component = new Map(instancesRef.current.map((i) => [i.name, components[i.component]]));
-    const highlighted = highlightsRef.current;
     return (name) => {
       const view = component.get(name);
-      const highlights = highlighted.length > 0 ? localTo(name, highlighted) : [];
-      if (lit.has(name)) {
-        highlights.push(...(view?.solids ?? []).map((name) => ({ target: locate("", view?.model ?? ""), kind: "solid", name })));
-      }
       const sketches = new Set(view?.sketches.map((sketch) => sketch.name));
       return {
-        highlights,
+        lit: lit[name] ?? null,
         hidden: (hiddenIn.get(name) ?? []).filter((h) => sketches.has(h)),
         // Hidden with the part it is placed in, as the kernel picks it.
         visible: !name.split("/").some((_, k, path) => hidden.has(path.slice(0, k + 1).join("/"))),
@@ -818,19 +801,14 @@ export function SceneViewer({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [instances, components]);
 
-  // Re-tint in place when the highlights, what is hidden or what the
-  // visuals light change: nothing is rebuilt.
-  const appearanceKey = JSON.stringify([
-    highlights ?? [],
-    hidden ?? [],
-    (visuals ?? []).flatMap((v) => (v.shape === "instance" ? [[v.name, v.style]] : [])),
-  ]);
+  // Re-tint in place when what is lit or what is hidden changes — sent
+  // anew only when it changed, so compared by identity: nothing is rebuilt.
   useEffect(() => {
-    if (groupRef.current) applyHighlight(groupRef.current, scene, highlightsRef.current, hiddenRef.current);
+    if (groupRef.current) applyHighlight(groupRef.current, scene, litRef.current[""] ?? null, hiddenRef.current);
     placedRef.current?.light(placedLook());
     // `scene` is the one the group was built from: a new one rebuilds it above.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [appearanceKey]);
+  }, [lit, hidden]);
 
   // No touch is the browser's to scroll or zoom the page by: every one is the view's.
   return (

@@ -53,12 +53,15 @@ use std::{
 };
 
 use crate::{
-    editing::{Extent, Presentation, StepEditEvent},
+    editing::{Extent, Presentation, Shape, StepEditEvent, Style},
     output::{Content, Export, Inspection, Output},
     registry::{Drawings, Registry},
     step_editor::{Editing, StepEditor},
     tools::Tool,
-    view::{EMPTY_EXTENT, PartView, ViewInstance, Visible, drawn},
+    view::{
+        EMPTY_EXTENT, PartView, ViewInstance, Visible, drawn,
+        lit::{Lighting, lighting},
+    },
 };
 use build::Build;
 use geop_core_math::{
@@ -253,6 +256,10 @@ pub struct Editor {
     /// The placed parts the user chose to show alone, if any
     /// ([`Command::Isolate`]).
     isolated: BTreeSet<String>,
+    /// What [`Command::Light`] lights.
+    lights: Vec<PickedElement>,
+    /// What the viewer was last sent to draw lit (see [`Update::lit`]).
+    lit: Option<Lighting>,
 }
 
 impl Editor {
@@ -301,6 +308,8 @@ impl Editor {
             visibility: BTreeMap::new(),
             colors: BTreeMap::new(),
             isolated: BTreeSet::new(),
+            lights: Vec::new(),
+            lit: None,
         }
     }
 
@@ -519,17 +528,51 @@ impl Editor {
         {
             cache.flush();
         }
+        let tool = self.tool_presentation(step.is_none());
+        let lit = self.lit(
+            step.as_ref().map(|s| &s.presentation).or(tool.as_ref()),
+            &scene,
+        );
         Update {
             error,
             program,
             scene,
-            tool: self.tool_presentation(step.is_none()),
+            tool,
+            lit,
             step,
             files: self.added.take(),
             written: (!self.written.is_empty()).then(|| std::mem::take(&mut self.written)),
             inspection,
             export: self.exported.take(),
         }
+    }
+
+    /// What to draw lit now, as `presentation` — the step's, or the tool's —
+    /// and [`Command::Light`] light it: if it is not what the viewer was
+    /// last sent, or the viewer was sent a `scene` afresh.
+    fn lit(
+        &mut self,
+        presentation: Option<&Presentation>,
+        scene: &Option<SceneState>,
+    ) -> Option<Lighting> {
+        let part = self.drawn.as_ref()?;
+        let mut elements = presentation.map_or_else(Vec::new, |p| p.highlights.clone());
+        elements.extend(self.lights.iter().cloned());
+        let whole: BTreeSet<&str> = (presentation.iter())
+            .flat_map(|p| &p.visuals)
+            .filter(|v| matches!(v.style, Style::Hover | Style::Selected))
+            .filter_map(|v| match &v.shape {
+                Shape::Instance { name } => Some(name.as_str()),
+                _ => None,
+            })
+            .collect();
+        let lit = lighting(part, &elements, &whole);
+        let afresh = scene.as_ref().is_some_and(|s| s.all);
+        if !afresh && self.lit.as_ref() == Some(&lit) {
+            return None;
+        }
+        self.lit = Some(lit.clone());
+        Some(lit)
     }
 
     /// What to draw, `shown`: the part, and of the parts placed in it what
@@ -1095,6 +1138,10 @@ impl Editor {
             }
             Command::Isolate { names } => {
                 self.isolated = names.into_iter().collect();
+                Changed::Nothing
+            }
+            Command::Light { elements } => {
+                self.lights = elements;
                 Changed::Nothing
             }
             #[expect(

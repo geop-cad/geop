@@ -20,6 +20,7 @@ use geop_core_editor::{
     editing::Presentation,
     editor::{Command, File, ProgramState, StepState, Update},
     output::{Export, Inspection},
+    view::lit::Lighting,
 };
 
 use crate::scene::SceneData;
@@ -54,6 +55,7 @@ pub struct Answer {
     pub export: Option<Export>,
     pub tool: Option<Presentation>,
     pub inspection: Option<Inspection>,
+    pub lit: Option<Lighting>,
     /// What panicked, if the kernel did: it was started afresh, and knows
     /// no program and no files.
     pub crashed: Option<String>,
@@ -72,6 +74,7 @@ impl Answer {
             export: update.export,
             tool: update.tool,
             inspection: update.inspection,
+            lit: update.lit,
             crashed: None,
         }
     }
@@ -88,6 +91,7 @@ impl Answer {
             export: None,
             tool: None,
             inspection: None,
+            lit: None,
             crashed: Some(message),
         }
     }

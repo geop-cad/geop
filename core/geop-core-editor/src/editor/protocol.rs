@@ -13,7 +13,7 @@ use crate::{
     output::{Export, ExporterInfo, Inspection, InspectorInfo},
     registry::{Panel, StructureItem},
     tools::ToolInfo,
-    view::{FaceMesh, PartView, ViewInstance},
+    view::{FaceMesh, PartView, ViewInstance, lit::Lighting},
 };
 
 /// Something the user did.
@@ -165,6 +165,13 @@ pub enum Command {
         options: serde_json::Value,
         #[serde(default)]
         date: String,
+    },
+    /// Light `elements` too, beside what the step or the tool lights — what
+    /// an item of the structure or a row of an answer points at, while the
+    /// pointer is on it — until lit otherwise: none, once it leaves.
+    /// Changes nothing else (see [`Update::lit`]).
+    Light {
+        elements: Vec<PickedElement>,
     },
     /// Panic, on purpose: how the front ends' recovery from a kernel that
     /// crashed is checked (`web/e2e/`). A panic anywhere else is a bug;
@@ -362,4 +369,9 @@ pub struct Update {
     /// The answer of the tool in hand about the part — the pick tool's
     /// inspector's about its picks — or the answer to [`Command::Inspect`].
     pub inspection: Option<Inspection>,
+    /// What to draw lit, of the part drawn and of its placed parts, when
+    /// it changed (see [`crate::view::lit::Lighting`]): what the step or
+    /// the tool lights and what [`Command::Light`] does. A viewer keeps it
+    /// until it is sent again.
+    pub lit: Option<Lighting>,
 }
