@@ -224,7 +224,9 @@ fn new_fillet_picks_edges() {
             radius is set and undone, so the next click on an edge picks nothing"]
 fn undoing_a_radius_keeps_the_edges_waiting_for_picks() {
     let armed = |editor: &mut Editor| {
-        let step = handled(editor, Command::Show).step.expect("a step is edited");
+        let step = handled(editor, Command::Show)
+            .step
+            .expect("a step is edited");
         match step.presentation.dialog.get("edges") {
             Some(Control::Reference(edges)) => edges.armed,
             other => panic!("the edges are no reference field: {other:?}"),

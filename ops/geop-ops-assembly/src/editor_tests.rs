@@ -1341,7 +1341,10 @@ fn a_constraint_mate_hover_lights_what_the_click_picks() {
         shift: false,
     });
     let picked = step.args::<AddPartArgs>().mates["m1"].entities.clone();
-    assert_eq!(picked, [MateEntity::of("b", Selected::Face(element("block(c,end)")))]);
+    assert_eq!(
+        picked,
+        [MateEntity::of("b", Selected::Face(element("block(c,end)")))]
+    );
     let lit = step.presentation().highlights.clone();
     assert_eq!(hovered, lit, "the hover lights what the click picks");
 }
@@ -1374,7 +1377,10 @@ fn undo_after_editing_a_placed_part_takes_back_that_edit() {
             kind: "add_part".into(),
         },
     );
-    handled(&mut editor, dialog("file", Value::Choice("box.geop".into())));
+    handled(
+        &mut editor,
+        dialog("file", Value::Choice("box.geop".into())),
+    );
     handled(&mut editor, dialog("fixed", Value::Bool(true)));
     handled(&mut editor, Command::Commit);
     let placed = editor.program().steps[0].id.clone();
@@ -1386,9 +1392,12 @@ fn undo_after_editing_a_placed_part_takes_back_that_edit() {
     handled(&mut editor, open.clone());
     handled(&mut editor, dialog("distance", Value::Number(2.0)));
     let committed = handled(&mut editor, Command::Commit);
-    let files = (committed.written.expect("the box's file is written").into_iter())
-        .map(|file| (file.path, Some(file.program.to_json().unwrap())))
-        .collect();
+    let files = (committed
+        .written
+        .expect("the box's file is written")
+        .into_iter())
+    .map(|file| (file.path, Some(file.program.to_json().unwrap())))
+    .collect();
     handled(&mut editor, Command::Files { files });
 
     let undone = handled(&mut editor, Command::Undo);
@@ -1490,12 +1499,7 @@ fn a_placed_part_pasted_into_a_file_in_another_folder_places_the_same_file() {
     handled(&mut editor, Command::Files { files });
     let path = Some("parts/asm.geop".into());
     handled(&mut editor, Command::Load { program: asm, path });
-    let copied = handled(
-        &mut editor,
-        Command::Copy {
-            id: "plate".into(),
-        },
-    );
+    let copied = handled(&mut editor, Command::Copy { id: "plate".into() });
     let Content::Text(text) = copied.export.expect("the step as text").content else {
         panic!("a step is copied as text");
     };

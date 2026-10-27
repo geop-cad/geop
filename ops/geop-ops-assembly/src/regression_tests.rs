@@ -169,7 +169,9 @@ fn an_angle_mate_of_half_a_turn_turns_the_part_half_way_round() {
         program.push("a", placed.clone().fixed());
         program.push("b", AddPartArgs { mates, ..placed });
         let start = crate::examples::pose([2.0, 0.3, 0.4], [0.0, 0.0, 20.0]);
-        program.state.insert(pose_state("b"), StateValue::Pose(start));
+        program
+            .state
+            .insert(pose_state("b"), StateValue::Pose(start));
         let mut editor = editor();
         let files = BTreeMap::from([("cube.geop".to_string(), Some(cube.to_json().unwrap()))]);
         handled(&mut editor, Command::Files { files });
@@ -220,7 +222,12 @@ fn a_part_mated_from_far_away_is_brought_onto_its_mates() {
         ),
     ];
     let mates = (mates.into_iter().enumerate())
-        .map(|(k, (kind, entities))| (format!("m{}", k + 1), Mate::constraint(kind, entities.to_vec())))
+        .map(|(k, (kind, entities))| {
+            (
+                format!("m{}", k + 1),
+                Mate::constraint(kind, entities.to_vec()),
+            )
+        })
         .collect();
     let placed = AddPartArgs {
         file: "cube.geop".into(),
