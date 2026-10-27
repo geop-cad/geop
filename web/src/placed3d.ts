@@ -6,10 +6,13 @@
 // two thousand screws is a few draw calls, not thousands. A placed part
 // that is lit, or has something of it hidden, is drawn on its own instead,
 // from buffers of its own, so that its faces can be tinted by name; the
-// others stay in the batch.
+// others stay in the batch. One that covers only a few pixels on screen is
+// drawn as its box, one batch of boxes per component (see `lod.ts`).
 
 import * as THREE from "three";
+import { worldPerPixel } from "./camera";
 import type { PickedElement, PartView, ViewInstance } from "./geop";
+import { boxed, sameNames } from "./lod";
 import {
   applyHighlight,
   buildSceneGroup,
@@ -43,6 +46,9 @@ interface Shared {
   /** The batch drawn now, and what it was built from: the names and frames of the parts in it. */
   batch: THREE.Group | null;
   built: string;
+  /** The parts drawn as its box, and what they were built from, as for the batch. */
+  boxes: THREE.InstancedMesh | null;
+  boxesBuilt: string;
 }
 
 /** A placed part drawn on its own. */
@@ -55,6 +61,9 @@ interface Single {
 const FACES = new THREE.MeshStandardMaterial({ vertexColors: true, side: THREE.DoubleSide, roughness: 0.6 });
 const LINES = new THREE.LineBasicMaterial({ vertexColors: true });
 const POINTS = new THREE.PointsMaterial({ size: 0.02, vertexColors: true });
+/** A part drawn as its box: a unit cube, scaled to the box, and its material. */
+const BOX = new THREE.BoxGeometry(1, 1, 1);
+const BOXES = new THREE.MeshStandardMaterial({ color: 0x9aa4b1, roughness: 0.8 });
 
 /** The colour `hex` as three numbers, `count` times over. */
 function repeat(hex: number, count: number): number[] {
@@ -90,7 +99,21 @@ function share(view: PartView): Shared {
     pointColors: new Float32Array(scene.points.flatMap((p) => repeat(p[3], 1))),
     batch: null,
     built: "",
+    boxes: null,
+    boxesBuilt: "",
   };
+}
+
+/** The boxes of `view`'s parts placed at `matrices`: its extent — a ball's diameter — as a cube about its center, where each is. */
+function boxesOf(view: PartView, matrices: THREE.Matrix4[]): THREE.InstancedMesh {
+  const { center, size } = view.extent;
+  const edge = size / Math.sqrt(3);
+  const local = new THREE.Matrix4().makeScale(edge, edge, edge).setPosition(center[0], center[1], center[2]);
+  const mesh = new THREE.InstancedMesh(BOX, BOXES, matrices.length);
+  matrices.forEach((m, i) => mesh.setMatrixAt(i, m.clone().multiply(local)));
+  mesh.instanceMatrix.needsUpdate = true;
+  mesh.computeBoundingSphere();
+  return mesh;
 }
 
 /** `coords` — `[x, y, z]` after one another — moved by each of `matrices`, one copy per matrix. */
@@ -158,6 +181,9 @@ export class PlacedLayer {
   private singles = new Map<string, Single>();
   private instances: ViewInstance[] = [];
   private components: Record<string, PartView> = {};
+  private look: (name: string) => PlacedLook = () => ({ highlights: [], hidden: [], visible: true });
+  /** The placed parts drawn as boxes now (see [[PlacedLayer.detail]]). */
+  private boxed = new Set<string>();
 
   /** Draw `instances`, from the views `components`, each looking as `look` says. */
   update(instances: ViewInstance[], components: Record<string, PartView>, look: (name: string) => PlacedLook) {
@@ -166,10 +192,26 @@ export class PlacedLayer {
     this.light(look);
   }
 
+  /**
+   * Draw each placed part as `camera` sees it, in a viewport `height`
+   * pixels tall: as its box if it covers only a few pixels (see `lod.ts`),
+   * else in full — rebuilding only when which parts are boxes changed.
+   */
+  detail(camera: THREE.Camera, height: number) {
+    const pixel = (at: [number, number, number]) => worldPerPixel(camera, new THREE.Vector3(...at), height);
+    const now = boxed(this.instances, this.components, pixel);
+    if (sameNames(now, this.boxed)) return;
+    this.boxed = now;
+    this.light(this.look);
+  }
+
   /** Draw the placed parts as `look` says, rebuilding only the batches whose parts changed. */
   light(look: (name: string) => PlacedLook) {
-    // Which component's batch each placed part goes into, or drawn alone.
+    this.look = look;
+    // Which component's batch each placed part goes into, or drawn alone,
+    // or as a box.
     const batched = new Map<string, ViewInstance[]>();
+    const boxes = new Map<string, ViewInstance[]>();
     const alone = new Map<string, { instance: ViewInstance; look: PlacedLook }>();
     for (const instance of this.instances) {
       const view = this.components[instance.component];
@@ -179,25 +221,48 @@ export class PlacedLayer {
       if (seen.highlights.length > 0 || seen.hidden.length > 0) {
         alone.set(instance.name, { instance, look: seen });
       } else {
-        const list = batched.get(instance.component) ?? [];
+        const into = this.boxed.has(instance.name) ? boxes : batched;
+        const list = into.get(instance.component) ?? [];
         list.push(instance);
-        batched.set(instance.component, list);
+        into.set(instance.component, list);
       }
     }
 
     // The components used: built once, and freed once no placed part uses them.
-    const used = new Set([...batched.keys(), ...[...alone.values()].map((a) => a.instance.component)]);
+    const used = new Set([...batched.keys(), ...boxes.keys(), ...[...alone.values()].map((a) => a.instance.component)]);
     for (const [key, shared] of this.shared) {
       if (used.has(key) && this.components[key]) continue;
       if (shared.batch) {
         this.group.remove(shared.batch);
         disposeBatch(shared.batch);
       }
+      if (shared.boxes) {
+        this.group.remove(shared.boxes);
+        shared.boxes.dispose();
+      }
       shared.faces?.dispose();
       this.shared.delete(key);
     }
     for (const key of used) {
       if (!this.shared.has(key)) this.shared.set(key, share(this.components[key]));
+    }
+
+    for (const [key, shared] of this.shared) {
+      const parts = boxes.get(key) ?? [];
+      const built = JSON.stringify(parts.map((p) => [p.name, p.frame]));
+      if (built === shared.boxesBuilt) continue;
+      if (shared.boxes) {
+        this.group.remove(shared.boxes);
+        shared.boxes.dispose();
+        shared.boxes = null;
+      }
+      shared.boxesBuilt = built;
+      if (parts.length === 0) continue;
+      shared.boxes = boxesOf(
+        this.components[key],
+        parts.map((p) => frameMatrix(p.frame)),
+      );
+      this.group.add(shared.boxes);
     }
 
     for (const [key, shared] of this.shared) {
@@ -247,6 +312,7 @@ export class PlacedLayer {
     for (const single of this.singles.values()) disposeGroup(single.group);
     for (const shared of this.shared.values()) {
       if (shared.batch) disposeBatch(shared.batch);
+      shared.boxes?.dispose();
       shared.faces?.dispose();
     }
     this.singles.clear();
