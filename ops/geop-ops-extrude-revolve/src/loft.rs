@@ -95,6 +95,7 @@ impl PartOperation for Loft {
         OperationGroup::Solid,
         OperationTier::Small,
     )
+    .shortcut("L")
     .icon(crate::icons::LOFT);
     type Args = LoftArgs;
     type Session = ();

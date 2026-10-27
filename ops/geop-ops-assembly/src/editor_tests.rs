@@ -1112,9 +1112,9 @@ fn a_step_of_a_placed_part_is_edited_where_it_is_placed() {
         .find(|item| item.name == "a")
         .expect("the part is listed");
     assert_eq!(
-        item.label.as_deref(),
-        Some("box: a"),
-        "called after its file too"
+        item.detail.as_deref(),
+        Some("box"),
+        "said beside it which file it is from"
     );
     let listed = &loaded.program.expect("the program is sent").steps[0];
     let [placed] = &listed.placed[..] else {

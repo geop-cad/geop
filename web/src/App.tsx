@@ -53,6 +53,13 @@ import { scopeTextSelection } from "./selection";
 import { AssistantPanel } from "./Assistant";
 import { ASSISTANT_CONFIGURED, useAssistant } from "./useAssistant";
 import type { ToolResult } from "./agent";
+import { CommandPalette, ShortcutsOverlay } from "./CommandPalette";
+import { matches, parseChord, pressed, type PaletteEntry } from "./shortcuts";
+
+/** What the pointer sends as it moves: answered as often as it moves, never "busy". */
+function following(command: Command): boolean {
+  return command.command === "event" && ["hover", "leave", "drag", "view"].includes(command.event.type);
+}
 
 /** Whether a key press belongs to a field being typed into rather than to the step. */
 function typing(e: KeyboardEvent): boolean {
@@ -218,7 +225,10 @@ function App() {
 
   /** Send `command` to the kernel, and show what comes back. */
   async function dispatch(command: Command): Promise<Update | null> {
-    setPending((n) => n + 1);
+    // The pointer's moves are answered within a frame or two: shown as
+    // busy, every hover would flash the spinner.
+    const busy = !following(command);
+    if (busy) setPending((n) => n + 1);
     try {
       const update = await send(command);
       show(update, command.command);
@@ -240,7 +250,7 @@ function App() {
       setError(String(e));
       return null;
     } finally {
-      setPending((n) => n - 1);
+      if (busy) setPending((n) => n - 1);
     }
   }
 
@@ -365,24 +375,6 @@ function App() {
     fitView();
   }, [scene]);
 
-  // Ctrl+Z undoes, Ctrl+Shift+Z or Ctrl+Y redoes — a step's own edits
-  // while one is edited — unless typed into a field.
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      if (typing(e) || !(e.ctrlKey || e.metaKey)) return;
-      const key = e.key.toLowerCase();
-      if (key === "z" && !e.shiftKey) {
-        e.preventDefault();
-        void dispatch({ command: "undo" });
-      } else if ((key === "z" && e.shiftKey) || key === "y") {
-        e.preventDefault();
-        void dispatch({ command: "redo" });
-      }
-    };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
 
   /** Copy the step `id` to the clipboard, as text a paste inserts. */
   async function copyStep(id: string) {
@@ -449,20 +441,9 @@ function App() {
     return dispatch({ command: "event", event });
   }
 
-  // Keys go to the step being edited — tools, Escape, Delete — unless
-  // typed into a field. With none edited, F frames the drawing.
   const editing = step != null;
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      if (typing(e) || e.ctrlKey || e.metaKey || e.altKey) return;
-      if (editing) event({ type: "key", key: e.key });
-      else if (e.key === "f" || e.key === "F") fitView();
-      else if (e.key === "Home") fitView(DEFAULT_POSE);
-    };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [editing]);
+  /** Whether the command palette, or the list of keys, is open. */
+  const [palette, setPalette] = useState<"palette" | "keys" | null>(null);
 
   function newStep(info: OperationInfo) {
     if (step?.kind === info.kind && step.id == null) void close({ command: "cancel" });
@@ -699,10 +680,10 @@ function App() {
   const iconOf = (kind: string) => infos.find((info) => info.kind === kind)?.icon ?? null;
   const timelineSteps: TimelineStep[] = steps.map((s) => ({
     id: s.id,
-    // A step placing one part is called after its file too: `base: part2`.
-    name: s.placed.length === 1 ? `${programName(s.placed[0].file)}: ${s.id}` : s.id,
+    name: s.id,
     icon: iconOf(s.kind),
-    title: `${s.label}: ${s.summary}`,
+    // A step placing one part says which file it places.
+    title: s.placed.length === 1 ? `${s.label} of ${programName(s.placed[0].file)}: ${s.summary}` : `${s.label}: ${s.summary}`,
     error: s.error,
     dim: !s.editing && !s.runs,
     editing: s.editing,
@@ -732,6 +713,167 @@ function App() {
     }));
   /** The key of an inspector's pick tool: `pick:measure`. */
   const PICK = "pick:";
+
+  // Everything the editor offers, as the palette lists it and the keys
+  // reach it: the operations by the kernel's keys, the steps, examples,
+  // tools, inspectors and exports, and the app's own actions.
+  const idle = wasmReady && step == null;
+  const firstSentence = (doc: string) => doc.split(/(?<=\.)\s/)[0];
+  const paletteEntries: PaletteEntry[] = [
+    ...tools.map((t) => ({
+      id: `op:${t.kind}`,
+      label: t.label,
+      group: "Operation",
+      detail: firstSentence(t.doc),
+      shortcut: t.shortcut,
+      disabled: t.disabled,
+      run: t.onSelect,
+    })),
+    {
+      id: "edit:commit",
+      label: "OK: put the step into the program",
+      group: "Edit",
+      shortcut: "Mod+Enter",
+      disabled: step == null || step.missing.length > 0 || step.error != null,
+      run: () => void close({ command: "commit" }),
+    },
+    {
+      id: "edit:cancel",
+      label: "Cancel the step",
+      group: "Edit",
+      disabled: step == null,
+      run: () => void close({ command: "cancel" }),
+    },
+    {
+      id: "edit:undo",
+      label: "Undo",
+      group: "Edit",
+      shortcut: "Mod+Z",
+      disabled: !(step ? step.can_undo : (program?.can_undo ?? false)),
+      run: () => void dispatch({ command: "undo" }),
+    },
+    {
+      id: "edit:redo",
+      label: "Redo",
+      group: "Edit",
+      shortcut: "Mod+Shift+Z",
+      disabled: !(step ? step.can_redo : (program?.can_redo ?? false)),
+      run: () => void dispatch({ command: "redo" }),
+    },
+    {
+      id: "edit:preview",
+      label: step?.preview === false ? "Preview the step" : "Stop previewing the step",
+      group: "Edit",
+      disabled: step == null,
+      run: () => void dispatch({ command: "preview", preview: !(step?.preview ?? true) }),
+    },
+    { id: "view:fit", label: "Fit the part in the view", group: "View", shortcut: "F", disabled: !idle, run: () => fitView() },
+    {
+      id: "view:home",
+      label: "Reset the view",
+      group: "View",
+      shortcut: "Home",
+      disabled: !idle,
+      run: () => fitView(DEFAULT_POSE),
+    },
+    {
+      id: "view:projection",
+      label: projection === "perspective" ? "Orthographic view" : "Perspective view",
+      group: "View",
+      shortcut: "O",
+      disabled: !idle,
+      run: () => setProjection(projection === "perspective" ? "orthographic" : "perspective"),
+    },
+    ...(program?.tools ?? []).map((t) => ({
+      id: `tool:${t.key}`,
+      label: inHand === t.key ? `Put down: ${t.label}` : t.label,
+      group: "Tool",
+      detail: firstSentence(t.doc),
+      disabled: !idle,
+      run: () => void dispatch({ command: "tool", key: inHand === t.key ? null : t.key }),
+    })),
+    ...(program?.inspectors ?? []).map((i) => ({
+      id: `inspect:${i.kind}`,
+      label: i.label,
+      group: "Inspect",
+      detail: firstSentence(i.doc),
+      disabled: !idle,
+      run: () =>
+        void (i.picks
+          ? dispatch({ command: "tool", key: PICK + i.kind })
+          : inspect(i.kind).then(() => setMobileTab("part"))),
+    })),
+    ...steps.map((s, i) => ({
+      id: `step:${s.id}`,
+      label: s.id,
+      group: "Step",
+      detail: `${s.label}: ${s.summary}`,
+      disabled: !idle,
+      run: () => void open({ command: "open", id: steps[i].id }),
+    })),
+    ...(program?.exporters ?? []).map((x) => ({
+      id: `export:${x.kind}`,
+      label: `Export ${x.label}`,
+      group: "Export",
+      detail: x.doc,
+      disabled: !idle,
+      run: () => void exportWith(x.kind),
+    })),
+    ...(program?.examples ?? []).map((name) => ({
+      id: `example:${name}`,
+      label: name,
+      group: "Example",
+      disabled: !idle,
+      run: () => void loadExample(name),
+    })),
+    ...(host ? [] : (program?.workspace_examples ?? [])).map((name) => ({
+      id: `workspace:${name}`,
+      label: name,
+      group: "Example",
+      detail: "several files",
+      disabled: !idle,
+      run: () => void loadWorkspaceExample(name),
+    })),
+    { id: "help:palette", label: "Command palette", group: "Help", shortcut: "Mod+K", run: () => setPalette("palette") },
+    { id: "help:keys", label: "Keyboard shortcuts", group: "Help", shortcut: "?", run: () => setPalette("keys") },
+  ];
+  const entriesRef = useRef(paletteEntries);
+  entriesRef.current = paletteEntries;
+
+  // The keys: Ctrl+K (⌘K) opens the palette anywhere; then, unless typed
+  // into a field, `?` lists the keys, Ctrl+Enter commits, and the
+  // palette's keys run what they name — an operation's only while no
+  // step is edited. Any other key goes to the step being edited (its
+  // tools, Escape, Enter, Delete).
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (matches(parseChord("Mod+K"), e)) {
+        e.preventDefault();
+        setPalette((open) => (open === "palette" ? null : "palette"));
+        return;
+      }
+      if (palette != null || typing(e) || e.defaultPrevented) return;
+      // While a step is edited, its tools take the plain keys.
+      const usable = entriesRef.current.filter(
+        (entry) => !editing || entry.shortcut?.startsWith("Mod+") || entry.shortcut === "?",
+      );
+      const entry = pressed(usable, e);
+      if (entry) {
+        e.preventDefault();
+        entry.run();
+        return;
+      }
+      if (matches(parseChord("Mod+Y"), e)) {
+        e.preventDefault();
+        void dispatch({ command: "redo" });
+        return;
+      }
+      if (editing && !e.ctrlKey && !e.metaKey && !e.altKey) void event({ type: "key", key: e.key });
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [editing, palette]);
 
   const programPanel = (
     <section className="panel timeline">
@@ -962,6 +1104,8 @@ function App() {
           </aside>
         )}
       </div>
+      {palette === "palette" && <CommandPalette entries={paletteEntries} onClose={() => setPalette(null)} />}
+      {palette === "keys" && <ShortcutsOverlay entries={paletteEntries} onClose={() => setPalette(null)} />}
       <MobileBottom
         tab={mobileTab}
         onTab={setMobileTab}

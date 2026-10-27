@@ -43,6 +43,11 @@ pub struct OperationInfo {
     /// that a front end puts in an `<svg>` of its own. None to show its
     /// label.
     pub icon: Option<&'static str>,
+    /// The key that starts a new step of it while none is edited — a
+    /// letter, `Shift+` one for the less used — as every front end offers
+    /// and shows it: `E`, `Shift+F`. Unique among the operations offered;
+    /// `F` and `Home` are the view's (framing it), `?` lists the keys.
+    pub shortcut: Option<&'static str>,
 }
 
 impl OperationInfo {
@@ -63,6 +68,7 @@ impl OperationInfo {
             picks_built: false,
             reads: &[],
             icon: None,
+            shortcut: None,
         }
     }
 
@@ -85,6 +91,15 @@ impl OperationInfo {
     /// The same, its steps reading files of the extensions `reads`.
     pub const fn reads(self, reads: &'static [&'static str]) -> Self {
         Self { reads, ..self }
+    }
+
+    /// The same, started by the key `shortcut` (see
+    /// [`OperationInfo::shortcut`]).
+    pub const fn shortcut(self, shortcut: &'static str) -> Self {
+        Self {
+            shortcut: Some(shortcut),
+            ..self
+        }
     }
 
     /// The same, shown as `icon` (see [`OperationInfo::icon`]).

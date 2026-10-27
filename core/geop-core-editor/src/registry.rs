@@ -103,9 +103,9 @@ pub struct StructureItem {
     pub kind_label: String,
     /// What it is shown by — and shown and hidden by, its key.
     pub name: String,
-    /// What it is called, if not its name: a placed part after its file
-    /// too, `base: part2`.
-    pub label: Option<String>,
+    /// What is said beside its name, quieter: the file a placed part is
+    /// from, `iso4762_socket_screw`. Its name is what it is called.
+    pub detail: Option<String>,
     /// Whether it is shown, if it is drawn at all: what an editor's
     /// visibility switches. None for what a step lists, which is not drawn.
     pub visible: Option<bool>,
@@ -122,16 +122,17 @@ impl StructureItem {
             kind: kind.to_string(),
             kind_label: kind_label.to_string(),
             name: name.to_string(),
-            label: None,
+            detail: None,
             visible: Some(true),
             elements: Vec::new(),
         }
     }
 
-    /// The same item, called `label` (see [`Self::label`]).
-    pub fn labelled(self, label: String) -> Self {
+    /// The same item, said `detail` of beside its name (see
+    /// [`Self::detail`]).
+    pub fn detailed(self, detail: String) -> Self {
         Self {
-            label: Some(label),
+            detail: Some(detail),
             ..self
         }
     }
@@ -393,7 +394,7 @@ impl Registry {
                     kind_label: plural(&listed.kind),
                     kind: listed.kind,
                     name: listed.name,
-                    label: None,
+                    detail: None,
                     visible: None,
                     elements: listed.elements,
                 }),

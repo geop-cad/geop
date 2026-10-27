@@ -2,6 +2,7 @@ import { useLayoutEffect, useRef, useState, type ReactNode } from "react";
 import type { OperationTier } from "./geop";
 import { Icon } from "./icons";
 import { DropdownArrow, Menu, type MenuEntry } from "./Menu";
+import { formatShortcut, withShortcut } from "./shortcuts";
 
 /** A button of the operations: an operation to start a step of, or a tool of the editor's. */
 export interface Tool {
@@ -12,6 +13,8 @@ export interface Tool {
   label: string;
   /** What it does, at length: its tooltip. */
   doc: string;
+  /** The key that starts it, if one does (see shortcuts.ts). */
+  shortcut?: string | null;
   /** The section of the toolbar it is in (see `geop_core_program::operation::OperationGroup`). */
   group: string;
   /** How prominently its section shows it (see `geop_core_program::operation::OperationTier`). */
@@ -36,7 +39,8 @@ function entries(tools: Tool[]): MenuEntry[] {
       kind: "item",
       label: t.label,
       icon: t.icon ?? undefined,
-      title: t.doc,
+      title: withShortcut(t.doc, t.shortcut),
+      hint: t.shortcut ? formatShortcut(t.shortcut) : undefined,
       disabled: t.disabled,
       active: t.active,
       onSelect: t.onSelect,
@@ -55,7 +59,7 @@ function columns<T>(items: T[], n: number): T[][] {
 function ToolButton({ tool, big }: { tool: Tool; big: boolean }) {
   return (
     <button
-      title={tool.doc}
+      title={withShortcut(tool.doc, tool.shortcut)}
       className={["op-button", big ? "big" : "small", tool.active ? "active" : ""].join(" ")}
       disabled={tool.disabled}
       onClick={tool.onSelect}

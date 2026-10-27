@@ -249,6 +249,18 @@ impl StepEditor {
         editors.presentation(runner, part, program, &self.step, &*self.editing)
     }
 
+    /// Whether nothing is in progress in `form`, the step's form: no field
+    /// waits for a pick, nothing is selected or dragged, and the operation
+    /// has no tool in hand — so Escape has nothing to end, and Enter
+    /// nothing to finish, but the step itself (see
+    /// [`crate::editor::Editor::handle`]).
+    pub fn at_rest(&self, form: &Form) -> bool {
+        self.armed.is_none()
+            && self.grab.is_none()
+            && form.selection.is_empty()
+            && form.tool == InHand::Nothing
+    }
+
     /// Sends `event` to the operation, and keeps what it made of the step:
     /// its arguments in the program, its editing state here. A reference
     /// field that is gone after it waits for no pick any more, and one that

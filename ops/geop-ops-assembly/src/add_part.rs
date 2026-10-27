@@ -110,6 +110,7 @@ impl PartOperation for AddPart {
         OperationTier::Big,
     )
     .picks_built()
+    .shortcut("I")
     .icon(crate::icons::ADD_PART);
     type Args = AddPartArgs;
     type Session = PartSession;

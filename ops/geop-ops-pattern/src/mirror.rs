@@ -79,6 +79,7 @@ impl PartOperation for Mirror {
         OperationGroup::Bodies,
         OperationTier::Small,
     )
+    .shortcut("M")
     .icon(geop_core_editor::view::icons::MIRROR);
     type Args = MirrorArgs;
     type Session = ();

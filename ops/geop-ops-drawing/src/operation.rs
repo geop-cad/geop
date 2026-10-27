@@ -975,6 +975,7 @@ impl PartOperation for Drawing {
         OperationGroup::Output,
         OperationTier::Big,
     )
+    .shortcut("Shift+D")
     .icon(crate::icons::DRAWING);
     type Args = DrawingArgs;
     type Session = DrawingSession;

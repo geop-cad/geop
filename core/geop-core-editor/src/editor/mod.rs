@@ -419,10 +419,15 @@ impl Editor {
     /// Applies `command`, and says what to show now.
     pub fn handle(&mut self, command: Command) -> Update {
         // What undo goes back to — not taken for what is sent as often as
-        // the pointer moves, and cannot change the program. Another file's
-        // program is not something to undo back to.
-        let before = (!matches!(command, Command::Event { .. } | Command::Preview { .. }))
-            .then(|| (self.file.clone(), self.path.clone()));
+        // the pointer moves, and cannot change the program; a key can, by
+        // committing the step. Another file's program is not something to
+        // undo back to.
+        let keeps_program = match &command {
+            Command::Event { event } => !matches!(event, StepEditEvent::Key { .. }),
+            Command::Preview { .. } => true,
+            _ => false,
+        };
+        let before = (!keeps_program).then(|| (self.file.clone(), self.path.clone()));
         let result = self.apply(command);
         if matches!(result, Ok(Changed::Program))
             && let Some((before, path)) = before
@@ -725,6 +730,24 @@ impl Editor {
                 Changed::Run
             }
             Command::Event { event } => {
+                // With nothing in progress in the step, Enter commits it, and
+                // Escape — before it was edited, so nothing is lost — cancels
+                // it: what every front end's keys do.
+                if let Some(open) = &self.open
+                    && let StepEditEvent::Key { key } = &event
+                    && matches!(key.as_str(), "Enter" | "Escape")
+                {
+                    let (runner, part) = self.edited_with(open);
+                    let editors = self.registry.editors();
+                    let form = (open.editor).form(editors, runner, part, &open.program)?;
+                    if open.editor.at_rest(&form) {
+                        match key.as_str() {
+                            "Enter" => return self.apply(Command::Commit),
+                            _ if open.undo.is_empty() => return self.apply(Command::Cancel),
+                            _ => {}
+                        }
+                    }
+                }
                 let Some(open) = &mut self.open else {
                     let Some(mut in_hand) = self.tool.take() else {
                         return Ok(Changed::Nothing);

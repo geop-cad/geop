@@ -92,6 +92,40 @@ mod set {
         );
     }
 
+    /// The keys that start a step are each one operation's, a letter with
+    /// Shift or without, and none of them the view's own (`F` frames it)
+    /// or the key list's (`?`); the most used of the workflow have one.
+    #[test]
+    fn every_shortcut_starts_one_operation() {
+        let registry = registry().unwrap();
+        let infos = registry.infos();
+        let mut taken = HashSet::new();
+        for listed in &infos {
+            let Some(key) = listed.info.shortcut else {
+                continue;
+            };
+            let letter = key.strip_prefix("Shift+").unwrap_or(key);
+            assert!(
+                letter.len() == 1 && letter.chars().all(|c| c.is_ascii_uppercase()),
+                "{}: {key:?} is no letter",
+                listed.kind
+            );
+            assert!(key != "F", "{}: F frames the view", listed.kind);
+            assert!(taken.insert(key), "{key} starts two operations");
+        }
+        for kind in [
+            "add_sketch",
+            "extrude",
+            "revolve",
+            "fillet",
+            "hole",
+            "add_part",
+        ] {
+            let listed = infos.iter().find(|i| i.kind == kind).unwrap();
+            assert!(listed.info.shortcut.is_some(), "{kind} has no key");
+        }
+    }
+
     /// A new step starts from what the steps before it built.
     #[test]
     fn new_steps_start_from_what_was_built() {
