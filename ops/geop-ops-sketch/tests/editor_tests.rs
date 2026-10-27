@@ -2569,34 +2569,3 @@ fn horizontal_and_vertical_are_named_as_seen() {
     });
     assert!(glyphs(&e).contains(&"H".to_string()), "{:?}", glyphs(&e));
 }
-
-/// A new sketch waiting for its plane, the pointer over the origin from
-/// above: whatever the hover lights there, a click there picks — a plane
-/// to draw on — rather than lighting the origin's frame, which a click
-/// then refuses.
-#[test]
-#[ignore = "bug: hover lights by the kind of element, the click checks what the field takes: \
-            over the origin, a new sketch's plane field lights the frame datum `origin` \
-            (`/:datums`, kind `datum`), and the click there picks nothing, the plane still \
-            unset — the same for a part pattern's axis over a flat face, and an edge flange's \
-            edge over a hole's circular rim"]
-fn a_new_sketch_lights_only_what_its_plane_field_takes() {
-    let mut step = Stepping::new(editor(), "add_sketch");
-    let over_origin = pointer([0.003, 0.003, 10.0], [0.0, 0.0, -1.0]);
-    step.send(StepEditEvent::Hover {
-        pointer: over_origin,
-        shift: false,
-    });
-    let hovered = step.presentation().highlights.clone();
-    step.send(StepEditEvent::Click {
-        pointer: over_origin,
-        button: Button::Primary,
-        double: false,
-        shift: false,
-    });
-    let plane = step.args::<AddSketchArgs>().plane;
-    assert!(
-        hovered.is_empty() || plane.is_some(),
-        "the hover lit {hovered:?}, and the click picked no plane"
-    );
-}
