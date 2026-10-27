@@ -130,7 +130,7 @@ pub fn unknowns() -> TargetReference<Unknowns> {
 /// part's [`Unknowns`]: of several declarations of one state, one that
 /// holds it fixed wins, and otherwise the first made. A plain function,
 /// like a make ([`Make`]).
-pub fn declare_unknowns<Args: PartialEq + Clone + 'static>(
+pub fn declare_unknowns<Args: PartialEq + Clone + std::fmt::Debug + 'static>(
     ctx: &mut StepContext,
     args: &Args,
     generator: Make<Args, Vec<Unknown>>,

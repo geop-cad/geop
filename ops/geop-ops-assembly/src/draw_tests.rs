@@ -54,7 +54,7 @@ fn a_part_placed_three_times_is_three_instances_of_one_component() {
     top.run(&runner(shelf, "top.geop"), &mut part).unwrap();
 
     let registry = Registry::default().drawer(AssemblyDrawer).unwrap();
-    let view = registry.draw(&part.current(), &Default::default()).unwrap();
+    let view = (registry.draw(&part.current(), &Default::default(), None)).unwrap();
     assert!(
         view.faces.is_empty(),
         "the assembly has no model of its own"

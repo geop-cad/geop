@@ -1,16 +1,19 @@
 //! [`Runner`]: runs a program on a part ([`Runner::run`]) — every step's
 //! operation, in order, each declaring what it produces — and builds the
-//! parts it places, sharing equal builds.
+//! parts it places, sharing equal builds. What a run made of the targets
+//! kept between processes it notes in its workspace's cache, to be written
+//! when the cache is next flushed (see [`crate::kept`]).
 
 use std::{
     cell::{Cell, RefCell},
-    collections::HashSet,
+    collections::{HashMap, HashSet},
     rc::Rc,
 };
 
 use geop_core_math::geop_error::{GeopError, GeopResult};
 
 use crate::{
+    kept::{Digest, Made, digest_text},
     operation_registry::OperationRegistry,
     part::{Part, StepContext},
     placed::{BuildCache, BuildKey},
@@ -36,6 +39,9 @@ pub struct Runner {
 struct Shared {
     cache: RefCell<BuildCache>,
     counts: Cell<Counts>,
+    /// The digest of each file's text, by its path, and the revision it is
+    /// of: what a node that read the file was made from, in any process.
+    files: RefCell<HashMap<String, (u64, Option<Digest>)>>,
 }
 
 /// How much work a runner did: what a test of what runs counts, never a
@@ -48,6 +54,12 @@ pub struct Counts {
     pub placed: u64,
     /// The parts placed that were built, not taken from the build cache.
     pub builds: u64,
+    /// The nodes taken from what an earlier process kept, rather than made
+    /// (see [`crate::kept`]).
+    pub restored: u64,
+    /// The makes of targets kept between processes: what reopening a
+    /// program that did not change does none of.
+    pub kept_makes: u64,
 }
 
 /// How a run went.
@@ -138,8 +150,56 @@ impl Runner {
         part.end(failures);
         if self.location.within.is_empty() {
             self.shared.cache.borrow_mut().sweep();
+            self.keep(part);
         }
         RunOutput { step_errors }
+    }
+
+    /// Notes what `part`, built from the program it runs, and the parts
+    /// placed in it, however deep, hold of the targets kept between
+    /// processes in the cache of its workspace, each by the file of the
+    /// program that built it: what was made since the cache was written is
+    /// written when it is next flushed ([`crate::cache::Cache::flush`]).
+    fn keep(&self, part: &Part) {
+        let Some(cache) = self
+            .workspace
+            .as_deref()
+            .and_then(|workspace| workspace.cache())
+        else {
+            return;
+        };
+        let mut seen = HashSet::new();
+        let mut parts = vec![(self.location.file.clone(), part)];
+        while let Some((path, part)) = parts.pop() {
+            for (_, _, placed) in part.placed() {
+                if seen.insert(Rc::as_ptr(&placed.part)) {
+                    parts.push((placed.location.file.clone(), &placed.part));
+                }
+            }
+            cache.builds(&path, |builds| {
+                builds.order(part.order());
+                for (name, node) in part.kept_nodes() {
+                    let (Some((derivation, digest)), Some(write), Ok(value)) =
+                        (&node.kept, node.write, &node.value)
+                    else {
+                        continue;
+                    };
+                    if node.noted.replace(true) || builds.has(&node.step, name, derivation, *digest)
+                    {
+                        continue;
+                    }
+                    let value = value.clone();
+                    builds.add(Made {
+                        step: node.step.clone(),
+                        target: name.to_string(),
+                        kind: node.kind_name,
+                        derivation: derivation.clone(),
+                        digest: *digest,
+                        write: Box::new(move |pool| write(&*value, pool)),
+                    });
+                }
+            });
+        }
     }
 
     /// Runs one step by hand, as the step `step` after those `part` ran,
@@ -179,8 +239,16 @@ impl Runner {
         self.shared.cache.borrow().len()
     }
 
-    pub(crate) fn count_make(&self) {
-        self.count(|counts| counts.makes += 1);
+    /// Counts a make, of a target `kept` between processes or not.
+    pub(crate) fn count_make(&self, kept: bool) {
+        self.count(|counts| {
+            counts.makes += 1;
+            counts.kept_makes += u64::from(kept);
+        });
+    }
+
+    pub(crate) fn count_restored(&self) {
+        self.count(|counts| counts.restored += 1);
     }
 
     fn count(&self, add: impl FnOnce(&mut Counts)) {
@@ -215,6 +283,22 @@ impl Runner {
     /// The revision of the file at `path` of its workspace: 0 without one.
     pub fn revision(&self, path: &str) -> u64 {
         (self.workspace.as_ref()).map_or(0, |workspace| workspace.revision(path))
+    }
+
+    /// The digest of the text of the file at `path` of its workspace, as it
+    /// is now: what a node that read it was made from, in any process. None
+    /// without a workspace, or for a file it does not have.
+    pub(crate) fn file_digest(&self, path: &str) -> Option<Digest> {
+        let workspace = self.workspace.as_deref()?;
+        let revision = workspace.revision(path);
+        if let Some((read, digest)) = self.shared.files.borrow().get(path)
+            && *read == revision
+        {
+            return *digest;
+        }
+        let digest = workspace.digest(path).map(Digest);
+        (self.shared.files.borrow_mut()).insert(path.to_string(), (revision, digest));
+        digest
     }
 
     /// The workspace it reads from: an error, for a runner of programs that
@@ -268,6 +352,11 @@ impl Runner {
         let path = workspace.resolve(&self.location.file, name);
         let content =
             (workspace.read(&path)).map_err(|e| e.with_context(format!("reading {path}")))?;
+        // What it was read as is what a node reading it was made from: its
+        // digest is taken now, not by reading it again.
+        let digest = Some(Digest(digest_text(&content)));
+        let revision = workspace.revision(&path);
+        (self.shared.files.borrow_mut()).insert(path.clone(), (revision, digest));
         Ok((path, content))
     }
 

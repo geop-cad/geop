@@ -52,6 +52,7 @@
 
 pub mod cache;
 pub mod element;
+pub mod kept;
 pub mod numeric;
 pub mod operation;
 pub mod operation_registry;

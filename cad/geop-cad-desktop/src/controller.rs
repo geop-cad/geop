@@ -935,6 +935,8 @@ fn kind(command: &Command) -> &'static str {
         Command::Redo => "redo",
         Command::Panel { .. } => "panel",
         Command::Visibility { .. } => "visibility",
+        Command::Appearance { .. } => "appearance",
+        Command::Isolate { .. } => "isolate",
         Command::Tool { .. } => "tool",
         Command::Inspect { .. } => "inspect",
         Command::Export { .. } => "export",

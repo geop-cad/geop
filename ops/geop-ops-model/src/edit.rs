@@ -413,7 +413,7 @@ struct MergedNames {
 /// The names [`NamedModel::build_body`] gives what it builds: one per vertex, edge
 /// and face of the [`BodySpec`], index for index, and the solid's, if it
 /// builds one.
-#[derive(Clone, Debug, Default, PartialEq)]
+#[derive(Clone, Debug, Default, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct BodyNames {
     pub vertices: Vec<String>,
     pub edges: Vec<String>,

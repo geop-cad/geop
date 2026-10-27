@@ -12,8 +12,9 @@ use geop_core_geometry::nurb_surface::NurbSurface3D;
 /// re-establish it. It also removes a whole class of bug where a hole is
 /// accidentally treated as the outer loop (or vice versa) after a
 /// split/merge reorders the list.
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct Face {
+    #[serde(with = "geop_core_math::exact")]
     pub surface: NurbSurface3D,
     pub outer: BoundaryType,
     pub holes: Vec<BoundaryType>,

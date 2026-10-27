@@ -2,7 +2,9 @@
 //! kept by the workspace, so that a file is made into the same thing once
 //! for every build that reads it (a step's preview, the program it is
 //! committed to, a part placed from it in another file), and, with a
-//! [`CacheStore`], once for every process.
+//! [`CacheStore`], once for every process. With a store, it keeps what
+//! the programs of the workspace built too, so that reopening one whose
+//! steps and inputs did not change builds nothing (see [`crate::kept`]).
 //!
 //! What a cache keeps is the answer to "what does this text read as", and
 //! nothing else: it is looked up by the file's path and checked against
@@ -12,7 +14,8 @@
 //! made again rather than trusted.
 //!
 //! On disk, what the file `path` was made into is kept in `path.geopc`
-//! beside it: `AX-12A.STEP.geopc`. Its values are written exactly
+//! beside it: `AX-12A.STEP.geopc` (a shared library's file in a folder of
+//! the store's own, see [`cache_path`]). Its values are written exactly
 //! ([`geop_core_math::exact`]), so the value read back is the value that
 //! was made. A `.geopc` file is a cache: deleting it costs a make, and it
 //! belongs in no repository.
@@ -29,7 +32,7 @@ use geop_core_math::geop_error::GeopError;
 use geop_core_math::geop_error::GeopResult;
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
 
-use crate::workspace::is_shared;
+use crate::{kept::Builds, workspace::is_shared};
 
 /// The extension of a cache file: what the file it is beside was made
 /// into ([`Cache`]).
@@ -61,6 +64,9 @@ pub struct Cache {
     kept: RefCell<Kept>,
     /// How many values it made: what a test of what is made again counts.
     made: Cell<u64>,
+    /// What the program of each file built, as kept in the store, by the
+    /// file's path: read when a run first asks, written by [`Cache::flush`].
+    builds: RefCell<BTreeMap<String, Builds>>,
 }
 
 /// A cache file: what the file beside it was made into, and from what.
@@ -125,11 +131,42 @@ impl Cache {
         self.made.get()
     }
 
+    /// `use_builds` of what the program in the file `path` built, as its
+    /// store keeps it — read from the store the first time — if it keeps
+    /// builds of that file: it has a store, and the program is in a file.
+    pub(crate) fn builds<R>(
+        &self,
+        path: &str,
+        use_builds: impl FnOnce(&mut Builds) -> R,
+    ) -> Option<R> {
+        let store = self.store.as_ref().filter(|_| !path.is_empty())?;
+        let mut builds = self.builds.borrow_mut();
+        let builds = (builds.entry(path.to_string())).or_insert_with(|| {
+            Builds::read(store.read(&cache_path(path)).as_deref(), store.build())
+        });
+        Some(use_builds(builds))
+    }
+
+    /// Writes what the programs built since it was last written, each into
+    /// its file's cache file: what an editor does when an edit is done, and
+    /// the command line when it has built. Nothing is written of a file
+    /// whose builds did not change.
+    pub fn flush(&self) {
+        let Some(store) = self.store.as_ref() else {
+            return;
+        };
+        for (path, builds) in self.builds.borrow_mut().iter_mut() {
+            if let Some(text) = builds.write(store.build()) {
+                store.write(&cache_path(path), &text);
+            }
+        }
+    }
+
     /// What its store kept of `text` of `path` as `kind`, if it was made by
     /// this build from this text. A file that does not read, of another
     /// build or text or kind, is none.
     fn read<T: DeserializeOwned>(&self, kind: &str, path: &str, text: &str) -> Option<T> {
-        let store = self.store.as_ref().filter(|_| !is_shared(path))?;
+        let store = self.store.as_ref()?;
         let kept = store.read(&cache_path(path))?;
         let entry: Entry<T> = serde_json::from_str(&kept).ok()?;
         (entry.build == store.build() && entry.kind == kind && entry.source == source(text))
@@ -138,9 +175,7 @@ impl Cache {
 
     /// Keeps `value`, made of `text` of `path` as `kind`, in its store.
     fn write<T: Serialize>(&self, kind: &str, path: &str, text: &str, value: &T) {
-        // A shared library's file is not where the files of the workspace
-        // are: nothing is kept beside it.
-        let Some(store) = self.store.as_ref().filter(|_| !is_shared(path)) else {
+        let Some(store) = self.store.as_ref() else {
             return;
         };
         let entry = Entry {
@@ -157,9 +192,16 @@ impl Cache {
     }
 }
 
-/// The cache file of the file `path`: beside it, `path.geopc`.
+/// The cache file of the file `path`: beside it, `path.geopc` — or, for a
+/// file of a library every workspace shares, which is not where the files
+/// of the workspace are (see [`is_shared`]), in a folder of the store's
+/// own, by the library's scheme: `std:hex_nut.geop` in
+/// `.geopc/std/hex_nut.geop.geopc`.
 pub fn cache_path(path: &str) -> String {
-    format!("{path}.{CACHE_EXTENSION}")
+    match path.split_once(':').filter(|_| is_shared(path)) {
+        Some((scheme, name)) => format!(".{CACHE_EXTENSION}/{scheme}/{name}.{CACHE_EXTENSION}"),
+        None => format!("{path}.{CACHE_EXTENSION}"),
+    }
 }
 
 /// What tells a text from others: its digest and its length.
@@ -183,28 +225,7 @@ pub fn digest(text: &str) -> u128 {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    /// Cache files in memory, as a store on disk keeps them, of the build
-    /// `build`.
-    #[derive(Clone)]
-    struct Shelf {
-        build: String,
-        files: Rc<RefCell<BTreeMap<String, String>>>,
-    }
-
-    impl CacheStore for Shelf {
-        fn build(&self) -> &str {
-            &self.build
-        }
-
-        fn read(&self, path: &str) -> Option<String> {
-            self.files.borrow().get(path).cloned()
-        }
-
-        fn write(&self, path: &str, text: &str) {
-            (self.files.borrow_mut()).insert(path.to_string(), text.to_string());
-        }
-    }
+    use crate::testing::Shelf;
 
     fn words(text: &str) -> GeopResult<Vec<String>> {
         Ok(text.split_whitespace().map(str::to_string).collect())
@@ -238,13 +259,10 @@ mod tests {
     /// text.
     #[test]
     fn a_store_keeps_what_was_made_between_processes() {
-        let shelf = Shelf {
-            build: "1".into(),
-            files: Rc::default(),
-        };
+        let shelf = Shelf::of("1");
         let text: Rc<str> = Rc::from("a b");
         let made = |shelf: &Shelf, text: &Rc<str>| {
-            let cache = Cache::stored(Box::new(shelf.clone()));
+            let cache = shelf.cache();
             let value = cache.made_of("words", "f.txt", text, words).unwrap();
             (value, cache.made())
         };

@@ -125,6 +125,11 @@ impl Drawer for ModelDrawer {
             .map(|n| StructureItem::drawn("face", "Faces", &n));
         Ok(solids.chain(faces).collect())
     }
+
+    /// Meshing the faces takes work: what it drew is kept.
+    fn kept(&self) -> bool {
+        true
+    }
 }
 
 #[cfg(test)]
@@ -220,7 +225,7 @@ mod tests {
         use crate::Solid;
         let part: Part = given_part(&unit_cube()).unwrap();
         let registry = crate::register(Registry::default()).unwrap();
-        let view = registry.draw(&part.current(), &Default::default()).unwrap();
+        let view = (registry.draw(&part.current(), &Default::default(), None)).unwrap();
         let faces = accepts(&[drawn::FACE]);
         let hit = view.pick(&from_above(0.5, 0.5), &faces).unwrap();
         assert_eq!(hit.element.kind, drawn::FACE);

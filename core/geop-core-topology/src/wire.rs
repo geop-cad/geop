@@ -18,7 +18,7 @@ use crate::{Model, Sense};
 /// A wire is no [`crate::Body`]: nothing is cut or combined with it. Its
 /// edges must not cross each other except at a shared vertex, as the edges
 /// of a body must not (see [`crate::validation`]).
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct Wire {
     pub vertices: Vec<VertexId>,
     pub edges: Vec<EdgeId>,

@@ -50,6 +50,16 @@ impl<Args: Clone, Out> Clone for Generated<Args, Out> {
     }
 }
 
+/// The generator by its address, which is this process's own: what read a
+/// generated target is made again in another process (see
+/// `geop_core_program::kept`), never taken for what another generator made.
+impl<Args: std::fmt::Debug, Out> std::fmt::Debug for Generated<Args, Out> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let generator = self.generator as *const ();
+        write!(f, "Generated({:?}, {generator:p})", self.args)
+    }
+}
+
 impl<Args: PartialEq, Out> PartialEq for Generated<Args, Out> {
     fn eq(&self, other: &Self) -> bool {
         self.args == other.args && std::ptr::fn_addr_eq(self.generator, other.generator)
