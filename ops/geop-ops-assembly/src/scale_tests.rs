@@ -777,7 +777,6 @@ fn small_arm(screws: usize) -> RobotArm {
 /// mated to a moving part was one group with it: the whole arm one dense
 /// system, a drag of 101 parts — 600 variables — taking minutes.
 #[test]
-#[ignore = "slow: every part of the arm is one dense system, a drag of 101 parts takes minutes"]
 fn the_arm_solves_its_links_not_its_screws() {
     let mut largest = Vec::new();
     for screws in [5, 20] {
@@ -818,7 +817,6 @@ fn the_arm_solves_its_links_not_its_screws() {
 /// linear algebra grows with them no faster than they do: each screw is
 /// enclosed on its own, a system of six variables.
 #[test]
-#[ignore = "slow: every part of the arm is one dense system, a drag of 101 parts takes minutes"]
 fn drag_work_grows_with_the_moving_links_not_the_screws() {
     let costs: Vec<Vec<DragCost>> = [5, 20]
         .into_iter()

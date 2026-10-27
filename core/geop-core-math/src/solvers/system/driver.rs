@@ -244,21 +244,27 @@ impl<E: Equations> Asked<'_, '_, '_, E> {
     /// where they come closest (see the module docs). The point is given
     /// whether or not they hold, with the phases that put it there.
     async fn solve(&self, start: Vec<E::Value>) -> GeopResult<Phased<E>> {
-        let (solved, phase, holds) = self.minimize(start, true).await?;
+        let (solved, phase, holds) = self.minimize(start, self.solving.start(), true).await?;
         let mut phases = vec![phase];
         if holds {
             return Ok((solved, phases));
         }
-        let (solved, phase, _) = self.minimize(solved, false).await?;
+        let (solved, phase, _) = self.minimize(solved.clone(), solved, false).await?;
         phases.push(phase);
         Ok((solved, phases))
     }
 
     /// One minimization from `from`: the constraints held exactly and the
     /// group pulled if `hard`, else the constraints in the sum; every value
-    /// held where it is at `from`. Where it ended, how, and whether the
-    /// constraints hold there.
-    async fn minimize(&self, from: Vec<E::Value>, hard: bool) -> GeopResult<Minimized<E>> {
+    /// held where it is at `anchor` — where the group was, for a pendant
+    /// started where what it hangs off carried it. Where it ended, how, and
+    /// whether the constraints hold there.
+    async fn minimize(
+        &self,
+        from: Vec<E::Value>,
+        anchor: Vec<E::Value>,
+        hard: bool,
+    ) -> GeopResult<Minimized<E>> {
         let space = &self.solving.space;
         if space.dimension(&from) == 0 {
             let (max_residual, holds) = self.check(&from).await?;
@@ -271,7 +277,6 @@ impl<E: Equations> Asked<'_, '_, '_, E> {
             return Ok((from, phase, holds));
         }
         let damping = Scalar::from_ratio(DAMPING.0, DAMPING.1)?;
-        let anchor = from.clone();
         let evaluate = async |at: &Vec<E::Value>| {
             let Terms {
                 constraints,

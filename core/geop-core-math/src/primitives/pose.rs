@@ -693,6 +693,15 @@ impl Variable for Pose {
     fn same(&self, other: &Self) -> bool {
         self == other
     }
+
+    /// Moved as `from` moved to `to`: `to ∘ from⁻¹ ∘ self`.
+    fn carried(&self, from: &Self, to: &Self) -> Option<Self> {
+        Some(
+            to.compose(&from.inverse())
+                .compose(self)
+                .map(Scalar::sharpen),
+        )
+    }
 }
 
 /// The twist `(ω, v)` a step of six numbers is.
