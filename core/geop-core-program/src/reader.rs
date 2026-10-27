@@ -140,6 +140,27 @@ impl<'a> Reader<'a> {
         }
     }
 
+    /// What `read` makes of the part it reads, and what of the part it read
+    /// to make it: equal reads ([`Reader::reads_same`]) make it alike, so
+    /// what an editor draws of a part is kept by what each drawer read,
+    /// and drawn again only when that changed.
+    pub fn recorded<T>(&self, read: impl FnOnce(&Reader) -> T) -> (T, Reads) {
+        let recording = Recording::default();
+        let reader = Reader {
+            recording: Some(&recording),
+            path: Vec::new(),
+            ..self.clone()
+        };
+        let made = read(&reader);
+        (made, Reads(recording.take()))
+    }
+
+    /// Whether everything `reads` read ([`Reader::recorded`]) reads the
+    /// same through it.
+    pub fn reads_same(&self, reads: &Reads) -> bool {
+        (reads.0.iter()).all(|read| (self.part).holds(read, self.before, self.own, self.runner))
+    }
+
     /// The target being made, if it reads for a make of its own part.
     pub(crate) fn own(&self) -> Option<&'a str> {
         self.own
@@ -450,6 +471,10 @@ impl<'a> Reader<'a> {
         Ok((program, location))
     }
 }
+
+/// What a reader read of its part ([`Reader::recorded`]), each thing once.
+#[derive(Clone, Default)]
+pub struct Reads(Vec<Read>);
 
 /// Everything a [`Reader`] reads from ([`Reader::seen`]): the version of
 /// every target it sees, by name, and the inputs and the state its part
