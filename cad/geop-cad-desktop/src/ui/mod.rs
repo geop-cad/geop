@@ -55,6 +55,8 @@ pub struct GeopApp {
     /// What was said of a file saved, or why it was not.
     notes: (mpsc::Sender<String>, mpsc::Receiver<String>),
     pub note: Option<(String, f64)>,
+    /// The window's title, as last set.
+    title: String,
     wake: Arc<dyn Fn() + Send + Sync>,
 }
 
@@ -74,6 +76,7 @@ impl GeopApp {
             folders: mpsc::channel(),
             notes: mpsc::channel(),
             note: None,
+            title: String::new(),
             wake,
         }
     }
@@ -147,8 +150,10 @@ impl GeopApp {
         let mut done = Vec::new();
         ctx.input_mut(|input| {
             for action in Action::with_shortcuts() {
+                // Typing, a field's own keys are its: undo, a word deleted.
+                let while_typing = matches!(action, Action::Palette | Action::Commit);
                 if let Some(shortcut) = action.shortcut()
-                    && (!typing || shortcut.modifiers.command)
+                    && (!typing || while_typing)
                     && input.consume_shortcut(&shortcut)
                 {
                     done.push(action);
@@ -408,6 +413,14 @@ impl eframe::App for GeopApp {
             self.note = None;
         }
         self.keys(ctx);
+        let title = match self.app.active() {
+            Some(active) => format!("{active} — geop"),
+            None => "geop".to_string(),
+        };
+        if self.title != title {
+            ctx.send_viewport_cmd(egui::ViewportCommand::Title(title.clone()));
+            self.title = title;
+        }
         if self.app.busy() || !self.app.ready() {
             ctx.request_repaint_after(std::time::Duration::from_millis(100));
         }

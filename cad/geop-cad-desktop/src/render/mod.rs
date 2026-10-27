@@ -193,10 +193,13 @@ pub struct Renderer {
     /// The faces' instances, and per mesh drawn its range of them.
     instances: Growing,
     face_draws: Vec<(String, u32, u32)>,
+    base_key: u64,
     base_lines_buffer: Growing,
     base_points_buffer: Growing,
     base_counts: (u32, u32),
-    lit_ranges: Ranges,
+    lit_lines_buffer: Growing,
+    lit_points_buffer: Growing,
+    lit_counts: (u32, u32),
     /// What is drawn anew every frame.
     flat: Growing,
     lines: Growing,
@@ -538,10 +541,13 @@ impl Renderer {
             statics_count: 0,
             instances: Growing::new("faces", wgpu::BufferUsages::VERTEX),
             face_draws: Vec::new(),
+            base_key: 0,
             base_lines_buffer: Growing::new("base lines", wgpu::BufferUsages::VERTEX),
             base_points_buffer: Growing::new("base points", wgpu::BufferUsages::VERTEX),
             base_counts: (0, 0),
-            lit_ranges: Ranges::default(),
+            lit_lines_buffer: Growing::new("lit lines", wgpu::BufferUsages::VERTEX),
+            lit_points_buffer: Growing::new("lit points", wgpu::BufferUsages::VERTEX),
+            lit_counts: (0, 0),
             flat: Growing::new("flat", wgpu::BufferUsages::VERTEX),
             lines: Growing::new("lines", wgpu::BufferUsages::VERTEX),
             points: Growing::new("points", wgpu::BufferUsages::VERTEX),
@@ -656,28 +662,21 @@ impl Renderer {
         }
         self.instances
             .write(device, queue, bytemuck::cast_slice(&instances));
-        let mut lines = statics.base.lines.clone();
-        let mut points = statics.base.points.clone();
-        self.base_counts = (lines.len() as u32, points.len() as u32);
-        let lit_lines = (
-            lines.len() as u32,
-            (lines.len() + statics.lit.lines.len()) as u32,
-        );
-        let lit_points = (
-            points.len() as u32,
-            (points.len() + statics.lit.points.len()) as u32,
-        );
-        lines.extend_from_slice(&statics.lit.lines);
-        points.extend_from_slice(&statics.lit.points);
-        self.lit_ranges = Ranges {
-            triangles: (0, 0),
-            lines: lit_lines,
-            points: lit_points,
-        };
-        self.base_lines_buffer
-            .write(device, queue, bytemuck::cast_slice(&lines));
-        self.base_points_buffer
-            .write(device, queue, bytemuck::cast_slice(&points));
+        if statics.base_key != self.base_key {
+            self.base_key = statics.base_key;
+            let base = &statics.base;
+            self.base_counts = (base.lines.len() as u32, base.points.len() as u32);
+            self.base_lines_buffer
+                .write(device, queue, bytemuck::cast_slice(&base.lines));
+            self.base_points_buffer
+                .write(device, queue, bytemuck::cast_slice(&base.points));
+        }
+        let lit = &statics.lit;
+        self.lit_counts = (lit.lines.len() as u32, lit.points.len() as u32);
+        self.lit_lines_buffer
+            .write(device, queue, bytemuck::cast_slice(&lit.lines));
+        self.lit_points_buffer
+            .write(device, queue, bytemuck::cast_slice(&lit.points));
     }
 
     fn draw(
@@ -849,20 +848,20 @@ impl Renderer {
             (&self.seen_flat, &self.seen_lines, &self.top_points),
         );
         // What is lit of the part, over it.
-        let lit = self.lit_ranges;
-        if lit.lines.1 > lit.lines.0
-            && let Some(buffer) = self.base_lines_buffer.buffer.as_ref()
+        let (lit_lines, lit_points) = self.lit_counts;
+        if lit_lines > 0
+            && let Some(buffer) = self.lit_lines_buffer.buffer.as_ref()
         {
             pass.set_pipeline(&self.top_lines);
             pass.set_vertex_buffer(0, buffer.slice(..));
-            pass.draw(0..6, lit.lines.0..lit.lines.1);
+            pass.draw(0..6, 0..lit_lines);
         }
-        if lit.points.1 > lit.points.0
-            && let Some(buffer) = self.base_points_buffer.buffer.as_ref()
+        if lit_points > 0
+            && let Some(buffer) = self.lit_points_buffer.buffer.as_ref()
         {
             pass.set_pipeline(&self.top_points);
             pass.set_vertex_buffer(0, buffer.slice(..));
-            pass.draw(0..6, lit.points.0..lit.points.1);
+            pass.draw(0..6, 0..lit_points);
         }
         // Datums' points and frames, the step's visuals, the gizmo.
         for ranges in tops {

@@ -23,6 +23,9 @@ enum Act {
     Dialog(String, Value),
     Download(String, String),
     Choose(Chooser),
+    Preview(bool),
+    Commit,
+    Cancel,
 }
 
 /// How an element held is shown: its name — a whole sketch's, its
@@ -41,45 +44,51 @@ pub fn element_label(e: &PickedElement) -> String {
 
 /// The dialog beside the viewport.
 pub fn sidebar(window: &mut GeopApp, ui: &mut Ui) {
-    let Some(step) = window.app.step.clone() else {
-        return;
+    let acts = {
+        let window = &*window;
+        let Some(step) = &window.app.step else {
+            return;
+        };
+        head(window, ui, step, false);
+        ui.separator();
+        let mut acts = egui::ScrollArea::vertical()
+            .auto_shrink([false, true])
+            .max_height(ui.available_height() - 96.0)
+            .show(ui, |ui| fields(window, ui, step))
+            .inner;
+        status(window, ui, step);
+        footer(window, ui, step, &mut acts);
+        acts
     };
-    head(window, ui, &step, false);
-    ui.separator();
-    let acts = egui::ScrollArea::vertical()
-        .auto_shrink([false, true])
-        .max_height(ui.available_height() - 96.0)
-        .show(ui, |ui| fields(window, ui, &step))
-        .inner;
-    status(window, ui, &step);
-    footer(window, ui, &step);
     apply(window, acts);
 }
 
 /// The dialog as a wide popup over the middle of the viewport.
 pub fn popup(window: &mut GeopApp, ctx: &egui::Context) {
-    let Some(step) = window.app.step.clone() else {
-        return;
-    };
     let mut acts = Vec::new();
-    let theme = window.theme;
-    egui::Window::new(RichText::new(step.label).strong())
-        .id(egui::Id::new("geop step popup"))
-        .collapsible(false)
-        .resizable(true)
-        .default_width(760.0)
-        .anchor(egui::Align2::CENTER_CENTER, egui::Vec2::ZERO)
-        .frame(theme.card())
-        .show(ctx, |ui| {
-            head(window, ui, &step, true);
-            ui.separator();
-            acts = egui::ScrollArea::vertical()
-                .max_height(ctx.content_rect().height() * 0.65)
-                .show(ui, |ui| fields(window, ui, &step))
-                .inner;
-            status(window, ui, &step);
-            footer(window, ui, &step);
-        });
+    {
+        let window = &*window;
+        let Some(step) = &window.app.step else {
+            return;
+        };
+        egui::Window::new(RichText::new(step.label).strong())
+            .id(egui::Id::new("geop step popup"))
+            .collapsible(false)
+            .resizable(true)
+            .default_width(760.0)
+            .anchor(egui::Align2::CENTER_CENTER, egui::Vec2::ZERO)
+            .frame(window.theme.card())
+            .show(ctx, |ui| {
+                head(window, ui, step, true);
+                ui.separator();
+                acts = egui::ScrollArea::vertical()
+                    .max_height(ctx.content_rect().height() * 0.65)
+                    .show(ui, |ui| fields(window, ui, step))
+                    .inner;
+                status(window, ui, step);
+                footer(window, ui, step, &mut acts);
+            });
+    }
     apply(window, acts);
 }
 
@@ -94,11 +103,16 @@ fn apply(window: &mut GeopApp, acts: Vec<Act>) {
                 super::today(),
             ),
             Act::Choose(chooser) => window.chooser = Some(chooser),
+            Act::Preview(preview) => window
+                .app
+                .command(geop_core_editor::editor::Command::Preview { preview }),
+            Act::Commit => window.app.commit(),
+            Act::Cancel => window.app.cancel(),
         }
     }
 }
 
-fn head(window: &mut GeopApp, ui: &mut Ui, step: &StepState, popup: bool) {
+fn head(window: &GeopApp, ui: &mut Ui, step: &StepState, popup: bool) {
     ui.horizontal(|ui| {
         if let Some(icon) = (window.app.program.as_ref())
             .and_then(|p| p.operations.iter().find(|o| o.kind == step.kind))
@@ -137,7 +151,7 @@ fn status(window: &GeopApp, ui: &mut Ui, step: &StepState) {
     }
 }
 
-fn footer(window: &mut GeopApp, ui: &mut Ui, step: &StepState) {
+fn footer(window: &GeopApp, ui: &mut Ui, step: &StepState, acts: &mut Vec<Act>) {
     ui.add_space(4.0);
     let blocked = step.error.is_some() || !step.missing.is_empty();
     let format = |action: super::actions::Action| {
@@ -157,9 +171,7 @@ fn footer(window: &mut GeopApp, ui: &mut Ui, step: &StepState) {
             .on_hover_text("Show the step as it builds, or the part before it")
             .changed()
         {
-            window
-                .app
-                .command(geop_core_editor::editor::Command::Preview { preview });
+            acts.push(Act::Preview(preview));
         }
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
             let ok = egui::Button::new(RichText::new("  OK  ").strong().color(Color32::WHITE))
@@ -175,21 +187,21 @@ fn footer(window: &mut GeopApp, ui: &mut Ui, step: &StepState) {
                 .on_disabled_hover_text(tip)
                 .clicked()
             {
-                window.app.commit();
+                acts.push(Act::Commit);
             }
             if ui
                 .button("Cancel")
                 .on_hover_text(format!("Leave the program as it was ({cancel_key})"))
                 .clicked()
             {
-                window.app.cancel();
+                acts.push(Act::Cancel);
             }
         });
     });
 }
 
 /// Every field of the step's dialog.
-fn fields(window: &mut GeopApp, ui: &mut Ui, step: &StepState) -> Vec<Act> {
+fn fields(window: &GeopApp, ui: &mut Ui, step: &StepState) -> Vec<Act> {
     let mut acts = Vec::new();
     // Nothing of the dialog widens the panel it is in: it wraps.
     ui.set_max_width(ui.available_width());

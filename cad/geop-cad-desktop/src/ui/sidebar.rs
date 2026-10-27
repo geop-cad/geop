@@ -37,19 +37,15 @@ pub fn part(window: &mut GeopApp, ui: &mut Ui) {
 
 fn structure(window: &mut GeopApp, ui: &mut Ui, lights: &mut Option<Vec<PickedElement>>) {
     let theme = window.theme;
-    let items = window.app.scene.structure.clone();
-    let details = window
-        .app
-        .program
-        .as_ref()
-        .map(|p| p.details.clone())
-        .unwrap_or_default();
+    let items = &window.app.scene.structure;
+    let no_details = Default::default();
+    let details = (window.app.program.as_ref()).map_or(&no_details, |p| &p.details);
     if items.is_empty() {
         ui.label(RichText::new("Nothing yet.").color(theme.weak()));
         return;
     }
     let mut groups: Vec<(String, Vec<&geop_core_editor::registry::StructureItem>)> = Vec::new();
-    for item in &items {
+    for item in items {
         match groups.iter_mut().find(|(k, _)| *k == item.kind_label) {
             Some((_, list)) => list.push(item),
             None => groups.push((item.kind_label.clone(), vec![item])),

@@ -27,7 +27,7 @@ pub fn program(window: &mut GeopApp, ui: &mut Ui) {
     panels::program_panels(window, ui);
     let theme = window.theme;
     let app = &window.app;
-    let Some(program) = app.program.clone() else {
+    let Some(program) = &app.program else {
         ui.add(egui::Spinner::new());
         return;
     };
@@ -293,18 +293,19 @@ pub fn program(window: &mut GeopApp, ui: &mut Ui) {
         }
         d.insert_temp(unfold_id, unfolded);
     });
-    let app = &mut window.app;
+    let mut moved = None;
+    let mut seek = None;
     if let Some(Drag { what, .. }) = released
         && let Some(p) = pointer
     {
         let slot = boxes.iter().filter(|r| p.y > r.center().y).count();
         match what {
-            Dragging::Seeker if slot != seeker => app.seek(slot),
+            Dragging::Seeker if slot != seeker => seek = Some(slot),
             Dragging::Step(i) => {
                 // Among the other steps, the ones before the slot keep their place.
                 let to = if slot > i { slot - 1 } else { slot };
                 if to != i {
-                    app.command(geop_core_editor::editor::Command::Move {
+                    moved = Some(geop_core_editor::editor::Command::Move {
                         id: steps[i].id.clone(),
                         index: to,
                     });
@@ -312,6 +313,13 @@ pub fn program(window: &mut GeopApp, ui: &mut Ui) {
             }
             _ => {}
         }
+    }
+    let app = &mut window.app;
+    if let Some(slot) = seek {
+        app.seek(slot);
+    }
+    if let Some(command) = moved {
+        app.command(command);
     }
     if let Some(id) = open {
         app.open_step(&id, None);

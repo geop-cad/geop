@@ -247,13 +247,18 @@ pub struct Label {
 /// parts, as lit: kept while the scene and what is lit stay as they are.
 #[derive(Debug, Default)]
 pub struct Statics {
-    /// What it was made of: drawn again only when that changes.
+    /// What it was made of — the scene and what is lit: drawn again only
+    /// when that changes.
     pub key: u64,
     /// Every face drawn, by its mesh's key: each mesh is drawn once with
     /// every place and colour it is drawn in.
     pub faces: Vec<(String, Arc<MeshData>, Vec<FaceInstance>)>,
+    /// The scene's version the edges and sketches were drawn of: they do
+    /// not change with what is lit, so a hover over a large assembly does
+    /// not draw them again.
+    pub base_key: u64,
     /// The edges and sketches, depth tested.
-    pub base: Layer,
+    pub base: Arc<Layer>,
     /// What is lit of the edges, vertices and sketches, over everything.
     pub lit: Layer,
 }
@@ -319,11 +324,11 @@ struct PartStatics<'a> {
 }
 
 impl PartStatics<'_> {
-    fn draw(
+    /// Its faces, coloured as lit, and what is lit of the rest.
+    fn draw_lit(
         &self,
         meshes: &HashMap<String, Arc<MeshData>>,
         faces: &mut HashMap<String, (Arc<MeshData>, Vec<FaceInstance>)>,
-        base: &mut Layer,
         lit: &mut Layer,
     ) {
         let part = self.part;
@@ -363,55 +368,43 @@ impl PartStatics<'_> {
                 color: color.f32(),
             });
         }
+        if self.lit.edges.is_empty()
+            && self.lit.vertices.is_empty()
+            && self.lit.sketches.is_empty()
+            && self.lit.curves.is_empty()
+            && self.lit.sketch_points.is_empty()
+        {
+            return;
+        }
         for edge in &part.edges {
-            if !shown(&self.hidden, edge.solid.as_deref(), &edge.faces) {
-                continue;
-            }
-            let points: Vec<V3> = edge.polyline.iter().map(|&p| at(p)).collect();
-            base.polyline(&points, EDGE, 1.2);
-            if self.lit.edges.contains(&edge.name) {
+            if self.lit.edges.contains(&edge.name)
+                && shown(&self.hidden, edge.solid.as_deref(), &edge.faces)
+            {
+                let points: Vec<V3> = edge.polyline.iter().map(|&p| at(p)).collect();
                 lit.polyline(&points, HIGHLIGHT, 2.5);
             }
         }
         for vertex in &part.vertices {
-            if !shown(&self.hidden, vertex.solid.as_deref(), &vertex.faces) {
-                continue;
-            }
-            base.point(at(vertex.at), VERTEX, 3.0);
-            if self.lit.vertices.contains(&vertex.name) {
+            if self.lit.vertices.contains(&vertex.name)
+                && shown(&self.hidden, vertex.solid.as_deref(), &vertex.faces)
+            {
                 lit.point(at(vertex.at), HIGHLIGHT, 9.0);
             }
         }
-        for annotation in &part.annotations {
-            let points: Vec<V3> = annotation.polyline.iter().map(|&p| at(p)).collect();
-            base.polyline(&points, ANNOTATION, 1.2);
-        }
         for sketch in &part.sketches {
             let whole = self.lit.sketches.contains(&sketch.name);
-            let visible = whole || !self.hidden_sketches.contains(sketch.name.as_str());
             for curve in &sketch.curves {
-                let points: Vec<V3> = curve.polyline.iter().map(|&p| at(p)).collect();
-                if visible {
-                    let color = if curve.construction {
-                        CONSTRUCTION
-                    } else {
-                        SKETCH
-                    };
-                    base.polyline(&points, color, 1.6);
-                }
+                let points = || curve.polyline.iter().map(|&p| at(p)).collect::<Vec<V3>>();
                 if whole
                     || self
                         .lit
                         .curves
                         .contains(&(sketch.name.clone(), curve.id.clone()))
                 {
-                    lit.polyline(&points, HIGHLIGHT, 2.5);
+                    lit.polyline(&points(), HIGHLIGHT, 2.5);
                 }
             }
             for (id, p) in &sketch.points {
-                if visible {
-                    base.point(at(*p), SKETCH, 5.0);
-                }
                 if whole
                     || self
                         .lit
@@ -420,6 +413,45 @@ impl PartStatics<'_> {
                 {
                     lit.point(at(*p), HIGHLIGHT, 9.0);
                 }
+            }
+        }
+    }
+
+    /// Its edges, vertices, annotations and sketches, as they are drawn
+    /// whatever is lit.
+    fn draw_base(&self, base: &mut Layer) {
+        let part = self.part;
+        let at = |p: V3| self.frame.point(p);
+        for edge in &part.edges {
+            if shown(&self.hidden, edge.solid.as_deref(), &edge.faces) {
+                let points: Vec<V3> = edge.polyline.iter().map(|&p| at(p)).collect();
+                base.polyline(&points, EDGE, 1.2);
+            }
+        }
+        for vertex in &part.vertices {
+            if shown(&self.hidden, vertex.solid.as_deref(), &vertex.faces) {
+                base.point(at(vertex.at), VERTEX, 3.0);
+            }
+        }
+        for annotation in &part.annotations {
+            let points: Vec<V3> = annotation.polyline.iter().map(|&p| at(p)).collect();
+            base.polyline(&points, ANNOTATION, 1.2);
+        }
+        for sketch in &part.sketches {
+            if self.hidden_sketches.contains(sketch.name.as_str()) {
+                continue;
+            }
+            for curve in &sketch.curves {
+                let points: Vec<V3> = curve.polyline.iter().map(|&p| at(p)).collect();
+                let color = if curve.construction {
+                    CONSTRUCTION
+                } else {
+                    SKETCH
+                };
+                base.polyline(&points, color, 1.6);
+            }
+            for (_, p) in &sketch.points {
+                base.point(at(*p), SKETCH, 5.0);
             }
         }
     }
@@ -446,7 +478,7 @@ pub fn drawing(shown: &Shown, camera: &Camera, statics: &Arc<Statics>) -> Drawin
         if statics.key == key && key != 0 {
             statics.clone()
         } else {
-            Arc::new(make_statics(shown, visuals, key))
+            Arc::new(make_statics(shown, visuals, key, statics))
         }
     };
     let part = &kept.part;
@@ -565,7 +597,7 @@ fn statics_key(shown: &Shown, visuals: &[Visual]) -> u64 {
     hasher.finish().max(1)
 }
 
-fn make_statics(shown: &Shown, visuals: &[Visual], key: u64) -> Statics {
+fn make_statics(shown: &Shown, visuals: &[Visual], key: u64, before: &Statics) -> Statics {
     let kept = shown.kept;
     let lit_instances: BTreeSet<&str> = (visuals.iter())
         .filter(|v| matches!(v.style, Style::Hover | Style::Selected))
@@ -576,6 +608,8 @@ fn make_statics(shown: &Shown, visuals: &[Visual], key: u64) -> Statics {
         .collect();
     let hidden: BTreeSet<&str> = kept.hidden.iter().map(String::as_str).collect();
     let mut faces = HashMap::new();
+    let base_key = kept.version.max(1);
+    let fresh = before.base_key != base_key;
     let mut base = Layer::default();
     let mut lit = Layer::default();
     let own = PartStatics {
@@ -586,7 +620,10 @@ fn make_statics(shown: &Shown, visuals: &[Visual], key: u64) -> Statics {
         lit: Lit::of(&kept.part.targets, "", shown.highlights),
         all_lit: false,
     };
-    own.draw(&kept.meshes, &mut faces, &mut base, &mut lit);
+    own.draw_lit(&kept.meshes, &mut faces, &mut lit);
+    if fresh {
+        own.draw_base(&mut base);
+    }
     for instance in kept.instances.values() {
         if hidden.contains(instance.name.as_str()) {
             continue;
@@ -601,15 +638,21 @@ fn make_statics(shown: &Shown, visuals: &[Visual], key: u64) -> Statics {
             &lit_instances,
             &kept.meshes,
             &mut faces,
-            &mut base,
+            fresh.then_some(&mut base),
             &mut lit,
         );
     }
+    let base = if fresh {
+        Arc::new(base)
+    } else {
+        before.base.clone()
+    };
     let mut faces: Vec<_> = faces.into_iter().map(|(k, (m, i))| (k, m, i)).collect();
     faces.sort_by(|a, b| a.0.cmp(&b.0));
     Statics {
         key,
         faces,
+        base_key,
         base,
         lit,
     }
@@ -623,22 +666,25 @@ fn placed(
     lit_instances: &BTreeSet<&str>,
     meshes: &HashMap<String, Arc<MeshData>>,
     faces: &mut HashMap<String, (Arc<MeshData>, Vec<FaceInstance>)>,
-    base: &mut Layer,
+    base: Option<&mut Layer>,
     lit: &mut Layer,
 ) {
     let prefix = format!("/{}:", instance.name);
     let hidden_sketches = (shown.kept.hidden.iter())
         .filter_map(|h| h.strip_prefix(&prefix))
         .collect();
-    PartStatics {
+    let statics = PartStatics {
         part: view,
         frame: instance.frame,
         hidden: BTreeSet::new(),
         hidden_sketches,
         lit: Lit::of(&view.targets, &instance.name, shown.highlights),
         all_lit: lit_instances.contains(instance.name.as_str()),
+    };
+    statics.draw_lit(meshes, faces, lit);
+    if let Some(base) = base {
+        statics.draw_base(base);
     }
-    .draw(meshes, faces, base, lit);
 }
 
 // ── shapes, at unit size, put where they go ─────────────────────────────
