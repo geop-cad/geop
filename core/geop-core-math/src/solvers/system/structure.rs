@@ -102,19 +102,23 @@ impl<E: Equations> Over<'_, '_, E> {
             let Some((boxed, differentials)) = self.system.around(self.at) else {
                 return vec![None; self.terms.len()];
             };
-            (self.system.equations.evaluate(&boxed, &self.terms).into_iter())
-                .map(|made| {
-                    let mut made = made?;
-                    for (block, rows) in &mut made.jacobian {
-                        if let Some(Some(d)) = differentials.get(*block) {
-                            for row in rows.iter_mut() {
-                                *row = super::compose(row, d);
-                            }
+            (self
+                .system
+                .equations
+                .evaluate(&boxed, &self.terms)
+                .into_iter())
+            .map(|made| {
+                let mut made = made?;
+                for (block, rows) in &mut made.jacobian {
+                    if let Some(Some(d)) = differentials.get(*block) {
+                        for row in rows.iter_mut() {
+                            *row = super::compose(row, d);
                         }
                     }
-                    Some(made)
-                })
-                .collect()
+                }
+                Some(made)
+            })
+            .collect()
         });
         rows.get(k)?.as_ref()
     }
@@ -180,7 +184,8 @@ impl<E: Equations> System<'_, E> {
                 continue;
             }
             let own: Vec<usize> = on[b].iter().copied().filter(|&k| alive[k]).collect();
-            let Some(pendant) = self.hangs_off(at, b, own, &reads, &over, &alive, &on, tolerance) else {
+            let Some(pendant) = self.hangs_off(at, b, own, &reads, &over, &alive, &on, tolerance)
+            else {
                 continue;
             };
             for &k in &pendant.terms {
