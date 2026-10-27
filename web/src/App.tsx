@@ -1,14 +1,11 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import "./App.css";
 import {
-  applyScene,
-  NOTHING_PLACED,
   loadGeop,
   runTool,
   send,
   type Command,
   type EditEvent,
-  type Placed,
   type PickedElement,
   type Inspection,
   type OperationInfo,
@@ -16,12 +13,12 @@ import {
   type Presentation,
   type Program,
   type ProgramState,
-  type DrawnScene,
   type StepState,
   type Update,
   type Value,
 } from "./geop";
 import { host, onRestart, store } from "./backend";
+import { applyScene, NOTHING_PLACED, type DrawnScene, type Placed } from "./kept";
 import { KernelCrashed } from "./crash";
 import { DEFAULT_POSE, headOnPose, wantsFraming, type CameraPose, type Drawn, type Projection } from "./camera";
 import { DialogView } from "./DialogView";
