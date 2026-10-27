@@ -93,11 +93,20 @@ impl NurbSurface3D {
     /// tau^2 gamma (P, 1)` has that ratio for every `u` and any `tau(u)`;
     /// `tau` linear, chosen so that both side arcs come out in their usual
     /// form, makes the row polynomial of degree at most 4.
+    ///
+    /// The rows multiply the center and the corners by weights and by
+    /// each other, so it is built about the center's middle, a free choice
+    /// of origin, and moved back by one rounding: built where it lies, a
+    /// corner of a block at `(1e4, 1e4, 0)` came out with control points
+    /// `8e-4` wide, and at `1e5` with no normal left at all.
     pub fn spherical_triangle(
         center: &Vector3,
         radius: Scalar,
         corners: [Vector3; 3],
     ) -> GeopResult<Self> {
+        let origin = center.sharpen();
+        let center = &center.sub(&origin);
+        let corners = corners.map(|c| c.sub(&origin));
         let r2 = radius.mul(radius);
         let [p1, p2, p3] = &corners;
         let (b1, b2, p) = (p1.sub(center), p2.sub(center), p3.sub(center));
@@ -163,7 +172,7 @@ impl NurbSurface3D {
             k.extend(vec![Scalar::ONE; degree + 1]);
             k
         };
-        NurbSurface3D::try_new(4, 2, control_points, knots(4), knots(2))
+        Ok(NurbSurface3D::try_new(4, 2, control_points, knots(4), knots(2))?.translate(origin))
     }
 }
 
@@ -179,6 +188,30 @@ mod tests {
             Scalar::from_f64(y),
             Scalar::from_f64(z),
         ])
+    }
+
+    /// A corner's ball far from the origin, as a block placed at
+    /// `(1e5, -1e5, 0)` has with every edge rounded: its patch is as
+    /// narrow as its corners allow, and has a normal. Built where it lies,
+    /// its weighted control points came out `1e-5` wide here.
+    #[test]
+    fn far_from_the_origin_is_as_narrow() {
+        let radius = Scalar::from_f64(2.0);
+        for [x, y, z] in [[2.0, 2.0, 2.0], [1e5 + 2.0, -1e5 + 2.0, 2.0]] {
+            let center = v3(x, y, z);
+            let corners = [
+                v3(x - 2.0, y, z),
+                v3(x, y - 2.0, z),
+                v3(x, y, z - 2.0),
+            ];
+            let s = NurbSurface3D::spherical_triangle(&center, radius, corners).unwrap();
+            let widest = (s.control_points.iter())
+                .flat_map(|p| (0..4).map(move |c| p[c].width().to_f64()))
+                .fold(0.0, f64::max);
+            assert!(widest < 1e-9, "at {center:?}: {widest:e}");
+            let (u, v) = (Scalar::from_f64(0.4), Scalar::from_f64(0.3));
+            assert!(s.normal(u, v).is_ok(), "at {center:?}");
+        }
     }
 
     /// Every point of the patch lies on the sphere, its corners are where
