@@ -790,7 +790,8 @@ export function SceneViewer({
       return {
         highlights,
         hidden: (hiddenIn.get(name) ?? []).filter((h) => sketches.has(h)),
-        visible: !hidden.has(name),
+        // Hidden with the part it is placed in, as the kernel picks it.
+        visible: !name.split("/").some((_, k, path) => hidden.has(path.slice(0, k + 1).join("/"))),
       };
     };
   };
