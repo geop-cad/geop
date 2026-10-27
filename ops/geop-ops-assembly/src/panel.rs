@@ -87,7 +87,11 @@ impl Panel for JointsPanel {
     fn details(&self, state: &JointsState) -> BTreeMap<String, String> {
         let parts = state.freedom.iter().flat_map(|f| &f.parts);
         (parts.map(|(part, &dof)| {
-            let said = if dof == 0 { "fixed".into() } else { format!("{dof} DOF") };
+            let said = if dof == 0 {
+                "fixed".into()
+            } else {
+                format!("{dof} DOF")
+            };
             (part.clone(), said)
         }))
         .collect()

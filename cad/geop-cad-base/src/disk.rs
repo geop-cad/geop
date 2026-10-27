@@ -158,7 +158,6 @@ impl Folder {
     }
 }
 
-
 /// The folder `path` names, and the program in it to edit first if it
 /// names one.
 pub fn workspace_of(path: &Path) -> GeopResult<(PathBuf, Option<String>)> {
@@ -245,7 +244,6 @@ impl CacheStore for DiskCache {
     }
 }
 
-
 /// The extensions of the files an editor of `registry` shows in a
 /// workspace, in lower case: programs (`geop`), and the data files its
 /// operations read (see `OperationInfo::reads`).
@@ -307,7 +305,10 @@ mod tests {
         let f = folder(&dir);
         let content = geop_core_program::workspace::content(vec![0xff, 0x00, 0x80]);
         f.write("mesh.step", &content).unwrap();
-        assert_eq!(std::fs::read(dir.join("mesh.step")).unwrap(), [0xff, 0x00, 0x80]);
+        assert_eq!(
+            std::fs::read(dir.join("mesh.step")).unwrap(),
+            [0xff, 0x00, 0x80]
+        );
         assert_eq!(f.files().unwrap()["mesh.step"], content);
     }
 
