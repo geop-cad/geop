@@ -39,7 +39,7 @@ use geop_core_program::{
     element::PickedElement,
     operation_registry::OperationRegistry,
     part::Part,
-    placed::{Located, PlacedPart},
+    placed::{INSTANCE_SEPARATOR, Located, PlacedPart},
     program::{Program, ProgramStep},
     reader::{Reader, Seen},
     runner::Runner,
@@ -48,7 +48,7 @@ use geop_core_program::{
 };
 use std::{
     cell::RefCell,
-    collections::{BTreeMap, HashMap},
+    collections::{BTreeMap, BTreeSet, HashMap},
     rc::Rc,
 };
 
@@ -58,7 +58,7 @@ use crate::{
     registry::{Drawings, Registry},
     step_editor::{Editing, StepEditor},
     tools::Tool,
-    view::{EMPTY_EXTENT, PartView, Visible, drawn},
+    view::{EMPTY_EXTENT, PartView, ViewInstance, Visible, drawn},
 };
 use build::Build;
 use geop_core_math::{
@@ -170,8 +170,20 @@ struct Shown {
     seen: Seen,
     steps: usize,
     hidden: Vec<String>,
+    /// The colours placed parts are drawn in, by name (see
+    /// [`Editor::colors`]).
+    colors: BTreeMap<String, String>,
     /// The sheet's centre and size.
     sheet: Option<([f64; 3], f64)>,
+}
+
+/// A placed part as the viewer was sent it: the key of the component it is
+/// drawn from, where it is, and the colour it is drawn in.
+#[derive(PartialEq)]
+struct Sent {
+    component: String,
+    frame: [f64; 12],
+    color: Option<String>,
 }
 
 /// Editing a program: see the module docs.
@@ -210,10 +222,9 @@ pub struct Editor {
     written: Vec<File>,
     /// The file the last command wrote, for the update to carry.
     exported: Option<Export>,
-    /// The placed parts the viewer was sent, by name: the key of the
-    /// component each is drawn from, and where it is, as sent — `None`
+    /// The placed parts the viewer was sent, by name, as sent — `None`
     /// when the viewer may have none (see [`SceneState`]).
-    placed: Option<HashMap<String, (String, [f64; 12])>>,
+    placed: Option<HashMap<String, Sent>>,
     /// What the viewer keeps of the scenes it was sent: the components and
     /// the meshes of faces, by key.
     kept: Kept,
@@ -236,6 +247,12 @@ pub struct Editor {
     /// What the user chose to show or hide, by name, over what the editor
     /// would by itself (see [`Editor::hidden`]).
     visibility: BTreeMap<String, bool>,
+    /// The colours the user chose to draw placed parts in, by name, over
+    /// their own ([`Command::Appearance`]).
+    colors: BTreeMap<String, String>,
+    /// The placed parts the user chose to show alone, if any
+    /// ([`Command::Isolate`]).
+    isolated: BTreeSet<String>,
 }
 
 impl Editor {
@@ -282,6 +299,8 @@ impl Editor {
             views: RefCell::default(),
             drawings: Drawings::default(),
             visibility: BTreeMap::new(),
+            colors: BTreeMap::new(),
+            isolated: BTreeSet::new(),
         }
     }
 
@@ -469,6 +488,7 @@ impl Editor {
             seen: self.shown_part(steps).seen(),
             steps,
             hidden,
+            colors: self.colors.clone(),
             sheet: (step.as_ref())
                 .and_then(|s| s.presentation.sheet)
                 .map(|e| (e.center.to_array().map(|c| c.to_f64()), e.size.to_f64())),
@@ -492,6 +512,13 @@ impl Editor {
             },
             false => None,
         };
+        // What an edit built is kept once it is done — not while a step
+        // being edited previews it, each event anew.
+        if self.open.is_none()
+            && let Some(cache) = self.workspace.cache()
+        {
+            cache.flush();
+        }
         Update {
             error,
             program,
@@ -532,9 +559,17 @@ impl Editor {
             for (number, x) in numbers.iter_mut().zip(frame.iter().flatten()) {
                 *number = *x;
             }
-            let drawn = (instance.component.clone(), numbers);
+            let color = shown.colors.get(&instance.name).cloned();
+            let drawn = Sent {
+                component: instance.component.clone(),
+                frame: numbers,
+                color: color.clone(),
+            };
             if before.get(&instance.name) != Some(&drawn) {
-                instances.push(instance.clone());
+                instances.push(ViewInstance {
+                    color,
+                    ..instance.clone()
+                });
             }
             placed.insert(instance.name.clone(), drawn);
         }
@@ -621,7 +656,7 @@ impl Editor {
             .run(&program, Some(index + usize::from(self.preview)));
         let Build { runner, part, .. } = &self.build;
         let editor = StepEditor::new(self.registry.editors(), runner, part, &program, &id, new)?;
-        let view = self.draw(&self.build.view_at(&program, index))?;
+        let view = self.draw(&self.build.view_at(&program, index), &self.build.runner)?;
         self.open = Some(Open {
             index,
             id,
@@ -651,7 +686,8 @@ impl Editor {
         let program = (*self.workspace.program(&location.file).map_err(ctx)?).clone();
         let text = self.workspace.files().read(&location.file).map_err(ctx)?;
         let index = program.index_of(&id).map_err(ctx)?;
-        let pose = (self.draw(&self.build.part.current())?.instances.iter())
+        let current = self.build.part.current();
+        let pose = (self.draw(&current, &self.build.runner)?.instances.iter())
             .find(|placed| placed.name == instance)
             .map(|placed| placed.pose)
             .ok_or_else(|| GeopError::new(format!("the part placed as `{instance}` is not drawn")))
@@ -666,7 +702,7 @@ impl Editor {
             false,
         )
         .map_err(ctx)?;
-        let view = self.draw(&part.before(&id))?;
+        let view = self.draw(&part.before(&id), &runner)?;
         self.open = Some(Open {
             index,
             id,
@@ -972,6 +1008,8 @@ impl Editor {
                     self.undo.clear();
                     self.redo.clear();
                     self.visibility.clear();
+                    self.colors.clear();
+                    self.isolated.clear();
                 }
                 self.file = program;
                 self.marker = None;
@@ -995,7 +1033,7 @@ impl Editor {
                     let placed = (self.open.as_ref()).is_some_and(|open| open.within.is_some());
                     self.run_to(if placed { self.marker } else { Some(index) });
                     if let Some(open) = &self.open {
-                        let view = self.draw(&self.picks_in(open))?;
+                        let view = self.draw(&self.picks_in(open), self.edited_with(open).0)?;
                         if let Some(open) = &mut self.open {
                             open.view = view;
                         }
@@ -1038,6 +1076,25 @@ impl Editor {
             }
             Command::Visibility { name, visible } => {
                 self.visibility.insert(name, visible);
+                Changed::Nothing
+            }
+            Command::Appearance { name, color } => {
+                match color {
+                    Some(color) => {
+                        let hex = color.strip_prefix('#').unwrap_or_default();
+                        if hex.len() != 6 || !hex.chars().all(|c| c.is_ascii_hexdigit()) {
+                            return Err(GeopError::new(format!(
+                                "{color:?} is no colour: a colour is `#rrggbb`"
+                            )));
+                        }
+                        self.colors.insert(name, color)
+                    }
+                    None => self.colors.remove(&name),
+                };
+                Changed::Nothing
+            }
+            Command::Isolate { names } => {
+                self.isolated = names.into_iter().collect();
                 Changed::Nothing
             }
             #[expect(
@@ -1234,7 +1291,7 @@ impl Editor {
             .collect();
         if let Some(open) = &self.open
             && self.picks_built(open)
-            && let Ok(view) = self.draw(&self.picks_in(open))
+            && let Ok(view) = self.draw(&self.picks_in(open), self.edited_with(open).0)
             && let Some(open) = &mut self.open
         {
             open.view = view;
@@ -1390,6 +1447,22 @@ impl Editor {
             (self.registry.hidden(&self.shown_part(steps)).into_iter())
                 .filter(|name| !pickable(name)),
         );
+        // The placed parts not isolated, of those drawn, when some are: a
+        // part is shown with the parts placed in it and those it is in.
+        if !self.isolated.is_empty() {
+            let related = |name: &str, other: &str| {
+                let inside = |a: &str, b: &str| {
+                    (a.strip_prefix(b)).is_some_and(|rest| rest.starts_with(INSTANCE_SEPARATOR))
+                };
+                name == other || inside(name, other) || inside(other, name)
+            };
+            for instance in &self.view_of(steps).instances {
+                let name = &instance.name;
+                if !self.isolated.iter().any(|i| related(name, i)) && !hidden.contains(name) {
+                    hidden.push(name.clone());
+                }
+            }
+        }
         // Then what the user chose — but what a click could pick now is
         // shown, to be picked.
         for (name, &visible) in &self.visibility {
@@ -1404,7 +1477,7 @@ impl Editor {
 
     /// The part `steps` steps build, as drawn.
     fn view_of(&self, steps: usize) -> Rc<PartView> {
-        (self.draw(&self.shown_part(steps))).unwrap_or_else(|_| {
+        (self.draw(&self.shown_part(steps), &self.build.runner)).unwrap_or_else(|_| {
             Rc::new(PartView::blank(Extent {
                 center: Vector3::zero(),
                 size: Scalar::from_f64(EMPTY_EXTENT),
@@ -1414,13 +1487,15 @@ impl Editor {
 
     /// The part `reader` reads, as the registry draws it: as it was drawn
     /// last, if it is made of the same (see [`Self::views`]), else of what
-    /// each drawer drew of what reads the same (see [`Self::drawings`]).
-    fn draw(&self, reader: &Reader) -> GeopResult<Rc<PartView>> {
+    /// each drawer drew of what reads the same (see [`Self::drawings`]) —
+    /// in this process, or, kept, in an earlier one, of the program
+    /// `runner` runs, whose part it is.
+    fn draw(&self, reader: &Reader, runner: &Runner) -> GeopResult<Rc<PartView>> {
         let seen = reader.seen();
         let mut views = self.views.borrow_mut();
         let view = match views.iter().position(|(drawn, _)| *drawn == seen) {
             Some(k) => views.remove(k).1,
-            None => Rc::new(self.registry.draw(reader, &self.drawings)?),
+            None => Rc::new(self.registry.draw(reader, &self.drawings, Some(runner))?),
         };
         views.push((seen, view.clone()));
         if views.len() > KEPT_VIEWS {

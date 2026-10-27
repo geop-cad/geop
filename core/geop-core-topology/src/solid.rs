@@ -7,7 +7,7 @@ use super::ids::ShellId;
 /// `shells`: a boolean cutting a bar in two leaves two lumps, one leaving
 /// a sphere's room inside a block a lump and a void. A void's faces point
 /// into it, out of the material, so the volume it encloses is negative.
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct Solid {
     pub shells: Vec<ShellId>,
 }

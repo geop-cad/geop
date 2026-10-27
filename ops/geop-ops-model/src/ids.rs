@@ -2,7 +2,7 @@ use geop_core_topology::{EdgeId, FaceId, SolidId, VertexId};
 
 /// Every kind of entity a [`super::NamedModel`] names: the topology
 /// entities a user can pick in isolation (a coedge or shell never is).
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 pub enum RefId {
     Vertex(VertexId),
     Edge(EdgeId),

@@ -8,7 +8,7 @@ use super::ids::{FaceId, SolidId};
 /// bounding anything, whose free border edges are used by one face only
 /// (what an extrude or revolve builds as a surface, and what a split cuts a
 /// solid with).
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct Shell {
     pub faces: Vec<FaceId>,
     pub solid: Option<SolidId>,

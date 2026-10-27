@@ -39,7 +39,9 @@ fn drawn(sketches: &[(&str, PlacedSketch)]) -> PartView {
         .unwrap();
     }
     let registry = crate::register(Registry::default()).unwrap();
-    registry.draw(&part.current(), &Default::default()).unwrap()
+    registry
+        .draw(&part.current(), &Default::default(), None)
+        .unwrap()
 }
 
 /// What `pointer` picks of the kinds `accepts`.

@@ -708,15 +708,30 @@ impl<'a> Rebuild<'a> {
                     return Ok(Some(line));
                 }
                 // Only as far as the surface goes: its ends in its domain.
+                // And only as far as the seam stays as narrow as its fit
+                // may drift: carrying a pcurve on extrapolates its end
+                // span, whose width grows as the span's length over the
+                // room to the power of its degree. A pcurve fitted in
+                // twenty spans, carried on by its whole domain, took the
+                // `7e-11` it has on a block at `(1e5, -1e5, 0)` to a seam
+                // `3.3e-4` wide where it was to end.
                 let ((u0, u1), (v0, v1)) = (surface.domain_u(), surface.domain_v());
                 let pcurve = carried_on(&along, |longer| {
                     let (a, b) = longer.ends()?;
-                    Ok([a, b].iter().all(|p| {
-                        !p[0].definitely_less(u0)
+                    for p in [a, b] {
+                        let inside = !p[0].definitely_less(u0)
                             && !p[0].definitely_greater(u1)
                             && !p[1].definitely_less(v0)
-                            && !p[1].definitely_greater(v1)
-                    }))
+                            && !p[1].definitely_greater(v1);
+                        if !inside {
+                            return Ok(false);
+                        }
+                        let point = surface.evaluate(p[0], p[1])?;
+                        if (0..3).any(|k| point[k].width().to_f64() > TRACE_DRIFT) {
+                            return Ok(false);
+                        }
+                    }
+                    Ok(true)
                 })?;
                 let (t0, t1) = pcurve.domain();
                 let at = |frac: Scalar| -> GeopResult<Vector3> {

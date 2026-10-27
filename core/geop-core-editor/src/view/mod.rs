@@ -23,11 +23,13 @@
 //! instance's path ([`Located`]): `/bolt:model`.
 
 pub mod icons;
+pub mod kept;
 pub mod lit;
 #[cfg(test)]
 mod tests;
+mod tree;
 
-use std::rc::Rc;
+use std::{cell::RefCell, rc::Rc};
 
 use crate::editing::{
     Extent, Pointer,
@@ -47,6 +49,8 @@ use geop_core_program::{
     target::{Target, TargetReference},
 };
 use serde::Serialize;
+use tree::FaceTree;
+pub use tree::triangles_tested;
 
 /// The kinds of what a view draws, as a pick names them
 /// ([`PickedElement::kind`]).
@@ -189,20 +193,64 @@ pub struct ViewFace {
 /// A face triangulated, with the surface's normal at each corner, and what
 /// it is known by: its key, a hash of what a viewer is sent of it — so a
 /// face drawn alike, in this part or another, is one mesh to a viewer.
-#[derive(Debug, Serialize)]
+///
+/// Its corners and normals are sharp: a mesh is a polygon drawn near the
+/// face, and which point of a corner's enclosure it is drawn through is a
+/// free choice — the middle — which a viewer is sent and a pick tests.
+///
+/// A viewer is sent it as a viewer draws it: each corner its triangles
+/// share once, and each triangle by its corners' indices — in base64, the
+/// corners' points and normals as 32-bit floats, `x y z` after one
+/// another, the indices as 32-bit integers, three a triangle, all little
+/// endian: `{"positions", "normals", "indices"}`. A tenth of a mesh's size
+/// written as numbers.
+#[derive(Debug)]
 pub struct FaceMesh {
-    #[serde(skip)]
     pub key: String,
     pub triangles: Vec<[Vector3; 3]>,
     pub normals: Vec<[Vector3; 3]>,
 }
 
+impl Serialize for FaceMesh {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        use serde::ser::SerializeStruct;
+        let mut index: std::collections::HashMap<[u32; 6], u32> = Default::default();
+        let (mut positions, mut normals, mut indices) = (Vec::new(), Vec::new(), Vec::new());
+        for (points, at) in self.triangles.iter().zip(&self.normals) {
+            for (p, n) in points.iter().zip(at) {
+                let p = p.to_array().map(|x| x.to_f64() as f32);
+                let n = n.to_array().map(|x| x.to_f64() as f32);
+                let bits = [p[0], p[1], p[2], n[0], n[1], n[2]].map(f32::to_bits);
+                let next = index.len() as u32;
+                let corner = *index.entry(bits).or_insert_with(|| {
+                    positions.extend(p.iter().flat_map(|x| x.to_le_bytes()));
+                    normals.extend(n.iter().flat_map(|x| x.to_le_bytes()));
+                    next
+                });
+                indices.extend(corner.to_le_bytes());
+            }
+        }
+        let base64 = geop_core_program::workspace::base64;
+        let mut s = serializer.serialize_struct("FaceMesh", 3)?;
+        s.serialize_field("positions", &base64(&positions))?;
+        s.serialize_field("normals", &base64(&normals))?;
+        s.serialize_field("indices", &base64(&indices))?;
+        s.end()
+    }
+}
+
 impl FaceMesh {
     /// The mesh of `triangles`, each with the normals `normals` at its
-    /// corners.
+    /// corners, each taken at the middle of its enclosure.
     pub fn new(triangles: Vec<[Vector3; 3]>, normals: Vec<[Vector3; 3]>) -> Rc<Self> {
         use std::hash::{Hash, Hasher};
         FACES_DRAWN.set(FACES_DRAWN.get() + 1);
+        let sharp = |corners: Vec<[Vector3; 3]>| -> Vec<[Vector3; 3]> {
+            (corners.into_iter())
+                .map(|corner| corner.map(|p| p.map(|x| Scalar::from_f64(x.to_f64()))))
+                .collect()
+        };
+        let (triangles, normals) = (sharp(triangles), sharp(normals));
         let mut key = std::hash::DefaultHasher::new();
         for p in triangles.iter().chain(&normals).flatten() {
             for x in p.to_array() {
@@ -401,6 +449,10 @@ pub struct ViewInstance {
     /// Whether no mate moves it.
     #[serde(skip)]
     pub fixed: bool,
+    /// The colour it is drawn in over its own, `#rrggbb`, if the user chose
+    /// one for it (see [`crate::editor::Command::Appearance`]).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub color: Option<String>,
 }
 
 impl std::fmt::Debug for ViewInstance {
@@ -443,6 +495,11 @@ pub struct PartView {
     pub extent: Extent,
     /// The part's colour, `#rrggbb`; none for the viewer's own.
     pub color: Option<String>,
+    /// The tree of its faces' triangles a pick tests the ray against (see
+    /// [`tree`]): built when it is first picked in, and again only for
+    /// other faces.
+    #[serde(skip)]
+    faces_tree: RefCell<Option<Rc<FaceTree>>>,
 }
 
 /// One part of what a pick tests: the part drawn itself, or a placed part,
@@ -493,13 +550,7 @@ impl Layer<'_> {
 
     /// The nearest face drawn the ray enters.
     fn pick_face(&self) -> Option<(Scalar, &ViewFace)> {
-        (self.view.faces.iter())
-            .filter(|f| self.shows_face(f))
-            .flat_map(|f| f.mesh.triangles.iter().map(move |tri| (f, tri)))
-            .filter_map(|(f, [a, b, c])| {
-                (self.pointer.ray.intersect_triangle(a, b, c)).map(|t| (t, f))
-            })
-            .min_by(|a, b| nearer(a.0, b.0))
+        (self.view).pick_face(&self.pointer, |f| self.shows_face(f))
     }
 
     /// The element `kind` `name` of the target `target` of this layer, as
@@ -556,6 +607,7 @@ impl PartView {
             instances: Vec::new(),
             extent,
             color: None,
+            faces_tree: RefCell::default(),
         }
     }
 
@@ -1008,6 +1060,42 @@ impl PartView {
                 .min_by(|a, b| nearer(a.1, b.1))
                 .map(|(e, _)| (drawn::EDGE, e.name.clone()))
         })
+    }
+
+    /// The nearest face of those `shown` the ray enters, of the triangles
+    /// its tree finds the ray could meet (see [`tree`]) — the first of the
+    /// nearest, in the order of the faces and their triangles, as testing
+    /// every one finds.
+    fn pick_face(
+        &self,
+        pointer: &Pointer,
+        shown: impl Fn(&ViewFace) -> bool,
+    ) -> Option<(Scalar, &ViewFace)> {
+        let mut hits = Vec::new();
+        self.faces_tree().near(&pointer.ray, |f, t| {
+            if let Some(face) = self.faces.get(f).filter(|face| shown(face))
+                && let Some([a, b, c]) = face.mesh.triangles.get(t)
+                && let Some(hit) = pointer.ray.intersect_triangle(a, b, c)
+            {
+                hits.push(((f, t), hit, face));
+            }
+        });
+        hits.sort_by_key(|(at, ..)| *at);
+        (hits.into_iter())
+            .map(|(_, hit, face)| (hit, face))
+            .min_by(|a, b| nearer(a.0, b.0))
+    }
+
+    /// The tree of its faces' triangles: built once, and again only once
+    /// its faces are others.
+    fn faces_tree(&self) -> Rc<FaceTree> {
+        let mut kept = self.faces_tree.borrow_mut();
+        if let Some(tree) = kept.as_ref().filter(|tree| tree.is_of(&self.faces)) {
+            return tree.clone();
+        }
+        let tree = Rc::new(FaceTree::of(&self.faces));
+        *kept = Some(tree.clone());
+        tree
     }
 
     /// The nearest sketch of `layer` hit inside one of its closed regions —

@@ -66,6 +66,15 @@ pub trait Workspace {
     fn cache(&self) -> Option<&Cache> {
         None
     }
+
+    /// A digest of the text of the file at `path` as it is now: what a node
+    /// that read it was made from, in any process (see [`crate::kept`]).
+    /// None for a file it does not have.
+    fn digest(&self, path: &str) -> Option<u128> {
+        self.read(path)
+            .ok()
+            .map(|text| crate::kept::digest_text(&text))
+    }
 }
 
 /// Where the program a runner runs is: the file it is in, and the files
@@ -140,7 +149,7 @@ pub fn base64(bytes: &[u8]) -> String {
 }
 
 /// The bytes of the base64 text `text` (RFC 4648, padded or not).
-fn from_base64(text: &str) -> GeopResult<Vec<u8>> {
+pub fn from_base64(text: &str) -> GeopResult<Vec<u8>> {
     let digits = text.trim_end_matches('=').as_bytes();
     let mut bytes = Vec::with_capacity(digits.len() * 3 / 4);
     let (mut n, mut bits) = (0u32, 0);
@@ -230,6 +239,8 @@ pub struct Files<F: 'static = BTreeMap<String, String>> {
     programs: RefCell<BTreeMap<String, Rc<Program>>>,
     /// Each other file's text, read once: by its path.
     texts: RefCell<BTreeMap<String, Rc<str>>>,
+    /// The digest of each file's text, taken when it is read: by its path.
+    digests: RefCell<BTreeMap<String, u128>>,
     /// How many times a file changed ([`Files::write`]).
     revision: Cell<u64>,
     /// The revision of each file that changed: the count when it last did.
@@ -251,6 +262,7 @@ impl<F: FileStore + 'static> Files<F> {
             registry,
             programs: RefCell::new(BTreeMap::new()),
             texts: RefCell::new(BTreeMap::new()),
+            digests: RefCell::new(BTreeMap::new()),
             revision: Cell::new(0),
             revisions: RefCell::new(BTreeMap::new()),
             cache,
@@ -272,6 +284,13 @@ impl<F: FileStore + 'static> Files<F> {
     fn forget(&self, changed: &BTreeSet<String>) {
         (self.programs.borrow_mut()).retain(|path, _| !changed.contains(path));
         (self.texts.borrow_mut()).retain(|path, _| !changed.contains(path));
+        (self.digests.borrow_mut()).retain(|path, _| !changed.contains(path));
+    }
+
+    /// Notes the digest of `text`, the file `path` as read.
+    fn read_as(&self, path: &str, text: &str) {
+        let digest = crate::kept::digest_text(text);
+        (self.digests.borrow_mut()).insert(path.to_string(), digest);
     }
 }
 
@@ -298,6 +317,7 @@ impl<F: FileStore + 'static> Workspace for Files<F> {
             return Ok(program.clone());
         }
         let text = self.files.borrow().read(path)?;
+        self.read_as(path, &text);
         let program = (Program::from_json(&text))
             .and_then(|program| program.validate(&self.registry).map(|()| program))
             .map_err(|e| e.with_context(format!("reading {path}")))?;
@@ -311,6 +331,7 @@ impl<F: FileStore + 'static> Workspace for Files<F> {
             return Ok(text.clone());
         }
         let text: Rc<str> = self.files.borrow().read(path)?.into();
+        self.read_as(path, &text);
         (self.texts.borrow_mut()).insert(path.to_string(), text.clone());
         Ok(text)
     }
@@ -339,6 +360,14 @@ impl<F: FileStore + 'static> Workspace for Files<F> {
 
     fn cache(&self) -> Option<&Cache> {
         Some(&self.cache)
+    }
+
+    fn digest(&self, path: &str) -> Option<u128> {
+        if let Some(digest) = self.digests.borrow().get(path) {
+            return Some(*digest);
+        }
+        self.read(path).ok()?;
+        self.digests.borrow().get(path).copied()
     }
 }
 

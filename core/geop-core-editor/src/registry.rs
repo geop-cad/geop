@@ -14,9 +14,11 @@ use std::{cell::RefCell, collections::BTreeMap, rc::Rc};
 use geop_core_math::geop_error::{GeopError, GeopResult};
 use geop_core_program::{
     element::PickedElement,
+    kept::{Keeper, made_kept},
     operation_registry::OperationRegistry,
     program::Program,
     reader::{Reader, Reads},
+    runner::Runner,
     values::StateValues,
 };
 use serde::{Serialize, de::DeserializeOwned};
@@ -50,7 +52,21 @@ pub trait Drawer: 'static {
     fn hidden(&self, _reader: &Reader) -> Vec<String> {
         Vec::new()
     }
+
+    /// Whether what it draws is kept between processes, as what a program
+    /// builds is (see [`geop_core_program::kept`]): for a drawer whose
+    /// drawing takes work — the model's, which meshes its faces — so that a
+    /// program reopened is drawn without that work. Not, unless it says so.
+    fn kept(&self) -> bool {
+        false
+    }
 }
+
+/// How a drawing is kept between processes ([`Drawer::kept`]).
+const KEPT_DRAWING: Keeper<PartView> = Keeper {
+    write: crate::view::kept::write,
+    read: crate::view::kept::read,
+};
 
 /// What each drawer of a registry drew last ([`Registry::draw`]), kept by
 /// what it read ([`Reads`]): a part shown again with other sketches — a
@@ -67,21 +83,31 @@ const KEPT_DRAWINGS: usize = 4;
 
 impl Drawings {
     /// What the drawer `drawer` draws of the part `reader` reads, by
-    /// `draw`: as it drew it last of what reads the same.
+    /// `draw`: as it drew it last of what reads the same — or, given the
+    /// runner of the program whose part it is, as an earlier process drew
+    /// it of what reads the same now (see [`Drawer::kept`]).
     fn drawn(
         &self,
         drawer: usize,
         reader: &Reader,
+        kept_by: Option<&Runner>,
         draw: impl FnOnce(&Reader) -> GeopResult<PartView>,
     ) -> GeopResult<Rc<PartView>> {
         let mut kept = self.0.borrow_mut();
         let kept = kept.entry(drawer).or_default();
         let entry = match kept.iter().position(|(reads, _)| reader.reads_same(reads)) {
             Some(k) => kept.remove(k),
-            None => {
-                let (drawn, reads) = reader.recorded(draw);
-                (reads, Rc::new(drawn?))
-            }
+            None => match kept_by {
+                Some(runner) => {
+                    let key = format!("drawn:{drawer}");
+                    let (drawn, reads) = made_kept(reader, runner, &key, KEPT_DRAWING, draw);
+                    (reads, drawn?)
+                }
+                None => {
+                    let (drawn, reads) = reader.recorded(draw);
+                    (reads, Rc::new(drawn?))
+                }
+            },
         };
         let drawn = entry.1.clone();
         kept.push(entry);
@@ -380,11 +406,19 @@ impl Registry {
 
     /// The part `reader` reads, as every drawer draws it, with what its
     /// steps annotate it with: what a drawer drew before of what reads the
-    /// same, as `drawings` kept it.
-    pub fn draw(&self, reader: &Reader, drawings: &Drawings) -> GeopResult<PartView> {
+    /// same, as `drawings` kept it — and, given the runner `kept_by` of the
+    /// program whose part it is, what a drawer that keeps its drawings
+    /// ([`Drawer::kept`]) drew of it in an earlier process.
+    pub fn draw(
+        &self,
+        reader: &Reader,
+        drawings: &Drawings,
+        kept_by: Option<&Runner>,
+    ) -> GeopResult<PartView> {
         let mut view = PartView::new();
         for (k, drawer) in self.drawers.iter().enumerate() {
-            let drawn = drawings.drawn(k, reader, |reader| {
+            let kept_by = kept_by.filter(|_| drawer.kept());
+            let drawn = drawings.drawn(k, reader, kept_by, |reader| {
                 let mut drawn = PartView::new();
                 drawer.draw(reader, &mut drawn)?;
                 Ok(drawn)

@@ -1,7 +1,7 @@
 macro_rules! define_ids {
     ($($name:ident),* $(,)?) => {
         $(
-            #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+            #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, serde::Serialize, serde::Deserialize)]
             pub struct $name(pub u64);
 
             impl std::fmt::Display for $name {

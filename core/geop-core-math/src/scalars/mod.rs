@@ -13,6 +13,13 @@ pub use number::Number;
 use crate::geop_error::{GeopError, GeopResult};
 
 // ── IEEE 754 outward-rounding helpers ─────────────────────────────────────────
+//
+// The next number either way, zero included: from zero that is the
+// smallest subnormal, as from any other value it is one unit in the last
+// place. Zero once rounded to `MIN_POSITIVE`, `2.2e-308`, so every value
+// computed near zero carried that much, while values a subnormal apart
+// (a cap's side at `u = MIN_POSITIVE / 20`) were sharp: a point between
+// them could not be told on or off the side.
 
 #[inline]
 pub(crate) fn next_up(x: f64) -> f64 {
@@ -23,7 +30,7 @@ pub(crate) fn next_up(x: f64) -> f64 {
         return f64::INFINITY;
     }
     if x == 0.0 {
-        return f64::MIN_POSITIVE;
+        return f64::from_bits(1);
     }
     let bits = x.to_bits();
     let bits = if x > 0.0 { bits + 1 } else { bits - 1 };
@@ -39,7 +46,7 @@ pub(crate) fn next_down(x: f64) -> f64 {
         return f64::NEG_INFINITY;
     }
     if x == 0.0 {
-        return -f64::MIN_POSITIVE;
+        return -f64::from_bits(1);
     }
     let bits = x.to_bits();
     let bits = if x < 0.0 { bits + 1 } else { bits - 1 };

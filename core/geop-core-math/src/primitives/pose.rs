@@ -13,7 +13,7 @@ use crate::{
     geop_error::{GeopError, GeopResult},
     scalars::{Number, Scalar},
     solvers::{least_squares::Rows, system::Variable},
-    vector::Vector3,
+    vector::{Vector, Vector3},
 };
 
 /// How many terms of each series [`Pose::exp`] sums near zero before it
@@ -310,6 +310,32 @@ impl<T: Number> TryFrom<PoseFile> for Pose<T> {
         Ok(Pose {
             rotation,
             position: Vector3::from_array(file.position.map(T::from_f64)),
+        })
+    }
+}
+
+/// Its position and its rotation's quaternion, each component exactly —
+/// the quaternion as it is, not normalized: what a value kept to be read
+/// again holds ([`crate::exact`]).
+impl crate::exact::Exact for Pose {
+    fn write<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        let [w, x, y, z] = self.rotation.components();
+        let rotation = Vector::from_array([w, x, y, z]);
+        let written = (
+            crate::exact::Written(&self.position),
+            crate::exact::Written(&rotation),
+        );
+        written.serialize(serializer)
+    }
+
+    fn read<'de, D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        let (crate::exact::Read(position), crate::exact::Read(rotation)): (
+            crate::exact::Read<Vector3>,
+            crate::exact::Read<Vector<4>>,
+        ) = Deserialize::deserialize(deserializer)?;
+        Ok(Pose {
+            rotation: Quaternion::new(rotation[0], rotation[1], rotation[2], rotation[3]),
+            position,
         })
     }
 }

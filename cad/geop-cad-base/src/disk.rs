@@ -235,8 +235,10 @@ impl CacheStore for DiskCache {
     fn write(&self, path: &str, text: &str) {
         let target = self.root.join(path);
         let partial = target.with_extension(format!("{CACHE_EXTENSION}.{}", std::process::id()));
-        let written =
-            std::fs::write(&partial, text).and_then(|()| std::fs::rename(&partial, &target));
+        // A shared library's cache files are in a folder of the cache's own.
+        let folder = target.parent().map_or(Ok(()), std::fs::create_dir_all);
+        let written = (folder.and_then(|()| std::fs::write(&partial, text)))
+            .and_then(|()| std::fs::rename(&partial, &target));
         if let Err(e) = written {
             let _ = std::fs::remove_file(&partial);
             eprintln!("geop: could not keep {}: {e}", target.display());

@@ -170,3 +170,140 @@ pub fn edit_sequence(original: &Program) -> Vec<Program> {
     }
     programs
 }
+
+// ── Keeping builds between processes ────────────────────────────────────────
+
+/// Cache files in memory, as a store on disk keeps them, of the build
+/// `build`: what a test of what one process keeps for the next shares
+/// between the two (see [`crate::cache`], [`crate::kept`]).
+#[derive(Clone, Default)]
+pub struct Shelf {
+    pub build: String,
+    pub files: Rc<std::cell::RefCell<std::collections::BTreeMap<String, String>>>,
+}
+
+impl Shelf {
+    /// An empty shelf of the build `build`.
+    pub fn of(build: &str) -> Self {
+        Self {
+            build: build.to_string(),
+            ..Self::default()
+        }
+    }
+
+    /// A cache kept on it.
+    pub fn cache(&self) -> crate::cache::Cache {
+        crate::cache::Cache::stored(Box::new(self.clone()))
+    }
+}
+
+impl crate::cache::CacheStore for Shelf {
+    fn build(&self) -> &str {
+        &self.build
+    }
+
+    fn read(&self, path: &str) -> Option<String> {
+        self.files.borrow().get(path).cloned()
+    }
+
+    fn write(&self, path: &str, text: &str) {
+        (self.files.borrow_mut()).insert(path.to_string(), text.to_string());
+    }
+}
+
+/// Builds the program in the file `file` of the workspace `workspace` makes
+/// of a cache, in the operations of `registry`, in one process — its cache
+/// kept on a shelf — then in another, from what the first kept (see
+/// [`crate::kept`]): asserts that the second makes none of the targets kept
+/// between processes, and builds what the first built (see
+/// [`Part::differences`]). Returns what each process did.
+#[track_caller]
+pub fn assert_reopens(
+    registry: Rc<OperationRegistry>,
+    workspace: impl Fn(crate::cache::Cache) -> Rc<dyn Workspace>,
+    file: &str,
+) -> [crate::runner::Counts; 2] {
+    let shelf = Shelf::of("kept");
+    let process = || {
+        let workspace = workspace(shelf.cache());
+        let program = (workspace.program(file)).unwrap_or_else(|e| panic!("{file}: {e}"));
+        let runner = runner(registry.clone(), Some((workspace.clone(), file)));
+        let mut part = Part::default();
+        let failed = errors(runner.run(&mut part, &program, None));
+        if let Some(cache) = workspace.cache() {
+            cache.flush();
+        }
+        (runner.counts(), part, failed)
+    };
+    let (first, built, failed) = process();
+    let kept = shelf.files.borrow().clone();
+    let (second, reopened, failed_again) = process();
+    assert_eq!(
+        failed, failed_again,
+        "{file}: reopened, its steps fail otherwise"
+    );
+    assert_eq!(
+        second.kept_makes,
+        0,
+        "{file}: reopened, it makes again what it kept: {second:?}, first {first:?}: {:#?}",
+        not_kept(&reopened, file, &kept, &shelf.build)
+    );
+    let differences = reopened.differences(&built);
+    assert!(
+        differences.is_empty(),
+        "{file}: reopened, it builds otherwise: {differences:?}"
+    );
+    [first, second]
+}
+
+/// Every node of a kept type of `part`, built from the file `file` — and of
+/// the parts placed in it, from theirs — that the cache files `kept`, of
+/// the build `build`, keep no record of, and why: the reads in which the
+/// records of its target with its arguments differ from how it was made.
+fn not_kept(
+    part: &Part,
+    file: &str,
+    kept: &std::collections::BTreeMap<String, String>,
+    build: &str,
+) -> Vec<String> {
+    let mut found = Vec::new();
+    let mut parts = vec![(file.to_string(), part)];
+    while let Some((path, part)) = parts.pop() {
+        for (_, _, placed) in part.placed() {
+            parts.push((placed.location.file.clone(), &placed.part));
+        }
+        let text = kept.get(&crate::cache::cache_path(&path));
+        let builds = crate::kept::Builds::read(text.map(String::as_str), build);
+        for (name, node) in part.kept_nodes() {
+            let Some((derivation, digest)) = &node.kept else {
+                continue;
+            };
+            let records = builds.records(&node.step, name);
+            if records
+                .iter()
+                .any(|r| r.digest == *digest && r.derivation == **derivation)
+            {
+                continue;
+            }
+            let differing: Vec<String> = (records.iter())
+                .filter(|r| r.derivation.args == derivation.args)
+                .flat_map(|r| {
+                    (r.derivation.reads.iter())
+                        .filter(|read| !derivation.reads.contains(read))
+                        .map(|(read, _)| format!("{read:?}"))
+                })
+                .collect();
+            found.push(format!(
+                "{path}: `{name}` of step `{}`: {} records, {} with its arguments, \
+                 reading otherwise: {differing:?}; it read {:?}",
+                node.step,
+                records.len(),
+                (records.iter())
+                    .filter(|r| r.derivation.args == derivation.args)
+                    .count(),
+                derivation.reads,
+            ));
+        }
+    }
+    found
+}

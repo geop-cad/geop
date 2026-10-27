@@ -127,6 +127,8 @@ export interface ViewInstance {
   /** The key of its component's view. */
   component: string;
   frame: Frame;
+  /** The colour to draw it in over its own, `#rrggbb`, if the user chose one (see the command `appearance`). */
+  color?: string;
 }
 
 /** A face of the part, as drawn. */
@@ -141,6 +143,18 @@ export interface ViewFace {
 export interface FaceMesh {
   triangles: [Vec3, Vec3, Vec3][];
   normals: [Vec3, Vec3, Vec3][];
+}
+
+/**
+ * A [[FaceMesh]] as the kernel sends it (see `geop_core_editor::view::FaceMesh`):
+ * each corner its triangles share once, its point and its normal as 32-bit
+ * floats, and each triangle as its corners' indices, as 32-bit integers —
+ * all little endian, in base64. Read by `kept.ts`'s `readMesh`.
+ */
+export interface SentFaceMesh {
+  positions: string;
+  normals: string;
+  indices: string;
 }
 
 /** A part as the kernel sends it: each face with the key of its mesh (see `kept.ts`). */
@@ -639,6 +653,8 @@ export type Command =
   | { command: "redo" }
   /** Show or hide the datum, sketch, solid, face standing on its own or placed part `name`. */
   | { command: "visibility"; name: string; visible: boolean }
+  | { command: "appearance"; name: string; color: string | null }
+  | { command: "isolate"; names: string[] }
   /** Something the user did in the panel `key` (see [[ProgramState]] `panels`), which it reads as `payload`. */
   | { command: "panel"; key: string; payload: unknown }
   /**
@@ -811,7 +827,7 @@ export interface SceneState {
   /** The components to forget: no placed part has used them for longest. */
   forgotten: string[];
   /** The meshes of the faces drawn — of the part, and of the components sent — the viewer does not have, by key: kept until `forgotten_meshes`. */
-  meshes: Record<string, FaceMesh>;
+  meshes: Record<string, SentFaceMesh>;
   /** The meshes to forget: no face drawn has used them for longest. */
   forgotten_meshes: string[];
 }
