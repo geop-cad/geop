@@ -21,13 +21,9 @@ use std::{
 
 use geop_core_editor::{
     editing::{
-        GizmoPart, GizmoView, Presentation, Shape, Style, TRIAD, Visual,
-        gizmo::size as gizmo_size,
+        GizmoPart, GizmoView, Presentation, Shape, Style, TRIAD, Visual, gizmo::size as gizmo_size,
     },
-    view::{
-        RESOLUTION,
-        lit::Lit,
-    },
+    view::{RESOLUTION, lit::Lit},
 };
 use geop_core_math::{primitives::DatumKind, scalars::Scalar, vector::Vector3};
 use geop_core_program::element::PickedElement;
@@ -170,7 +166,15 @@ impl Layer {
 
     /// A polyline dashed `dash` on and `gap` off, in pixels, `per_pixel`
     /// world a pixel.
-    fn dashed(&mut self, points: &[V3], color: Rgba, width: f32, dash: f32, gap: f32, per_pixel: f64) {
+    fn dashed(
+        &mut self,
+        points: &[V3],
+        color: Rgba,
+        width: f32,
+        dash: f32,
+        gap: f32,
+        per_pixel: f64,
+    ) {
         let mut start = 0.0;
         for w in points.windows(2) {
             let mut l = line(w[0], w[1], color, width);
@@ -315,7 +319,13 @@ struct PartStatics<'a> {
 }
 
 impl PartStatics<'_> {
-    fn draw(&self, meshes: &HashMap<String, Arc<MeshData>>, faces: &mut HashMap<String, (Arc<MeshData>, Vec<FaceInstance>)>, base: &mut Layer, lit: &mut Layer) {
+    fn draw(
+        &self,
+        meshes: &HashMap<String, Arc<MeshData>>,
+        faces: &mut HashMap<String, (Arc<MeshData>, Vec<FaceInstance>)>,
+        base: &mut Layer,
+        lit: &mut Layer,
+    ) {
         let part = self.part;
         let at = |p: V3| self.frame.point(p);
         let color = part
@@ -338,9 +348,16 @@ impl PartStatics<'_> {
                 continue;
             };
             let is_lit = self.all_lit
-                || self.lit.face(&face.name, face.solid.as_deref(), face.feature.as_deref());
-            let color = if is_lit { color.tint(HIGHLIGHT, 0.7) } else { color };
-            let entry = (faces.entry(face.mesh.clone())).or_insert_with(|| (mesh.clone(), Vec::new()));
+                || self
+                    .lit
+                    .face(&face.name, face.solid.as_deref(), face.feature.as_deref());
+            let color = if is_lit {
+                color.tint(HIGHLIGHT, 0.7)
+            } else {
+                color
+            };
+            let entry =
+                (faces.entry(face.mesh.clone())).or_insert_with(|| (mesh.clone(), Vec::new()));
             entry.1.push(FaceInstance {
                 rows: instance_rows,
                 color: color.f32(),
@@ -375,10 +392,19 @@ impl PartStatics<'_> {
             for curve in &sketch.curves {
                 let points: Vec<V3> = curve.polyline.iter().map(|&p| at(p)).collect();
                 if visible {
-                    let color = if curve.construction { CONSTRUCTION } else { SKETCH };
+                    let color = if curve.construction {
+                        CONSTRUCTION
+                    } else {
+                        SKETCH
+                    };
                     base.polyline(&points, color, 1.6);
                 }
-                if whole || self.lit.curves.contains(&(sketch.name.clone(), curve.id.clone())) {
+                if whole
+                    || self
+                        .lit
+                        .curves
+                        .contains(&(sketch.name.clone(), curve.id.clone()))
+                {
                     lit.polyline(&points, HIGHLIGHT, 2.5);
                 }
             }
@@ -386,7 +412,12 @@ impl PartStatics<'_> {
                 if visible {
                     base.point(at(*p), SKETCH, 5.0);
                 }
-                if whole || self.lit.sketch_points.contains(&(sketch.name.clone(), id.clone())) {
+                if whole
+                    || self
+                        .lit
+                        .sketch_points
+                        .contains(&(sketch.name.clone(), id.clone()))
+                {
                     lit.point(at(*p), HIGHLIGHT, 9.0);
                 }
             }
@@ -430,7 +461,12 @@ pub fn drawing(shown: &Shown, camera: &Camera, statics: &Arc<Statics>) -> Drawin
     }
     let pickable: Vec<DatumKind> = match shown.presentation {
         Some(p) if p.pickable.iter().any(|k| k == "datum" || k == "frame") => {
-            vec![DatumKind::Point, DatumKind::Axis, DatumKind::Plane, DatumKind::Frame]
+            vec![
+                DatumKind::Point,
+                DatumKind::Axis,
+                DatumKind::Plane,
+                DatumKind::Frame,
+            ]
         }
         _ => Vec::new(),
     };
@@ -462,7 +498,9 @@ pub fn drawing(shown: &Shown, camera: &Camera, statics: &Arc<Statics>) -> Drawin
     let hidden: BTreeSet<&str> = kept.hidden.iter().map(String::as_str).collect();
     for (name, kind, frame) in &datums {
         let is_lit = |element: &str| lit_datums.contains(element);
-        let any_lit = lit_datums.iter().any(|l| l == name || l.starts_with(&format!("{name}:")));
+        let any_lit = lit_datums
+            .iter()
+            .any(|l| l == name || l.starts_with(&format!("{name}:")));
         if hidden.contains(name.as_str()) && !any_lit {
             continue;
         }
@@ -556,7 +594,16 @@ fn make_statics(shown: &Shown, visuals: &[Visual], key: u64) -> Statics {
         let Some(view) = kept.components.get(&instance.component) else {
             continue;
         };
-        placed(instance, view, shown, &lit_instances, &kept.meshes, &mut faces, &mut base, &mut lit);
+        placed(
+            instance,
+            view,
+            shown,
+            &lit_instances,
+            &kept.meshes,
+            &mut faces,
+            &mut base,
+            &mut lit,
+        );
     }
     let mut faces: Vec<_> = faces.into_iter().map(|(k, (m, i))| (k, m, i)).collect();
     faces.sort_by(|a, b| a.0.cmp(&b.0));
@@ -608,14 +655,21 @@ impl Place {
         let [x, y, z] = self.axes;
         add(
             self.origin,
-            scale(add(add(scale(x, p[0]), scale(y, p[1])), scale(z, p[2])), self.k),
+            scale(
+                add(add(scale(x, p[0]), scale(y, p[1])), scale(z, p[2])),
+                self.k,
+            ),
         )
     }
 }
 
 /// Two unit vectors square to `d` and to each other, right-handed with it.
 fn square_to(d: V3) -> (V3, V3) {
-    let other = if d[0].abs() < 0.9 { [1.0, 0.0, 0.0] } else { [0.0, 1.0, 0.0] };
+    let other = if d[0].abs() < 0.9 {
+        [1.0, 0.0, 0.0]
+    } else {
+        [0.0, 1.0, 0.0]
+    };
     let a = normalized(cross(d, other));
     (a, cross(d, a))
 }
@@ -627,7 +681,17 @@ fn sphere(layer: &mut Layer, place: &Place, c: V3, r: f64, color: Rgba) {
     let p = |i: usize, j: usize| {
         let theta = std::f64::consts::PI * j as f64 / RINGS as f64;
         let phi = std::f64::consts::TAU * i as f64 / SEG as f64;
-        place.at(add(c, scale([theta.sin() * phi.cos(), theta.cos(), theta.sin() * phi.sin()], r)))
+        place.at(add(
+            c,
+            scale(
+                [
+                    theta.sin() * phi.cos(),
+                    theta.cos(),
+                    theta.sin() * phi.sin(),
+                ],
+                r,
+            ),
+        ))
     };
     for j in 0..RINGS {
         for i in 0..SEG {
@@ -641,12 +705,24 @@ fn sphere(layer: &mut Layer, place: &Place, c: V3, r: f64, color: Rgba) {
 /// A cone (`r1` 0) or cylinder along `dir` from `from`, `h` long, of radius
 /// `r0` at its foot and `r1` at its top.
 #[allow(clippy::too_many_arguments)]
-fn frustum(layer: &mut Layer, place: &Place, from: V3, dir: V3, h: f64, r0: f64, r1: f64, color: Rgba) {
+fn frustum(
+    layer: &mut Layer,
+    place: &Place,
+    from: V3,
+    dir: V3,
+    h: f64,
+    r0: f64,
+    r1: f64,
+    color: Rgba,
+) {
     const SEG: usize = 14;
     let (a, b) = square_to(dir);
     let ring = |i: usize, r: f64, t: f64| {
         let phi = std::f64::consts::TAU * i as f64 / SEG as f64;
-        place.at(add(add(from, scale(dir, t)), add(scale(a, r * phi.cos()), scale(b, r * phi.sin()))))
+        place.at(add(
+            add(from, scale(dir, t)),
+            add(scale(a, r * phi.cos()), scale(b, r * phi.sin())),
+        ))
     };
     let foot = place.at(from);
     let top = place.at(add(from, scale(dir, h)));
@@ -663,10 +739,23 @@ fn frustum(layer: &mut Layer, place: &Place, from: V3, dir: V3, h: f64, r0: f64,
 }
 
 /// A square `size` across about `c`, in the plane of `a` and `b`.
-fn square(layer: &mut Layer, place: &Place, c: V3, a: V3, b: V3, size: f64, color: Rgba) -> [V3; 4] {
+fn square(
+    layer: &mut Layer,
+    place: &Place,
+    c: V3,
+    a: V3,
+    b: V3,
+    size: f64,
+    color: Rgba,
+) -> [V3; 4] {
     let h = size / 2.0;
     let corner = |x: f64, y: f64| place.at(add(c, add(scale(a, x * h), scale(b, y * h))));
-    let q = [corner(-1.0, -1.0), corner(1.0, -1.0), corner(1.0, 1.0), corner(-1.0, 1.0)];
+    let q = [
+        corner(-1.0, -1.0),
+        corner(1.0, -1.0),
+        corner(1.0, 1.0),
+        corner(-1.0, 1.0),
+    ];
     layer.triangle([q[0], q[1], q[2]], color);
     layer.triangle([q[0], q[2], q[3]], color);
     q
@@ -677,7 +766,15 @@ fn cube(layer: &mut Layer, place: &Place, c: V3, h: f64, color: Rgba) {
         let n = std::array::from_fn(|k| if k == axis { 1.0 } else { 0.0 });
         let (a, b) = square_to(n);
         for sign in [1.0, -1.0] {
-            square(layer, place, add(c, scale(n, sign * h)), a, b, 2.0 * h, color);
+            square(
+                layer,
+                place,
+                add(c, scale(n, sign * h)),
+                a,
+                b,
+                2.0 * h,
+                color,
+            );
         }
     }
 }
@@ -691,7 +788,13 @@ fn torus(layer: &mut Layer, place: &Place, axis: V3, radius: f64, tube: f64, col
         let theta = std::f64::consts::TAU * j as f64 / SIDES as f64;
         let out = add(scale(a, phi.cos()), scale(b, phi.sin()));
         let c = scale(out, radius);
-        place.at(add(c, add(scale(out, tube * theta.cos()), scale(axis, tube * theta.sin()))))
+        place.at(add(
+            c,
+            add(
+                scale(out, tube * theta.cos()),
+                scale(axis, tube * theta.sin()),
+            ),
+        ))
     };
     for i in 0..SEG {
         for j in 0..SIDES {
@@ -706,8 +809,16 @@ fn torus(layer: &mut Layer, place: &Place, axis: V3, radius: f64, tube: f64, col
 
 const DATUM: Rgba = Rgba::hex(0xb58cff);
 const LIT: Rgba = Rgba::hex(0xffc94a);
-const AXIS_TINTS: [Rgba; 3] = [Rgba::hex(0xff8080), Rgba::hex(0x80e080), Rgba::hex(0x80b0ff)];
-const FRAME_AXES: [Rgba; 3] = [Rgba::hex(0xff5555), Rgba::hex(0x55dd55), Rgba::hex(0x5599ff)];
+const AXIS_TINTS: [Rgba; 3] = [
+    Rgba::hex(0xff8080),
+    Rgba::hex(0x80e080),
+    Rgba::hex(0x80b0ff),
+];
+const FRAME_AXES: [Rgba; 3] = [
+    Rgba::hex(0xff5555),
+    Rgba::hex(0x55dd55),
+    Rgba::hex(0x5599ff),
+];
 /// A point datum's axes, in pixels.
 const TRIAD_PX: f64 = 32.0;
 
@@ -735,10 +846,25 @@ fn datum(
     let offset = sub(center, frame.origin);
     match kind {
         DatumKind::Plane => {
-            let origin = sub(add(frame.origin, offset), scale(frame.w, dot(offset, frame.w)));
+            let origin = sub(
+                add(frame.origin, offset),
+                scale(frame.w, dot(offset, frame.w)),
+            );
             let look = fade(&[DatumKind::Plane], name);
-            let place = Place { origin: [0.0; 3], axes: [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]], k: 1.0 };
-            let q = square(translucent, &place, origin, frame.u, frame.v, size, paint(DATUM, 0.12, look));
+            let place = Place {
+                origin: [0.0; 3],
+                axes: [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]],
+                k: 1.0,
+            };
+            let q = square(
+                translucent,
+                &place,
+                origin,
+                frame.u,
+                frame.v,
+                size,
+                paint(DATUM, 0.12, look),
+            );
             let edge = paint(DATUM, 0.8, look);
             for i in 0..4 {
                 translucent.line(q[i], q[(i + 1) % 4], edge, 1.2);
@@ -747,25 +873,47 @@ fn datum(
         DatumKind::Axis => {
             let origin = add(frame.origin, scale(frame.w, dot(offset, frame.w)));
             let look = fade(&[DatumKind::Axis], name);
-            let ends = [sub(origin, scale(frame.w, size)), add(origin, scale(frame.w, size))];
+            let ends = [
+                sub(origin, scale(frame.w, size)),
+                add(origin, scale(frame.w, size)),
+            ];
             // Dashes `size / 30` long, gaps half that, in the world.
             translucent.dashed(&ends, paint(DATUM, 0.9, look), 1.5, 2.0, 1.0, size / 60.0);
         }
         DatumKind::Point => {
             let k = camera.world_per_pixel(frame.origin) * TRIAD_PX;
-            let place = Place { origin: frame.origin, axes: [frame.u, frame.v, frame.w], k };
+            let place = Place {
+                origin: frame.origin,
+                axes: [frame.u, frame.v, frame.w],
+                k,
+            };
             let look = fade(&[DatumKind::Point], name);
             sphere(on_top, &place, [0.0; 3], 0.12, paint(DATUM, 1.0, look));
             for (axis, tint) in AXIS_TINTS.iter().enumerate() {
                 let end = std::array::from_fn(|i| if i == axis { 1.0 } else { 0.0 });
-                on_top.line(place.at([0.0; 3]), place.at(end), paint(*tint, 1.0, look), 1.5);
+                on_top.line(
+                    place.at([0.0; 3]),
+                    place.at(end),
+                    paint(*tint, 1.0, look),
+                    1.5,
+                );
             }
         }
         DatumKind::Frame => {
             let k = camera.world_per_pixel(frame.origin) * 10.0 * REACH_PX;
-            let place = Place { origin: frame.origin, axes: [frame.u, frame.v, frame.w], k };
+            let place = Place {
+                origin: frame.origin,
+                axes: [frame.u, frame.v, frame.w],
+                k,
+            };
             let ball = fade(&[DatumKind::Point, DatumKind::Frame], name);
-            sphere(on_top, &place, [0.0; 3], 0.07, paint(Rgba::hex(0xffffff), 1.0, ball));
+            sphere(
+                on_top,
+                &place,
+                [0.0; 3],
+                0.07,
+                paint(Rgba::hex(0xffffff), 1.0, ball),
+            );
             for (axis, (color, (axis_name, plane_name))) in FRAME_AXES
                 .iter()
                 .zip([("x", "yz"), ("y", "zx"), ("z", "xy")])
@@ -774,12 +922,20 @@ fn datum(
                 let dir: V3 = std::array::from_fn(|i| if i == axis { 1.0 } else { 0.0 });
                 let look = fade(&[DatumKind::Axis], &format!("{name}:{axis_name}"));
                 let c = paint(*color, 1.0, look);
-                frustum(on_top, &place, scale(dir, 0.075), dir, 0.85, 0.015, 0.015, c);
+                frustum(
+                    on_top,
+                    &place,
+                    scale(dir, 0.075),
+                    dir,
+                    0.85,
+                    0.015,
+                    0.015,
+                    c,
+                );
                 frustum(on_top, &place, scale(dir, 0.85), dir, 0.15, 0.05, 0.0, c);
                 let look = fade(&[DatumKind::Plane], &format!("{name}:{plane_name}"));
-                let [a, b] = [(axis + 1) % 3, (axis + 2) % 3].map(|o| -> V3 {
-                    std::array::from_fn(|i| if i == o { 1.0 } else { 0.0 })
-                });
+                let [a, b] = [(axis + 1) % 3, (axis + 2) % 3]
+                    .map(|o| -> V3 { std::array::from_fn(|i| if i == o { 1.0 } else { 0.0 }) });
                 let mid = scale(add(a, b), 0.45);
                 let q = square(on_top, &place, mid, a, b, 0.3, paint(*color, 0.3, look));
                 let edge = paint(*color, 1.0, look);
@@ -822,10 +978,18 @@ fn draw_visual(visual: &Visual, camera: &Camera, layer: &mut Layer, labels: &mut
             let points: Vec<V3> = points.iter().map(v).collect();
             if dashed {
                 let per_pixel = camera.world_per_pixel(camera.pose.target);
-                let (dash, gap) = if visual.style == Style::Reference { (2.0, 3.0) } else { (6.0, 4.0) };
+                let (dash, gap) = if visual.style == Style::Reference {
+                    (2.0, 3.0)
+                } else {
+                    (6.0, 4.0)
+                };
                 layer.dashed(&points, color, 1.8, dash, gap, per_pixel);
             } else {
-                let width = if matches!(visual.style, Style::Selected | Style::Hover) { 2.6 } else { 1.8 };
+                let width = if matches!(visual.style, Style::Selected | Style::Hover) {
+                    2.6
+                } else {
+                    1.8
+                };
                 layer.polyline(&points, color, width);
             }
         }
@@ -847,7 +1011,11 @@ fn draw_visual(visual: &Visual, camera: &Camera, layer: &mut Layer, labels: &mut
         Shape::Handle { at, direction } => {
             let at = v(at);
             let k = camera.world_per_pixel(at) * 0.8 * REACH_PX;
-            let place = Place { origin: at, axes: [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]], k };
+            let place = Place {
+                origin: at,
+                axes: [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]],
+                k,
+            };
             sphere(layer, &place, [0.0; 3], 1.0, color);
             let dir = normalized(v(direction));
             if length(v(direction)) > 0.0 {
@@ -860,7 +1028,11 @@ fn draw_visual(visual: &Visual, camera: &Camera, layer: &mut Layer, labels: &mut
         Shape::Triad { at, axes } => {
             let at = v(at);
             let k = camera.world_per_pixel(at) * REACH_PX * TRIAD;
-            let place = Place { origin: at, axes: [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]], k };
+            let place = Place {
+                origin: at,
+                axes: [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]],
+                k,
+            };
             for (axis, color) in axes.iter().zip(FRAME_AXES) {
                 let dir = normalized(v(axis));
                 frustum(layer, &place, [0.0; 3], dir, 0.8, 0.02, 0.02, color);
@@ -872,7 +1044,11 @@ fn draw_visual(visual: &Visual, camera: &Camera, layer: &mut Layer, labels: &mut
 
 // ── the gizmo (`gizmo3d.ts`) ────────────────────────────────────────────
 
-const GIZMO_AXES: [Rgba; 3] = [Rgba::hex(0xe0584f), Rgba::hex(0x5cc25c), Rgba::hex(0x4f86f0)];
+const GIZMO_AXES: [Rgba; 3] = [
+    Rgba::hex(0xe0584f),
+    Rgba::hex(0x5cc25c),
+    Rgba::hex(0x4f86f0),
+];
 const GIZMO_PLAIN: Rgba = Rgba::hex(0xdddddd);
 const GIZMO_LIT: Rgba = Rgba::hex(0xffd84a);
 
@@ -885,7 +1061,11 @@ fn draw_gizmo(gizmo: &GizmoView, camera: &Camera, layer: &mut Layer) -> Option<(
     let at = v(&gizmo.at);
     let reach = camera.reach_at(at);
     let axes = gizmo.axes.each_ref().map(v);
-    let place = Place { origin: at, axes, k: reach };
+    let place = Place {
+        origin: at,
+        axes,
+        k: reach,
+    };
     let eye = match camera.projection {
         crate::camera::Projection::Orthographic => neg(camera.pose.back()),
         crate::camera::Projection::Perspective => normalized(sub(at, camera.pose.position)),
@@ -897,12 +1077,14 @@ fn draw_gizmo(gizmo: &GizmoView, camera: &Camera, layer: &mut Layer) -> Option<(
             continue;
         }
         let axis = match part {
-            GizmoPart::Move(a) | GizmoPart::Plane(a) | GizmoPart::Turn(a) | GizmoPart::Stretch(a) => {
-                Some(a as usize)
-            }
+            GizmoPart::Move(a)
+            | GizmoPart::Plane(a)
+            | GizmoPart::Turn(a)
+            | GizmoPart::Stretch(a) => Some(a as usize),
             GizmoPart::Free | GizmoPart::Scale => None,
         };
-        let lit = gizmo.active == Some(part) || (gizmo.active.is_none() && gizmo.hover == Some(part));
+        let lit =
+            gizmo.active == Some(part) || (gizmo.active.is_none() && gizmo.hover == Some(part));
         let faded = gizmo.active.is_some() && !lit;
         let base = axis.map_or(GIZMO_PLAIN, |a| GIZMO_AXES[a]);
         let color = |opacity: f32| {
@@ -915,8 +1097,26 @@ fn draw_gizmo(gizmo: &GizmoView, camera: &Camera, layer: &mut Layer) -> Option<(
                 let d = unit(axis.unwrap_or(0));
                 let (from, tip) = gizmo_size::ARROW;
                 let head = 2.0;
-                frustum(layer, &place, scale(d, from), d, tip - head - from, 0.18, 0.18, color(0.9));
-                frustum(layer, &place, scale(d, tip - head), d, head, 0.65, 0.0, color(0.9));
+                frustum(
+                    layer,
+                    &place,
+                    scale(d, from),
+                    d,
+                    tip - head - from,
+                    0.18,
+                    0.18,
+                    color(0.9),
+                );
+                frustum(
+                    layer,
+                    &place,
+                    scale(d, tip - head),
+                    d,
+                    head,
+                    0.65,
+                    0.0,
+                    color(0.9),
+                );
             }
             GizmoPart::Plane(_) => {
                 let i = axis.unwrap_or(0);
@@ -926,7 +1126,14 @@ fn draw_gizmo(gizmo: &GizmoView, camera: &Camera, layer: &mut Layer) -> Option<(
                 square(layer, &place, mid, a, b, hi - lo, color(0.45));
             }
             GizmoPart::Turn(_) => {
-                torus(layer, &place, unit(axis.unwrap_or(0)), gizmo_size::RING, 0.16, color(0.9));
+                torus(
+                    layer,
+                    &place,
+                    unit(axis.unwrap_or(0)),
+                    gizmo_size::RING,
+                    0.16,
+                    color(0.9),
+                );
             }
             GizmoPart::Stretch(_) => {
                 let c = scale(unit(axis.unwrap_or(0)), gizmo_size::CUBE_AT);
@@ -955,7 +1162,10 @@ fn grid(plane: &Frame, camera: &Camera, dark: bool) -> Layer {
     let px = camera.world_per_pixel(target);
     let step = 10f64.powf((20.0 * px).log10().ceil());
     let local = sub(target, plane.origin);
-    let (cu, cv) = ((dot(local, plane.u) / step).round(), (dot(local, plane.v) / step).round());
+    let (cu, cv) = (
+        (dot(local, plane.u) / step).round(),
+        (dot(local, plane.v) / step).round(),
+    );
     let n = ((px * camera.size[1] * 1.2) / step).ceil() + 1.0;
     let at = |x: f64, y: f64| plane.in_plane([x, y]);
     let mut layer = Layer::default();
@@ -963,8 +1173,18 @@ fn grid(plane: &Frame, camera: &Camera, dark: bool) -> Layer {
     while i <= n {
         let (x, y) = ((cu + i) * step, (cv + i) * step);
         let color = |k: f64| if (k % 10.0).abs() < 0.5 { major } else { minor };
-        layer.line(at(x, (cv - n) * step), at(x, (cv + n) * step), color(cu + i), 1.0);
-        layer.line(at((cu - n) * step, y), at((cu + n) * step, y), color(cv + i), 1.0);
+        layer.line(
+            at(x, (cv - n) * step),
+            at(x, (cv + n) * step),
+            color(cu + i),
+            1.0,
+        );
+        layer.line(
+            at((cu - n) * step, y),
+            at((cu + n) * step, y),
+            color(cv + i),
+            1.0,
+        );
         i += 1.0;
     }
     let span = (n + cu.abs().max(cv.abs())) * step;

@@ -22,4 +22,6 @@ rfd = "=0.17.2"
 
 [dev-dependencies]
 geop-core-editor = { workspace = true, features = ["testing"] }
-egui_kittest = { version = "=0.36.2" }
+egui_kittest = { version = "=0.36.2", features = ["eframe", "wgpu"] }
+# The images the view draws in tests, kept as PNG where asked.
+image = { version = "0.25", default-features = false, features = ["png"] }

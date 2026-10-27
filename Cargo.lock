@@ -1107,11 +1107,16 @@ version = "0.36.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "5eb3f3effb2726fee23449293e67acbf6cc6ce35525b1722bd5743bb348114d5"
 dependencies = [
+ "eframe",
  "egui",
+ "egui-wgpu",
+ "image",
  "kittest",
  "log",
+ "pollster 1.0.1",
  "serde",
  "toml",
+ "wgpu",
 ]
 
 [[package]]
@@ -1487,6 +1492,7 @@ dependencies = [
  "geop-core-editor",
  "geop-core-math",
  "geop-core-program",
+ "image",
  "rfd",
  "serde",
  "serde_json",

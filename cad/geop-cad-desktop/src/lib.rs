@@ -11,7 +11,9 @@ pub mod controller;
 pub mod draw;
 pub mod kernel;
 pub mod math;
+pub mod render;
 pub mod scene;
+pub mod ui;
 pub mod workspace;
 
 #[cfg(test)]

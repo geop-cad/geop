@@ -164,15 +164,26 @@ mod tests {
         let q = Quat::from_basis(right, up, back);
         assert!(near(q.apply([1.0, 0.0, 0.0]), right));
         assert!(near(q.apply([0.0, 1.0, 0.0]), up));
-        let half = Quat::from_basis([1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]).slerp(&q, 0.5);
-        assert!(near(half.apply([1.0, 0.0, 0.0]), normalized([1.0, (22.5f64).to_radians().tan(), 0.0])));
+        let half =
+            Quat::from_basis([1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]).slerp(&q, 0.5);
+        assert!(near(
+            half.apply([1.0, 0.0, 0.0]),
+            normalized([1.0, (22.5f64).to_radians().tan(), 0.0])
+        ));
     }
 
     #[test]
     fn rotating_about_an_axis_keeps_what_lies_on_it() {
-        assert!(near(rotate([0.0, 0.0, 2.0], [0.0, 0.0, 1.0], 1.0), [0.0, 0.0, 2.0]));
         assert!(near(
-            rotate([1.0, 0.0, 0.0], [0.0, 0.0, 1.0], std::f64::consts::FRAC_PI_2),
+            rotate([0.0, 0.0, 2.0], [0.0, 0.0, 1.0], 1.0),
+            [0.0, 0.0, 2.0]
+        ));
+        assert!(near(
+            rotate(
+                [1.0, 0.0, 0.0],
+                [0.0, 0.0, 1.0],
+                std::f64::consts::FRAC_PI_2
+            ),
             [0.0, 1.0, 0.0]
         ));
     }

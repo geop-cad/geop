@@ -90,7 +90,11 @@ fn a_line_is_sketched_by_clicks_in_the_view_and_saved() {
     app.key("Escape");
     app.key("Escape");
     app.settle();
-    assert!(app.can_commit(), "{:?}", app.step.as_ref().map(|s| &s.error));
+    assert!(
+        app.can_commit(),
+        "{:?}",
+        app.step.as_ref().map(|s| &s.error)
+    );
     app.commit();
     app.settle();
     assert!(app.step.is_none(), "{:?}", app.error);
@@ -175,5 +179,8 @@ fn hovers_are_sent_one_at_a_time_the_latest_winning() {
     app.click(pointer, Button::Primary, false, false);
     app.settle();
     assert_eq!(app.error, None);
-    assert_eq!(app.pointer_events_sent, 1, "the first hover: the click says where the rest went");
+    assert_eq!(
+        app.pointer_events_sent, 1,
+        "the first hover: the click says where the rest went"
+    );
 }

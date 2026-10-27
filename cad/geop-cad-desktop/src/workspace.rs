@@ -148,7 +148,10 @@ impl Workspace {
 
     /// The programs, by path.
     pub fn programs(&self) -> impl Iterator<Item = &str> {
-        self.files.keys().map(String::as_str).filter(|p| is_program(p))
+        self.files
+            .keys()
+            .map(String::as_str)
+            .filter(|p| is_program(p))
     }
 }
 

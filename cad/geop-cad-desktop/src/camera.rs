@@ -83,7 +83,11 @@ impl Pose {
 
 /// A unit vector square to `d`.
 fn any_square_to(d: V3) -> V3 {
-    let other = if d[0].abs() < 0.9 { [1.0, 0.0, 0.0] } else { [0.0, 1.0, 0.0] };
+    let other = if d[0].abs() < 0.9 {
+        [1.0, 0.0, 0.0]
+    } else {
+        [0.0, 1.0, 0.0]
+    };
     normalized(cross(d, other))
 }
 
@@ -159,7 +163,9 @@ impl Camera {
     pub fn world_per_pixel(&self, at: V3) -> f64 {
         let along = match self.projection {
             Projection::Orthographic => self.pose.distance(),
-            Projection::Perspective => dot(sub(at, self.pose.position), neg(self.pose.back())).max(1e-9),
+            Projection::Perspective => {
+                dot(sub(at, self.pose.position), neg(self.pose.back())).max(1e-9)
+            }
         };
         2.0 * along * self.tan_half() / self.height()
     }
@@ -188,7 +194,10 @@ impl Camera {
                 let half = self.half_height();
                 let at = add(
                     self.pose.position,
-                    add(scale(right, nx * half * self.aspect()), scale(up, ny * half)),
+                    add(
+                        scale(right, nx * half * self.aspect()),
+                        scale(up, ny * half),
+                    ),
                 );
                 (at, neg(back))
             }
@@ -446,10 +455,8 @@ impl Camera {
     /// Whether the view came to rest since it was last asked: a glide
     /// landed, momentum died away, or a drag was let go with none.
     pub fn settled(&mut self, held: bool) -> bool {
-        let at_rest = !held
-            && self.glide.is_none()
-            && self.spin.is_none()
-            && length(self.drift) == 0.0;
+        let at_rest =
+            !held && self.glide.is_none() && self.spin.is_none() && length(self.drift) == 0.0;
         if at_rest && self.moved {
             self.moved = false;
             return true;
@@ -492,9 +499,13 @@ pub fn head_on(frame: &Frame, pose: &Pose) -> Pose {
     let distance = length(eye);
     let side = if dot(eye, frame.w) < 0.0 { -1.0 } else { 1.0 };
     let ups = [frame.v, frame.u, neg(frame.u), neg(frame.v)];
-    let up = ups
-        .into_iter()
-        .fold(ups[0], |best, a| if dot(a, pose.up) > dot(best, pose.up) { a } else { best });
+    let up = ups.into_iter().fold(ups[0], |best, a| {
+        if dot(a, pose.up) > dot(best, pose.up) {
+            a
+        } else {
+            best
+        }
+    });
     Pose {
         position: frame.point([center[0], center[1], side * distance]),
         target: frame.in_plane(center),
@@ -538,11 +549,17 @@ mod tests {
             let (_, dir) = camera.ray(400.0, 300.0);
             assert!(near(dir, neg(camera.pose.back())));
             let p = camera.project([0.0, 0.0, 0.0]).unwrap();
-            assert!((p[0] - 400.0).abs() < 1e-6 && (p[1] - 300.0).abs() < 1e-6, "{p:?}");
+            assert!(
+                (p[0] - 400.0).abs() < 1e-6 && (p[1] - 300.0).abs() < 1e-6,
+                "{p:?}"
+            );
             // A point a few pixels right of the middle lies along the ray there.
             let (o, d) = camera.ray(500.0, 200.0);
             let p = camera.project(add(o, scale(d, 50.0))).unwrap();
-            assert!((p[0] - 500.0).abs() < 1e-6 && (p[1] - 200.0).abs() < 1e-6, "{p:?}");
+            assert!(
+                (p[0] - 500.0).abs() < 1e-6 && (p[1] - 200.0).abs() < 1e-6,
+                "{p:?}"
+            );
         }
     }
 
@@ -566,7 +583,10 @@ mod tests {
         let under = add(o, scale(d, t));
         camera.zoom(3.0, 600.0, 100.0);
         let p = camera.project(under).unwrap();
-        assert!((p[0] - 600.0).abs() < 1e-6 && (p[1] - 100.0).abs() < 1e-6, "{p:?}");
+        assert!(
+            (p[0] - 600.0).abs() < 1e-6 && (p[1] - 100.0).abs() < 1e-6,
+            "{p:?}"
+        );
     }
 
     #[test]
@@ -604,16 +624,46 @@ mod tests {
             assert!(frames < 1000, "the spin dies away");
         }
         assert!(frames > 5);
-        assert!((camera.pose.distance() - DEFAULT_POSE.position.map(|x| x * x).iter().sum::<f64>().sqrt()).abs() < 1e-6);
+        assert!(
+            (camera.pose.distance()
+                - DEFAULT_POSE
+                    .position
+                    .map(|x| x * x)
+                    .iter()
+                    .sum::<f64>()
+                    .sqrt())
+            .abs()
+                < 1e-6
+        );
     }
 
     #[test]
     fn a_drawing_is_framed_when_its_first_solid_appears_or_it_outgrows_the_view() {
         let pose = DEFAULT_POSE;
-        let empty = Drawn { size: 100.0, solids: 0 };
-        let one = Drawn { size: 10.0, solids: 1 };
+        let empty = Drawn {
+            size: 100.0,
+            solids: 0,
+        };
+        let one = Drawn {
+            size: 10.0,
+            solids: 1,
+        };
         assert!(wants_framing(empty, one, &pose));
-        assert!(!wants_framing(one, Drawn { size: 12.0, solids: 1 }, &pose));
-        assert!(wants_framing(one, Drawn { size: 1000.0, solids: 1 }, &pose));
+        assert!(!wants_framing(
+            one,
+            Drawn {
+                size: 12.0,
+                solids: 1
+            },
+            &pose
+        ));
+        assert!(wants_framing(
+            one,
+            Drawn {
+                size: 1000.0,
+                solids: 1
+            },
+            &pose
+        ));
     }
 }

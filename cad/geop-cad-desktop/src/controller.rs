@@ -94,7 +94,11 @@ impl Section {
             }
         };
         let origin = std::array::from_fn(|k| from[k] + normal[k] * self.offset);
-        let normal = if self.flip { normal.map(|x| -x) } else { normal };
+        let normal = if self.flip {
+            normal.map(|x| -x)
+        } else {
+            normal
+        };
         Some((origin, normal))
     }
 }
@@ -158,7 +162,9 @@ pub struct Controller {
 fn coalesced(event: &StepEditEvent) -> bool {
     matches!(
         event,
-        StepEditEvent::Hover { .. } | StepEditEvent::Leave | StepEditEvent::Drag { done: false, .. }
+        StepEditEvent::Hover { .. }
+            | StepEditEvent::Leave
+            | StepEditEvent::Drag { done: false, .. }
     )
 }
 
@@ -301,7 +307,11 @@ impl Controller {
                 });
             }
             None => {
-                let program = self.program.as_ref().map(|p| p.program.clone()).unwrap_or_default();
+                let program = self
+                    .program
+                    .as_ref()
+                    .map(|p| p.program.clone())
+                    .unwrap_or_default();
                 self.command(Command::Load {
                     program,
                     path: None,
@@ -417,7 +427,10 @@ impl Controller {
 
     /// What the step edited shows — or the tool in hand.
     pub fn presentation(&self) -> Option<&Presentation> {
-        self.step.as_ref().map(|s| &s.presentation).or(self.tool.as_ref())
+        self.step
+            .as_ref()
+            .map(|s| &s.presentation)
+            .or(self.tool.as_ref())
     }
 
     /// The plane worked in.
@@ -432,8 +445,10 @@ impl Controller {
 
     /// Everything lit: what the editor lights, and what the panels do.
     pub fn highlights(&self) -> Vec<PickedElement> {
-        let mut lit: Vec<PickedElement> =
-            self.presentation().map(|p| p.highlights.clone()).unwrap_or_default();
+        let mut lit: Vec<PickedElement> = self
+            .presentation()
+            .map(|p| p.highlights.clone())
+            .unwrap_or_default();
         lit.extend(self.lights.iter().cloned());
         lit
     }
@@ -561,7 +576,10 @@ impl Controller {
     /// Start a step of the operation `kind` — or, if one is open and new
     /// already, give it up.
     pub fn new_step(&mut self, kind: &str) {
-        let open_new = self.step.as_ref().is_some_and(|s| s.kind == kind && s.id.is_none());
+        let open_new = self
+            .step
+            .as_ref()
+            .is_some_and(|s| s.kind == kind && s.id.is_none());
         if open_new {
             self.command(Command::Cancel);
         } else {
@@ -652,15 +670,27 @@ impl Controller {
     pub fn open_file(&mut self, path: &str) {
         if !is_program(path) {
             let lower = path.to_ascii_lowercase();
-            let reader = (self.program.iter().flat_map(|p| &p.operations))
-                .find(|o| o.info.reads.iter().any(|e| lower.ends_with(&format!(".{e}"))));
+            let reader = (self.program.iter().flat_map(|p| &p.operations)).find(|o| {
+                o.info
+                    .reads
+                    .iter()
+                    .any(|e| lower.ends_with(&format!(".{e}")))
+            });
             self.error = Some(match reader {
-                Some(o) => format!("{path} is no program: read it into one with \"{}\"", o.info.label),
+                Some(o) => format!(
+                    "{path} is no program: read it into one with \"{}\"",
+                    o.info.label
+                ),
                 None => format!("{path} is no program"),
             });
             return;
         }
-        let Some(text) = self.workspace.as_ref().and_then(|w| w.files.get(path)).cloned() else {
+        let Some(text) = self
+            .workspace
+            .as_ref()
+            .and_then(|w| w.files.get(path))
+            .cloned()
+        else {
             self.error = Some(format!("there is no file {path}"));
             return;
         };
@@ -741,7 +771,10 @@ impl Controller {
         if let Some(active) = self.workspace.as_ref().map(|w| w.active.clone())
             && paths.contains(&active)
         {
-            let other = files.keys().find(|p| is_program(p) && !paths.contains(p)).cloned();
+            let other = files
+                .keys()
+                .find(|p| is_program(p) && !paths.contains(p))
+                .cloned();
             match other {
                 Some(other) => self.open_file(&other),
                 None => {
@@ -755,7 +788,10 @@ impl Controller {
 
     /// The files of the workspace, by path.
     pub fn files(&self) -> BTreeMap<String, String> {
-        self.workspace.as_ref().map(|w| w.files.clone()).unwrap_or_default()
+        self.workspace
+            .as_ref()
+            .map(|w| w.files.clone())
+            .unwrap_or_default()
     }
 
     /// The file edited.
@@ -824,7 +860,10 @@ impl Controller {
             _ => wanted,
         };
         self.change_files(BTreeMap::from([(path.clone(), Some(chosen.content))]));
-        self.dialog(&chosen.field, Value::Choice(path[folder.len()..].to_string()));
+        self.dialog(
+            &chosen.field,
+            Value::Choice(path[folder.len()..].to_string()),
+        );
     }
 
     /// Bytes chosen from disk, as a workspace holds a file.

@@ -108,7 +108,8 @@ impl Kernel {
         note_panics();
         let (jobs, inbox) = mpsc::channel::<(u64, Command)>();
         let (outbox, answers) = mpsc::channel();
-        let fresh = move || editor_with(DiskCache::cache(cache_root.clone().and_then(DiskCache::of)));
+        let fresh =
+            move || editor_with(DiskCache::cache(cache_root.clone().and_then(DiskCache::of)));
         std::thread::Builder::new()
             .name("geop kernel".into())
             .spawn(move || {

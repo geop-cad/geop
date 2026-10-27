@@ -211,7 +211,11 @@ impl PartData {
                             .map(|c| CurveData {
                                 id: c.id.clone(),
                                 construction: c.construction,
-                                polyline: c.polyline.iter().map(|p| plane.in_plane(v2(p))).collect(),
+                                polyline: c
+                                    .polyline
+                                    .iter()
+                                    .map(|p| plane.in_plane(v2(p)))
+                                    .collect(),
                             })
                             .collect(),
                         points: (s.points.iter())
