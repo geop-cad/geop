@@ -466,6 +466,26 @@ pub(crate) fn add_flange(
                 "edge {name} meets the bent edge {key} at its {end}, and the corner gap is 0: the two bends would touch"
             )));
         }
+        // The flange starts the gap short of that bend, and the sheet left
+        // in the gap would touch its bend: only a relief beside the flange,
+        // in the gap and the offset, keeps the two apart.
+        let room = offset + rules.corner_gap;
+        match relief {
+            None if set_back.is_some() => {
+                return Err(GeopError::new(format!(
+                    "edge {name} meets the bent edge {key} at its {end}: the flange starts the corner gap short of that bend, and with a tear its own bend, set back into the sheet, would touch the sheet left beside it — use a rectangular relief narrower than the corner gap, or bend the flange outside"
+                )));
+            }
+            None => {}
+            Some(w) if !s(room).sub(w).definitely_greater(Scalar::ZERO) => {
+                return Err(GeopError::new(format!(
+                    "edge {name} meets the bent edge {key} at its {end}: the relief beside the flange, {} wide, does not fit in the corner gap of {} and the offset of {offset} — make the corner gap wider than the relief, the relief ratio smaller, or offset the flange further",
+                    w.to_f64(),
+                    rules.corner_gap
+                )));
+            }
+            Some(_) => {}
+        }
         if shape.corner == Corner::Open || offset > 0.0 {
             return Ok((rules.corner_gap, None));
         }
