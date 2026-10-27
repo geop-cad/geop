@@ -102,23 +102,6 @@ function build(part: GizmoPart): THREE.Object3D {
   return group;
 }
 
-/** The parts a gizmo of `modes` shows, as the kernel lists them. */
-function parts(modes: GizmoView["modes"]): GizmoPart[] {
-  const out: GizmoPart[] = [];
-  const axes = [0, 1, 2];
-  if (modes.translate) {
-    out.push({ part: "free" });
-    for (const axis of axes) out.push({ part: "move", axis });
-    for (const axis of axes) out.push({ part: "plane", axis });
-  }
-  if (modes.rotate) for (const axis of axes) out.push({ part: "turn", axis });
-  if (modes.scale) {
-    for (const axis of axes) out.push({ part: "stretch", axis });
-    out.push({ part: "scale" });
-  }
-  return out;
-}
-
 /** The gizmo on screen: rebuilt when it changes, sized to the screen every frame. */
 export class GizmoLayer {
   readonly group = new THREE.Group();
@@ -134,7 +117,7 @@ export class GizmoLayer {
   }
 
   sync(view: GizmoView | null) {
-    const signature = JSON.stringify(view && { at: view.at, axes: view.axes, modes: view.modes });
+    const signature = JSON.stringify(view && { at: view.at, axes: view.axes, parts: view.parts });
     this.view = view;
     if (signature !== this.signature) {
       this.signature = signature;
@@ -148,7 +131,7 @@ export class GizmoLayer {
         const frame = new THREE.Group();
         const [u, v, w] = view.axes.map(vec);
         frame.quaternion.setFromRotationMatrix(new THREE.Matrix4().makeBasis(u, v, w));
-        for (const part of parts(view.modes)) frame.add(build(part));
+        for (const part of view.parts) frame.add(build(part));
         frame.traverse((o) => (o.renderOrder = 1002));
         this.group.add(frame);
         this.group.add(this.readout);

@@ -83,6 +83,16 @@ impl Panel for JointsPanel {
         }
     }
 
+    /// How free each placed part is: `fixed`, or how many ways it moves.
+    fn details(&self, state: &JointsState) -> BTreeMap<String, String> {
+        let parts = state.freedom.iter().flat_map(|f| &f.parts);
+        (parts.map(|(part, &dof)| {
+            let said = if dof == 0 { "fixed".into() } else { format!("{dof} DOF") };
+            (part.clone(), said)
+        }))
+        .collect()
+    }
+
     fn command(&self, ctx: &mut EditorContext, command: JointsCommand) -> GeopResult<Changed> {
         let JointsCommand::Set { parameter, value } = command;
         ctx.idle()?;
