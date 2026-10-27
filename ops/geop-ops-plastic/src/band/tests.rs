@@ -166,7 +166,10 @@ fn line_into_a_cubic() {
     let d = Scalar::from_f64(0.25);
     let moved = chain.offset(d).unwrap();
     let joint = moved[0].end().unwrap();
-    assert!(joint.could_be_equal(&moved[1].start().unwrap()), "{moved:?}");
+    assert!(
+        joint.could_be_equal(&moved[1].start().unwrap()),
+        "{moved:?}"
+    );
     assert!(joint.could_be_equal(&p(1.0, 0.25)), "{joint:?}");
     let tolerance = Scalar::from_f64(0.25e-6);
     let miss = cubic
