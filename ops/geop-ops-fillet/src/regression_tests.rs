@@ -1148,3 +1148,47 @@ fn fillet_of_every_edge_into_a_lofted_pyramids_apex() {
     let part = program.build_model(blade_registry).unwrap();
     assert_valid(&part);
 }
+
+/// The operations of [`registry`], and the chamfer.
+fn chamfer_registry() -> GeopResult<OperationRegistry> {
+    registry()?.with(crate::Chamfer)
+}
+
+/// Builds `program` in the operations of `registry` and checks the part is
+/// valid.
+fn assert_builds_valid_with(program: &Program, registry: fn() -> GeopResult<OperationRegistry>) {
+    let part = program.build_model(registry).unwrap();
+    assert_valid(&part);
+}
+
+/// A 40 x 20 x 10 block, the front edge of its top (along `x` at `y = 0`)
+/// bevelled 2, then the two front upright edges, which now end on the
+/// bevel, rounded by 2 (a part finished edge by edge, as a user does).
+/// The fillet fails with no hint of why:
+///
+/// > Cannot normalize zero-length vector
+///
+/// at `Link::at(edge=.., fraction=0, t=0.1875)` on the curve of an edge at
+/// `x = 40`, `y = 0`, `z = 8`: where the upright edge at `x = 40` meets the
+/// bevel. Rounding the uprights first and bevelling after fails too, in
+/// another way ([`chamfer_after_rounding_the_edges_it_runs_into`]).
+#[test]
+#[ignore = "bug: rounding the two upright edges of a block that end on a bevelled top edge fails with \"Cannot normalize zero-length vector\" at Link::at, where an upright meets the bevel"]
+fn fillet_of_upright_edges_ending_on_a_chamfer() {
+    let mut program = Program::new();
+    program.push(
+        "box",
+        PrimitiveArgs::block([0.0, 0.0, 0.0], [40.0, 20.0, 10.0]),
+    );
+    let before = program.build_model(chamfer_registry).unwrap();
+    let front = edges_at(&before, [20.0, 0.0, 10.0]);
+    assert_eq!(front.len(), 1, "{front:?}");
+    program.push("bevel", crate::ChamferArgs::even(front, 2.0));
+    let bevelled = program.build_model(chamfer_registry).unwrap();
+    let uprights = edges_with_middle_where(&bevelled, |m| {
+        (near(m[0], 0.0) || near(m[0], 40.0)) && near(m[1], 0.0)
+    });
+    assert_eq!(uprights.len(), 2, "{uprights:?}");
+    program.push("round", FilletArgs::constant(uprights, 2.0));
+    assert_builds_valid_with(&program, chamfer_registry);
+}
