@@ -22,6 +22,7 @@ fn polygon(corners: &[[f64; 2]]) -> Chain {
             })
             .collect(),
         joints: (0..n).map(|i| format!("p{i}")).collect(),
+        smooth: vec![false; n],
         closed: true,
     }
 }
@@ -114,6 +115,7 @@ fn line_into_arc() {
             },
         ],
         joints: vec!["a".into(), "b".into(), "c".into()],
+        smooth: vec![false; 2],
         closed: false,
     };
     let moved = chain.offset(Scalar::from_f64(0.25)).unwrap();
@@ -128,4 +130,47 @@ fn line_into_arc() {
     let radius = ((mid[0] - 1.0).powi(2) + (mid[1] - 1.0).powi(2)).sqrt();
     assert!((radius - 0.75).abs() < 1e-12, "{radius}");
     assert!(chain.offset(Scalar::from_f64(1.5)).is_err());
+}
+
+/// A curve that is neither line nor arc — a cubic, as the shell traces an
+/// edge — and a line it runs on into smoothly, offset: the cubic's offset
+/// is fitted, proven within the fit's tolerance of the true offset, and
+/// meets the line's at the joint.
+#[test]
+fn line_into_a_cubic() {
+    let h = |x: f64, y: f64| {
+        geop_core_math::vector::Vector3::from_array([x, y, 1.0].map(Scalar::from_f64))
+    };
+    let knots = [0.0, 0.0, 0.0, 0.0, 1.0, 1.0, 1.0, 1.0]
+        .map(Scalar::from_f64)
+        .to_vec();
+    let cubic =
+        NurbCurve2D::try_new(3, vec![h(1., 0.), h(2., 0.), h(3., 1.), h(3., 2.)], knots).unwrap();
+    let chain = Chain {
+        pieces: vec![
+            Piece {
+                curve: NurbCurve2D::line(p(0., 0.), p(1., 0.)).unwrap(),
+                center: None,
+                name: "line".into(),
+            },
+            Piece {
+                curve: cubic.clone(),
+                center: None,
+                name: "cubic".into(),
+            },
+        ],
+        joints: vec!["a".into(), "b".into(), "c".into()],
+        smooth: vec![false, true],
+        closed: false,
+    };
+    let d = Scalar::from_f64(0.25);
+    let moved = chain.offset(d).unwrap();
+    let joint = moved[0].end().unwrap();
+    assert!(joint.could_be_equal(&moved[1].start().unwrap()), "{moved:?}");
+    assert!(joint.could_be_equal(&p(1.0, 0.25)), "{joint:?}");
+    let tolerance = Scalar::from_f64(0.25e-6);
+    let miss = cubic
+        .offset_miss(d, cubic.domain(), &moved[1], tolerance)
+        .unwrap();
+    assert!(!miss.definitely_greater(tolerance), "{miss:?}");
 }
