@@ -1224,3 +1224,33 @@ fn a_placed_part_copied_and_pasted_is_mated_as_itself() {
         .collect();
     assert_eq!(parts, ["fore", pasted.id.as_str()], "{:?}", args.mates);
 }
+
+/// Picking a coincident mate's faces by clicks: what the hover lights over
+/// the second cube's top is what the click then picks and lights — the
+/// face — not a frame, which a constraint does not have.
+#[test]
+#[ignore = "bug: while a constraint mate (coincident) waits for its elements, the add_part form \
+            accepts `frame` picks as for a joint: hovering the top of the cube placed as `b` lights \
+            the frame `face/block(c,end)` (a triad), while the click picks and lights the face \
+            `block(c,end)` — what the hover shows is not what the click picks"]
+fn a_constraint_mate_hover_lights_what_the_click_picks() {
+    let mut step = placing(args(false, &[]));
+    step.dialog("x", Value::Number(3.0));
+    step.dialog("add_mate", Value::Choice("coincident".into()));
+    let over = down_at(3.5, 0.5, 1.0);
+    step.send(StepEditEvent::Hover {
+        pointer: over,
+        shift: false,
+    });
+    let hovered = step.presentation().highlights.clone();
+    step.send(StepEditEvent::Click {
+        pointer: over,
+        button: geop_core_editor::editing::Button::Primary,
+        double: false,
+        shift: false,
+    });
+    let picked = step.args::<AddPartArgs>().mates["m1"].entities.clone();
+    assert_eq!(picked, [MateEntity::of("b", Selected::Face(element("block(c,end)")))]);
+    let lit = step.presentation().highlights.clone();
+    assert_eq!(hovered, lit, "the hover lights what the click picks");
+}
