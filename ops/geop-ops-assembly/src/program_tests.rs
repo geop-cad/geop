@@ -181,7 +181,7 @@ impl Built {
     /// cost.
     fn solve_mates(&mut self, pull: Pull) -> GeopResult<(StateValues, Report)> {
         let state = self.program.state.clone();
-        let (moved, report) = solving::solve(&mut self.rerun(), &state, &[pull], None, true)?;
+        let (moved, report) = solving::solve(&mut self.rerun(), &state, &[pull], None, true, None)?;
         if report.converged {
             assert!(report.unproven.is_empty(), "{:?}", report.unproven);
             for name in moved.keys() {
@@ -992,7 +992,8 @@ fn a_mate_on_a_part_of_a_sub_assembly_is_solved() {
     );
     let report = built.check_mates().unwrap();
     assert!(!report.converged, "the pin is not up yet");
-    let (moved, report) = solving::solve(&mut built.rerun(), &top.state, &[], None, true).unwrap();
+    let (moved, report) =
+        solving::solve(&mut built.rerun(), &top.state, &[], None, true, None).unwrap();
     assert!(report.converged, "{report:?}");
     let pin = match moved.get(&key_behind("hinge", &pose_state("pin"))) {
         Some(StateValue::Pose(pose)) => *pose,
@@ -2303,7 +2304,7 @@ fn an_assembly_is_meshed_from_its_files() {
         part: &mut part,
         program: &stale,
     };
-    let (moved, report) = solving::solve(&mut rerun, &stale.state, &[], None, true).unwrap();
+    let (moved, report) = solving::solve(&mut rerun, &stale.state, &[], None, true, None).unwrap();
     assert!(report.converged, "{report:?}");
     stale.state.extend(moved);
     stale.run(&runner, &mut part).unwrap();
@@ -2413,7 +2414,7 @@ fn the_cam_drives_its_follower_round() {
     // Settled as the editor settles it: the foot point on the cam started
     // where it is nearest the follower.
     let state = part.program.state.clone();
-    let (moved, report) = solving::solve(&mut part.rerun(), &state, &[], None, true).unwrap();
+    let (moved, report) = solving::solve(&mut part.rerun(), &state, &[], None, true, None).unwrap();
     assert!(report.converged, "{report:?}");
     part.program.state.extend(moved);
     // The cam's side closes round on itself: its foot point runs on round

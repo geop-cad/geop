@@ -173,6 +173,7 @@ fn an_instance_is_solved_in_the_part_it_is_placed_in() {
         free: BTreeMap::from([("/p:body".to_string(), Mobility::Held)]),
         preferences: Vec::new(),
         scale: Scalar::ONE,
+        structure: None,
     };
     let x = inputs(&[]);
     let run = runner.rerun(&program, &x, &given);

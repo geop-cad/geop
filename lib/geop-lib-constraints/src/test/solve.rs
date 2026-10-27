@@ -85,6 +85,7 @@ fn problem<'p>(names: &[&str], preferences: Vec<&'p dyn Preference>) -> Problem<
             .collect(),
         preferences,
         scale: Scalar::ONE,
+        structure: None,
     }
 }
 

@@ -30,7 +30,7 @@ use geop_core_math::{
     scalars::Scalar,
     solvers::{
         least_squares::{Rows, Stop},
-        system::{Phase, Variable, tolerance},
+        system::{Phase, Structure, Variable, tolerance},
     },
     vector::Vector3,
 };
@@ -217,6 +217,9 @@ pub struct Report {
     /// did ([`solve::Report::work`]).
     pub largest: usize,
     pub work: u64,
+    /// The groups it solved in: what the next event of a drag solves in
+    /// (see [`solve`]). None found for a check.
+    pub structure: Structure,
 }
 
 /// How free the placed parts are (see [`freedom`]).
@@ -281,6 +284,7 @@ pub fn check(reader: &Reader) -> GeopResult<Report> {
         evaluations: [0, 0],
         largest: 0,
         work: 0,
+        structure: Structure::default(),
     })
 }
 
@@ -464,6 +468,7 @@ fn report(reader: &Reader, solved: solve::Solved) -> GeopResult<(StateValues, Re
         evaluations: solved.report.evaluations,
         largest: solved.report.largest,
         work: solved.report.work,
+        structure: solved.structure,
     };
     Ok((solved.state, report))
 }
@@ -484,20 +489,24 @@ fn changes(state: &StateValues, solved: StateValues) -> StateValues {
 /// is placed in, and the unknowns the steps declared — and how the solve
 /// went.
 ///
-/// The program was last run with `state`; it is left run at the state
-/// found. A part no solve may move — fixed, or not `only` — goes where its
+/// The program was last run with `state`; it is left so, for the caller to
+/// run at the state found. A part no solve may move — fixed, or not `only` — goes where its
 /// pulls take it, alone: to a pose pulled to, or moved as far as a point
 /// pulled goes.
 ///
 /// A true solution near there is enclosed only where `prove` asks: an
 /// event of a drag is solved again at the next, and only the state it is
-/// let go at is kept (see [`solve::solve`]).
+/// let go at is kept (see [`solve::solve`]). It is solved in the groups
+/// `known` — those a solve of the same program found a hair away, the
+/// last event's of a drag ([`Report::structure`]) — where given, rather
+/// than finding them again.
 pub fn solve(
     rerun: &mut Rerun,
     state: &StateValues,
     pulls: &[Pull],
     only: Option<&str>,
     prove: bool,
+    known: Option<&Structure>,
 ) -> GeopResult<(StateValues, Report)> {
     let set: BTreeMap<String, Scalar> = (pulls.iter())
         .filter_map(|pull| match pull {
@@ -570,11 +579,13 @@ pub fn solve(
         free: &BTreeMap<String, Mobility>,
         preferences: Vec<&'p dyn Preference>,
         scale: Scalar,
+        structure: Option<&'p Structure>,
     ) -> Problem<'p> {
         Problem {
             free: free.clone(),
             preferences,
             scale,
+            structure,
         }
     }
     // A held angle driven there in stages, the rest following each. Where
@@ -593,18 +604,17 @@ pub fn solve(
         .map(|(from, to)| ((to - from).abs() / TURN_STEP).ceil() as usize)
         .max()
         .unwrap_or(0);
+    // Each stage a hair from the one before: solved in its groups.
+    let mut known = known.cloned();
     for k in 1..stages {
         for (name, (from, to)) in driven.iter().zip(&ranges) {
             let at = from + (to - from) * k as f64 / stages as f64;
             start.insert(name.clone(), StateValue::Number(Scalar::from_f64(at)));
         }
-        start = solve::solve(
-            run(rerun),
-            &start,
-            &problem(&free, Vec::new(), scale),
-            false,
-        )?
-        .state;
+        let staged = problem(&free, Vec::new(), scale, known.as_ref());
+        let solved = solve::solve(run(rerun), &start, &staged, false)?;
+        start = solved.state;
+        known = Some(solved.structure);
     }
     for (name, value) in &set {
         start.insert(name.clone(), StateValue::Number(*value));
@@ -613,7 +623,7 @@ pub fn solve(
     let solved = solve::solve(
         run(rerun),
         &start,
-        &problem(&free, preferences, scale),
+        &problem(&free, preferences, scale, known.as_ref()),
         prove,
     )?;
     let (solved, report) = report(&rerun.reader(), solved)?;
@@ -653,12 +663,12 @@ pub fn set(
     }
     every.extend(set.iter().map(|(p, v)| (p.clone(), *v)));
     let pulls: Vec<Pull> = every.iter().map(value).collect();
-    let (moved, report) = solve(rerun, state, &pulls, None, true)?;
+    let (moved, report) = solve(rerun, state, &pulls, None, true, None)?;
     if report.converged {
         return Ok((moved, report));
     }
     let pulls: Vec<Pull> = set.iter().map(value).collect();
-    solve(rerun, state, &pulls, None, true)
+    solve(rerun, state, &pulls, None, true, None)
 }
 
 /// The problem of every value a solve may move in the program `rerun`
@@ -675,6 +685,7 @@ fn every_value(
         free,
         preferences: Vec::new(),
         scale: scale_of(&reader)?,
+        structure: None,
     };
     Ok((start, problem))
 }

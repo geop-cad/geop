@@ -62,6 +62,19 @@ pub struct Structure {
 }
 
 impl Structure {
+    /// Whether it can be of a system of `blocks` blocks, `constraints`
+    /// constraints and `preferences` preferences: every block in one of its
+    /// components, and every term it names one of the system's.
+    pub fn fits(&self, blocks: usize, (constraints, preferences): (usize, usize)) -> bool {
+        let covered: usize = self.components.iter().map(|c| c.blocks.len()).sum();
+        let within = |g: &Group| {
+            g.blocks.iter().chain(&g.on).all(|&b| b < blocks)
+                && g.constraints.iter().all(|&c| c < constraints)
+                && g.preferences.iter().all(|&p| p < preferences)
+        };
+        covered == blocks && self.groups.iter().chain(&self.components).all(within)
+    }
+
     /// How many layers its groups are in.
     pub fn layers(&self) -> usize {
         self.groups.iter().map(|g| g.layer + 1).max().unwrap_or(0)

@@ -268,6 +268,9 @@ pub struct Solution<V: Variable> {
     /// ([`System::enclose_rest`]). Of none, for a solve not proven
     /// ([`System::solve_unproven`]).
     pub enclosure: Enclosure<V>,
+    /// The groups it was solved in: what a solve of the same system a hair
+    /// away can take as it is ([`System::solve_unproven_in`]).
+    pub structure: Structure,
 }
 
 /// How free the blocks are (see [`System::freedom`]).
@@ -345,7 +348,12 @@ impl<E: Equations> System<'_, E> {
     /// The blocks are moved even where the constraints cannot all hold, to
     /// where they come closest; [`System::held`] says which do not.
     pub fn solve(&self, start: &[E::Value]) -> GeopResult<Solution<E::Value>> {
-        let mut solution = self.solve_unproven(start)?;
+        self.proven(self.solve_unproven(start)?)
+    }
+
+    /// `solution`, a solve of it, with the enclosure of every group it
+    /// solved (see [`System::solve`]).
+    pub fn proven(&self, mut solution: Solution<E::Value>) -> GeopResult<Solution<E::Value>> {
         solution.enclosure = self.enclose_groups(&solution.values, &solution.solved)?;
         Ok(solution)
     }
@@ -355,8 +363,20 @@ impl<E: Equations> System<'_, E> {
     /// again at once — an event of a drag — where proving every group it
     /// moved would cost several times the solve; the answer kept is proven.
     pub fn solve_unproven(&self, start: &[E::Value]) -> GeopResult<Solution<E::Value>> {
+        self.solve_unproven_in(start, self.structure(start))
+    }
+
+    /// [`System::solve_unproven`] in the groups of `structure`: the
+    /// structure a solve of the same system found before, a hair away — an
+    /// event of a drag, the last's — rather than found again, which makes
+    /// every term twice. A pendant that cannot follow there after all is
+    /// solved with its component, as ever (see [`System::solve`]).
+    pub fn solve_unproven_in(
+        &self,
+        start: &[E::Value],
+        structure: Structure,
+    ) -> GeopResult<Solution<E::Value>> {
         let tolerance = tolerance(self.scale)?;
-        let structure = self.structure(start);
         let mut values = start.to_vec();
         let mut solution = Solution {
             values: Vec::new(),
@@ -366,6 +386,7 @@ impl<E: Equations> System<'_, E> {
             phases: Vec::new(),
             evaluations: 0,
             enclosure: Enclosure::empty(self.mobility.len()),
+            structure: Structure::default(),
         };
         let mut failed: Vec<usize> = Vec::new();
         for layer in 0..structure.layers() {
@@ -406,6 +427,7 @@ impl<E: Equations> System<'_, E> {
         solution.at_limit.sort_unstable();
         solution.at_limit.dedup();
         solution.values = values;
+        solution.structure = structure;
         Ok(solution)
     }
 

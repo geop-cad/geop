@@ -140,7 +140,8 @@ impl Mechanism {
     /// near where it ended.
     fn solve(&mut self, pulls: &[Pull]) -> Report {
         let state = self.program.state.clone();
-        let (moved, report) = solving::solve(&mut self.rerun(), &state, pulls, None, true).unwrap();
+        let (moved, report) =
+            solving::solve(&mut self.rerun(), &state, pulls, None, true, None).unwrap();
         if report.converged {
             assert!(report.unproven.is_empty(), "{:?}", report.unproven);
         }

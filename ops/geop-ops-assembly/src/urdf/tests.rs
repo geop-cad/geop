@@ -99,7 +99,8 @@ fn build(files: BTreeMap<String, String>, path: &str, program: &Program) -> Buil
         part: &mut part,
         program: &program,
     };
-    let (moved, report) = solving::solve(&mut rerun, &program.state, &[], None, true).unwrap();
+    let (moved, report) =
+        solving::solve(&mut rerun, &program.state, &[], None, true, None).unwrap();
     assert!(report.converged, "{report:?}");
     program.state.extend(moved);
     program.run(&runner, &mut part).unwrap();

@@ -34,7 +34,9 @@ use std::{
 
 use geop_core_math::{
     geop_error::GeopResult,
-    solvers::system::{self, Bound, Equations, Linearized, Phase, System, Term, Variable},
+    solvers::system::{
+        self, Bound, Equations, Linearized, Phase, Structure, System, Term, Variable,
+    },
 };
 
 pub use geop_core_math::solvers::system::Mobility;
@@ -103,6 +105,11 @@ pub struct Problem<'p> {
     /// far one step may go, and what a turn is measured against when a
     /// value stays where it was.
     pub scale: Scalar,
+    /// The groups a solve of the same system found before, a hair away —
+    /// the last event of a drag — to solve in rather than find them again
+    /// (see [`System::solve_unproven_in`]); found if none is given, or one
+    /// of another system.
+    pub structure: Option<&'p Structure>,
 }
 
 /// How a solve went.
@@ -151,6 +158,8 @@ pub struct Solved {
     pub state: StateValues,
     pub report: Report,
     pub enclosure: Option<Enclosure>,
+    /// The groups it was solved in (see [`Problem::structure`]).
+    pub structure: Structure,
 }
 
 /// How free the values of the state are, where they are now (see
@@ -334,9 +343,14 @@ pub fn solve(
     let (program, start) = Solving::new(run, state, problem)?;
     let system = program.system(problem);
     let work = geop_core_math::solvers::work();
+    let structure = (problem.structure)
+        .filter(|s| s.fits(start.len(), program.count()))
+        .cloned()
+        .unwrap_or_else(|| system.structure(&start));
+    let solution = system.solve_unproven_in(&start, structure)?;
     let solution = match prove {
-        true => system.solve(&start)?,
-        false => system.solve_unproven(&start)?,
+        true => system.proven(solution)?,
+        false => solution,
     };
     let work = geop_core_math::solvers::work() - work;
     let held = system.held(&solution.values)?;
@@ -371,6 +385,7 @@ pub fn solve(
         state: solved,
         report,
         enclosure,
+        structure: solution.structure,
     })
 }
 
