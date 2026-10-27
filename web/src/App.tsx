@@ -176,9 +176,10 @@ function App() {
   /**
    * Show `update`, the kernel's answer to a command of the kind `kind` — or
    * to one an agent's tool sent (`agent`), whose errors and answers are the
-   * assistant's to show.
+   * assistant's to show; `moved`, to the pointer moving, which leaves an
+   * error shown before as it is.
    */
-  function show(update: Update, kind: Command["command"] | "agent") {
+  function show(update: Update, kind: Command["command"] | "agent", moved = false) {
     if (update.program) {
       setProgram(update.program);
       trackFailures(update.program.steps);
@@ -226,7 +227,8 @@ function App() {
     if (kind === "inspect") {
       if (inspection) setAnswers((answers) => ({ ...answers, [inspection.kind]: inspection }));
     } else setPicked(inspection);
-    setError(update.error);
+    // The pointer moving clears no error the user has not read yet.
+    if (!moved || update.error) setError(update.error);
   }
 
   /** Send `command` to the kernel, and show what comes back. */
@@ -237,7 +239,7 @@ function App() {
     if (busy) setPending((n) => n + 1);
     try {
       const update = await send(command);
-      show(update, command.command);
+      show(update, command.command, !busy);
       if (!update.error && EDITS.includes(command.command)) {
         trackEdit(command, command.command === "commit" ? (step?.kind ?? undefined) : undefined);
       }
@@ -1013,8 +1015,6 @@ function App() {
         badge={step && plane ? `${step.label}: working in its plane` : null}
         error={error}
         program={program?.program ?? { steps: [] }}
-        stepCount={stepCount}
-        triangleCount={triangleCount}
         bugReportOpen={bugReportOpen}
         bugReportHost={isMobile ? bugReportHost : null}
         reducedMode={reducedMode}
@@ -1100,6 +1100,16 @@ function App() {
                 <span className="spinner" />
                 <span>{wasmReady ? "Building…" : "Loading geop…"}</span>
               </div>
+            )}
+            {/* What is built, in the view's corner: the top bar's room is the operations'. */}
+            {wasmReady && (
+              <span className="stats" title="Steps in the program, and triangles drawn">
+                <span>
+                  {stepCount} step{stepCount === 1 ? "" : "s"}
+                </span>
+                <span className="stats-separator"> · </span>
+                <span>{triangleCount} tris</span>
+              </span>
             )}
             <div className="view-buttons">
               <button title="Frame the whole part in the view (F)" onClick={() => fitView()}>

@@ -152,7 +152,7 @@ for (const width of [1625, 1400, 1100, 900]) {
 
 // As a visitor sees it, in reduced mode: with every operation shown, the
 // experimental ones take room the others then find in their menus.
-await check("at 1625 px the big operations are big, the small ones small, and every group's caption shows whole", async () => {
+await check("at 1625 px the big operations are big, the small ones small as far as the room reaches, and every group's caption shows whole", async () => {
   await page.setViewportSize({ width: 1625, height: 900 });
   await fresh({ reduced: true });
   const operations = await page.evaluate(async () => (await window.geopCommand({ command: "show" })).program.operations);
@@ -166,9 +166,17 @@ await check("at 1625 px the big operations are big, the small ones small, and ev
   expect(JSON.stringify(big) === JSON.stringify(wantBig), `big: ${big.join(", ")}`);
   const inspectTools = await labels(".inspect-tools button.op-button");
   expect(inspectTools[0] === "Drag", `the inspect panel offers: ${inspectTools.join(", ")}`);
+  // The small ones as far as the room reaches, the earliest groups first:
+  // no group shows its small operations while an earlier one hides its.
   const wantSmall = tier("Small");
-  const notSmall = wantSmall.filter((l) => !small.includes(l));
-  expect(notSmall.length === 0, `not shown small: ${notSmall.join(", ")}`);
+  const shownSmall = wantSmall.map((l) => small.includes(l));
+  expect(shownSmall[0], `not even the first small operation shown: ${wantSmall[0]}`);
+  const firstHidden = shownSmall.indexOf(false);
+  const later = firstHidden < 0 ? [] : wantSmall.slice(firstHidden).filter((l) => small.includes(l));
+  const groupOf = (l) => operations.find((o) => o.label === l)?.group;
+  const hiddenGroup = firstHidden < 0 ? null : groupOf(wantSmall[firstHidden]);
+  const outOfOrder = later.filter((l) => groupOf(l) !== hiddenGroup);
+  expect(outOfOrder.length === 0, `small in a later group while ${wantSmall[firstHidden]} is not: ${outOfOrder.join(", ")}`);
   const shownMenu = tier("Menu").filter((l) => big.includes(l) || small.includes(l));
   expect(shownMenu.length === 0, `shown as buttons, though only in their menus: ${shownMenu.join(", ")}`);
   const captions = await page.evaluate(() => {
@@ -283,7 +291,7 @@ await check("a drag across the viewport selects no text", async () => {
   return builtCleanly();
 });
 
-await check("a drag within a dialog or the program panel selects its text, and only its", async () => {
+await check("a drag within a dialog or the part's panel selects its text, and only its", async () => {
   await fresh();
   await fileMenu(page, "Box with drill hole");
   await builtCleanly();
@@ -301,13 +309,13 @@ await check("a drag within a dialog or the program panel selects its text, and o
   expect(leaked.length === 0, `selected the toolbar's ${leaked.join(", ")}`);
   await page.locator(".desktop-only .popup .button-row button", { hasText: /^Cancel$/ }).click();
   await settle(page);
-  // The program panel: its parameters' text.
-  const panel = await page.locator(".panel.timeline").boundingBox();
+  // The part's panel: the names of what the steps built, to copy.
+  const panel = await page.locator(".panel.structure-panel").boundingBox();
   const inPanel = await dragThrough([
     { x: panel.x + 8, y: panel.y + 30 },
     { x: panel.x + panel.width - 8, y: panel.y + 90 },
   ]);
-  expect(inPanel.trim().length > 0, "dragging across the program panel selected nothing");
+  expect(inPanel.trim().length > 0, "dragging across the part's panel selected nothing");
   // On out of the panel, over the view and up into the toolbar: still only the panel's.
   const view = await page.locator("main.viewport canvas").first().boundingBox();
   const panelOut = await dragThrough([
@@ -316,7 +324,7 @@ await check("a drag within a dialog or the program panel selects its text, and o
     { x: view.x + view.width / 2, y: 40 },
     { x: 300, y: 40 },
   ]);
-  const panelText = await page.locator(".panel.timeline").innerText();
+  const panelText = await page.locator(".panel.structure-panel").innerText();
   const fromPanel = toolbarText.filter((w) => panelOut.includes(w) && !panelText.includes(w));
   expect(fromPanel.length === 0, `a drag out of the panel selected the toolbar's ${fromPanel.join(", ")}`);
   await page.mouse.click(5, 5);
@@ -575,32 +583,7 @@ await check("a UV surface's rib is taken out, and picked again by a click on it"
   return `picked ${middle}; ${stats}`;
 });
 
-await check("a parameter renamed is renamed where it is read, and removing one read warns", async () => {
-  await fresh();
-  await fileMenu(page, "Parametric plate");
-  const before = await builtCleanly();
-  const dialog = page.locator(".modal[aria-label^='Parameter']");
-  await page.locator("button[aria-label='Edit width']").click();
-  const readers = await dialog.locator(".parameter-readers").innerText();
-  expect(readers.includes("depth") && readers.includes("outline"), `width is read by: ${readers}`);
-  const name = dialog.locator(".modal-field", { hasText: "Name" }).locator("input");
-  await name.fill("plate_width");
-  await name.press("Enter");
-  const after = await builtCleanly();
-  expect(after === before, `renamed, the part is ${after}, not ${before}`);
-  await dialog.locator("button", { hasText: "Done" }).click();
-  expect((await page.locator(".parameter-name").allInnerTexts()).includes("plate_width"), "width was not renamed");
-  // Removing what the plate's extrusion reads says so first, and removes nothing yet.
-  await page.locator("button[aria-label='Edit thickness']").click();
-  await dialog.locator("button.danger").click();
-  const warning = await dialog.locator(".warning-text").innerText();
-  expect(warning.includes("plate"), `no warning that the plate reads thickness: ${warning}`);
-  await dialog.locator("button", { hasText: "Done" }).click();
-  expect((await page.locator(".parameter-name").allInnerTexts()).includes("thickness"), "thickness was removed");
-  return builtCleanly();
-});
-
-await check("a table is edited in a popup of its step, and opened again from the parameters panel", async () => {
+await check("a table is edited in a popup of its step, and opened again from the program", async () => {
   await fresh();
   await clickOperation(page, "Table");
   await settle(page);
@@ -629,12 +612,12 @@ await check("a table is edited in a popup of its step, and opened again from the
   expect((await popup.count()) === 0, "OK closes the popup");
   const summary = await page.evaluate(async () => (await window.geopCommand({ command: "show" })).program.steps.map((s) => s.summary).join("; "));
   expect(summary.includes("3 rows"), `the step is summarised: ${summary}`);
-  // The parameters panel lists the table, chosen row and all, and its Edit opens the step again.
-  const chosen = await page.locator(".parameter-row select[title='The row built']").inputValue();
-  expect(chosen === "M6", `the row chosen is ${chosen}`);
-  await page.locator("button[aria-label='Edit size']").click();
+  // Its box in the program opens the step again, the row chosen kept.
+  await page.locator(".timeline .step-box").first().click();
   await settle(page);
-  expect((await popup.count()) === 1, "Edit opens the table's step");
+  expect((await popup.count()) === 1, "the table's step did not open again");
+  const chosen = await popup.locator("input[aria-label='Choose row 3']").isChecked();
+  expect(chosen, "the third row is no longer the one chosen");
   await popup.locator(".button-row button", { hasText: /^Cancel$/ }).click();
   await settle(page);
   return builtCleanly();

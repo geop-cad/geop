@@ -42,8 +42,6 @@ interface Props {
   /** Why the last command was refused, if it was. */
   error: string | null;
   program: Program;
-  stepCount: number;
-  triangleCount: number;
   /** Whether the bug-report form is open. */
   bugReportOpen: boolean;
   /** Where the bug-report form goes instead of floating over the viewport — the mobile "Bug" tab, when on mobile. */
@@ -85,8 +83,6 @@ export function Toolbar({
   badge,
   error,
   program,
-  stepCount,
-  triangleCount,
   bugReportOpen,
   bugReportHost,
   onBugReportOpen,
@@ -164,9 +160,9 @@ export function Toolbar({
 
   return (
     <header className="toolbar">
-      <span className="brand">
-        <img src={logo} alt="" width={20} height={20} />
-        geop
+      <span className="brand" title="geop">
+        <img src={logo} alt="geop" width={20} height={20} />
+        <span className="brand-name">geop</span>
       </span>
       <Menu label="File" entries={file} disabled={busy} className="file-menu" />
       <input
@@ -197,16 +193,6 @@ export function Toolbar({
       {operationRibbon}
       <div className="toolbar-spacer mobile-only" />
       {badge && <span className="mode-badge">{badge}</span>}
-      {!busy && (
-        <span className="stats" title="Steps in the program, and triangles drawn">
-          <span>
-            {stepCount} step{stepCount === 1 ? "" : "s"}
-          </span>
-          {/* Two lines in the bar; one in what is read of it. */}
-          <span className="stats-separator"> · </span>
-          <span>{triangleCount} tris</span>
-        </span>
-      )}
       {!hosted && (
         <a
           className="star-link desktop-only"
