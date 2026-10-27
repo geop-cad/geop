@@ -1185,16 +1185,19 @@ fn assert_builds_valid_with(program: &Program, registry: fn() -> GeopResult<Oper
 /// A 40 x 20 x 10 block, the front edge of its top (along `x` at `y = 0`)
 /// bevelled 2, then the two front upright edges, which now end on the
 /// bevel, rounded by 2 (a part finished edge by edge, as a user does).
-/// The fillet fails with no hint of why:
 ///
-/// > Cannot normalize zero-length vector
-///
-/// at `Link::at(edge=.., fraction=0, t=0.1875)` on the curve of an edge at
-/// `x = 40`, `y = 0`, `z = 8`: where the upright edge at `x = 40` meets the
-/// bevel. Rounding the uprights first and bevelling after fails too, in
-/// another way ([`chamfer_after_rounding_the_edges_it_runs_into`]).
+/// The fillet failed with "Cannot normalize zero-length vector" at
+/// `Link::at`, on the bevel's lower edge along the front at `z = 8`: its
+/// curve began with a span `2e-16` long, four control points at one
+/// point. The bevel's contact curve has a triple knot where its run-out
+/// span begins, at the block's corner, and the boolean cut it there at
+/// the sharp middle of where it reaches the corner's vertex, a hair
+/// beside that knot (`split_parameter_at_point` now cuts at a knot in the
+/// enclosure). Then the upright, 8 long, met the bevel at 45°, and the
+/// blend's usual run-out past it, twice its width over that squareness,
+/// was 8.000008: refused as farther than the chain is long, though half
+/// of it clears the bevel (the chain's length is now tried first).
 #[test]
-#[ignore = "bug: rounding the two upright edges of a block that end on a bevelled top edge fails with \"Cannot normalize zero-length vector\" at Link::at, where an upright meets the bevel"]
 fn fillet_of_upright_edges_ending_on_a_chamfer() {
     let mut program = Program::new();
     program.push(
@@ -1216,15 +1219,21 @@ fn fillet_of_upright_edges_ending_on_a_chamfer() {
 
 /// The block of [`fillet_of_upright_edges_ending_on_a_chamfer`] the other
 /// way round: its two front upright edges rounded by 2 first, then the
-/// front edge of its top bevelled 2. That edge now ends where the two
-/// blends leave the top, tangent to them. The chamfer fails:
+/// front edge of its top bevelled. That edge now runs on tangentially
+/// into the blends' top edges, quarter circles of radius 2 round the
+/// rounded edges' axes.
 ///
-/// > Scalar::div: divisor interval contains zero
+/// The chamfer failed, "Scalar::div: divisor interval contains zero"
+/// moving from the front face onto a blend: the place where its side
+/// crosses the edge between them is found by Newton on the sphere of the
+/// chamfer's distance about the chain's point, and from the station before
+/// the sphere did not reach that edge, which starts at the chain's vertex.
+/// The edge's nearest point now stands in for it there.
 ///
-/// "moving from face FaceId(206) onto face FaceId(164)", at the ends of
-/// edge `block(box,c0,end)` along the top's front.
+/// Bevelled 2, the chamfer's side on the top runs 2 inside the quarter
+/// circles, round their centres: it closes to a point there, and is
+/// refused by name. Bevelled 1.5, it builds.
 #[test]
-#[ignore = "bug: bevelling a block's top front edge after its two front uprights are rounded fails with \"Scalar::div: divisor interval contains zero\" moving from face onto face at the edge's ends, where it runs tangentially into the blends"]
 fn chamfer_after_rounding_the_edges_it_runs_into() {
     let mut program = Program::new();
     program.push(
@@ -1240,7 +1249,14 @@ fn chamfer_after_rounding_the_edges_it_runs_into() {
     let rounded = program.build_model(chamfer_registry).unwrap();
     let front = edges_at(&rounded, [20.0, 0.0, 10.0]);
     assert_eq!(front.len(), 1, "{front:?}");
-    program.push("bevel", crate::ChamferArgs::even(front, 2.0));
+    let mut too_far = program.clone();
+    too_far.push("bevel", crate::ChamferArgs::even(front.clone(), 2.0));
+    let err = too_far
+        .build_model(chamfer_registry)
+        .unwrap_err()
+        .to_string();
+    assert!(err.contains("chamfer it by less than that radius"), "{err}");
+    program.push("bevel", crate::ChamferArgs::even(front, 1.5));
     assert_builds_valid_with(&program, chamfer_registry);
 }
 

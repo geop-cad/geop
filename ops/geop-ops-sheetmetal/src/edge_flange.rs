@@ -466,6 +466,62 @@ pub(crate) fn add_flange(
                 "edge {name} meets the bent edge {key} at its {end}, and the corner gap is 0: the two bends would touch"
             )));
         }
+        // A bend there turning the same way past a quarter turn folds its
+        // flat back over this one (a hem): the flange must start past all
+        // of it, measured along the edge from the corner.
+        if let Some(other) = sheet
+            .bends
+            .iter()
+            .find(|b| b.parent == f && b.parent_edge == key)
+            && other.toward_b == toward_b
+        {
+            let (from, along) = if neighbour == prev {
+                (a, tau)
+            } else {
+                (b, tau.neg())
+            };
+            let (from, along) = (flat.place.point(&from), flat.place.direction(&along));
+            let child = &sheet.flats[other.child];
+            let mut reach: Option<Scalar> = None;
+            for place in [child.place.clone(), child.place.offset(t)] {
+                for e in std::iter::once(&child.outer).chain(&child.holes).flatten() {
+                    let r = place.point(&e.curve.start()?).sub(&from).prod_dot(&along);
+                    reach = Some(reach.map_or(r, |x| x.max(r)));
+                }
+            }
+            if let Some(reach) = reach
+                && !s(offset + rules.corner_gap)
+                    .sub(reach)
+                    .definitely_greater(Scalar::ZERO)
+            {
+                return Err(GeopError::new(format!(
+                    "edge {name} meets the bent edge {key} at its {end}, and the flat {} bent from it folds back over the sheet, {:.3} along edge {name}: a flange starting a corner gap from that end would pass through it — offset the flange from its {end} by more than {:.3}, or bend it the other way",
+                    child.name.root(),
+                    reach.to_f64(),
+                    reach.to_f64() - rules.corner_gap
+                )));
+            }
+        }
+        // The flange starts the gap short of that bend, and the sheet left
+        // in the gap would touch its bend: only a relief beside the flange,
+        // in the gap and the offset, keeps the two apart.
+        let room = offset + rules.corner_gap;
+        match relief {
+            None if set_back.is_some() => {
+                return Err(GeopError::new(format!(
+                    "edge {name} meets the bent edge {key} at its {end}: the flange starts the corner gap short of that bend, and with a tear its own bend, set back into the sheet, would touch the sheet left beside it — use a rectangular relief narrower than the corner gap, or bend the flange outside"
+                )));
+            }
+            None => {}
+            Some(w) if !s(room).sub(w).definitely_greater(Scalar::ZERO) => {
+                return Err(GeopError::new(format!(
+                    "edge {name} meets the bent edge {key} at its {end}: the relief beside the flange, {} wide, does not fit in the corner gap of {} and the offset of {offset} — make the corner gap wider than the relief, the relief ratio smaller, or offset the flange further",
+                    w.to_f64(),
+                    rules.corner_gap
+                )));
+            }
+            Some(_) => {}
+        }
         if shape.corner == Corner::Open || offset > 0.0 {
             return Ok((rules.corner_gap, None));
         }

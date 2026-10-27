@@ -98,8 +98,8 @@ impl Link {
         let t = Scalar::interpolate(t0, t1, f);
         let ctx = |e: GeopError| {
             e.with_context(format!(
-                "Link::at(edge={}, fraction={fraction:?}, t={t:?}): control points {:?}",
-                self.edge, curve.control_points
+                "Link::at(edge={}, fraction={fraction:?}, t={t:?}): control points {:?}, knots {:?}",
+                self.edge, curve.control_points, curve.knot_vector
             ))
         };
         let tangent = curve.tangent(t).map_err(ctx)?.normalize().map_err(ctx)?;

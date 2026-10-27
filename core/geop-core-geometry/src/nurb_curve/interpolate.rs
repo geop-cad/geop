@@ -387,6 +387,33 @@ fn check_params(params: &[Scalar], m: usize) -> GeopResult<()> {
     Ok(())
 }
 
+impl<const D: usize> NurbCurve<D> {
+    /// The rational curve of `degree` whose homogeneous control points
+    /// interpolate the homogeneous points `values` — `(w p, w)`, the point
+    /// `p` of weight `w` — at the strictly increasing `params`, from 0 to 1,
+    /// on the knots their averages give: it passes through each `p` at its
+    /// parameter. Curves interpolated at the same parameters share one knot
+    /// vector, so they are the rows of a surface skinned through curves
+    /// whose control points are the values (see
+    /// [`crate::nurb_surface::NurbSurface::try_new`]), its iso-curve at each
+    /// parameter exactly the curve there.
+    ///
+    /// The values are solved for as they are: interval values carry their
+    /// width into the control points (sharpen a value that is a free choice
+    /// first). An error if a control point's weight comes out not positive.
+    pub fn interpolate_homogeneous(
+        values: &[Vector<D>],
+        params: &[Scalar],
+        degree: usize,
+    ) -> GeopResult<Self> {
+        check_params(params, values.len())?;
+        let p = degree.max(1).min(values.len() - 1);
+        let knots = averaging_knots(params, p);
+        let control_points = solve_interpolation_system(params, &knots, p, values)?;
+        NurbCurve::try_new(p, control_points, knots)
+    }
+}
+
 impl NurbCurve<4> {
     /// The cubic spline through `points`, in order: twice continuously
     /// differentiable, parameterized by chord length (see
@@ -509,31 +536,6 @@ impl NurbCurve<4> {
         degree: usize,
     ) -> GeopResult<Self> {
         interpolate::<3, 4>(points, Some(between), degree)
-    }
-
-    /// The rational curve of `degree` whose homogeneous control points
-    /// interpolate the homogeneous points `values` — `(w p, w)`, the point
-    /// `p` of weight `w` — at the strictly increasing `params`, from 0 to 1,
-    /// on the knots their averages give: it passes through each `p` at its
-    /// parameter. Curves interpolated at the same parameters share one knot
-    /// vector, so they are the rows of a surface skinned through curves
-    /// whose control points are the values (see
-    /// [`crate::nurb_surface::NurbSurface::try_new`]), its iso-curve at each
-    /// parameter exactly the curve there.
-    ///
-    /// The values are solved for as they are: interval values carry their
-    /// width into the control points (sharpen a value that is a free choice
-    /// first). An error if a control point's weight comes out not positive.
-    pub fn interpolate_homogeneous(
-        values: &[Vector4],
-        params: &[Scalar],
-        degree: usize,
-    ) -> GeopResult<Self> {
-        check_params(params, values.len())?;
-        let p = degree.max(1).min(values.len() - 1);
-        let knots = averaging_knots(params, p);
-        let control_points = solve_interpolation_system(params, &knots, p, values)?;
-        NurbCurve::try_new(p, control_points, knots)
     }
 
     /// How far, per coordinate, this curve has to be widened (see

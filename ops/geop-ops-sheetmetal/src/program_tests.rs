@@ -950,10 +950,23 @@ fn notches_and_refused_cuts() {
     assert!(err.contains("has been cut"), "{err}");
     assert_valid(&unfold(part, "sheet_cut(c)"));
 
-    // A corner on the outline.
+    // A side along the outline.
     let corner = polygon(&[[0.0, 0.4], [0.2, 0.4], [0.2, 0.6], [0.0, 0.6]]);
     let err = refused(cut(with_sketch(square(), "n", top(), corner), "c", "n", ""));
-    assert!(err.contains("at an end"), "{err}");
+    assert!(err.contains("runs along"), "{err}");
+    // A corner on the outline, where the notch crosses it: cut there.
+    let crossing = polygon(&[[-0.1, 0.3], [0.0, 0.4], [0.2, 0.5], [-0.1, 0.6]]);
+    let part = cut(with_sketch(square(), "n", top(), crossing), "c", "n", "").unwrap();
+    assert_valid(&part);
+    // A corner touching the outline from inside.
+    let touching = polygon(&[[0.0, 0.5], [0.2, 0.4], [0.2, 0.6]]);
+    let err = refused(cut(
+        with_sketch(square(), "n", top(), touching),
+        "c",
+        "n",
+        "",
+    ));
+    assert!(err.contains("touch"), "{err}");
     // Right across: two pieces.
     let across = polygon(&[[0.4, -0.1], [0.6, -0.1], [0.6, 1.1], [0.4, 1.1]]);
     let err = refused(cut(with_sketch(square(), "n", top(), across), "c", "n", ""));

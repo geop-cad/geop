@@ -122,11 +122,12 @@ fn sign(surface: &NurbSurface3D, d: &Vector3, u: Scalar, v: Scalar) -> Option<bo
 /// `(u, v)` moved onto the silhouette by Newton steps along `g`'s gradient
 /// (the smallest step that zeroes `g` to first order), or why it does not
 /// get there. Every iterate is sharpened: each is only the seed of the
-/// next, and what is returned is a point *of* the silhouette, as good as any
-/// other there — or, where the seeds only cycle round it, the last step as
-/// wide as it came out, if `g` could vanish over it. A start outside the domain — a sharpened foot point on its
-/// boundary can land a hair past it — is clamped into it first, as every
-/// iterate is.
+/// next. What is returned is the step from the last seed, unsharpened: an
+/// enclosure of the silhouette there as wide as `g`'s leaves it — or, where
+/// the seeds only cycle round it, the last step as wide as it came out, if
+/// `g` could vanish over it. A start outside the domain — a sharpened foot
+/// point on its boundary can land a hair past it — is clamped into it
+/// first, as every iterate is.
 fn correct(
     surface: &NurbSurface3D,
     d: &Vector3,
@@ -156,7 +157,18 @@ fn correct(
         },
     )?;
     if corrected.end == End::Done {
-        return Ok(corrected.seed);
+        // The sharp seed is where `g` could vanish, one point of where the
+        // silhouette could be: the answer is the step from it, unsharpened,
+        // which holds the seed and is as wide as `g` there leaves where
+        // the silhouette is. Sharp, a silhouette of a padded surface ran
+        // `3.6e-12` off the face's edge it lies along, and nothing could
+        // see the two were one.
+        let (u, v) = corrected.seed;
+        let (g, gu, gv) = contour(surface, d, u, v)?;
+        let Ok(scale) = g.div(gu.mul(gu).add(gv.mul(gv))) else {
+            return Ok((u, v));
+        };
+        return Ok((u.sub(gu.mul(scale)), v.sub(gv.mul(scale))));
     }
     // No sharp seed lands where `g`, rounded, could vanish — the steps
     // cycle in the last bits around it. The last step's answer, as wide
@@ -912,7 +924,12 @@ fn trim(
     for coedge_id in model.iterate_face_coedges(face_id) {
         let pcurve = &model.get_coedge(coedge_id)?.pcurve;
         let (overlaps, crossings) =
-            curve_curve_overlaps_and_crossings(&fit, pcurve, MAX_NODES, min_subdivision_size())?;
+            curve_curve_overlaps_and_crossings(&fit, pcurve, MAX_NODES, min_subdivision_size())
+                .map_err(|e| {
+                    e.with_context(format!(
+                        "where the traced silhouette {fit:?} meets the pcurve {pcurve:?} of coedge {coedge_id}"
+                    ))
+                })?;
         meetings.extend(crossings.iter().map(|(s, _)| *s));
         meetings.extend(overlaps.iter().flat_map(|o| [o.start.t, o.end.t]));
     }
