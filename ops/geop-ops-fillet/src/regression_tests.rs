@@ -1222,3 +1222,38 @@ fn chamfer_after_rounding_the_edges_it_runs_into() {
     program.push("bevel", crate::ChamferArgs::even(front, 2.0));
     assert_builds_valid_with(&program, chamfer_registry);
 }
+
+/// A 40 x 20 x 10 block with every edge rounded by 2, placed in a large
+/// assembly's coordinates: its corner at `(10000, 10000, 0)`. At the
+/// origin it builds valid. There it builds invalid, 96 errors, every one
+/// a control point of a corner's patch too wide:
+///
+/// > face FaceId(422)'s surface control point 4, component 0 is
+/// > [6058.96855, 6058.96932], 0.00077 wide — wider than the 1e-4 every
+/// > search downstream assumes
+///
+/// (the patch's control points are homogeneous, weighted: the corner it
+/// stands for is at `x` about 10000). At `(100000, -100000, 0)` the fillet
+/// fails outright, building the tool of `block(..,c0,start)`: "Cannot
+/// normalize zero-length vector" at `NurbSurface::normal(0.4, 0.3)`, its
+/// `S_u` `[-1.26, 6.07]` in `x`. Rounding only the four upright edges
+/// builds valid at either place.
+#[test]
+#[ignore = "bug: a block with every edge rounded, far from the origin, builds invalid at (1e4,1e4,0) — corner patches' weighted control points ~8e-4 wide — and fails at (1e5,-1e5,0) with \"Cannot normalize zero-length vector\" in an edge's tool; at the origin, or with only the uprights rounded, it builds"]
+fn every_edge_of_a_block_far_from_the_origin_rounded() {
+    for corner in [[1e4, 1e4, 0.0], [1e5, -1e5, 0.0]] {
+        let mut program = Program::new();
+        program.push(
+            "box",
+            PrimitiveArgs::block(corner, [corner[0] + 40.0, corner[1] + 20.0, 10.0]),
+        );
+        let before = program.build_model(registry).unwrap();
+        let all = edges_with_middle_where(&before, |_| true);
+        assert_eq!(all.len(), 12, "{all:?}");
+        program.push("round", FilletArgs::constant(all, 2.0));
+        let part = program
+            .build_model(registry)
+            .unwrap_or_else(|e| panic!("at {corner:?}: {e}"));
+        assert_valid(&part);
+    }
+}
