@@ -20,6 +20,8 @@
 //! the wall falls away from the rim along it, so the space beside the
 //! edge, over the wall, is air.
 
+use geop_core_geometry::contains::surface::surface_could_contain;
+use geop_core_geometry::intersection::curve_curve_overlaps_and_crossings;
 use geop_core_geometry::nurb_curve::{NurbCurve2D, flatten_point};
 use geop_core_geometry::search::{MAX_NODES, min_subdivision_size};
 use geop_core_math::{
@@ -32,6 +34,7 @@ use geop_core_math::{
 use geop_core_topology::{
     EdgeId, FaceId,
     build::{BodySpec, CoedgeOn, CoedgeSpec},
+    contains::face::{PointClassification, face_contains},
 };
 use geop_lib_booleans::{Reach, combine_tools};
 use geop_lib_sweep::{SweepLoop, extrude};
@@ -283,6 +286,77 @@ fn convex_along(
     Ok(())
 }
 
+/// Fails unless the band along `chain` reaches no further than `far` into
+/// the rim face `face`, the plane `frame` holds it in, without meeting
+/// another of its edges: a lip or groove `what` that wide has to stand on
+/// the rim. Its far side crossing none of the rim's edges lies inside the
+/// rim or out of it all along, and one point of it says which.
+fn fits_on_rim(
+    part: &NamedModel,
+    face: FaceId,
+    frame: &CoordinateSystem,
+    chain: &Chain,
+    far: Scalar,
+    what: &str,
+) -> GeopResult<()> {
+    let model = part.topology();
+    let name = |id: geop_ops_model::RefId| part.name_of(id).unwrap_or("?").to_string();
+    let refuse = |why: String| {
+        GeopError::new(format!(
+            "a {what} {:?} wide does not fit on the rim, face {}: {why} — make it narrower than the rim",
+            far.to_f64(),
+            name(face.into())
+        ))
+    };
+    let far_side = chain.offset(far)?;
+    for coedge in model.iterate_face_coedges(face) {
+        let edge = model.get_coedge(coedge)?.edge()?;
+        let curve = &model.get_edge(edge)?.curve;
+        let flat = curve
+            .control_points
+            .iter()
+            .map(|cp| flatten_point(cp, frame.origin(), frame.u(), frame.v()))
+            .collect();
+        let flat = NurbCurve2D::try_new(curve.degree, flat, curve.knot_vector.clone())?;
+        for side in &far_side {
+            let (overlaps, crossings) =
+                curve_curve_overlaps_and_crossings(side, &flat, MAX_NODES, min_subdivision_size())?;
+            if !(overlaps.is_empty() && crossings.is_empty()) {
+                return Err(refuse(format!(
+                    "its far side meets the rim's edge {}",
+                    name(edge.into())
+                )));
+            }
+        }
+    }
+    let side = &far_side[0];
+    let at = side.evaluate(side.mid_parameter()?)?;
+    let point = frame
+        .origin()
+        .add(&frame.u().prod_scalar(at[0]))
+        .add(&frame.v().prod_scalar(at[1]));
+    let surface = &model.get_face(face)?.surface;
+    let inside = match surface_could_contain(surface, &point, MAX_NODES, min_subdivision_size())? {
+        Some((u, v)) => face_contains(
+            model,
+            face,
+            u,
+            v,
+            MAX_NODES,
+            min_subdivision_size(),
+            RIM_SEED,
+        )?,
+        None => PointClassification::Outside,
+    };
+    if inside != PointClassification::Inside {
+        return Err(refuse("its far side lies past the rim's other edge".into()));
+    }
+    Ok(())
+}
+
+/// Seeds the ray directions [`fits_on_rim`] asks the rim with.
+const RIM_SEED: u64 = 0x5249_4D00_0000_0001;
+
 /// The sizes of a lip, or of the lip a groove takes.
 #[derive(Clone, Copy, Debug)]
 pub struct LipSize {
@@ -339,6 +413,7 @@ pub fn lip(
         )))
         .with_context(ctx);
     }
+    fits_on_rim(part, face, &frame, &chain, size.width, "lip").with_context(ctx)?;
     let loops: Vec<SweepLoop> = chain
         .band(Scalar::ZERO, size.width)
         .with_context(ctx)?
@@ -390,6 +465,15 @@ pub fn groove(
         .solid_name_of_face(face, "a rim is a face of a solid")
         .with_context(ctx)?;
     let (frame, chain) = rim_chain(part, face, edges).with_context(ctx)?;
+    fits_on_rim(
+        part,
+        face,
+        &frame,
+        &chain,
+        size.width.add(clearance),
+        "groove",
+    )
+    .with_context(ctx)?;
     // Past the wall into the air, and above the rim, by the lip's width: a
     // free choice, only so no face of the cut lies on one of the solid.
     let air = size.width;
