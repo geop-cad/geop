@@ -92,6 +92,40 @@ mod set {
         );
     }
 
+    /// The keys that start a step are each one operation's, a letter with
+    /// Shift or without, and none of them the view's own (`F` frames it)
+    /// or the key list's (`?`); the most used of the workflow have one.
+    #[test]
+    fn every_shortcut_starts_one_operation() {
+        let registry = registry().unwrap();
+        let infos = registry.infos();
+        let mut taken = HashSet::new();
+        for listed in &infos {
+            let Some(key) = listed.info.shortcut else {
+                continue;
+            };
+            let letter = key.strip_prefix("Shift+").unwrap_or(key);
+            assert!(
+                letter.len() == 1 && letter.chars().all(|c| c.is_ascii_uppercase()),
+                "{}: {key:?} is no letter",
+                listed.kind
+            );
+            assert!(key != "F", "{}: F frames the view", listed.kind);
+            assert!(taken.insert(key), "{key} starts two operations");
+        }
+        for kind in [
+            "add_sketch",
+            "extrude",
+            "revolve",
+            "fillet",
+            "hole",
+            "add_part",
+        ] {
+            let listed = infos.iter().find(|i| i.kind == kind).unwrap();
+            assert!(listed.info.shortcut.is_some(), "{kind} has no key");
+        }
+    }
+
     /// A new step starts from what the steps before it built.
     #[test]
     fn new_steps_start_from_what_was_built() {
@@ -1137,6 +1171,19 @@ mod agent {
             assert!(answer.text.contains("path"), "{}", answer.text);
             assert!(answer.updates.is_empty());
         }
+    }
+
+    /// A session knows the program from the start, but the viewer has
+    /// nothing yet: the page's first command, whatever it is, is answered
+    /// with the whole scene. The browser's first was answered with none,
+    /// and the view stayed empty until something changed it.
+    #[test]
+    fn a_sessions_first_command_sends_the_scene() {
+        let mut session = Session::new(crate::editor());
+        let update = session.handle(geop_core_editor::editor::Command::Files {
+            files: Default::default(),
+        });
+        assert!(update.scene.is_some_and(|scene| scene.all));
     }
 
     /// Every tool the browser offers, on the drilled box: built step by

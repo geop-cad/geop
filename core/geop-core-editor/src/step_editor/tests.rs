@@ -79,7 +79,7 @@ impl Editable for MarkOperation {
                 picked(&args.on),
                 &["face"],
                 false,
-                Preview(|_, _| Vec::new()),
+                Preview(|_, _| None),
             )
             .number("distance", distance);
         let dot = Shape::Point {

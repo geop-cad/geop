@@ -196,6 +196,7 @@ impl PartOperation for Revolve {
         OperationGroup::Solid,
         OperationTier::Big,
     )
+    .shortcut("R")
     .icon(crate::icons::REVOLVE);
     type Args = RevolveArgs;
     type Session = ();

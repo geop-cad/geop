@@ -181,8 +181,8 @@ export class DatumLayer {
   private signature = "";
 
   /** Show `datums` but those in `hidden`, planes and axes `size` across around `center`. */
-  sync(datums: DatumInfo[], hidden: string[], size: number, center: THREE.Vector3) {
-    const shown = datums.filter((d) => !hidden.includes(d.name));
+  sync(datums: DatumInfo[], hidden: Set<string>, size: number, center: THREE.Vector3) {
+    const shown = datums.filter((d) => !hidden.has(d.name));
     const signature = JSON.stringify([shown, size, center.toArray()]);
     if (signature === this.signature) return;
     this.signature = signature;

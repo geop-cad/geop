@@ -207,6 +207,9 @@ impl Session {
             sent: Vec::new(),
         };
         session.handle(Command::Show);
+        // That scene was the session's to know, not the viewer's to have:
+        // the front end's first command gets all of it.
+        session.editor.forget_viewer();
         session
     }
 

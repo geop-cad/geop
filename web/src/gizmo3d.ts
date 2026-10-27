@@ -117,6 +117,7 @@ export class GizmoLayer {
   }
 
   sync(view: GizmoView | null) {
+    if (view === this.view && view != null) return;
     const signature = JSON.stringify(view && { at: view.at, axes: view.axes, parts: view.parts });
     this.view = view;
     if (signature !== this.signature) {

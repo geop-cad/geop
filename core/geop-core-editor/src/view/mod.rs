@@ -516,9 +516,43 @@ struct Layer<'v> {
     motion: Option<(Motion, Motion)>,
     /// The instance's name, for a placed part.
     instance: Option<&'v str>,
+    /// What the viewer does not draw, of the whole drawing.
+    hidden: &'v [String],
 }
 
 impl Layer<'_> {
+    /// Whether the viewer does not draw what this layer names `name`: a
+    /// solid, a face of none, a sketch, a datum — by its key in the part
+    /// drawn (see [`Located::key`]).
+    fn hides(&self, name: &str) -> bool {
+        let key = Located::in_instance(self.instance.unwrap_or_default(), name).key();
+        self.hidden.binary_search(&key).is_ok()
+    }
+
+    /// Whether the face `face` is drawn: its solid is not hidden, or, of
+    /// none, it is not.
+    fn shows_face(&self, face: &ViewFace) -> bool {
+        match &face.solid {
+            Some(solid) => !self.hides(solid),
+            None => !self.hides(&face.name),
+        }
+    }
+
+    /// Whether a vertex or an edge of the solid `solid`, bounding `faces`,
+    /// is drawn: its solid is not hidden, or, of none, not every face it
+    /// bounds is.
+    fn shows_boundary(&self, solid: &Option<String>, faces: &[String]) -> bool {
+        match solid {
+            Some(solid) => !self.hides(solid),
+            None => faces.is_empty() || faces.iter().any(|f| !self.hides(f)),
+        }
+    }
+
+    /// The nearest face drawn the ray enters.
+    fn pick_face(&self) -> Option<(Scalar, &ViewFace)> {
+        (self.view).pick_face(&self.pointer, |f| self.shows_face(f))
+    }
+
     /// The element `kind` `name` of the target `target` of this layer, as
     /// the part drawn names it.
     fn element(&self, target: &str, kind: &str, name: &str) -> PickedElement {
@@ -631,17 +665,31 @@ impl PartView {
             .definitely_greater(pointer.reach_at(1.0, t.add(radius)))
     }
 
-    /// The part drawn itself, then every placed part, each with `pointer`
-    /// moved into its frame.
-    fn layers(&self, pointer: &Pointer) -> Vec<Layer<'_>> {
+    /// The part drawn itself, then every placed part drawn — not hidden,
+    /// nor placed in one hidden — each with `pointer` moved into its frame;
+    /// of each, only what `hidden` does not name is hit.
+    fn layers<'v>(&'v self, pointer: &Pointer, hidden: &'v [String]) -> Vec<Layer<'v>> {
         let mut layers = vec![Layer {
             view: self,
             pointer: *pointer,
             near: true,
             motion: None,
             instance: None,
+            hidden,
         }];
-        for instance in &self.instances {
+        let instance_hidden = |name: &str| {
+            let mut path = name;
+            loop {
+                if hidden.binary_search_by(|h| h.as_str().cmp(path)).is_ok() {
+                    return true;
+                }
+                match path.rsplit_once(INSTANCE_SEPARATOR) {
+                    Some((outer, _)) => path = outer,
+                    None => return false,
+                }
+            }
+        };
+        for instance in self.instances.iter().filter(|i| !instance_hidden(&i.name)) {
             let back = instance.pose.inverse().motion();
             let ray = &pointer.ray;
             let Ok(ray) = Ray::try_new(back.apply(ray.origin()), back.rotate(ray.dir())) else {
@@ -658,6 +706,7 @@ impl PartView {
                 pointer,
                 motion: Some((instance.pose.motion(), back)),
                 instance: Some(&instance.name),
+                hidden,
             });
         }
         layers
@@ -668,13 +717,17 @@ impl PartView {
     /// placed in one placed rigid, the innermost one around it whose pose is
     /// a state of the part drawn: what moves it. None for a fixed one: no
     /// drag moves it.
-    pub fn part_to_drag(&self, pointer: &Pointer) -> Option<(&ViewInstance, Scalar)> {
-        let layers = self.layers(pointer);
+    pub fn part_to_drag(
+        &self,
+        pointer: &Pointer,
+        hidden: &[String],
+    ) -> Option<(&ViewInstance, Scalar)> {
+        let layers = self.layers(pointer, hidden);
         // The part's own faces hide what is behind them too.
         let (t, hit) = layers
             .iter()
             .filter(|l| l.near)
-            .filter_map(|l| Some((l.view.pick_face(&l.pointer)?.0, l.instance)))
+            .filter_map(|l| Some((l.pick_face()?.0, l.instance)))
             .min_by(|a, b| nearer(a.0, b.0))?;
         let hit = hit?;
         let moved = self
@@ -691,56 +744,55 @@ impl PartView {
     }
 
     /// How far along `pointer`'s ray it first enters the placed part
-    /// `instance`, if it does.
-    pub fn pick_instance(&self, instance: &str, pointer: &Pointer) -> Option<Scalar> {
-        let layers = self.layers(pointer);
+    /// `instance`, if it does and is drawn.
+    pub fn pick_instance(
+        &self,
+        instance: &str,
+        pointer: &Pointer,
+        hidden: &[String],
+    ) -> Option<Scalar> {
+        let layers = self.layers(pointer, hidden);
         let layer = layers.iter().find(|l| l.instance == Some(instance))?;
-        layer
-            .near
-            .then(|| layer.view.pick_face(&layer.pointer))?
-            .map(|(t, _)| t)
+        layer.near.then(|| layer.pick_face())?.map(|(t, _)| t)
+    }
+
+    /// The box around what it draws itself — its vertices, edges, faces
+    /// and sketches, not the parts placed in it — if it draws anything.
+    fn own_box(&self) -> Option<Vector3> {
+        let sketch_points = self.sketches.iter().flat_map(|sketch| {
+            (sketch.curves.iter())
+                .flat_map(|c| &c.polyline)
+                .map(|p| sketch.plane.uv_to_xyz(p))
+        });
+        (self.vertices.iter())
+            .map(|v| v.at)
+            .chain(self.edges.iter().flat_map(|e| e.polyline.iter().copied()))
+            .chain((self.faces.iter()).flat_map(|f| f.mesh.triangles.iter().flatten().copied()))
+            .chain(sketch_points)
+            .reduce(|a, b| a.union(&b))
     }
 
     /// The box around everything drawn: the union of every point of it,
     /// and of the corners of every placed part's own box, where it is.
     fn measure(&self) -> Extent {
-        let sketch_points = self.sketches.iter().flat_map(|sketch| {
-            sketch
-                .curves
-                .iter()
-                .flat_map(|c| &c.polyline)
-                .map(|p| sketch.plane.uv_to_xyz(p))
-        });
-        let hull = self
-            .vertices
-            .iter()
-            .map(|v| v.at)
-            .chain(self.edges.iter().flat_map(|e| e.polyline.iter().copied()))
-            .chain(
-                self.faces
-                    .iter()
-                    .flat_map(|f| f.mesh.triangles.iter().flatten().copied()),
-            )
-            .chain(sketch_points)
-            .collect::<Vec<_>>();
+        // Each placed part by the corners of its own box, where it is: the
+        // box around what it draws, not a cube as wide as that box's
+        // diagonal, which framed an assembly far too small.
         let mut corners = Vec::new();
         for instance in &self.instances {
-            let view = &instance.view;
-            // An empty part has no box of its own to place.
-            if view.vertices.is_empty() && view.faces.is_empty() && view.instances.is_empty() {
+            let Some(own) = instance.view.own_box() else {
                 continue;
-            }
-            let Extent { center, size } = view.extent;
-            let half = size.mul(Scalar::from_f64(0.5));
+            };
             let motion = instance.pose.motion();
             for i in 0..8 {
                 let corner = Vector3::from_array([0, 1, 2].map(|k| match i >> k & 1 {
-                    0 => center[k].sub(half),
-                    _ => center[k].add(half),
+                    0 => own[k].lower(),
+                    _ => own[k].upper(),
                 }));
                 corners.push(motion.apply(&corner));
             }
         }
+        let hull = self.own_box().into_iter();
         let hull = hull.into_iter().chain(corners).reduce(|a, b| a.union(&b));
         let Some(hull) = hull else {
             return Extent {
@@ -766,13 +818,21 @@ impl PartView {
     /// element under the pointer is the one meant. Else the nearest along
     /// the ray of the faces, sketches and other datums hit. The parts placed
     /// in the part count alike, each where it is (see [`PartView::layers`]):
-    /// a vertex of one is hidden behind a face of another.
-    pub fn pick(&self, pointer: &Pointer, accepts: &[String]) -> Option<ElementHit> {
+    /// a vertex of one is hidden behind a face of another. What the viewer
+    /// does not draw — named in `hidden`, sorted, as
+    /// [`crate::editor::SceneState::hidden`] names it — is not hit, and
+    /// hides nothing behind it: a pick is made in what is seen.
+    pub fn pick(
+        &self,
+        pointer: &Pointer,
+        accepts: &[String],
+        hidden: &[String],
+    ) -> Option<ElementHit> {
         let accepted = |kind: &str| accepts.iter().any(|a| a == kind);
         if accepted(drawn::FRAME) {
-            return self.pick_frame_on(pointer);
+            return self.pick_frame_on(pointer, hidden);
         }
-        let layers = self.layers(pointer);
+        let layers = self.layers(pointer, hidden);
         if accepted(drawn::DATUM) {
             let frames = layers.iter().filter_map(|l| l.view.pick_frame(l));
             if let Some(hit) = nearest(frames) {
@@ -785,7 +845,7 @@ impl PartView {
         let face = layers
             .iter()
             .filter(|l| l.near)
-            .filter_map(|l| l.view.pick_face(&l.pointer).map(|(t, f)| (t, l, f)))
+            .filter_map(|l| l.pick_face().map(|(t, f)| (t, l, f)))
             .min_by(|a, b| nearer(a.0, b.0));
         // In front of the face hit, give or take the reach — or on its
         // boundary, of the same layer: `faces`, those a vertex or an edge
@@ -808,14 +868,14 @@ impl PartView {
                 (l.pointer.within(dist, t, 1.0) && visible(t, faces, l)).then_some(t)
             };
             if accepted(drawn::VERTEX) {
-                for v in &l.view.vertices {
+                for v in (l.view.vertices.iter()).filter(|v| l.shows_boundary(&v.solid, &v.faces)) {
                     if let Some(t) = near(&v.at, &v.faces) {
                         points.push(l.hit(&l.view.model, drawn::VERTEX, &v.name, v.at, t));
                     }
                 }
             }
             if accepted(drawn::SKETCH_POINT) {
-                for sketch in &l.view.sketches {
+                for sketch in l.view.sketches.iter().filter(|s| !l.hides(&s.name)) {
                     for p in &sketch.points {
                         let at = sketch.plane.uv_to_xyz(&p.at);
                         if let Some(t) = near(&at, &[]) {
@@ -843,7 +903,7 @@ impl PartView {
                     .min_by(|&a, &b| nearer(a, b))
             };
             if accepted(drawn::EDGE) {
-                for e in &l.view.edges {
+                for e in (l.view.edges.iter()).filter(|e| l.shows_boundary(&e.solid, &e.faces)) {
                     let mut segments = e.polyline.array_windows().map(|&[a, b]| (a, b));
                     if let Some(t) = hit_along(&mut segments, &e.faces) {
                         edges.push(l.hit(&l.view.model, drawn::EDGE, &e.name, ray.at(t), t));
@@ -851,7 +911,7 @@ impl PartView {
                 }
             }
             if accepted(drawn::SKETCH_CURVE) {
-                for sketch in &l.view.sketches {
+                for sketch in l.view.sketches.iter().filter(|s| !l.hides(&s.name)) {
                     for c in &sketch.curves {
                         let world = |p: &Vector2| sketch.plane.uv_to_xyz(p);
                         let mut segments = c
@@ -912,7 +972,7 @@ impl PartView {
     /// vertex of the face under the pointer, the face's at that corner; an
     /// edge, its own, at the end the pointer is near; a point or a datum,
     /// its own.
-    fn pick_frame_on(&self, pointer: &Pointer) -> Option<ElementHit> {
+    fn pick_frame_on(&self, pointer: &Pointer, hidden: &[String]) -> Option<ElementHit> {
         let kinds = [
             drawn::DATUM,
             drawn::VERTEX,
@@ -922,8 +982,8 @@ impl PartView {
             drawn::SKETCH_CURVE,
         ];
         let accepts: Vec<String> = kinds.iter().map(|k| k.to_string()).collect();
-        let hit = self.pick(pointer, &accepts)?;
-        let layers = self.layers(pointer);
+        let hit = self.pick(pointer, &accepts, hidden)?;
+        let layers = self.layers(pointer, hidden);
         let instance = Some(hit.element.target.path()).filter(|path| !path.is_empty());
         let layer = layers.iter().find(|l| l.instance == instance)?;
         let view = layer.view;
@@ -935,7 +995,7 @@ impl PartView {
         let at = match hit.element.kind.as_str() {
             drawn::VERTEX => {
                 let vertex = view.vertices.iter().find(|v| v.name == hit.element.name)?;
-                let under = view.pick_face(&layer.pointer);
+                let under = layer.pick_face();
                 if let Some((_, face)) = under.filter(|(_, f)| vertex.faces.contains(&f.name)) {
                     let on = element(drawn::FACE, &face.name);
                     let frame = FramePick {
@@ -1002,13 +1062,18 @@ impl PartView {
         })
     }
 
-    /// The nearest face the ray enters, of the triangles its tree finds the
-    /// ray could meet (see [`tree`]) — the first of the nearest, in the
-    /// order of the faces and their triangles, as testing every one finds.
-    fn pick_face(&self, pointer: &Pointer) -> Option<(Scalar, &ViewFace)> {
+    /// The nearest face of those `shown` the ray enters, of the triangles
+    /// its tree finds the ray could meet (see [`tree`]) — the first of the
+    /// nearest, in the order of the faces and their triangles, as testing
+    /// every one finds.
+    fn pick_face(
+        &self,
+        pointer: &Pointer,
+        shown: impl Fn(&ViewFace) -> bool,
+    ) -> Option<(Scalar, &ViewFace)> {
         let mut hits = Vec::new();
         self.faces_tree().near(&pointer.ray, |f, t| {
-            if let Some(face) = self.faces.get(f)
+            if let Some(face) = self.faces.get(f).filter(|face| shown(face))
                 && let Some([a, b, c]) = face.mesh.triangles.get(t)
                 && let Some(hit) = pointer.ray.intersect_triangle(a, b, c)
             {
@@ -1037,7 +1102,8 @@ impl PartView {
     /// the area a viewer shades — or near one of its curves.
     fn pick_sketch(&self, layer: &Layer<'_>) -> Option<ElementHit> {
         let pointer = &layer.pointer;
-        let hits = self.sketches.iter().filter_map(|sketch| {
+        let shown = self.sketches.iter().filter(|s| !layer.hides(&s.name));
+        let hits = shown.filter_map(|sketch| {
             let (t, p) = pointer.ray.intersect_uv_plane(&sketch.plane)?;
             let reach = pointer.reach_at(1.0, t);
             let in_region = sketch
@@ -1066,7 +1132,8 @@ impl PartView {
         let Extent { center, size } = extent;
         let ray = &pointer.ray;
         let half = size.div(Scalar::TWO).ok()?;
-        let hits = self.datums.iter().filter_map(|d| {
+        let shown = self.datums.iter().filter(|d| !layer.hides(&d.name));
+        let hits = shown.filter_map(|d| {
             let f = &d.frame;
             let (origin, w) = (f.origin(), f.w());
             let t = match d.kind {
@@ -1107,7 +1174,9 @@ impl PartView {
             layer.hit(&self.datum_target, drawn::DATUM, name, point, t)
         };
         let (mut balls, mut axes, mut planes) = (Vec::new(), Vec::new(), Vec::new());
-        for d in self.datums.iter().filter(|d| d.kind == DatumKind::Frame) {
+        let frames =
+            (self.datums.iter()).filter(|d| d.kind == DatumKind::Frame && !layer.hides(&d.name));
+        for d in frames {
             let f = &d.frame;
             let origin = f.origin();
             let size = pointer.reach_at(FRAME, ray.closest_to_point(origin));
@@ -1180,15 +1249,42 @@ pub fn parts_drawn() -> usize {
     PARTS_DRAWN.get()
 }
 
-/// A part as drawn: what a step editor picks in (see [`Scene`]) — the part
-/// before the step, or what the step built.
+/// A part as drawn, but what the viewer was told not to draw: what is
+/// seen, which a step editor picks in (see [`Scene`]) — the part before
+/// the step, or what the step built, as the viewer shows it.
+#[derive(Clone, Copy, Debug)]
+pub struct Visible<'v> {
+    pub view: &'v PartView,
+    /// What is not drawn, sorted: [`crate::editor::SceneState::hidden`].
+    pub hidden: &'v [String],
+}
+
+/// A part as drawn, all of it shown.
 impl Scene for PartView {
     fn pick(&self, pointer: &Pointer, accepts: &[String]) -> Option<ElementHit> {
-        PartView::pick(self, pointer, accepts)
+        PartView::pick(self, pointer, accepts, &[])
     }
 
     fn hit_instance(&self, name: &str, pointer: &Pointer) -> Option<Scalar> {
-        self.pick_instance(name, pointer)
+        self.pick_instance(name, pointer, &[])
+    }
+}
+
+impl<'v> Visible<'v> {
+    /// The placed part a drag at `pointer` moves (see
+    /// [`PartView::part_to_drag`]), of those drawn.
+    pub fn part_to_drag(&self, pointer: &Pointer) -> Option<(&'v ViewInstance, Scalar)> {
+        self.view.part_to_drag(pointer, self.hidden)
+    }
+}
+
+impl Scene for Visible<'_> {
+    fn pick(&self, pointer: &Pointer, accepts: &[String]) -> Option<ElementHit> {
+        self.view.pick(pointer, accepts, self.hidden)
+    }
+
+    fn hit_instance(&self, name: &str, pointer: &Pointer) -> Option<Scalar> {
+        self.view.pick_instance(name, pointer, self.hidden)
     }
 }
 

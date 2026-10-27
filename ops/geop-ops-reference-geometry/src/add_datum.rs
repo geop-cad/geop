@@ -615,6 +615,7 @@ impl PartOperation for AddDatum {
         OperationGroup::Sketch,
         OperationTier::Small,
     )
+    .shortcut("D")
     .icon(crate::icons::ADD_DATUM);
     type Args = AddDatumArgs;
     type Session = ();

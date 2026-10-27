@@ -300,7 +300,7 @@ fn a_sketch_curve_is_picked_as_a_line() {
         reach: Reach::Tube { radius: n(0.01) },
     };
     let hit = view
-        .pick(&pointer, &[drawn::SKETCH_CURVE.to_string()])
+        .pick(&pointer, &[drawn::SKETCH_CURVE.to_string()], &[])
         .unwrap();
     let lines: Vec<ElementReference<PlacedSketch, Line>> = selected(&reader, &[hit.element]);
     assert_eq!(lines, [sketch_element::<Line>("s", sides[0])]);

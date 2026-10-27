@@ -459,13 +459,13 @@ impl Picked {
     }
 }
 
-/// What an editor draws of what a click on an element would pick for a
-/// reference field, in the part a reader reads (see
-/// [`crate::selectable::previewed`]). It follows from what the field picks
-/// (see [`Reference::accepts`]), so two previews count as equal: a
-/// function's address says nothing.
+/// What a click on an element would pick for a reference field, in the
+/// part a reader reads, lit and drawn as it would be held (see
+/// [`crate::selectable::previewed`]); none if it would pick nothing. It
+/// follows from what the field picks (see [`Reference::accepts`]), so two
+/// previews count as equal: a function's address says nothing.
 #[derive(Clone, Copy)]
-pub struct Preview(pub fn(&Reader, &PickedElement) -> Vec<Visual>);
+pub struct Preview(pub fn(&Reader, &PickedElement) -> Option<Picked>);
 
 impl PartialEq for Preview {
     fn eq(&self, _: &Self) -> bool {
@@ -847,11 +847,18 @@ impl Dialog {
         })
     }
 
+    /// What a click on `element` would pick for the reference field
+    /// `key`, in the part `reader` reads: as it would be held, to light
+    /// and draw while the pointer is over it (see [`Preview`]).
+    pub fn previewed(&self, reader: &Reader, key: &str, element: &PickedElement) -> Option<Picked> {
+        let (_, reference) = self.references().find(|(k, _)| *k == key)?;
+        (reference.preview.0)(reader, element)
+    }
+
     /// What an editor draws of every value its reference fields hold
     /// besides lighting it (see [`Picked::visuals`]), drawn as selected —
-    /// and, with `hover` the field waiting for a click and what a click
-    /// would pick for it, what that would be, drawn as hovered.
-    pub fn shown(&self, reader: &Reader, hover: Option<(&str, &PickedElement)>) -> Vec<Visual> {
+    /// and of `hovered`, what a click would pick now, drawn as hovered.
+    pub fn shown(&self, hovered: Option<&Picked>) -> Vec<Visual> {
         let styled = |mut visual: Visual, style: Style| {
             visual.style = style;
             visual
@@ -860,11 +867,9 @@ impl Dialog {
             .flat_map(|(_, r)| &r.value)
             .flat_map(|p| p.visuals.iter().cloned())
             .map(|v| styled(v, Style::Selected));
-        let hovered = hover.into_iter().flat_map(|(key, element)| {
-            (self.references().find(|(k, _)| *k == key).into_iter())
-                .flat_map(move |(_, r)| (r.preview.0)(reader, element))
-                .map(|v| styled(v, Style::Hover))
-        });
+        let hovered = (hovered.into_iter())
+            .flat_map(|p| p.visuals.iter().cloned())
+            .map(|v| styled(v, Style::Hover));
         held.chain(hovered).collect()
     }
 
@@ -984,7 +989,7 @@ mod tests {
                 multiple: false,
                 required: true,
                 armed: false,
-                preview: Preview(|_, _| Vec::new()),
+                preview: Preview(|_, _| None),
             }),
         );
         assert_eq!(

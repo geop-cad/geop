@@ -8,6 +8,7 @@
 // `steps.length` (after the last). The drop only happens on release; until
 // then the slot is only drawn.
 
+import { formatShortcut } from "./shortcuts";
 import { useRef, useState } from "react";
 import { Icon } from "./icons";
 
@@ -306,7 +307,9 @@ export function Timeline({
       onPointerCancel={onPointerCancel}
     >
       {rows}
-      {steps.length === 0 && <li className="empty">No steps yet.</li>}
+      {steps.length === 0 && (
+        <li className="empty">No steps yet: start one from the toolbar, or press {formatShortcut("Mod+K")} and type what to do.</li>
+      )}
     </ol>
   );
 }

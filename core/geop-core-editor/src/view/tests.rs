@@ -57,7 +57,7 @@ fn a_hover_tests_the_triangles_near_its_ray() {
     let component = Rc::new(grid(100));
     let tested = |view: &PartView, at: Pointer| {
         let before = triangles_tested();
-        let hit = view.pick(&at, &[drawn::FACE.to_string()]);
+        let hit = view.pick(&at, &[drawn::FACE.to_string()], &[]);
         (hit, triangles_tested() - before)
     };
     let (hit, alone) = tested(&component, down(37.3, 52.6));
@@ -173,7 +173,7 @@ fn cube() -> PartView {
 /// What `pointer` picks of the kinds `accepts`.
 fn picked(view: &PartView, pointer: &Pointer, accepts: &[&str]) -> Option<PickedElement> {
     let accepts: Vec<String> = accepts.iter().map(|k| k.to_string()).collect();
-    view.pick(pointer, &accepts).map(|h| h.element)
+    view.pick(pointer, &accepts, &[]).map(|h| h.element)
 }
 
 /// The kind of what `pointer` picks of the kinds `accepts`.
@@ -283,6 +283,10 @@ fn a_view_placed_three_times_is_picked_where_each_is() {
         place("c", v3(0.0, 0.0, 2.0)),
     ];
     let view = view.finish();
+    // Framed by the boxes of the cubes where they are: from the origin to
+    // (4, 1, 3), not by cubes as wide as their diagonals.
+    let size = view.extent.size.to_f64();
+    assert!((size - 26f64.sqrt()).abs() < 1e-9, "{size}");
     let hit = |x: f64, y: f64, accepts: &[&str]| picked(&view, &down(x, y), accepts).unwrap();
     let top_of_b = hit(3.5, 0.5, &[drawn::FACE]);
     assert_eq!(top_of_b.target, Located::in_instance("b", "model"));

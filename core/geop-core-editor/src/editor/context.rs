@@ -8,7 +8,7 @@ use geop_core_program::{
 };
 
 use super::Editor;
-use crate::{output::Inspection, view::PartView};
+use crate::{output::Inspection, view::Visible};
 use geop_core_math::geop_error::{GeopError, GeopResult};
 
 /// What a command changed: what the editor runs, settles and shows again
@@ -66,9 +66,12 @@ impl<'a> EditorContext<'a> {
         self.editor.part()
     }
 
-    /// The part as last drawn: what a tool picks in.
-    pub fn drawn(&self) -> Option<&PartView> {
-        self.editor.drawn.as_deref()
+    /// The part as last drawn, but what the viewer was told not to draw:
+    /// what a tool picks in.
+    pub fn drawn(&self) -> Option<Visible<'_>> {
+        let view = self.editor.drawn.as_deref()?;
+        let hidden = (self.editor.shown.as_ref()).map_or(&[][..], |shown| &shown.hidden);
+        Some(Visible { view, hidden })
     }
 
     /// How many times the editor has run the program: what the part is
