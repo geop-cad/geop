@@ -271,6 +271,17 @@ impl<O: Editable> ErasedEditable for O {
     }
 }
 
+thread_local! {
+    static LISTED: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
+/// How many forms this thread has made for a list of steps
+/// ([`Editors::listed`]), ever: what listing the steps costs, so a test
+/// can bound it by a count rather than time it.
+pub fn forms_listed() -> usize {
+    LISTED.get()
+}
+
 /// The operations an editor offers, by name, in the order they were added:
 /// the order an editor offers them in within a group and tier. The runner
 /// its programs run on is given the same operations by the
@@ -436,7 +447,7 @@ impl Editors {
     /// What a list of steps shows of the step `step`: its form, as a step
     /// just opened shows it, against the part before it — and never what
     /// it built, so that a list of every step asks nothing of what each
-    /// built.
+    /// built. Counted ([`forms_listed`]).
     pub fn listed(
         &self,
         runner: &Runner,
@@ -444,6 +455,7 @@ impl Editors {
         program: &Program,
         step: &str,
     ) -> GeopResult<Form> {
+        LISTED.set(LISTED.get() + 1);
         let mut step = self.step(runner, part, program, step)?;
         step.context.built = None;
         let editing = step.operation.initial_editing();

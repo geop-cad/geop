@@ -705,6 +705,8 @@ struct DragCost {
     runs: usize,
     /// The steps whose constraints were made again for a state tried.
     made: usize,
+    /// The forms made for the list of steps.
+    forms: usize,
     resolved: usize,
     work: u64,
     report: Report,
@@ -736,6 +738,7 @@ fn drag_wrist(editor: &mut Editor, arm: &RobotArm, by: &[[f64; 2]]) -> Vec<DragC
             crate::mates_resolved(),
             geop_lib_constraints::solve::runs(),
             geop_lib_constraints::constraint::made_again(),
+            geop_core_editor::editable::forms_listed(),
         );
         handled(
             editor,
@@ -755,6 +758,7 @@ fn drag_wrist(editor: &mut Editor, arm: &RobotArm, by: &[[f64; 2]]) -> Vec<DragC
         costs.push(DragCost {
             runs: geop_lib_constraints::solve::runs() - before.1,
             made: geop_lib_constraints::constraint::made_again() - before.2,
+            forms: geop_core_editor::editable::forms_listed() - before.3,
             resolved: crate::mates_resolved() - before.0,
             work: report.work,
             report,
@@ -835,7 +839,18 @@ fn drag_work_grows_with_the_moving_links_not_the_screws() {
         .map(|screws| {
             let arm = small_arm(screws);
             let mut editor = arm_editor(&arm);
-            drag_wrist(&mut editor, &arm, &DRAG)
+            let costs = drag_wrist(&mut editor, &arm, &DRAG);
+            // The steps of the parts placed are listed as they were kept:
+            // a drag builds none of them again.
+            let steps = editor.program().steps.len();
+            for (k, cost) in costs.iter().enumerate() {
+                assert!(
+                    cost.forms <= steps,
+                    "event {k}: {} forms listed, of {steps} steps",
+                    cost.forms
+                );
+            }
+            costs
         })
         .collect();
     let [few, many] = &costs[..] else {
@@ -905,9 +920,10 @@ fn robot_arm_timings() {
         for (k, cost) in costs.iter().enumerate() {
             assert!(cost.report.converged, "{:?}", cost.report.failed);
             println!(
-                "  drag event {k}: {} program runs, {} constraint steps made again, {} mates resolved, work {}, largest group {} variables, {} solve and {} enclosure evaluations",
+                "  drag event {k}: {} program runs, {} constraint steps made again, {} forms listed, {} mates resolved, work {}, largest group {} variables, {} solve and {} enclosure evaluations",
                 cost.runs,
                 cost.made,
+                cost.forms,
                 cost.resolved,
                 cost.work,
                 cost.report.largest,
