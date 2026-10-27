@@ -755,6 +755,8 @@ function App() {
       id: "edit:cancel",
       label: "Cancel the step",
       group: "Edit",
+      // As the desktop app has it: Escape is the step's own first.
+      shortcut: "Mod+Backspace",
       disabled: step == null,
       run: () => void close({ command: "cancel" }),
     },

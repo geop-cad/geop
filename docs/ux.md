@@ -34,7 +34,9 @@ agree; a front end only draws what it is sent and sends what the user did.
   progress (no field picking, nothing selected or dragged, no tool in
   hand), Enter commits the step and Escape cancels it — Escape only before
   the step was changed, so a key never throws work away
-  (`StepEditor::at_rest`). A commit by key is one edit to undo.
+  (`StepEditor::at_rest`). A commit by key is one edit to undo. The
+  kernel decides this, so the web app, VS Code and the desktop app agree;
+  `Ctrl/⌘+Backspace` cancels a step whatever is in progress, in both apps.
 - Every tooltip and menu entry of something with a key says the key, as
   the platform writes it (`shortcuts.ts`: `⇧F` on a Mac, `Shift+F`
   elsewhere).
