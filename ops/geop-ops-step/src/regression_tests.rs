@@ -282,6 +282,34 @@ fn cup_round_trips() {
     round_trip(&program.build_model(finishing_registry).unwrap());
 }
 
+/// A 40 x 20 x 10 block with a round pocket of radius 10 milled 5 deep
+/// from its top, the cutter as wide as the block: the pocket's wall
+/// touches the block's two long sides along a line each (a "cylinder
+/// tangent to a wall"). It builds valid, and exported as STEP it cannot be
+/// read back:
+///
+/// > the edge e6 (#69) it runs along twice is used by another face too
+///
+/// (`e5 (#63)` for the same pocket sketched and extruded.) The pocket's
+/// wall meets each side in a line; as written, one face's loop runs along
+/// that edge twice and another face uses it too, which the reader refuses,
+/// though the kernel built and validated the part. A pocket of radius 5
+/// in the block's corner, touching two sides, fails alike.
+#[test]
+#[ignore = "bug: a block with a round pocket tangent to its sides round-trips through STEP into \"the edge e6 (#69) it runs along twice is used by another face too\"; the kernel's own model is valid"]
+fn round_pocket_tangent_to_the_sides_round_trips() {
+    let mut program = Program::new();
+    program.push(
+        "box",
+        PrimitiveArgs::block([0.0, 0.0, 0.0], [40.0, 20.0, 10.0]),
+    );
+    program.push(
+        "pocket",
+        PrimitiveArgs::cylinder_z([20.0, 10.0, 5.0], 10.0, 10.0).cut("block(box)"),
+    );
+    round_trip(&program.build_model(registry).unwrap());
+}
+
 /// A bar cut in two by a slab across its middle is one solid of two lumps,
 /// and a block with a ball's room left inside it one lump with a void. Each
 /// lump is written as a brep of its own, with the voids inside it, and
