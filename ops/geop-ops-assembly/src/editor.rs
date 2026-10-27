@@ -31,6 +31,7 @@ use geop_core_editor::{
 use geop_core_program::{
     numeric::{ParameterValue, read_parameter_values},
     values::{Setting, Settings, StateValue, pose_state},
+    workspace::is_program,
 };
 use std::collections::BTreeMap;
 
@@ -48,11 +49,6 @@ use crate::{
     mechanism::mate_holds,
     solving::{SettingsState, check, settings},
 };
-
-/// Whether `file` is a program file, which a part can be placed from.
-fn is_program(file: &str) -> bool {
-    file.ends_with(".geop")
-}
 
 /// The form of a step placing a part, and what setting its fields does.
 type PartForm<'a> = EditForm<'a, AddPartArgs, PartSession>;
@@ -576,27 +572,20 @@ pub(crate) fn form<'a>(
     let mut f = PartForm::default();
     let step = context.step.to_string();
     let built = (context.built.as_ref()).filter(|view| instance(view, &step).is_ok());
-    let files = file_choices(context.runner, is_program, &args.file);
-    if files.is_empty() {
+    let files = file_choices(context.runner, is_program);
+    if !files.iter().any(|file| file.accepted) {
         f.form.dialog.text(
             "no_files",
             "There are no other program files to place: make one first.",
             Tone::Hint,
         );
     }
-    let options = std::iter::once(Choice::new("", "Choose a file…"))
-        .chain(
-            files
-                .iter()
-                .map(|file| Choice::new(file.clone(), file.clone())),
-        )
-        .collect();
-    f.select(
+    f.file(
         "file",
         "file",
         args.file.clone(),
-        options,
-        true,
+        files,
+        &[],
         |Edit { args, .. }, file| {
             args.file = file.to_string();
         },

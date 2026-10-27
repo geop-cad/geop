@@ -249,12 +249,21 @@ impl Action {
     }
 }
 
-/// One option of a [`Control::Select`] or a [`Control::File`].
+/// One option of a [`Control::Select`].
 #[derive(Clone, Debug, PartialEq, Serialize)]
 pub struct Choice {
     /// What choosing it sends back.
     pub value: String,
     pub label: String,
+}
+
+/// A file a [`Control::File`] shows: by its path as the program names
+/// it, `/`-separated — `../parts/bolt.geop`, a shared library's by its
+/// scheme, `std:hex_nut.geop` — and whether the field takes it.
+#[derive(Clone, Debug, PartialEq, Serialize)]
+pub struct FileEntry {
+    pub path: String,
+    pub accepted: bool,
 }
 
 impl Choice {
@@ -551,16 +560,19 @@ pub enum Control {
         options: Vec<Choice>,
         searchable: bool,
     },
-    /// A file the program reads, by its path relative to the program:
-    /// one of `options`, the files of the kinds `accept` (extensions,
-    /// without the dot) next to it, or one from elsewhere — the front end
-    /// stores a file the user chooses next to the program and sends its
-    /// path, as [`super::Value::Choice`] like an option's.
+    /// A file the program reads or places, by its path relative to the
+    /// program, chosen in an explorer of `files` — every file of the
+    /// workspace but the program's own, those the field does not take
+    /// among them, so the folders read as they are — and sent back as
+    /// [`super::Value::Choice`]. A file of the kinds `upload` (extensions,
+    /// without the dot; none, for a field taking only files there are) may
+    /// be added from elsewhere: the front end stores it next to the
+    /// program and sends its path.
     File {
         label: String,
         value: String,
-        options: Vec<Choice>,
-        accept: Vec<String>,
+        files: Vec<FileEntry>,
+        upload: Vec<String>,
     },
     /// A colour, `#rrggbb`, sent back as [`super::Value::Text`].
     Color {
@@ -709,28 +721,25 @@ impl Dialog {
         )
     }
 
-    /// A file the program reads, by its path relative to the program: one
-    /// of `files`, or one the user adds from elsewhere (see
-    /// [`Control::File`]) — of the kinds `accept`, extensions without the
-    /// dot.
+    /// A file the program reads or places, by its path relative to the
+    /// program: one of `files` it takes, or one the user adds from
+    /// elsewhere of the kinds `upload`, extensions without the dot (see
+    /// [`Control::File`]).
     pub fn file(
         &mut self,
         key: &str,
         label: impl Into<String>,
         value: impl Into<String>,
-        files: Vec<String>,
-        accept: &[&str],
+        files: Vec<FileEntry>,
+        upload: &[&str],
     ) -> &mut Self {
-        let options = (files.into_iter())
-            .map(|file| Choice::new(file.clone(), file))
-            .collect();
         self.push(
             key,
             Control::File {
                 label: label.into(),
                 value: value.into(),
-                options,
-                accept: accept.iter().map(|a| a.to_string()).collect(),
+                files,
+                upload: upload.iter().map(|a| a.to_string()).collect(),
             },
         )
     }
@@ -911,13 +920,8 @@ impl Dialog {
                             if table.rows.len() == 1 { "row" } else { "rows" }
                         ));
                     }
+                    Control::File { label, value, .. } => (label, value.clone()),
                     Control::Select {
-                        label,
-                        value,
-                        options,
-                        ..
-                    }
-                    | Control::File {
                         label,
                         value,
                         options,

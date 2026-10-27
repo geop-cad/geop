@@ -403,6 +403,65 @@ fn a_revolute_joint_is_dragged_up_to_its_limit() {
     assert_eq!(joints[1]["values"][0]["max"], 120.0);
 }
 
+/// A new part step's file explorer lists every file of the workspace by
+/// its path relative to the program — the programs, which it takes, and
+/// the rest, which it does not, and the standard parts — but not the
+/// program itself, and offers no upload; a program in a folder, chosen by
+/// its path, is placed.
+#[test]
+fn a_part_is_placed_from_a_folder_through_the_file_explorer() {
+    let mut editor = editor();
+    let plate = crate::examples::metric_plate().to_json().unwrap();
+    let files = [
+        ("parts/bracket/plate.geop".to_string(), Some(plate)),
+        ("parts/notes.txt".to_string(), Some("notes".to_string())),
+    ]
+    .into();
+    assert!(editor.handle(Command::Files { files }).error.is_none());
+    let update = editor.handle(Command::Load {
+        program: Program::new(),
+        path: Some("assembly.geop".into()),
+    });
+    assert!(update.error.is_none(), "{:?}", update.error);
+
+    let update = editor.handle(Command::New {
+        kind: "add_part".into(),
+    });
+    let step = update.step.unwrap();
+    let Some(Control::File { files, upload, .. }) = step.presentation.dialog.get("file") else {
+        panic!("the file is chosen in an explorer");
+    };
+    let (standard, own): (Vec<_>, Vec<_>) =
+        (files.iter()).partition(|f| f.path.starts_with("std:"));
+    let own: Vec<(&str, bool)> = (own.iter())
+        .map(|f| (f.path.as_str(), f.accepted))
+        .collect();
+    assert_eq!(
+        own,
+        [
+            ("parts/bracket/plate.geop", true),
+            ("parts/notes.txt", false)
+        ]
+    );
+    assert!(!standard.is_empty() && standard.iter().all(|f| f.accepted));
+    assert!(upload.is_empty(), "{upload:?}");
+
+    let update = editor.handle(dialog(
+        "file",
+        Value::Choice("parts/bracket/plate.geop".into()),
+    ));
+    let step = update.step.unwrap();
+    assert!(step.error.is_none(), "{:?}", step.error);
+    let Some(Control::File { value, .. }) = step.presentation.dialog.get("file") else {
+        panic!("the file is chosen in an explorer");
+    };
+    assert_eq!(value, "parts/bracket/plate.geop");
+    let update = editor.handle(Command::Commit);
+    assert!(update.error.is_none(), "{:?}", update.error);
+    let scene = editor.handle(Command::Show).scene.expect("the scene");
+    assert_eq!(scene.part.instances.len(), 1, "the plate is placed");
+}
+
 /// A standard screw is placed as any part: offered among the files, its
 /// size picked from its table, and mated by its datums — its axis on the
 /// hole's, the underside of its head on the plate.
@@ -433,10 +492,13 @@ fn a_standard_screw_is_placed_in_a_plate() {
         kind: "add_part".into(),
     });
     let step = update.step.unwrap();
-    let Some(Control::Select { options, .. }) = step.presentation.dialog.get("file") else {
-        panic!("the file is chosen from a list");
+    let Some(Control::File { files, .. }) = step.presentation.dialog.get("file") else {
+        panic!("the file is chosen in an explorer");
     };
-    assert!(options.iter().any(|o| o.value == screw), "{options:?}");
+    assert!(
+        (files.iter()).any(|f| f.path == screw && f.accepted),
+        "{files:?}"
+    );
     editor.handle(dialog("file", Value::Choice(screw.into())));
     let update = editor.handle(dialog("parameter:size", Value::Choice("M4x12".into())));
     assert!(update.error.is_none(), "{:?}", update.error);
@@ -509,13 +571,13 @@ fn a_carriage_slides_on_a_standard_rail() {
         kind: "add_part".into(),
     });
     let step = update.step.unwrap();
-    let Some(Control::Select { options, .. }) = step.presentation.dialog.get("file") else {
-        panic!("the file is chosen from a list");
+    let Some(Control::File { files, .. }) = step.presentation.dialog.get("file") else {
+        panic!("the file is chosen in an explorer");
     };
     for file in [rail, carriage, "std:spur_gear.geop", "std:servo_sg90.geop"] {
         assert!(
-            options.iter().any(|o| o.value == file),
-            "{file}: {options:?}"
+            (files.iter()).any(|f| f.path == file && f.accepted),
+            "{file}: {files:?}"
         );
     }
     editor.handle(dialog("file", Value::Choice(rail.into())));

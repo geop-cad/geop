@@ -40,7 +40,7 @@ const NewFileIcon = () => (
     <path {...stroke} d="M12 11v4M10 13h4" />
   </Icon>
 );
-const UploadIcon = () => (
+export const UploadIcon = () => (
   <Icon>
     <path {...stroke} d="M8 11V2.5M5 5.5l3-3 3 3M2.5 10v3.5h11V10" />
   </Icon>
@@ -60,13 +60,13 @@ const DeleteIcon = () => (
     <path {...stroke} d="M3 4.5h10M6.5 4.5V3h3v1.5M4.5 4.5l.6 9h5.8l.6-9" />
   </Icon>
 );
-const FileIcon = () => (
+export const FileIcon = () => (
   <Icon>
     <path d="M4 2h5l3 3v9H4z" fill="#4472c4" opacity="0.25" />
     <path {...stroke} stroke="#6c9cff" d="M4 2h5l3 3v9H4zM9 2v3h3" />
   </Icon>
 );
-const Chevron = ({ open }: { open: boolean }) => (
+export const Chevron = ({ open }: { open: boolean }) => (
   <Icon>
     <path {...stroke} d={open ? "M4.5 6.5l3.5 3.5 3.5-3.5" : "M6.5 4.5l3.5 3.5-3.5 3.5"} />
   </Icon>

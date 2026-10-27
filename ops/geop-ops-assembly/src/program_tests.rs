@@ -361,13 +361,14 @@ fn the_editor_places_parts_from_its_files() {
         kind: "add_part".into(),
     });
     let step = update.step.unwrap();
-    let Some(Control::Select { options, .. }) = step.presentation.dialog.get("file") else {
-        panic!("the file is chosen from a list");
+    let Some(Control::File { files, .. }) = step.presentation.dialog.get("file") else {
+        panic!("the file is chosen in an explorer");
     };
-    let files: Vec<&str> = options.iter().map(|o| o.value.as_str()).collect();
+    assert!(files.iter().all(|f| f.accepted), "{files:?}");
+    let files: Vec<&str> = files.iter().map(|f| f.path.as_str()).collect();
     // The workspace's own, then the standard parts.
-    let (own, standard) = files.split_at(3);
-    assert_eq!(own, ["", "pin.geop", "plate.geop"]);
+    let (own, standard) = files.split_at(2);
+    assert_eq!(own, ["pin.geop", "plate.geop"]);
     assert!(!standard.is_empty() && standard.iter().all(|f| f.starts_with("std:")));
 
     // What a viewer keeps: every component it was sent.

@@ -71,15 +71,15 @@ impl PartOperation for ImportStl {
         build_model::<Self>(ctx, args)
     }
 
-    /// The file: one of the STL files next to the program, or one chosen
-    /// from elsewhere.
+    /// The file: an STL file of the workspace, chosen in its explorer, or
+    /// one added from elsewhere.
     fn form<'a>(
         context: &'a Context<'a>,
         args: &ImportStlArgs,
         _: &FormState<()>,
     ) -> EditForm<'a, ImportStlArgs> {
         let mut f = EditForm::<ImportStlArgs>::default();
-        let files = file_choices(context.runner, is_stl_file, &args.file);
+        let files = file_choices(context.runner, is_stl_file);
         f.file(
             "file",
             "file",
@@ -341,10 +341,14 @@ mod tests {
             kind: "import_stl".into(),
         });
         let step = update.step.expect("a step is edited");
-        let Some(Control::File { options, .. }) = step.presentation.dialog.get("file") else {
+        let Some(Control::File { files, upload, .. }) = step.presentation.dialog.get("file") else {
             panic!("the file is a file field");
         };
-        assert!(options.iter().any(|o| o.value == "cube.stl"), "{options:?}");
+        assert!(
+            (files.iter()).any(|f| f.path == "cube.stl" && f.accepted),
+            "{files:?}"
+        );
+        assert_eq!(upload, &["stl"]);
         let update = editor.handle(dialog("file", Value::Choice("cube.stl".into())));
         let step = update.step.expect("a step is edited");
         assert!(step.error.is_none(), "{:?}", step.error);

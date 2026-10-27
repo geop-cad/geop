@@ -12,8 +12,8 @@ pub mod hit;
 mod visual;
 
 pub use dialog::{
-    Action, Cell, Choice, Column, ColumnKind, Control, Dialog, Field, Layout, ListItem, Number,
-    Picked, Preview, Reference, Table, TableRow, Tone, Track, Unit, is_formula,
+    Action, Cell, Choice, Column, ColumnKind, Control, Dialog, Field, FileEntry, Layout, ListItem,
+    Number, Picked, Preview, Reference, Table, TableRow, Tone, Track, Unit, is_formula,
 };
 pub use event::{Button, CanvasEvent, DRAG_SNAP, Pointer, Reach, StepEditEvent, TableEdit, Value};
 pub use form::{Event, Form, InHand, Pull};

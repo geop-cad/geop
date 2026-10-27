@@ -13,7 +13,10 @@
 use geop_core_program::{numeric::NumericInput, reader::Reader};
 
 use crate::{
-    editing::{Action, CanvasEvent, Choice, Event, Form, Layout, Number, Table, TableEdit, Value},
+    editing::{
+        Action, CanvasEvent, Choice, Event, FileEntry, Form, Layout, Number, Table, TableEdit,
+        Value,
+    },
     selectable::{Selectable, selected},
 };
 
@@ -261,17 +264,18 @@ impl<'a, A, T> EditForm<'a, A, T> {
         self
     }
 
-    /// A file the program reads (see [`crate::editing::Dialog::file`]).
+    /// A file the program reads or places (see
+    /// [`crate::editing::Dialog::file`]).
     pub fn file(
         &mut self,
         key: &str,
         label: impl Into<String>,
         value: impl Into<String>,
-        files: Vec<String>,
-        accept: &[&str],
+        files: Vec<FileEntry>,
+        upload: &[&str],
         set: impl Fn(Edit<'_, A, T>, &str) + 'a,
     ) -> &mut Self {
-        self.form.dialog.file(key, label, value, files, accept);
+        self.form.dialog.file(key, label, value, files, upload);
         self.on(key, move |edit, value| {
             if let Value::Choice(choice) = value {
                 set(edit, &choice);

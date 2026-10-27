@@ -1,5 +1,6 @@
-import { useRef, type ReactNode } from "react";
+import { useState, type ReactNode } from "react";
 import { ColorInput, Dropdown, SearchSelect } from "./controls";
+import { FileChooser } from "./FileChooser";
 import { Icon } from "./icons";
 import { TableField } from "./TableField";
 import { elementLabel, type Action, type Control, type StepState, type Tone, type Unit, type Value } from "./geop";
@@ -154,8 +155,9 @@ function referenced(c: Extract<Control, { type: "reference" }>): string {
 }
 
 /**
- * A file field: the files of its kinds next to the program, and a button
- * choosing one from disk, which is stored next to the program first.
+ * A file field: the path chosen, and a button browsing the workspace's
+ * files for another in an explorer — where one from disk can be chosen
+ * too, if the field takes such, stored next to the program first.
  */
 function FileField({
   c,
@@ -166,29 +168,31 @@ function FileField({
   send: (value: Value) => void;
   onChooseFile: (file: File) => Promise<string | null>;
 }) {
-  const input = useRef<HTMLInputElement>(null);
-  const none = { value: "", label: c.options.length > 0 ? "none chosen" : "none next to this program" };
+  const [browsing, setBrowsing] = useState(false);
   return (
-    <div className="file-field">
-      <Dropdown
-        label={c.label}
-        value={c.value}
-        options={[none, ...c.options]}
-        onChange={(value) => send({ type: "choice", value })}
-      />
-      <button onClick={() => input.current?.click()}>Choose a file…</button>
-      <input
-        ref={input}
-        type="file"
-        hidden
-        accept={c.accept.map((e) => `.${e}`).join(",")}
-        onChange={(e) => {
-          const chosen = e.target.files?.[0];
-          e.target.value = "";
-          if (!chosen) return;
-          void onChooseFile(chosen).then((path) => path != null && send({ type: "choice", value: path }));
-        }}
-      />
+    <div className="row field-row file-field" data-field={c.label}>
+      <span className="field-label">{c.label}</span>
+      <button
+        className={`file-field-browse${c.value ? " holds" : ""}`}
+        title={c.value ? `${c.value} — browse for another` : "Browse the files"}
+        onClick={() => setBrowsing(true)}
+      >
+        <span className="file-field-path">{c.value || "choose a file…"}</span>
+        <span className="file-field-dots" aria-hidden>
+          …
+        </span>
+      </button>
+      {browsing && (
+        <FileChooser
+          label={c.label}
+          value={c.value}
+          files={c.files}
+          upload={c.upload}
+          onChoose={(value) => send({ type: "choice", value })}
+          onUpload={onChooseFile}
+          onClose={() => setBrowsing(false)}
+        />
+      )}
     </div>
   );
 }
