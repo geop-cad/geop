@@ -242,23 +242,17 @@ fn block_with_one_rounded_edge_round_trips() {
 /// its top (the Onshape "cup" tutorial), exported as STEP and imported
 /// again.
 ///
-/// The cup builds valid. Reading it back fails at once:
-///
-/// > #77: its knots decrease
-/// > reading the edge #78 / reading the face #125 / reading the body
-/// > (shell(sh))
-///
-/// `#77` is the curve of `shell(sh,extrude(..,end))`, a quarter of the
-/// inner rim, a rational quadratic clamped at its start by three knots
-/// near zero. They are written as `(2,1,3)` multiplicities of the knots
-/// `(7.216449660063519E-16, 7.216449660062508E-16, 1.0)`: the first three
-/// knots are three enclosures of one value, two of them equal and the
-/// third not, so `knots_and_multiplicities` writes them as two distinct
-/// knots whose midpoints decrease. The block shelled the same way
-/// round-trips cleanly, and so does the cylinder itself
-/// ([`crate::tests`]).
+/// Reading it back failed at once with "#77: its knots decrease". `#77`
+/// is the curve of `shell(sh,cylinder(rod,c0,end))`, a quarter of the
+/// inner rim. The shell carries the rim on past its ends (`carried_on`),
+/// which joins the continuation at a knot of multiplicity two, an
+/// enclosure `[-3.4e-15, 4.9e-15]`, and cuts it back at the sharp
+/// `7.2e-16` where the rim's end moved to. The cut counted the joint's
+/// knots towards its multiplicity but inserted itself beside them: the
+/// rim started at the knots `(joint, joint, 7.2e-16)`, written as two
+/// knots whose midpoints decrease. The cut is now at the knot it could
+/// be, repeated (`knot_insertion::insert_to_full_multiplicity`).
 #[test]
-#[ignore = "bug: a cylinder shelled open at the top is written to STEP with an edge curve whose knots decrease (#77), so reading it back fails; a shelled block and the cylinder itself round-trip"]
 fn cup_round_trips() {
     let mut program = Program::new();
     program.push("rod", PrimitiveArgs::cylinder_z([0.0, 0.0, 0.0], 5.0, 10.0));

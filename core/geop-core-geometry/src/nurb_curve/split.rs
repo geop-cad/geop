@@ -183,6 +183,33 @@ mod tests {
         }
     }
 
+    /// A quadratic joined at a knot of multiplicity two that is an
+    /// enclosure, as a curve carried on past its end is: cut back at a
+    /// sharp parameter the knot could be, it starts at that knot repeated,
+    /// not at two enclosures of it which a file of knots and
+    /// multiplicities would write as two decreasing knots (a cup's rim,
+    /// shelled, read back from STEP).
+    #[test]
+    fn cut_at_a_knot_it_could_be_repeats_that_knot() {
+        let f = Scalar::from_f64;
+        let joint = f(0.5 - 1e-15).union(f(0.5 + 1e-15));
+        let curve = NurbCurve::try_new(
+            2,
+            vec![
+                hom(0.0, 0.0, 0.0, 1.0),
+                hom(1.0, 1.0, 0.0, 1.0),
+                hom(2.0, 0.0, 0.0, 1.0),
+                hom(3.0, 1.0, 0.0, 1.0),
+                hom(4.0, 0.0, 0.0, 1.0),
+            ],
+            vec![f(0.0), f(0.0), f(0.0), joint, joint, f(1.0), f(1.0), f(1.0)],
+        )
+        .unwrap();
+        let back = curve.sub_curve(f(0.5 + 2e-16), f(1.0)).unwrap();
+        assert_eq!(back.knot_vector[..3], [joint; 3]);
+        assert_eq!(back.control_points[0], curve.control_points[2]);
+    }
+
     #[test]
     fn split_cubic_at_existing_knot() {
         let f = Scalar::from_f64;

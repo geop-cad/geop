@@ -28,7 +28,13 @@ fn insert_once<const D: usize>(
     let alphas: Vec<Scalar> = ((span - p + 1)..=span)
         .map(|i| {
             let denom = knots[i + p].sub(knots[i]);
-            if denom.could_be_equal(Scalar::ZERO) {
+            // A knot that is `t_bar` itself, one enclosure of one knot:
+            // the new point is the old one, exactly.
+            if knots[i] == t_bar {
+                Scalar::ZERO
+            } else if knots[i + p] == t_bar {
+                Scalar::ONE
+            } else if denom.could_be_equal(Scalar::ZERO) {
                 Scalar::ONE
             } else {
                 t_bar.sub(knots[i]).div(denom).unwrap_or(Scalar::ONE)
@@ -39,7 +45,13 @@ fn insert_once<const D: usize>(
         pts.insert(span + 1, pts[span]);
         for (k, &alpha) in alphas.iter().enumerate().rev() {
             let i = span - p + 1 + k;
-            pts[i] = Vector::interpolate(&pts[i - 1], &pts[i], alpha);
+            // At an end of the interpolation the point is one of the two,
+            // exactly: interpolating would round it outwards.
+            if alpha == Scalar::ZERO {
+                pts[i] = pts[i - 1];
+            } else if alpha != Scalar::ONE {
+                pts[i] = Vector::interpolate(&pts[i - 1], &pts[i], alpha);
+            }
         }
     }
     knots.insert(span + 1, t_bar);
@@ -163,13 +175,33 @@ fn split_bezier_span<const D: usize>(
 /// `degree + 1`, in place, and return the index `k` at which every row
 /// separates: the left piece is `row[..k]` / `knots[..k + degree + 1]`, the
 /// right piece `row[k..]` / `knots[k..]`.
+///
+/// Where `t` could be a knot the rows already have, the cut is at that
+/// knot: counting it towards `t`'s multiplicity takes the two for one
+/// value, and the knot is the one the rows were built with. It is raised
+/// to full multiplicity as itself, so a knot repeated is one enclosure
+/// repeated. Inserting `t` beside it made a group of two enclosures of one
+/// knot, which a writer of knots and multiplicities (STEP) cannot tell
+/// from two knots, decreasing where their midpoints happen to.
 fn insert_to_full_multiplicity<const D: usize>(
     knots: &mut Vec<Scalar>,
     rows: &mut [Vec<Vector<D>>],
     degree: usize,
     t: Scalar,
 ) -> GeopResult<usize> {
-    let s: usize = knots.iter().filter(|&&ui| ui.could_be_equal(t)).count();
+    let mut existing = knots.iter().filter(|&&ui| ui.could_be_equal(t));
+    let t = match existing.next().copied() {
+        None => t,
+        Some(u) => {
+            if let Some(other) = existing.find(|&&k| k != u) {
+                return Err(GeopError::new(format!(
+                    "cutting at {t:?}, which could be either of the knots {u:?} and {other:?}"
+                )));
+            }
+            u
+        }
+    };
+    let s: usize = knots.iter().filter(|&&ui| ui == t).count();
     if s == 0
         && let Some(k) = split_bezier_span(knots, rows, degree, t)
     {
@@ -181,7 +213,7 @@ fn insert_to_full_multiplicity<const D: usize>(
     }
     knots
         .iter()
-        .position(|&ui| ui.could_be_equal(t))
+        .position(|&ui| ui == t)
         .ok_or_else(|| GeopError::new("knot not found after insertion"))
 }
 
