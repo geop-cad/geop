@@ -14,6 +14,7 @@ use geop_core_program::{
     element::{ElementReference, HasElements, Kind, whole},
     part::StepContext,
     placed::{INSTANCE_SEPARATOR, Located, OUTSIDE, instance_path},
+    program::ProgramStep,
     reader::Reader,
     target::{Target, TargetReference},
     values::{Settings, StateValue, pose_in},
@@ -31,16 +32,19 @@ pub enum Placement {
     After { of: String, motion: Pose },
 }
 
-/// An instance placed, as its target holds it: where it is, and the file
-/// and the inputs its part was placed from — what a copy of it places
-/// again, and what a list of the parts tells them apart by. What is in it
-/// is its placed part (see [`geop_core_program::placed::PlacedPart`]).
+/// An instance placed, as its target holds it: where it is, and the file,
+/// the inputs and the steps after the file's own its part was placed from
+/// — what a copy of it places again, and what a list of the parts tells
+/// them apart by. What is in it is its placed part (see
+/// [`geop_core_program::placed::PlacedPart`]).
 #[derive(Clone, Debug, PartialEq)]
 pub struct Instance {
     pub placement: Placement,
     /// The file, as the program placing it names it.
     pub file: String,
     pub inputs: Settings,
+    /// The steps run after the file's own: a mirrored part's mirror.
+    pub then: Vec<ProgramStep>,
 }
 
 /// Defined once, by the step placing it.

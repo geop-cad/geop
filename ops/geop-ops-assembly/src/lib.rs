@@ -8,7 +8,9 @@
 //! ([`DragTool`]) with no step edited. The joints panel ([`JointsPanel`])
 //! sets a joint's coordinates, and says how free the placed parts are and
 //! which constraints conflict. [`PartPattern`] places copies of a placed
-//! part in a row or round an axis.
+//! part in a row or round an axis. A part derived from another brings its
+//! bodies in ([`DerivedPart`]), mirrored or not ([`MirrorPart`]); a
+//! mirrored component is placed so ([`AddPartArgs::mirror`]).
 //!
 //! Also what is exported of an assembly: an STL file of a part with the
 //! parts placed in it ([`Stl`]), and its mechanism as a robot description
@@ -17,6 +19,7 @@
 //! [`geop_ops_model::placed`]'s.
 
 mod add_part;
+mod add_part_derived;
 mod drag_tool;
 mod draw;
 #[cfg(test)]
@@ -58,6 +61,7 @@ use geop_core_editor::registry::Registry;
 use geop_core_math::geop_error::GeopResult;
 
 pub use add_part::{AddPart, AddPartArgs};
+pub use add_part_derived::{DerivedPart, DerivedPartArgs, MIRRORED, MirrorPart, MirrorPartArgs};
 pub use drag_tool::DragTool;
 pub use draw::AssemblyDrawer;
 pub use mates::{
@@ -73,7 +77,7 @@ pub use stl::{Stl, StlOptions};
 pub use urdf::Urdf;
 
 /// Adds what assemblies offer an editor to `r`: placing parts and patterns
-/// of them, the STL of a part with its placed parts and the URDF of its
+/// of them, parts derived from others and mirrored, the STL of a part with its placed parts and the URDF of its
 /// mechanism, how placed parts are drawn, the joints panel, the drag tool,
 /// what settles the program's state after every edit, and the examples of
 /// assemblies.
@@ -82,6 +86,8 @@ pub fn register(r: Registry) -> GeopResult<Registry> {
     let r = r
         .operation(AddPart)?
         .operation(PartPattern)?
+        .operation(DerivedPart)?
+        .operation(MirrorPart)?
         .exporter(Stl)?
         .exporter(Urdf)?
         .drawer(AssemblyDrawer)?

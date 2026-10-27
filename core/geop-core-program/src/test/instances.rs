@@ -36,6 +36,7 @@ impl Operation for LoadOperation {
         let placed = PlacedArgs {
             file: args.file.clone(),
             inputs: inputs(&[]),
+            then: Vec::new(),
         };
         let step = ctx.step();
         place(ctx, step, &placed)

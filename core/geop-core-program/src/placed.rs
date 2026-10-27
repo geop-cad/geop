@@ -37,10 +37,10 @@ use geop_core_math::geop_error::{GeopError, GeopResult};
 
 use crate::{
     part::{Part, StepContext},
-    program::Program,
+    program::{Program, ProgramStep},
     reader::Reader,
     target::{Read, Target, TargetReference},
-    values::{Settings, StateValues},
+    values::{Settings, StateValue, StateValues},
     workspace::Location,
 };
 
@@ -305,11 +305,14 @@ impl PartialEq for PlacedPart {
 impl Target for PlacedPart {}
 
 /// What a part is placed from: the program file, as the placing program
-/// names it, and what its parameters are set to.
+/// names it, what its parameters are set to, and the steps run after its
+/// own — none, for the part as its file builds it: a part derived from it,
+/// mirrored, say, otherwise.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct PlacedArgs {
     pub file: String,
     pub inputs: Settings,
+    pub then: Vec<ProgramStep>,
 }
 
 /// Places the part the program in `args.file` builds as `instance`, its
@@ -345,19 +348,46 @@ pub fn build_placed(reader: &Reader, args: &PlacedArgs) -> GeopResult<PlacedPart
         ))
     })?;
     check_name(instance)?;
+    build(reader, args, Some(instance))
+}
+
+/// The part the program `args` places builds on its own — with its own
+/// state, placed nowhere: what a step deriving a part from another reads
+/// the bodies of. Shared with every build alike, a placed one's too.
+/// Records the file and every file the part read.
+pub fn build_derived(reader: &Reader, args: &PlacedArgs) -> GeopResult<PlacedPart> {
+    build(reader, args, None)
+}
+
+/// The part the program `args` places builds — placed as `instance` of the
+/// part `reader` reads, with the slice of its state under the instance's
+/// name and reading it in context, or on its own (see [`build_placed`],
+/// [`build_derived`]).
+fn build(reader: &Reader, args: &PlacedArgs, instance: Option<&str>) -> GeopResult<PlacedPart> {
     let runner = reader.runner()?;
-    let (program, location) = reader.program(&args.file)?;
+    let (loaded, location) = reader.program(&args.file)?;
+    let program = match args.then.is_empty() {
+        true => loaded,
+        false => Rc::new(Program {
+            steps: (loaded.steps.iter()).chain(&args.then).cloned().collect(),
+            ..(*loaded).clone()
+        }),
+    };
     let given = &reader.part().state;
     // The values the part gives under the instance's name, each with its
     // name in the placed part: `/bolt:b.pose` is its `b.pose`.
-    let prefix = format!("{INSTANCE_SEPARATOR}{instance}");
-    let slice = || {
-        (given.range(prefix.clone()..))
-            .take_while(|(name, _)| name.starts_with(&prefix))
-            .filter_map(|(name, value)| Some((name, key_inside(instance, name)?, value)))
+    let slice: Vec<(&String, &str, &StateValue)> = match instance {
+        Some(instance) => {
+            let prefix = format!("{INSTANCE_SEPARATOR}{instance}");
+            (given.range(prefix.clone()..))
+                .take_while(|(name, _)| name.starts_with(&prefix))
+                .filter_map(|(name, value)| Some((name, key_inside(instance, name)?, value)))
+                .collect()
+        }
+        None => Vec::new(),
     };
     let mut state = program.state.clone();
-    state.extend(slice().map(|(_, inside, value)| (inside.to_string(), value.clone())));
+    state.extend((slice.iter()).map(|(_, inside, value)| (inside.to_string(), (*value).clone())));
     let key = BuildKey {
         revision: runner.revision(&location.file),
         path: location.file.clone(),
@@ -388,7 +418,7 @@ pub fn build_placed(reader: &Reader, args: &PlacedArgs) -> GeopResult<PlacedPart
                 &key.inputs,
                 &key.state,
                 None,
-                Some(Rc::new(reader.clone())),
+                instance.map(|_| Rc::new(reader.clone())),
             );
             let part = Rc::new(part);
             runner.cache(key, part.clone());
@@ -398,11 +428,13 @@ pub fn build_placed(reader: &Reader, args: &PlacedArgs) -> GeopResult<PlacedPart
     // The slice it is given, and what it read besides: a value of the slice
     // that changes or goes, or one it read that comes, builds it again, so
     // its state is always the one it is placed with.
-    for (name, _, value) in slice() {
-        reader.record_raw(Read::State(name.clone(), Some(value.clone())));
+    for (name, _, value) in &slice {
+        reader.record_raw(Read::State((*name).clone(), Some((*value).clone())));
     }
-    for name in &part.states_read {
-        let name = key_behind(instance, name);
+    for name in instance
+        .iter()
+        .flat_map(|instance| (part.states_read.iter()).map(move |name| key_behind(instance, name)))
+    {
         let value = given.get(&name).cloned();
         reader.record_raw(Read::State(name, value));
     }

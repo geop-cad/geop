@@ -17,9 +17,9 @@ use geop_core_program::{
     element::{ElementReference, HasElements, Kind, whole},
     numeric::NumericInput,
     part::StepContext,
+    placed::PlacedArgs,
     reader::Reader,
     target::{Target, TargetReference},
-    values::Settings,
 };
 use geop_ops_model::datums::Datums;
 use geop_ops_model::parameters::{Placement, instance, instances, located};
@@ -157,8 +157,7 @@ fn check(args: &PartPatternArgs) -> GeopResult<&PatternAxis> {
 /// from the part to each copy, `k` from 1.
 #[derive(Clone, Debug, PartialEq)]
 struct Copies {
-    file: String,
-    inputs: Settings,
+    placed: PlacedArgs,
     motions: Vec<Pose>,
 }
 
@@ -198,8 +197,11 @@ fn plan(reader: &Reader, args: &PartPatternArgs) -> GeopResult<Copies> {
     let motion = located(reader, &axis.instance)?.motion();
     let axis = axis.element.transform(&motion);
     Ok(Copies {
-        file: seed.file.clone(),
-        inputs: seed.inputs.clone(),
+        placed: PlacedArgs {
+            file: seed.file.clone(),
+            inputs: seed.inputs.clone(),
+            then: seed.then.clone(),
+        },
         motions: motions(args, &axis, reader)?,
     })
 }
@@ -243,11 +245,7 @@ impl PartOperation for PartPattern {
         let context = with_context!("part_pattern({step}, {args:?})");
         ctx.produce(&copies(step), args, plan)
             .with_context(context)?;
-        let Copies {
-            file,
-            inputs,
-            motions,
-        } = (ctx.reader())
+        let Copies { placed, motions } = (ctx.reader())
             .retrieve_element(&ElementReference::whole(copies(step)))
             .with_context(context)?
             .clone();
@@ -258,7 +256,7 @@ impl PartOperation for PartPattern {
                 of: args.part.clone(),
                 motion,
             };
-            define_placed(ctx, &name, &file, &inputs, placement).with_context(context)?;
+            define_placed(ctx, &name, &placed, placement).with_context(context)?;
         }
         Ok(())
     }

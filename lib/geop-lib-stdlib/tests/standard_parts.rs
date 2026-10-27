@@ -653,6 +653,7 @@ fn gear_drive() -> Program {
             file: "std:spur_gear.geop".into(),
             parameters: gear("z12", 5.0),
             mates: BTreeMap::from([("m1".into(), turning("pinion"))]),
+            mirror: None,
         },
     );
     let coupling = Mate::coupling(
@@ -669,6 +670,7 @@ fn gear_drive() -> Program {
             file: "std:spur_gear.geop".into(),
             parameters: gear("z15", 6.0),
             mates: BTreeMap::from([("m1".into(), turning("wheel")), ("m2".into(), coupling)]),
+            mirror: None,
         },
     );
     program.state = StateValues::from([
