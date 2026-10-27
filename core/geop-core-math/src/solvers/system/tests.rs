@@ -148,9 +148,18 @@ impl Variable for Value {
     fn same(&self, other: &Self) -> bool {
         self == other
     }
+
+    fn carried(&self, from: &Self, to: &Self) -> Option<Self> {
+        match (self, from, to) {
+            (Value::Pose(p), Value::Pose(from), Value::Pose(to)) => {
+                p.carried(from, to).map(Value::Pose)
+            }
+            _ => None,
+        }
+    }
 }
 
-type D = Dual<13>;
+type D = Dual<19>;
 
 /// A body's pose, moved by a step of its own variables from `slot` on —
 /// as a solver differentiates it.
@@ -231,7 +240,21 @@ impl Equations for Mechanism {
                     return None;
                 };
                 let residuals = (self.constraints[*c])(values, &read);
-                Some(linearized(&residuals, &slots))
+                // By the blocks it reads: those it has a derivative by — a
+                // derivative by one it does not read is zero to the
+                // smallest number the scalars tell apart from it, which a
+                // product by zero rounds to.
+                let read: Vec<(usize, std::ops::Range<usize>)> = (slots.iter())
+                    .filter(|(_, range)| {
+                        (residuals.iter()).any(|r| {
+                            range
+                                .clone()
+                                .any(|k| r.d[k].abs().upper().to_f64() > 1e-200)
+                        })
+                    })
+                    .cloned()
+                    .collect();
+                Some(linearized(&residuals, &read))
             })
             .collect()
     }
@@ -411,6 +434,140 @@ fn a_revolute_chain_is_enclosed_in_every_scalar() {
         Scalar::TWO.mul(half.sin()),
         Scalar::ZERO,
     ];
+    for k in 0..3 {
+        assert!(origin[k].could_be_equal(exact[k]), "{origin:?}");
+        assert!(origin[k].width().to_f64() < 1e-6, "{origin:?}");
+    }
+}
+
+/// An arm turning about `z` by a joint's angle, a link fastened to its end,
+/// and a pin on the link, standing on its end along its `z` and free to
+/// spin about it: the link hangs off the arm, the pin off the link — each
+/// a pendant, solved and enclosed after what it hangs off, alone. Driven
+/// to half a radian, the link and the pin go where the arm takes them, and
+/// are enclosed there; undriven, the arm turns, the link with it, and the
+/// pin with it and about its own axis: two freedoms, the pin's two.
+#[test]
+fn pendants_follow_what_they_hang_off_in_every_scalar() {
+    let z = |p: &Pose<D>| {
+        p.apply(&point([0.0, 0.0, 1.0]))
+            .sub(&p.apply(&point([0.0; 3])))
+    };
+    let axis = move |_: &[Value], read: &dyn Fn(usize) -> Var| {
+        let arm = read(1).pose();
+        let mut r: Vec<D> = arm.apply(&point([0.0; 3])).to_array().to_vec();
+        r.extend(z(&arm).sub(&point([0.0, 0.0, 1.0])).to_array());
+        r
+    };
+    let angle = move |_: &[Value], read: &dyn Fn(usize) -> Var| {
+        let (angle, arm) = (read(0).number(), read(1).pose());
+        let x = arm
+            .apply(&point([1.0, 0.0, 0.0]))
+            .sub(&arm.apply(&point([0.0; 3])));
+        vec![x[0].sub(angle.cos()), x[1].sub(angle.sin())]
+    };
+    let end = turned(0.0, [2.0, 0.0, 0.0]);
+    let link = move |_: &[Value], read: &dyn Fn(usize) -> Var| {
+        let (arm, link) = (read(1).pose(), read(2).pose());
+        at(&link, &arm.compose(&end.map(D::cst)))
+    };
+    // The pin's origin at the link's end, its `z` along the link's: five
+    // rows of six variables.
+    let tip = point([1.0, 0.0, 0.0]);
+    let pin = move |_: &[Value], read: &dyn Fn(usize) -> Var| {
+        let (link, pin) = (read(2).pose(), read(3).pose());
+        let mut r: Vec<D> = (pin.apply(&point([0.0; 3])).sub(&link.apply(&tip)))
+            .to_array()
+            .to_vec();
+        let off = z(&pin).sub(&z(&link));
+        r.extend([off[0], off[1]]);
+        r
+    };
+    let drive =
+        |_: &[Value], read: &dyn Fn(usize) -> Var| vec![read(0).number().sub(D::cst(n(0.5)))];
+    let mobility = vec![
+        Mobility::Follows,
+        Mobility::Held,
+        Mobility::Held,
+        Mobility::Held,
+    ];
+    let layout = vec![0, 1, 7, 13];
+    let holding = |a: f64| {
+        let arm = turned(a, [0.0; 3]);
+        let link = arm.compose(&end);
+        let pin = link.compose(&turned(0.7, [1.0, 0.0, 0.0]));
+        vec![
+            Value::Number(n(a)),
+            Value::Pose(arm),
+            Value::Pose(link),
+            Value::Pose(pin),
+        ]
+    };
+
+    // Undriven: the turn of the arm, and the spin of the pin.
+    let free = Mechanism {
+        layout: layout.clone(),
+        constraints: vec![
+            Box::new(axis),
+            Box::new(angle),
+            Box::new(link),
+            Box::new(pin),
+        ],
+    };
+    let system = System {
+        equations: &free,
+        mobility: mobility.clone(),
+        scale: size(),
+    };
+    let start = holding(0.3);
+    assert!(system.held(&start).unwrap().converged);
+    let structure = system.structure(&start);
+    let mut groups: Vec<(Vec<usize>, Vec<usize>, usize)> = (structure.groups.iter())
+        .map(|g| (g.blocks.clone(), g.on.clone(), g.layer))
+        .collect();
+    groups.sort();
+    // Undriven, the joint's angle only follows the arm too.
+    assert_eq!(
+        groups,
+        [
+            (vec![0], vec![1], 1),
+            (vec![1], vec![], 0),
+            (vec![2], vec![1], 1),
+            (vec![3], vec![2], 2)
+        ]
+    );
+    let freedom = system.freedom(&start).unwrap();
+    assert_eq!(freedom.total, 2, "{freedom:?}");
+    assert_eq!(freedom.blocks, [1, 1, 1, 2], "{freedom:?}");
+
+    // Driven to half a radian: the pin where the arm takes it.
+    let driven = Mechanism {
+        layout,
+        constraints: vec![
+            Box::new(axis),
+            Box::new(angle),
+            Box::new(link),
+            Box::new(pin),
+            Box::new(drive),
+        ],
+    };
+    let system = System {
+        equations: &driven,
+        mobility,
+        scale: size(),
+    };
+    let solved = system.solve(&start).unwrap();
+    let held = system.held(&solved.values).unwrap();
+    assert!(held.converged, "{held:?} after {:?}", solved.phases);
+    let enclosure = &solved.enclosure;
+    assert!(enclosure.failures.is_empty(), "{:?}", enclosure.failures);
+    assert_eq!(enclosure.total, 1, "the pin's spin: {enclosure:?}");
+    let Some(Value::Pose(pin)) = &enclosure.boxes[3] else {
+        panic!("the pin is not enclosed");
+    };
+    let origin = pin.apply(&Vector3::zero());
+    let half = n(0.5);
+    let exact = [n(3.0).mul(half.cos()), n(3.0).mul(half.sin()), Scalar::ZERO];
     for k in 0..3 {
         assert!(origin[k].could_be_equal(exact[k]), "{origin:?}");
         assert!(origin[k].width().to_f64() < 1e-6, "{origin:?}");

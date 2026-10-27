@@ -210,6 +210,11 @@ pub struct Report {
     /// How many times the constraints were made: by the solve, and to
     /// enclose its solution.
     pub evaluations: [usize; 2],
+    /// The most variables of a group the solve moved (see
+    /// [`solve::Report::largest`]), and the dense linear algebra the solve
+    /// did ([`solve::Report::work`]).
+    pub largest: usize,
+    pub work: u64,
 }
 
 /// How free the placed parts are (see [`freedom`]).
@@ -272,6 +277,8 @@ pub fn check(reader: &Reader) -> GeopResult<Report> {
         enclosed: StateValues::new(),
         unproven: Vec::new(),
         evaluations: [0, 0],
+        largest: 0,
+        work: 0,
     })
 }
 
@@ -450,6 +457,8 @@ fn report(reader: &Reader, solved: solve::Solved) -> GeopResult<(StateValues, Re
         enclosed: solved.enclosure.state,
         unproven: solved.enclosure.unproven,
         evaluations: solved.report.evaluations,
+        largest: solved.report.largest,
+        work: solved.report.work,
     };
     Ok((solved.state, report))
 }

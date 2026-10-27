@@ -100,6 +100,11 @@ pub struct Enclosure<V: Variable> {
     /// How many times the equations were made to enclose it — every
     /// group's at once: the work it took, which a test can bound.
     pub evaluations: usize,
+    /// Per block, how it moves along the ways the blocks can move together
+    /// that reach it: each way by its index, and the block's step along
+    /// it. What a pendant moving with what it hangs off reads (see
+    /// [`Enclosure::moved`]).
+    motions: Vec<Vec<(usize, Vec<Scalar>)>>,
 }
 
 impl<V: Variable> Enclosure<V> {
@@ -111,6 +116,94 @@ impl<V: Variable> Enclosure<V> {
             total: 0,
             failures: Vec::new(),
             evaluations: 0,
+            motions: vec![Vec::new(); blocks],
+        }
+    }
+
+    /// How free the blocks of `group` are — each of `dimensions` numbers —
+    /// as `motions` says it moves: the ways it moves of its own, and for a
+    /// pendant, the ways what it hangs off moves, each of which its rows
+    /// make it follow by the step `δ` with `R δ = -R_on v` — `R` its rows
+    /// by its own steps, `R_on` by those of what it hangs off, `v` their
+    /// step along that way. Of a block-triangular system, the null space
+    /// is that of the cores, carried along, and each pendant's own.
+    fn moved(&mut self, group: &Group, dimensions: &[usize], on: &[usize], motions: Motions) {
+        let n: usize = dimensions.iter().sum();
+        let mut ways: Vec<usize> = (group.on.iter())
+            .flat_map(|&s| self.motions[s].iter().map(|(way, _)| *way))
+            .collect();
+        ways.sort_unstable();
+        ways.dedup();
+        // Per way it follows, its step: along every column of the group.
+        let mut steps: Vec<(usize, Vec<Scalar>)> = Vec::new();
+        if !ways.is_empty() && !motions.rows.is_empty() {
+            let along: Vec<Vec<Scalar>> = (ways.iter())
+                .map(|way| {
+                    let mut v = Vec::new();
+                    for (&s, &width) in group.on.iter().zip(on) {
+                        match self.motions[s].iter().find(|(w, _)| w == way) {
+                            Some((_, step)) => v.extend(step.iter().copied()),
+                            None => v.extend(std::iter::repeat_n(Scalar::ZERO, width)),
+                        }
+                    }
+                    v
+                })
+                .collect();
+            let rows: Vec<Vec<Scalar>> = (motions.rows.iter())
+                .map(|(slope, by)| {
+                    let mut row = slope.clone();
+                    row.extend(along.iter().map(|v| {
+                        (by.iter().zip(v)).fold(Scalar::ZERO, |sum, (a, b)| sum.add(a.mul(*b)))
+                    }));
+                    row
+                })
+                .collect();
+            let reduced = eliminate(rows, n);
+            for (j, &way) in ways.iter().enumerate() {
+                let mut step = vec![Scalar::ZERO; n];
+                for (k, &(column, _)) in reduced.pivots.iter().enumerate() {
+                    step[column] = reduced.rows[k][n + j].neg();
+                }
+                steps.push((way, step));
+            }
+        }
+        // Its own ways, numbered after every way before.
+        let (first, own) = (self.total, motions.basis.len());
+        steps.extend((motions.basis.into_iter().enumerate()).map(|(k, v)| (first + k, v)));
+        self.total += own;
+        let mut column = 0;
+        for (&block, &dimension) in group.blocks.iter().zip(dimensions) {
+            let own: Vec<(usize, Vec<Scalar>)> = (steps.iter())
+                .map(|(way, step)| (*way, step[column..column + dimension].to_vec()))
+                .collect();
+            self.freedom[block] = rank(own.iter().map(|(_, v)| v.clone()).collect(), dimension);
+            self.motions[block] = own;
+            column += dimension;
+        }
+    }
+}
+
+/// How a group moves where its rows are decided, to first order (see
+/// [`Enclosure::moved`]): the null space of its rows by its own steps, and
+/// the rows that vanish — each its slope by its own steps and by those of
+/// what it hangs off.
+pub(super) struct Motions {
+    basis: Vec<Vec<Scalar>>,
+    rows: Vec<(Vec<Scalar>, Vec<Scalar>)>,
+}
+
+impl Motions {
+    /// Of a group of `n` variables no row is known of: every way free.
+    fn free(n: usize) -> Self {
+        Motions {
+            basis: (0..n)
+                .map(|k| {
+                    (0..n)
+                        .map(|j| if j == k { Scalar::ONE } else { Scalar::ZERO })
+                        .collect()
+                })
+                .collect(),
+            rows: Vec::new(),
         }
     }
 }
@@ -192,43 +285,85 @@ struct Row {
     value: Scalar,
     /// Its derivative by every variable of the group.
     slope: Vec<Scalar>,
+    /// Its derivative by the steps of the blocks the group hangs off, one
+    /// after another.
+    on: Vec<Scalar>,
 }
 
 /// A group enclosed: the box of steps around `center` its true solution
-/// is in — or why there is none — and how free its blocks are.
+/// is in — or why there is none — and how it moves.
 pub(super) struct Enclosed<V: Variable> {
     pub boxes: Result<Vec<V>, EncloseError>,
-    /// Per block of the group.
-    pub freedom: Vec<usize>,
-    pub total: usize,
+    pub motions: Motions,
 }
 
 impl<E: Equations> System<'_, E> {
-    /// [`System::enclose`] of the groups `groups`.
+    /// [`System::enclose`] of the groups `groups`, layer by layer (see
+    /// [`super::Structure`]): a pendant over the boxes of what it hangs off
+    /// — a box of its steps holding, for every value of theirs in theirs,
+    /// exactly one solution of its own constraints — and none where what it
+    /// hangs off is not proven.
     pub(super) fn enclose_groups(
         &self,
         at: &[E::Value],
         groups: &[Group],
     ) -> GeopResult<super::Enclosure<E::Value>> {
-        let batch = Batch::new(self, at);
-        let enclosed = batch.run(groups.iter().map(|group| {
-            let batch = &batch;
-            async move { self.enclose_group(at, group, batch).await }
-        }))?;
-        let mut enclosure = Enclosure::empty(self.mobility.len());
-        enclosure.evaluations = batch.evaluations();
-        for (group, enclosed) in groups.iter().zip(enclosed) {
-            for (k, &block) in group.blocks.iter().enumerate() {
-                enclosure.freedom[block] = enclosed.freedom[k];
-            }
-            enclosure.total += enclosed.total;
-            match enclosed.boxes {
-                Ok(boxes) => {
-                    for (&block, value) in group.blocks.iter().zip(boxes) {
-                        enclosure.boxes[block] = Some(value);
-                    }
+        self.enclose_into(at, groups, Enclosure::empty(self.mobility.len()))
+    }
+
+    /// `enclosure` with the groups `groups` enclosed too (see
+    /// [`System::enclose_groups`]), over the boxes it has.
+    pub(super) fn enclose_into(
+        &self,
+        at: &[E::Value],
+        groups: &[Group],
+        mut enclosure: Enclosure<E::Value>,
+    ) -> GeopResult<super::Enclosure<E::Value>> {
+        let layers = groups.iter().map(|g| g.layer + 1).max().unwrap_or(0);
+        for layer in 0..layers {
+            let mut base = at.to_vec();
+            for (block, boxed) in enclosure.boxes.iter().enumerate() {
+                if let Some(boxed) = boxed {
+                    base[block] = boxed.clone();
                 }
-                Err(e) => enclosure.failures.push((group.blocks.clone(), e)),
+            }
+            let unproven = |b: &usize| (enclosure.failures.iter()).any(|(bs, _)| bs.contains(b));
+            let (now, orphans): (Vec<&Group>, Vec<&Group>) = (groups.iter())
+                .filter(|g| g.layer == layer)
+                .partition(|g| !g.on.iter().any(unproven));
+            let batch = Batch::new(self, &base);
+            let enclosed = batch.run(now.iter().map(|&group| {
+                let (batch, base) = (&batch, &base);
+                async move { self.enclose_group(base, group, batch).await }
+            }))?;
+            enclosure.evaluations += batch.evaluations();
+            let dimensions = |group: &Group| -> (Vec<usize>, Vec<usize>) {
+                (
+                    group.blocks.iter().map(|&b| at[b].dimension()).collect(),
+                    group.on.iter().map(|&b| at[b].dimension()).collect(),
+                )
+            };
+            for group in orphans {
+                let (own, on) = dimensions(group);
+                let free = Motions::free(own.iter().sum());
+                enclosure.moved(group, &own, &on, free);
+                let error = GeopError::new(format!(
+                    "it hangs off blocks {:?}, which no true solution is proven for",
+                    group.on
+                ));
+                (enclosure.failures).push((group.blocks.clone(), EncloseError::Unproven(error)));
+            }
+            for (group, enclosed) in now.into_iter().zip(enclosed) {
+                let (own, on) = dimensions(group);
+                enclosure.moved(group, &own, &on, enclosed.motions);
+                match enclosed.boxes {
+                    Ok(boxes) => {
+                        for (&block, value) in group.blocks.iter().zip(boxes) {
+                            enclosure.boxes[block] = Some(value);
+                        }
+                    }
+                    Err(e) => enclosure.failures.push((group.blocks.clone(), e)),
+                }
             }
         }
         Ok(enclosure)
@@ -275,13 +410,6 @@ impl<E: Equations> System<'_, E> {
         let mut radius = Scalar::ZERO;
         let mut tried: Vec<Vec<(usize, usize)>> = Vec::new();
         let mut failure: Option<EncloseError> = None;
-        // A limit leaves free the motion away from it.
-        let vanishing = |rows: &[Row]| -> Vec<Vec<Scalar>> {
-            (rows.iter())
-                .filter(|r| self.equations.bound(r.constraint) == Bound::Zero)
-                .map(|r| r.slope.clone())
-                .collect()
-        };
         // How free the blocks are: at the point, until a proof decides it
         // over its box.
         let mut freedom = None;
@@ -305,7 +433,7 @@ impl<E: Equations> System<'_, E> {
             };
             let slopes: Vec<Vec<Scalar>> = rows.iter().map(|r| r.slope.clone()).collect();
             if freedom.is_none() {
-                freedom = Some(solving.freedom(vanishing(&rows)));
+                freedom = Some(solving.freedom(&rows));
             }
             let mut pivots = eliminate(slopes, n).pivots;
             pivots.sort_unstable();
@@ -342,11 +470,9 @@ impl<E: Equations> System<'_, E> {
                         })
                         .collect::<GeopResult<Vec<_>>>()?;
                     // How free the blocks are, over the box proven.
-                    let (freedom, total) = solving.freedom(vanishing(&over));
                     return Ok(Enclosed {
                         boxes: Ok(boxes),
-                        freedom,
-                        total,
+                        motions: solving.freedom(&over),
                     });
                 }
                 Err(e) => {
@@ -369,14 +495,9 @@ impl<E: Equations> System<'_, E> {
                 "enclose: no choice of independent rows was proven — tried {independent:?} rows, over {n} variables"
             ))),
         };
-        let (freedom, total) = freedom.unwrap_or_else(|| {
-            let free: Vec<usize> = group.blocks.iter().map(|&b| at[b].dimension()).collect();
-            (free, n)
-        });
         Ok(Enclosed {
             boxes: Err(failure),
-            freedom,
-            total,
+            motions: freedom.unwrap_or_else(|| Motions::free(n)),
         })
     }
 }
@@ -406,6 +527,12 @@ impl<E: Equations> Solving<'_, '_, E> {
             let k = self.group.blocks.binary_search(&block).ok()?;
             differentials.get(k)?.as_ref()
         };
+        let mut offsets = Vec::with_capacity(self.group.on.len());
+        let mut width = 0;
+        for &s in &self.group.on {
+            offsets.push(width);
+            width += self.base[s].dimension();
+        }
         let mut rows = Vec::new();
         for (&c, made) in which.iter().zip(made) {
             let made = made.ok_or_else(|| {
@@ -414,32 +541,43 @@ impl<E: Equations> Solving<'_, '_, E> {
                 ))
             })?;
             let linear = self.rows(&made, &differential);
-            for (value, slope) in linear.values.into_iter().zip(linear.jacobian) {
+            for (r, (value, slope)) in linear.values.into_iter().zip(linear.jacobian).enumerate() {
+                let mut on = vec![Scalar::ZERO; width];
+                for (block, derivatives) in &made.jacobian {
+                    let (Some(k), Some(local)) = (
+                        self.group.on.iter().position(|s| s == block),
+                        derivatives.get(r),
+                    ) else {
+                        continue;
+                    };
+                    for (slot, &d) in on.iter_mut().skip(offsets[k]).zip(local) {
+                        *slot = slot.add(d);
+                    }
+                }
                 rows.push(Row {
                     constraint: c,
                     value,
                     slope,
+                    on,
                 });
             }
         }
         Ok(rows)
     }
 
-    /// How free the group's blocks are, by the rows `slopes`: per block,
-    /// the rank of their null space's part along it, and its dimension.
-    fn freedom(&self, slopes: Vec<Vec<Scalar>>) -> (Vec<usize>, usize) {
-        let basis = null_space(slopes, self.n);
-        let per_block = (self.group.blocks.iter().enumerate())
-            .map(|(k, &block)| {
-                let column = self.columns[k];
-                let dimension = self.base[block].dimension();
-                let along: Vec<Vec<Scalar>> = (basis.iter())
-                    .map(|v| v[column..column + dimension].to_vec())
-                    .collect();
-                rank(along, dimension)
-            })
+    /// How the group moves by the rows `rows` (see [`Motions`]): by those
+    /// that vanish — a limit leaves free the motion away from it.
+    fn freedom(&self, rows: &[Row]) -> Motions {
+        let rows: Vec<&Row> = (rows.iter())
+            .filter(|r| self.system.equations.bound(r.constraint) == Bound::Zero)
             .collect();
-        (per_block, basis.len())
+        let slopes = rows.iter().map(|r| r.slope.clone()).collect();
+        Motions {
+            basis: null_space(slopes, self.n),
+            rows: (rows.into_iter())
+                .map(|r| (r.slope.clone(), r.on.clone()))
+                .collect(),
+        }
     }
 
     /// The Krawczyk proof for the independent rows `pivots` — `(variable,
