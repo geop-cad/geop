@@ -1074,3 +1074,67 @@ fn mug_handle_turned_up_to_next_both_ways_around_the_cup_seam() {
     }
     assert_eq!([ring(130.0, 1.0), ring(130.0, -1.0)], [Outside, Outside]);
 }
+
+/// A knob (the Fusion 360 "revolve" tutorial): a profile sketched on the
+/// XY plane with one side along the sketch's own `y` axis, its two ends
+/// constrained onto that axis, revolved a full turn around the `Y` axis of
+/// the origin, picked as a datum. That axis is the line the sketch's `y`
+/// axis lies on, and the constraints put the profile's side on it, yet the
+/// revolve refuses:
+///
+/// > the profile touches the revolve axis at s1,p5, which the constraints
+/// > do not put on it: constrain it onto a line of the sketch to revolve
+/// > around, or keep the profile clear of the axis
+///
+/// The refusal asks for what was done. `SketchAxis::of` collects the points
+/// on the axis only when the axis is a line of the sketch itself; for a
+/// datum (or an edge) lying in the sketch's plane it collects none, even
+/// where a line of the sketch runs along it. Revolved around the sketch's
+/// `y` axis line instead, the same profile builds (8795.6).
+#[test]
+#[ignore = "bug: a profile with its side constrained onto the sketch's y axis, revolved around the origin's Y datum axis (the same line), is refused: \"the profile touches the revolve axis at s1,p5, which the constraints do not put on it\"; around the sketch's own y line it builds"]
+fn knob_revolved_around_the_origin_y_axis() {
+    let mut profile = Sketch::new();
+    let origin = profile.add_fixed_point(n(0.0), n(0.0));
+    let x = profile.add_fixed_point(n(1.0), n(0.0));
+    let y = profile.add_fixed_point(n(0.0), n(1.0));
+    let x_axis = profile.add_line(origin, x);
+    let y_axis = profile.add_line(origin, y);
+    for line in [x_axis, y_axis] {
+        profile.set_construction(line, true);
+    }
+    let bottom = profile.add_point(n(0.0), n(0.0));
+    let corners: Vec<_> = [(15.0, 0.0), (15.0, 5.0), (10.0, 8.0), (10.0, 20.0)]
+        .into_iter()
+        .map(|(x, y)| profile.add_fixed_point(n(x), n(y)))
+        .collect();
+    let top = profile.add_point(n(0.0), n(20.0));
+    let mut points = vec![bottom];
+    points.extend(corners);
+    points.push(top);
+    let lines: Vec<_> = (0..points.len())
+        .map(|i| profile.add_line(points[i], points[(i + 1) % points.len()]))
+        .collect();
+    for point in [bottom, top] {
+        profile.constrain(Constraint::PointOnCurve {
+            point,
+            curve: y_axis,
+        });
+    }
+    profile.constrain(Constraint::Horizontal { line: lines[0] });
+    profile.constrain(Constraint::Horizontal { line: lines[4] });
+    let mut program = Program::new();
+    program.push("s1", AddSketchArgs::on(on_origin(FrameAxis::Z), profile));
+    program.push(
+        "knob",
+        RevolveArgs {
+            sketch: whole_sketch("s1"),
+            axis: Some(RevolveAxis::Datum(geop_ops_model::datums::origin_axis(
+                FrameAxis::Y,
+            ))),
+            extent: Extents::blind(360.0),
+            output: Output::Solid(Combine::NewBody),
+        },
+    );
+    assert_builds_valid(&program);
+}

@@ -1169,3 +1169,112 @@ fn fillet_of_every_edge_into_a_lofted_pyramids_apex() {
     assert_valid(&part);
     assert_eq!(assert_corner_is_smooth(&part, 1e-5), 8);
 }
+
+/// The operations of [`registry`], and the chamfer.
+fn chamfer_registry() -> GeopResult<OperationRegistry> {
+    registry()?.with(crate::Chamfer)
+}
+
+/// Builds `program` in the operations of `registry` and checks the part is
+/// valid.
+fn assert_builds_valid_with(program: &Program, registry: fn() -> GeopResult<OperationRegistry>) {
+    let part = program.build_model(registry).unwrap();
+    assert_valid(&part);
+}
+
+/// A 40 x 20 x 10 block, the front edge of its top (along `x` at `y = 0`)
+/// bevelled 2, then the two front upright edges, which now end on the
+/// bevel, rounded by 2 (a part finished edge by edge, as a user does).
+/// The fillet fails with no hint of why:
+///
+/// > Cannot normalize zero-length vector
+///
+/// at `Link::at(edge=.., fraction=0, t=0.1875)` on the curve of an edge at
+/// `x = 40`, `y = 0`, `z = 8`: where the upright edge at `x = 40` meets the
+/// bevel. Rounding the uprights first and bevelling after fails too, in
+/// another way ([`chamfer_after_rounding_the_edges_it_runs_into`]).
+#[test]
+#[ignore = "bug: rounding the two upright edges of a block that end on a bevelled top edge fails with \"Cannot normalize zero-length vector\" at Link::at, where an upright meets the bevel"]
+fn fillet_of_upright_edges_ending_on_a_chamfer() {
+    let mut program = Program::new();
+    program.push(
+        "box",
+        PrimitiveArgs::block([0.0, 0.0, 0.0], [40.0, 20.0, 10.0]),
+    );
+    let before = program.build_model(chamfer_registry).unwrap();
+    let front = edges_at(&before, [20.0, 0.0, 10.0]);
+    assert_eq!(front.len(), 1, "{front:?}");
+    program.push("bevel", crate::ChamferArgs::even(front, 2.0));
+    let bevelled = program.build_model(chamfer_registry).unwrap();
+    let uprights = edges_with_middle_where(&bevelled, |m| {
+        (near(m[0], 0.0) || near(m[0], 40.0)) && near(m[1], 0.0)
+    });
+    assert_eq!(uprights.len(), 2, "{uprights:?}");
+    program.push("round", FilletArgs::constant(uprights, 2.0));
+    assert_builds_valid_with(&program, chamfer_registry);
+}
+
+/// The block of [`fillet_of_upright_edges_ending_on_a_chamfer`] the other
+/// way round: its two front upright edges rounded by 2 first, then the
+/// front edge of its top bevelled 2. That edge now ends where the two
+/// blends leave the top, tangent to them. The chamfer fails:
+///
+/// > Scalar::div: divisor interval contains zero
+///
+/// "moving from face FaceId(206) onto face FaceId(164)", at the ends of
+/// edge `block(box,c0,end)` along the top's front.
+#[test]
+#[ignore = "bug: bevelling a block's top front edge after its two front uprights are rounded fails with \"Scalar::div: divisor interval contains zero\" moving from face onto face at the edge's ends, where it runs tangentially into the blends"]
+fn chamfer_after_rounding_the_edges_it_runs_into() {
+    let mut program = Program::new();
+    program.push(
+        "box",
+        PrimitiveArgs::block([0.0, 0.0, 0.0], [40.0, 20.0, 10.0]),
+    );
+    let before = program.build_model(chamfer_registry).unwrap();
+    let uprights = edges_with_middle_where(&before, |m| {
+        (near(m[0], 0.0) || near(m[0], 40.0)) && near(m[1], 0.0)
+    });
+    assert_eq!(uprights.len(), 2, "{uprights:?}");
+    program.push("round", FilletArgs::constant(uprights, 2.0));
+    let rounded = program.build_model(chamfer_registry).unwrap();
+    let front = edges_at(&rounded, [20.0, 0.0, 10.0]);
+    assert_eq!(front.len(), 1, "{front:?}");
+    program.push("bevel", crate::ChamferArgs::even(front, 2.0));
+    assert_builds_valid_with(&program, chamfer_registry);
+}
+
+/// A 40 x 20 x 10 block with every edge rounded by 2, placed in a large
+/// assembly's coordinates: its corner at `(10000, 10000, 0)`. At the
+/// origin it builds valid. There it builds invalid, 96 errors, every one
+/// a control point of a corner's patch too wide:
+///
+/// > face FaceId(422)'s surface control point 4, component 0 is
+/// > [6058.96855, 6058.96932], 0.00077 wide — wider than the 1e-4 every
+/// > search downstream assumes
+///
+/// (the patch's control points are homogeneous, weighted: the corner it
+/// stands for is at `x` about 10000). At `(100000, -100000, 0)` the fillet
+/// fails outright, building the tool of `block(..,c0,start)`: "Cannot
+/// normalize zero-length vector" at `NurbSurface::normal(0.4, 0.3)`, its
+/// `S_u` `[-1.26, 6.07]` in `x`. Rounding only the four upright edges
+/// builds valid at either place.
+#[test]
+#[ignore = "bug: a block with every edge rounded, far from the origin, builds invalid at (1e4,1e4,0) — corner patches' weighted control points ~8e-4 wide — and fails at (1e5,-1e5,0) with \"Cannot normalize zero-length vector\" in an edge's tool; at the origin, or with only the uprights rounded, it builds"]
+fn every_edge_of_a_block_far_from_the_origin_rounded() {
+    for corner in [[1e4, 1e4, 0.0], [1e5, -1e5, 0.0]] {
+        let mut program = Program::new();
+        program.push(
+            "box",
+            PrimitiveArgs::block(corner, [corner[0] + 40.0, corner[1] + 20.0, 10.0]),
+        );
+        let before = program.build_model(registry).unwrap();
+        let all = edges_with_middle_where(&before, |_| true);
+        assert_eq!(all.len(), 12, "{all:?}");
+        program.push("round", FilletArgs::constant(all, 2.0));
+        let part = program
+            .build_model(registry)
+            .unwrap_or_else(|e| panic!("at {corner:?}: {e}"));
+        assert_valid(&part);
+    }
+}

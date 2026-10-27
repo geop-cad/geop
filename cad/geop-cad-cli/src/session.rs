@@ -9,7 +9,7 @@
 //! started afresh, and the front end gives it the program it holds again
 //! (`web/src/backend.ts`, `vscode-extension/src/server.ts`).
 
-use crate::DiskCache;
+use geop_cad_base::disk::DiskCache;
 use geop_cad_base::{Editor, editor_with};
 use std::{cell::RefCell, path::PathBuf, sync::Once};
 

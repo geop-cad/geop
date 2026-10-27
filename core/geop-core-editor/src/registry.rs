@@ -178,6 +178,14 @@ pub trait Panel: 'static {
     /// program built as far as it runs.
     fn state(&self, program: &Program, part: &Reader) -> Self::State;
 
+    /// What the part's structure says beside its items, by their names,
+    /// from what the panel shows (`state`): how free a placed part is.
+    /// Nothing, unless it says otherwise.
+    fn details(&self, state: &Self::State) -> BTreeMap<String, String> {
+        let _ = state;
+        BTreeMap::new()
+    }
+
     /// Does `command`, saying what it changed.
     fn command(&self, ctx: &mut EditorContext, command: Self::Command) -> GeopResult<Changed>;
 
@@ -192,7 +200,13 @@ pub trait Panel: 'static {
 /// registry.
 pub trait ErasedPanel {
     fn key(&self) -> &'static str;
-    fn state(&self, program: &Program, part: &Reader) -> GeopResult<serde_json::Value>;
+    /// What it shows of `program` (see [`Panel::state`]), and what the
+    /// structure says beside its items from it (see [`Panel::details`]).
+    fn state(
+        &self,
+        program: &Program,
+        part: &Reader,
+    ) -> GeopResult<(serde_json::Value, BTreeMap<String, String>)>;
     fn command(&self, ctx: &mut EditorContext, payload: serde_json::Value) -> GeopResult<Changed>;
     fn after_edit(&self, ctx: &mut EditorContext);
 }
@@ -202,9 +216,16 @@ impl<P: Panel> ErasedPanel for P {
         P::KEY
     }
 
-    fn state(&self, program: &Program, part: &Reader) -> GeopResult<serde_json::Value> {
-        serde_json::to_value(Panel::state(self, program, part))
-            .map_err(|e| GeopError::new(format!("the state of the panel `{}`: {e}", P::KEY)))
+    fn state(
+        &self,
+        program: &Program,
+        part: &Reader,
+    ) -> GeopResult<(serde_json::Value, BTreeMap<String, String>)> {
+        let state = Panel::state(self, program, part);
+        let details = Panel::details(self, &state);
+        let state = serde_json::to_value(state)
+            .map_err(|e| GeopError::new(format!("the state of the panel `{}`: {e}", P::KEY)))?;
+        Ok((state, details))
     }
 
     fn command(&self, ctx: &mut EditorContext, payload: serde_json::Value) -> GeopResult<Changed> {

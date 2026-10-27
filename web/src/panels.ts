@@ -15,14 +15,3 @@ export interface JointsState {
 
 /** What the joints panel is sent — see `geop_ops_assembly::JointsCommand`. */
 export type JointsCommand = { command: "set"; parameter: string; value: number };
-
-/**
- * What the part's structure says beside its items, by name, from what the
- * panels were sent: how free each placed part is, from the joints panel.
- */
-export function structureDetails(panels: Record<string, unknown>): Record<string, string> {
-  const joints = panels.joints as JointsState | undefined;
-  return Object.fromEntries(
-    Object.entries(joints?.freedom?.parts ?? {}).map(([part, dof]) => [part, dof === 0 ? "fixed" : `${dof} DOF`]),
-  );
-}

@@ -40,6 +40,8 @@ mod icons;
 mod editor_tests;
 #[cfg(test)]
 mod program_tests;
+#[cfg(test)]
+mod regression_tests;
 
 pub use base_flange::{BaseFlange, BaseFlangeArgs};
 pub use body::{SheetBody, Sheets, sheet_body, sheets};

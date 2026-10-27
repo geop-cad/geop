@@ -13,7 +13,8 @@ are (math, geometry, topology; a program, a part, an editor), `lib/` holds
 algorithms two operations share, `ops/` has one crate per family of
 operations, and `cad/` composes them and carries them to the web app and
 the command line. `web/` is a React front end that loads `cad/geop-cad-web`
-compiled to WebAssembly and renders its output with `three.js`.
+compiled to WebAssembly and renders its output with `three.js`;
+`cad/geop-cad-desktop` is the native one, the same editor linked in.
 `cloudflare-functions/` holds the Cloudflare Pages Functions deployed with
 the web app (bug reports). `scripts/check-layering.sh` keeps the tiers
 apart (see Scripts).
@@ -57,7 +58,8 @@ apart (see Scripts).
 | `ops/geop-ops-bom` | bills of materials, an inspector and a CSV exporter |
 | `cad/geop-cad-base` | composition: `registry()`, one `register` line per crate, the editor of all of it beside the standard parts, and the composition's tests |
 | `cad/geop-cad-web` | the wasm bindings the web app loads (package `geop`), and the check of `web/src/geop.ts` against the protocol |
-| `cad/geop-cad-cli` | the `geop` command line: `compile`, `examples`, `serve` |
+| `cad/geop-cad-cli` | the `geop` command line: `compile`, `examples`, `serve`, `open`, `mcp`; `desktop` with the feature `desktop` |
+| `cad/geop-cad-desktop` | the desktop app (`geop-desktop`, `geop desktop`): the editor in-process on a thread of its own, drawn with egui and a wgpu viewport; its controller runs without a window, and its tests drive both |
 
 #### How an operation plugs in
 
@@ -125,8 +127,13 @@ buttons — the tools and the inspectors — from the lists the program state se
 inspector's answer as the inspector lays it out, groups the structure by
 the kernel's labels, lights what the kernel names by the target, kind and
 name of each element, and shows each panel by the component its key maps
-to (`web/src/ProgramPanels.tsx`, the one place it names a panel): no front
-end knows an operation, an exporter or an inspector by name. The files an
+to (`web/src/ProgramPanels.tsx`, the one place it names a panel; the
+desktop app's is `cad/geop-cad-desktop/src/ui/panels.rs`): no front
+end knows an operation, an exporter or an inspector by name. What a set
+of picked elements lights of a drawn part is the kernel's
+(`view::lit::Lit`), which parts a gizmo shows (`GizmoView::parts`) and
+what the structure says beside a placed part (`ProgramState::details`)
+too: a front end only draws them. The files an
 operation reads beside programs — a STEP file to import — it names by
 extension (`OperationInfo::reads`), and the front ends keep those in a
 workspace.

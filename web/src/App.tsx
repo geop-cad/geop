@@ -40,7 +40,6 @@ import {
 import { InspectPanel } from "./InspectPanel";
 import { sectionPlane, type Section } from "./section";
 import { ProgramPanels } from "./ProgramPanels";
-import { structureDetails } from "./panels";
 import { SceneViewer } from "./SceneViewer";
 import { StructurePanel } from "./StructurePanel";
 import { OperationGrid, OperationRibbon, type Tool } from "./OperationRibbon";
@@ -770,7 +769,7 @@ function App() {
         <h2>Part</h2>
         <StructurePanel
           items={scene?.structure ?? []}
-          details={structureDetails(program?.panels ?? {})}
+          details={program?.details ?? {}}
           enabled={wasmReady}
           onVisibility={(name, visible) => dispatch({ command: "visibility", name, visible })}
           onLight={setLights}

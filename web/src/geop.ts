@@ -583,7 +583,8 @@ export interface GizmoView {
   at: Vec3;
   /** Unit and orthogonal: the world's, or what it stands on's own. */
   axes: [Vec3, Vec3, Vec3];
-  modes: { translate: boolean; rotate: boolean; scale: boolean };
+  /** The parts it shows, as the kernel lays them out and hit-tests them. */
+  parts: GizmoPart[];
   hover: GizmoPart | null;
   active: GizmoPart | null;
   /** What a drag under way has done so far. */
@@ -762,6 +763,8 @@ export interface ProgramState {
    * it [[Command]] `panel`.
    */
   panels: Record<string, unknown>;
+  /** What the part's structure says beside its items, by their names, from what the panels show: how free a placed part is. */
+  details: Record<string, string>;
 }
 
 /**

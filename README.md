@@ -46,6 +46,7 @@
   It downloads the release for your machine, checks its SHA-256 and puts `geop` in `~/.local/bin` (`%LOCALAPPDATA%\geop\bin` on Windows) — no sudo. Or build it from source: `cargo install --path cad/geop-cad-cli` (add `--features frontend` after `npm --prefix web ci && npm --prefix web run build:open` for `geop open`). Then:
   ```sh
   geop open my-project                # edit a folder's .geop files in your browser, on the native kernel
+  geop desktop my-project             # the same, in a native window (release builds; from source: --features desktop)
   geop examples --out-dir examples    # every built-in example as a .geop program and its STL
   geop compile part.geop -o part.step
   ```
@@ -55,6 +56,7 @@
   codex mcp add geop -- geop mcp    # Codex
   ```
   Then ask for a part: the agent sketches, extrudes, fillets, inspects and exports through the same editor the web app runs. See [docs/mcp.md](docs/mcp.md).
+- **As a desktop app:** `geop desktop my-project` opens a folder's `.geop` files in a native window — the same editor as the web app, its kernel in the same process, the view drawn by the GPU (wgpu: Vulkan, Metal, DirectX 12 or OpenGL). From source: `cargo run --release -p geop-cad-desktop -- my-project`. Ctrl+K lists every operation and action; F1 lists the shortcuts.
 - **In VS Code:** `geop vscode` installs the extension of your `geop`'s release (into VS Code, Cursor or VSCodium); it opens any `.geop` file as the editor, with the kernel running natively. See [`vscode-extension/`](vscode-extension/README.md).
 
 ## Coming from Fusion 360 or Onshape?
@@ -111,7 +113,7 @@ Taken from [ROADMAP.md](ROADMAP.md), which also says what is next.
 
 - Every number is an interval: comparisons are three-valued (`definitely`, `could be`), searches subdivide to isolate and Newton to refine, and no epsilon decides an answer. [AGENTS.md](AGENTS.md) records the rules and the bugs that made them.
 - A part is a *program*: an ordered list of steps, each an operation with its arguments, referring to what earlier steps built by stable names (`extrude(box,end)` is the end cap of the step `box`), never by a kernel id, so it rebuilds the same part name for name.
-- The workspace has four tiers: `core/` (math, NURBS, the B-rep, programs, the editor), `lib/` (algorithms two operations share), `ops/` (one crate per family of operations, each with its forms, examples and tests) and `cad/` (the composition, one `register` line per crate, carried to the browser, the command line and MCP).
+- The workspace has four tiers: `core/` (math, NURBS, the B-rep, programs, the editor), `lib/` (algorithms two operations share), `ops/` (one crate per family of operations, each with its forms, examples and tests) and `cad/` (the composition, one `register` line per crate, carried to the browser, the desktop app, the command line and MCP).
 - The [book](https://book.geop-cad.dev) tours the crates; [docs.geop-cad.dev](https://docs.geop-cad.dev) is the rustdoc; [DEVELOPERS.md](DEVELOPERS.md) has the crate table, scripts and conventions.
 - The landing page is [geop-cad.dev](https://geop-cad.dev).
 

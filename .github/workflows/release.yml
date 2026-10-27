@@ -80,7 +80,8 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      # Embedded by the feature `frontend` (see cad/geop-cad-cli/src/open.rs).
+      # Embedded by the feature `frontend` (see cad/geop-cad-cli/src/open.rs);
+      # the feature `desktop` builds `geop desktop` in (cad/geop-cad-desktop).
       - uses: actions/download-artifact@v4
         with:
           name: page-open
@@ -104,9 +105,9 @@ jobs:
         shell: bash
         run: |
           if [ "${{ matrix.cross }}" = "true" ]; then
-            cross build --release --locked -p geop-cad-cli --features frontend --target ${{ matrix.target }}
+            cross build --release --locked -p geop-cad-cli --features frontend,desktop --target ${{ matrix.target }}
           else
-            cargo build --release --locked -p geop-cad-cli --features frontend --target ${{ matrix.target }}
+            cargo build --release --locked -p geop-cad-cli --features frontend,desktop --target ${{ matrix.target }}
           fi
 
       # A Linux binary must not need a newer glibc than the oldest
