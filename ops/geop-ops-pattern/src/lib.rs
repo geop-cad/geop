@@ -53,6 +53,8 @@ mod move_body;
 #[cfg(test)]
 mod program_tests;
 mod references;
+#[cfg(test)]
+mod regression_tests;
 mod scale_body;
 #[cfg(test)]
 mod tests;

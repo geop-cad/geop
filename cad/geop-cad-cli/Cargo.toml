@@ -28,6 +28,8 @@ sha2 = "0.11.1"
 # `geop open`'s page (`web/dist-open`), built in with the feature
 # `frontend`; embedded in debug builds too, so any build runs alike.
 rust-embed = { version = "8.13.0", features = ["debug-embed"], optional = true }
+# `geop desktop`: the desktop app, with the feature `desktop`.
+geop-cad-desktop = { workspace = true, optional = true }
 
 [dev-dependencies]
 # `tests/mcp.rs` models the drilled box the testing helpers describe,
@@ -39,3 +41,5 @@ geop-ops-model.workspace = true
 # The page `geop open` serves, embedded: build it first with
 # `npm --prefix web run build:open`. The release builds with it.
 frontend = ["dep:rust-embed"]
+# `geop desktop`, the native app (a window, wgpu): the release builds it.
+desktop = ["dep:geop-cad-desktop"]

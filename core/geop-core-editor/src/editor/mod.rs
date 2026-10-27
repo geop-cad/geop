@@ -1517,9 +1517,13 @@ impl Editor {
         let mut operations = editors.infos();
         operations.sort_by_key(|listed| (listed.info.group, listed.info.tier));
         let part = self.part();
-        let panels = (self.registry.panels())
-            .map(|panel| Ok((panel.key().to_string(), panel.state(&self.file, &part)?)))
-            .collect::<GeopResult<_>>()?;
+        let mut panels = BTreeMap::new();
+        let mut details = BTreeMap::new();
+        for panel in self.registry.panels() {
+            let (state, said) = panel.state(&self.file, &part)?;
+            panels.insert(panel.key().to_string(), state);
+            details.extend(said);
+        }
         Ok(ProgramState {
             program: self.file.clone(),
             path: self.path.clone(),
@@ -1541,6 +1545,7 @@ impl Editor {
             examples: self.registry.example_names().collect(),
             workspace_examples: self.registry.workspace_example_names().collect(),
             panels,
+            details,
         })
     }
 }

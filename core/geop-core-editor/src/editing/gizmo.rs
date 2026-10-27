@@ -272,7 +272,11 @@ pub struct GizmoView {
     pub at: Vector3,
     /// Unit and orthogonal: the world's, or what it stands on's own.
     pub axes: [Vector3; 3],
+    #[serde(skip)]
     pub modes: Modes,
+    /// The parts it shows, as its modes give them: what a viewer draws,
+    /// and the pointer is tested against.
+    pub parts: Vec<GizmoPart>,
     pub hover: Option<GizmoPart>,
     pub active: Option<GizmoPart>,
     pub readout: Option<String>,
@@ -301,16 +305,17 @@ impl GizmoView {
             at: gizmo.at,
             axes,
             modes: gizmo.modes,
+            parts: Self::parts_of(gizmo.modes),
             hover: None,
             active: None,
             readout: None,
         }
     }
 
-    /// The parts it shows.
-    fn parts(&self) -> Vec<GizmoPart> {
+    /// The parts a gizmo of `modes` shows: the ball, arrows and squares
+    /// to move by, the rings to turn by, the cubes to scale by.
+    fn parts_of(m: Modes) -> Vec<GizmoPart> {
         let mut parts = Vec::new();
-        let m = self.modes;
         if m.translate {
             parts.push(GizmoPart::Free);
             parts.extend(Axis::ALL.map(GizmoPart::Move));
@@ -327,7 +332,7 @@ impl GizmoView {
     }
 
     /// The diagonal the even scale's cube sits on.
-    fn diagonal(&self) -> Option<Vector3> {
+    pub fn diagonal(&self) -> Option<Vector3> {
         let [a, b, c] = &self.axes;
         a.add(b).add(c).normalize().ok()
     }
@@ -362,8 +367,7 @@ impl GizmoView {
             (!dist.definitely_greater(r.mul(Scalar::from_f64(reaches))))
                 .then(|| dist.div(r).unwrap_or(Scalar::ZERO))
         };
-        self.parts()
-            .into_iter()
+        (self.parts.iter().copied())
             .filter(|&part| self.shown(part, ray.dir()))
             .filter_map(|part| {
                 let (rank, dist) = match part {
@@ -421,7 +425,7 @@ impl GizmoView {
 
     /// The ring about axis `i`, as a closed polyline, a reach being `r`:
     /// as the viewer draws it, so it is hit where it is seen.
-    fn ring(&self, i: Axis, r: Scalar) -> Vec<Vector3> {
+    pub fn ring(&self, i: Axis, r: Scalar) -> Vec<Vector3> {
         const SEGMENTS: usize = 64;
         let [u, v] = i.others().map(|k| k.of(&self.axes));
         let radius = r.mul(Scalar::from_f64(size::RING));

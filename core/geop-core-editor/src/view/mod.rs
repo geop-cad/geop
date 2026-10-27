@@ -23,6 +23,7 @@
 //! instance's path ([`Located`]): `/bolt:model`.
 
 pub mod icons;
+pub mod lit;
 #[cfg(test)]
 mod tests;
 

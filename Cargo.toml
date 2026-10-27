@@ -22,6 +22,7 @@ members = [
     "cad/geop-cad-base",
     "cad/geop-cad-web",
     "cad/geop-cad-cli",
+    "cad/geop-cad-desktop",
     "ops/geop-ops-drawing",
     "ops/geop-ops-inspect",
     "ops/geop-ops-subd",
@@ -80,6 +81,7 @@ geop-ops-surface = { path = "ops/geop-ops-surface" }
 # build the very same part.
 serde_json = { version = "1", features = ["float_roundtrip"] }
 geop-cad-base = { path = "cad/geop-cad-base" }
+geop-cad-desktop = { path = "cad/geop-cad-desktop" }
 rayon = "1"
 indexmap = "2"
 # Maps that share structure with their copies, so that a version of a model
