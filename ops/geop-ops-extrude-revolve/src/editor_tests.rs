@@ -1217,3 +1217,25 @@ fn moving_a_step_keeps_where_the_program_runs_to() {
         ]
     );
 }
+
+/// The box's extrusion opened and made 3 deep, then copied as the desktop
+/// app's Ctrl+C copies the step open: what is copied is the step as it is
+/// edited — 3 deep — not as it was before it was opened.
+#[test]
+#[ignore = "bug: Command::Copy copies the step from the program as committed (`self.file`), \
+            ignoring the step being edited: the desktop app enables Copy only while a step is \
+            open (Action::CopyStep), so Ctrl+C after typing 3 into the box's distance copies \
+            the extrusion 1 deep"]
+fn copying_the_step_being_edited_copies_it_as_edited() {
+    let (mut editor, _) = editor();
+    handled(&mut editor, open("box"));
+    handled(&mut editor, dialog("distance", Value::Number(3.0)));
+    let copied = handled(&mut editor, Command::Copy { id: "box".into() });
+    let text = match copied.export.expect("the step as text").content {
+        geop_core_editor::output::Content::Text(text) => text,
+        other => panic!("a step is copied as text: {other:?}"),
+    };
+    let excerpt = geop_core_program::program::Program::from_json(&text).unwrap();
+    let extrusion: ExtrudeArgs = args(&excerpt.steps[0]);
+    assert_eq!(extrusion.extent, crate::Extents::blind(3.0));
+}
