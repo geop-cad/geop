@@ -1313,3 +1313,62 @@ fn undo_after_editing_a_placed_part_takes_back_that_edit() {
         geop_ops_extrude_revolve::Extents::blind(1.0)
     );
 }
+
+/// The pin-in-plate placed as a sub-assembly `hinge`, and the step placing
+/// its plate opened where it is placed, as the step list offers it: typing
+/// 5 into the plate's `x` moves the plate there — in the hinge's file once
+/// committed, and on the screen.
+#[test]
+#[ignore = "bug: a step placing a part, opened in a placed sub-assembly (Command::Open with \
+            `placed: hinge`), takes its placement fields and does nothing with them: the editor \
+            ignores what a step of a placed part pulls (`pulls` only for the program's own \
+            steps), so `x` = 5 leaves `hinge/plate` at the origin, and the commit writes \
+            hinge.geop with the plate's pose unchanged"]
+fn a_part_of_a_sub_assembly_goes_where_its_placement_fields_say() {
+    let mut editor = editor();
+    let files = BTreeMap::from([
+        (
+            "plate.geop".to_string(),
+            Some(
+                geop_ops_extrude_revolve::examples::box_with_drill_hole()
+                    .to_json()
+                    .unwrap(),
+            ),
+        ),
+        (
+            "pin.geop".to_string(),
+            Some(crate::examples::pin().to_json().unwrap()),
+        ),
+        (
+            "hinge.geop".to_string(),
+            Some(crate::examples::pin_in_plate_assembly().to_json().unwrap()),
+        ),
+    ]);
+    handled(&mut editor, Command::Files { files });
+    let mut top = Program::new();
+    let hinge = AddPartArgs {
+        file: "hinge.geop".into(),
+        ..Default::default()
+    };
+    top.push("hinge", hinge.fixed());
+    let path = Some("top.geop".into());
+    handled(&mut editor, Command::Load { program: top, path });
+    handled(
+        &mut editor,
+        Command::Open {
+            id: "plate".into(),
+            placed: Some("hinge".into()),
+        },
+    );
+    handled(&mut editor, dialog("x", Value::Number(5.0)));
+    let committed = handled(&mut editor, Command::Commit);
+    let written = committed.written.unwrap_or_default();
+    let [hinge_file] = &written[..] else {
+        panic!("the hinge's file is written: {written:?}");
+    };
+    let plate = match hinge_file.program.state.get(&pose_state("plate")) {
+        Some(StateValue::Pose(pose)) => pose.position().to_f64_array(),
+        other => panic!("the plate has no pose: {other:?}"),
+    };
+    assert_close(plate, [5.0, 0.0, 0.0], 1e-9);
+}
