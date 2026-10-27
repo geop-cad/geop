@@ -629,6 +629,8 @@ export type Command =
   | { command: "new"; kind: string }
   /** Open the step `id` — of the part placed as `placed`, if given, where it is placed. */
   | { command: "open"; id: string; placed?: string }
+  /** A new step of `kind` after the steps of the part placed as `placed`, edited where it is placed: built against the parts placed beside it, in context. */
+  | { command: "new_in"; kind: string; placed: string }
   | { command: "event"; event: EditEvent }
   | { command: "commit" }
   | { command: "cancel" }

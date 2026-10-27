@@ -3,6 +3,7 @@
 //! what a step sees of the steps before it, and how a program is checked,
 //! saved and read.
 
+mod in_context;
 pub(crate) mod instances;
 mod kept;
 mod operations;

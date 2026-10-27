@@ -433,6 +433,17 @@ function App() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [copyable]);
 
+  /**
+   * The part placed in the program that new steps go into, built in context
+   * against the parts placed beside it — none, for the program itself. Gone
+   * with the file, or the part.
+   */
+  const [context, setContext] = useState<string | null>(null);
+  const placedNames = (program?.steps ?? []).flatMap((s) => s.placed.map((p) => p.instance)).join("\n");
+  useEffect(() => {
+    if (context != null && !placedNames.split("\n").includes(context)) setContext(null);
+  }, [context, placedNames]);
+
   /** Suppress the step `id` in the configuration built, or run it again. */
   function suppress(id: string) {
     const { key, payload } = suppressStep(id);
@@ -490,6 +501,7 @@ function App() {
 
   function newStep(info: OperationInfo) {
     if (step?.kind === info.kind && step.id == null) void close({ command: "cancel" });
+    else if (context != null) void open({ command: "new_in", kind: info.kind, placed: context });
     else void open({ command: "new", kind: info.kind });
   }
 
@@ -775,6 +787,8 @@ function App() {
         enabled={wasmReady && step == null}
         onEdit={(i) => void open({ command: "open", id: steps[i].id })}
         onEditPlaced={(placed, id) => void open({ command: "open", id, placed })}
+        context={context}
+        onContext={setContext}
         onRemove={(i) => dispatch({ command: "remove", id: steps[i].id })}
         onCopy={(i) => void copyStep(steps[i].id)}
         onSuppress={(i) => void suppress(steps[i].id)}

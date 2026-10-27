@@ -46,6 +46,10 @@ interface Props {
   onEdit: (index: number) => void;
   /** Edit the step `id` of the part placed as `instance`, where it is placed. */
   onEditPlaced: (instance: string, id: string) => void;
+  /** The placed part new steps go into, built in context, if one is chosen. */
+  context: string | null;
+  /** New steps go into the part placed as `instance`, built in context — or, none, into the program. */
+  onContext: (instance: string | null) => void;
   onRemove: (index: number) => void;
   /** Copy step `index` to the clipboard, to paste with Ctrl+V. */
   onCopy: (index: number) => void;
@@ -77,6 +81,8 @@ export function Timeline({
   enabled,
   onEdit,
   onEditPlaced,
+  context,
+  onContext,
   onRemove,
   onCopy,
   onSuppress,
@@ -270,6 +276,21 @@ export function Timeline({
             </li>,
           );
         }
+        const here = context === placed.instance;
+        rows.push(
+          <li
+            key={`${step.id}/${placed.instance}/+`}
+            className={["step-box", "step-placed", "step-context", here ? "step-editing" : "", enabled ? "" : "disabled"].join(" ")}
+            title={
+              here
+                ? "New steps go into this part, built against the parts placed before it here. Click to put them into the program again."
+                : "Put new steps into this part, where it is placed: built against the parts placed before it here, in context."
+            }
+            onClick={() => enabled && onContext(here ? null : placed.instance)}
+          >
+            <span className="step-name">{here ? `New steps go into ${placed.instance} ✕` : `＋ New step in ${placed.instance}`}</span>
+          </li>,
+        );
       }
     }
   });

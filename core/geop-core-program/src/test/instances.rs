@@ -106,7 +106,7 @@ fn count(id: &str) -> ProgramStep {
 }
 
 /// The program of `steps`, written to the file `<name>.geop`.
-fn write(name: &str, steps: Vec<ProgramStep>) -> String {
+pub(crate) fn write(name: &str, steps: Vec<ProgramStep>) -> String {
     let file = format!("{name}.geop");
     let program = Program::from_steps(steps);
     FILES.with(|files| {
@@ -120,7 +120,7 @@ fn write(name: &str, steps: Vec<ProgramStep>) -> String {
 }
 
 /// The step `id` placing the part the program in `file` builds.
-fn place_file(id: &str, file: &str) -> ProgramStep {
+pub(crate) fn place_file(id: &str, file: &str) -> ProgramStep {
     let args = LoadArgs {
         file: file.to_string(),
     };

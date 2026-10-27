@@ -831,6 +831,12 @@ button.inline {
 .timeline .step-suppress:hover:not(:disabled) {
   color: #7ec9ff;
 }
+/* Where new steps go into a placed part, built in context. */
+.timeline li.step-box.step-context {
+  color: var(--text-dim);
+  font-style: italic;
+}
+
 /* A suppressed step builds nothing: struck through, its button lit. */
 .timeline li.step-box.step-suppressed {
   opacity: 0.55;

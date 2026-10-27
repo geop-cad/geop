@@ -53,6 +53,8 @@ pub fn program(window: &mut GeopApp, ui: &mut Ui) {
     let mut remove = None;
     let mut copy = None;
     let mut suppress = None;
+    // Where new steps go: into a placed part, in context, or the program.
+    let mut context = None;
     let mut released: Option<Drag> = None;
     let pointer = ui.input(|i| i.pointer.interact_pos());
     let seeker_slot = match drag {
@@ -289,6 +291,26 @@ pub fn program(window: &mut GeopApp, ui: &mut Ui) {
                                 }
                             });
                         }
+                        let here = app.context.as_deref() == Some(placed.instance.as_str());
+                        ui.horizontal(|ui| {
+                            ui.add_space(22.0);
+                            let text = match here {
+                                true => format!("New steps go into {} ✕", placed.instance),
+                                false => format!("＋ New step in {}", placed.instance),
+                            };
+                            let tip = match here {
+                                true => "New steps go into this part, built against the parts placed before it here. Click to put them into the program again.",
+                                false => "Put new steps into this part, where it is placed: built against the parts placed before it here, in context.",
+                            };
+                            let text = RichText::new(text).small().italics().color(theme.weak());
+                            let r = ui.add_enabled(
+                                enabled,
+                                egui::Button::selectable(here, text).frame_when_inactive(false),
+                            );
+                            if r.on_hover_text(tip).clicked() {
+                                context = Some((!here).then(|| placed.instance.clone()));
+                            }
+                        });
                     }
                 }
             }
@@ -361,6 +383,9 @@ pub fn program(window: &mut GeopApp, ui: &mut Ui) {
     }
     if let Some(id) = suppress {
         app.command(panels::suppress_step(&id));
+    }
+    if let Some(context) = context {
+        app.context = context;
     }
 }
 

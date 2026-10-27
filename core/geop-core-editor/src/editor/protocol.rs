@@ -26,6 +26,15 @@ pub enum Command {
     New {
         kind: String,
     },
+    /// Start a new step of the operation `kind` after the steps of the
+    /// part placed as `placed`, edited where it is placed: built against
+    /// the parts placed beside it, which it reads in context (see
+    /// [`geop_core_program::placed::OUTSIDE`]). Committed, it is written to
+    /// that part's file.
+    NewIn {
+        kind: String,
+        placed: String,
+    },
     /// Start editing the step `id` — of the program, or, given `placed`,
     /// of the part placed as that instance, where it is placed (see
     /// [`StepInfo::placed`]).

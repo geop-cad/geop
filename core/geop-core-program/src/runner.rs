@@ -18,6 +18,8 @@ use crate::{
     part::{Part, StepContext},
     placed::{BuildCache, BuildKey},
     program::{Program, ProgramStep},
+    reader::Reader,
+    target::Read,
     values::{Settings, StateValues},
     workspace::{Location, Workspace},
 };
@@ -113,11 +115,12 @@ impl Runner {
         inputs: &Settings,
         upto: Option<&str>,
     ) -> RunOutput {
-        self.build(part, &program.steps, inputs, &program.state, upto)
+        self.build(part, &program.steps, inputs, &program.state, upto, None)
     }
 
-    /// Runs `steps` before `upto` on `part`, with `inputs` and `state`, and
-    /// sweeps the build cache after a run of a part not itself placed.
+    /// Runs `steps` before `upto` on `part`, with `inputs` and `state` —
+    /// placed in the part `outside` reads, if it is placed — and sweeps the
+    /// build cache after a run of a part not itself placed.
     pub(crate) fn build(
         &self,
         part: &mut Part,
@@ -125,6 +128,7 @@ impl Runner {
         inputs: &Settings,
         state: &StateValues,
         upto: Option<&str>,
+        outside: Option<Rc<Reader>>,
     ) -> RunOutput {
         let order = steps.iter().map(|step| step.id.clone()).collect();
         part.begin(order, inputs, state);
@@ -135,7 +139,7 @@ impl Runner {
         for (at, step) in steps.iter().enumerate().take(end) {
             part.begin_step(at);
             let ran = match ids.insert(step.id.as_str()) {
-                true => self.run_step_of(part, step, at),
+                true => self.run_step_of(part, step, at, outside.clone()),
                 // A step's id names what it produces: two steps of one id
                 // could not be told apart.
                 false => Err(GeopError::new(format!(
@@ -172,8 +176,14 @@ impl Runner {
     /// (see [`crate::program::ProgramStep::active`]): then it produces
     /// nothing, and the steps after it see the part as the steps before it
     /// left it.
-    fn run_step_of(&self, part: &mut Part, step: &ProgramStep, at: usize) -> GeopResult<()> {
-        let mut ctx = StepContext::new(self, part, &step.id, at);
+    fn run_step_of(
+        &self,
+        part: &mut Part,
+        step: &ProgramStep,
+        at: usize,
+        outside: Option<Rc<Reader>>,
+    ) -> GeopResult<()> {
+        let mut ctx = StepContext::new(self, part, &step.id, at, outside);
         if !ctx.active(step.active.as_deref())? {
             part.suppress(&step.id);
             return Ok(());
@@ -246,7 +256,7 @@ impl Runner {
         let (inputs, state) = (part.inputs.clone(), part.state.clone());
         part.begin(order, &inputs, &state);
         part.begin_step(at);
-        let ran = body(&mut StepContext::new(self, part, step, at));
+        let ran = body(&mut StepContext::new(self, part, step, at, None));
         part.end_step(at);
         let failures = (ran.as_ref().err())
             .map(|e| (step.to_string(), e.to_string()))
@@ -295,10 +305,11 @@ impl Runner {
         }
     }
 
-    /// The part built from `key`, from the build cache.
-    pub(crate) fn cached(&self, key: &BuildKey) -> Option<Rc<Part>> {
+    /// The part built from `key`, from the build cache: one whose reads of
+    /// the part it is placed in `holds` says hold.
+    pub(crate) fn cached(&self, key: &BuildKey, holds: impl Fn(&Read) -> bool) -> Option<Rc<Part>> {
         self.count(|counts| counts.placed += 1);
-        (self.shared.cache.borrow()).get(key, |path| self.revision(path))
+        (self.shared.cache.borrow()).get(key, |path| self.revision(path), holds)
     }
 
     /// Keeps `part`, built from `key`, in the build cache.

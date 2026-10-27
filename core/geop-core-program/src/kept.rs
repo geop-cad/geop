@@ -71,7 +71,8 @@ pub fn made_kept<T: 'static>(
         }
         let reads = (record.derivation.reads.iter())
             .map(|(kept, digest)| {
-                let (read, now) = part.resolve(kept, before, own, runner)?;
+                let (read, now) =
+                    part.resolve(kept, before, own, runner, reader.outside_reader())?;
                 (now == *digest).then_some(read)
             })
             .collect::<Option<Vec<_>>>();
@@ -87,7 +88,7 @@ pub fn made_kept<T: 'static>(
     let (made, reads) = reader.recorded(make);
     let made = made.map(Rc::new);
     let derivation = (reads.0.iter())
-        .map(|read| part.read_digest(read, before, own, runner))
+        .map(|read| part.read_digest(read, before, own, runner, reader.outside_reader()))
         .collect::<Option<Vec<_>>>()
         .map(|reads| Derivation { args, reads });
     if let (Ok(value), Some(derivation)) = (&made, derivation) {

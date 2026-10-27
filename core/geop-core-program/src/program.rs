@@ -112,9 +112,11 @@ impl Display {
 /// Checks that `id` can be an operation id: non-empty, and only ASCII
 /// letters, digits, `_`, `-` and `.`. Nothing that could be mistaken for the
 /// `(`, `)` and `,` that structure a name, so the names built from it stay
-/// unambiguous.
+/// unambiguous — nor dots alone: a part placed as `..` would be mistaken
+/// for the part placing it ([`crate::placed::OUTSIDE`]).
 pub fn validate_operation_id(id: &str) -> GeopResult<()> {
     if !id.is_empty()
+        && !id.chars().all(|c| c == '.')
         && id
             .chars()
             .all(|c| c.is_ascii_alphanumeric() || matches!(c, '_' | '-' | '.'))

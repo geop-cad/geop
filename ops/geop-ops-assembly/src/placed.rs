@@ -70,13 +70,15 @@ pub fn define_placed(
         file: file.to_string(),
         inputs: inputs.clone(),
     };
-    let loaded = place(ctx, name, &placed);
+    // Where it is before it is built: a part reading the parts beside it in
+    // context reads where it is itself.
     let instance = Instance {
         placement,
         file: file.to_string(),
         inputs: inputs.clone(),
     };
     define_instance(ctx, name, &instance)?;
+    let loaded = place(ctx, name, &placed);
     let drawn = ctx.produce(&drawn_target(name), &name.to_string(), |reader, name| {
         // Drawn once for every instance of one build: every screw of a size.
         let inside = reader.placed_part(name)?;

@@ -7,7 +7,7 @@ use std::{any::Any, rc::Rc};
 use geop_core_math::{geop_error::GeopResult, vector::Vector3};
 
 use crate::{
-    editable::Editors,
+    editable::{Against, Editors},
     editing::{
         Action, Button, CanvasEvent, Control, DRAG_SNAP, Dialog, Event, Form, Gizmo, GizmoView,
         InHand, Orientation, Pointer, Presentation, Reference, Shape, StepEditEvent, Style, Value,
@@ -16,7 +16,7 @@ use crate::{
         hit::{Scene, hit_visuals},
     },
 };
-use geop_core_program::{element::PickedElement, part::Part, program::Program, runner::Runner};
+use geop_core_program::{element::PickedElement, program::Program, runner::Runner};
 
 /// The key of the field the editor adds to a dialog whose gizmo has an
 /// orientation of its own: the world's axes or its own, as
@@ -174,7 +174,7 @@ fn references(form: &Form) -> Vec<String> {
 pub struct Editing<'a, Sc> {
     pub editors: &'a Editors,
     pub runner: &'a Runner,
-    pub part: &'a Part,
+    pub part: Against<'a>,
     pub program: &'a mut Program,
     pub scene: &'a Sc,
 }
@@ -185,10 +185,10 @@ impl StepEditor {
     /// built on is what it needs first. One that already holds something —
     /// the newest sketch, say — needs no click, and leaves the pointer to
     /// the rest of the step: its handles, its drawing.
-    pub fn new(
+    pub fn new<'a>(
         editors: &Editors,
         runner: &Runner,
-        part: &Part,
+        part: impl Into<Against<'a>>,
         program: &Program,
         step: &str,
         new: bool,
@@ -239,11 +239,11 @@ impl StepEditor {
     }
 
     /// The step's form.
-    pub fn form(
+    pub fn form<'a>(
         &self,
         editors: &Editors,
         runner: &Runner,
-        part: &Part,
+        part: impl Into<Against<'a>>,
         program: &Program,
     ) -> GeopResult<Form> {
         editors.presentation(runner, part, program, &self.step, &*self.editing)
@@ -255,11 +255,11 @@ impl StepEditor {
     /// appeared empty waits for one — what the step needs picked next, as
     /// for a new step.
     fn send<Sc: Scene>(&mut self, e: &mut Editing<'_, Sc>, event: Event) -> GeopResult<()> {
-        let before = references(&self.form(e.editors, e.runner, e.part, e.program)?);
+        let before = references(&self.form(e.editors, e.runner, e.part.clone(), e.program)?);
         let scene: &dyn Scene = e.scene;
         let edited = (e.editors).process_user_event(
             e.runner,
-            e.part,
+            e.part.clone(),
             e.program,
             &self.step,
             &*self.editing,
@@ -268,7 +268,7 @@ impl StepEditor {
         )?;
         e.program.step_mut(&self.step)?.args = edited.args;
         self.editing = Rc::from(edited.editing);
-        let form = self.form(e.editors, e.runner, e.part, e.program)?;
+        let form = self.form(e.editors, e.runner, e.part.clone(), e.program)?;
         if let Some(armed) = &self.armed
             && !references(&form).contains(armed)
         {
@@ -329,7 +329,7 @@ impl StepEditor {
         event: &StepEditEvent,
     ) -> GeopResult<()> {
         let e = &mut e;
-        let form = self.form(e.editors, e.runner, e.part, e.program)?;
+        let form = self.form(e.editors, e.runner, e.part.clone(), e.program)?;
         if let StepEditEvent::Dialog { key, value } = event {
             return self.dialog(e, &form, key, value.clone());
         }
@@ -711,15 +711,16 @@ impl StepEditor {
     /// there is no plane to work in: what can be picked is shown in the
     /// part as it stands — and of the visuals, only the handles can be
     /// grabbed.
-    pub fn presentation(
+    pub fn presentation<'a>(
         &self,
         editors: &Editors,
         runner: &Runner,
-        part: &Part,
+        part: impl Into<Against<'a>>,
         program: &Program,
         scene: &impl Scene,
     ) -> GeopResult<Presentation> {
-        let mut form = self.form(editors, runner, part, program)?;
+        let part = part.into();
+        let mut form = self.form(editors, runner, part.clone(), program)?;
         let mut pickable = Vec::new();
         for (key, reference) in form.dialog.references_mut() {
             if self.armed.as_deref() == Some(key) {
