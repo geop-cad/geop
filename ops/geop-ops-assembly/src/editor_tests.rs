@@ -1454,3 +1454,48 @@ fn an_example_opened_shows_whole_whatever_was_isolated_before() {
         .collect();
     assert!(parts_hidden.is_empty(), "hidden: {hidden:?}");
 }
+
+/// A step placing a file that has since gone, opened and committed: the
+/// refusal says why the step does not build in its root message — the
+/// line every front end shows of an error, and the assistant's summary —
+/// naming the file.
+#[test]
+#[ignore = "bug: Command::Commit refuses a step that does not build with \
+            `GeopError::new(format!(\"the step does not build: {error}\"))`, where `error` is \
+            the step's whole error as displayed, so the refusal's root message reads `the step \
+            does not build: GeopError` — its first line — and the reason (`there is no file \
+            \"box.geop\"`) is buried in a backtrace and context dump inside the message"]
+fn a_step_that_does_not_build_says_why_in_its_refusal() {
+    let mut editor = editor();
+    let box_text = geop_ops_extrude_revolve::examples::box_with_drill_hole()
+        .to_json()
+        .unwrap();
+    let files = BTreeMap::from([("box.geop".to_string(), Some(box_text))]);
+    handled(&mut editor, Command::Files { files });
+    let mut program = Program::new();
+    let placed = AddPartArgs {
+        file: "box.geop".into(),
+        ..Default::default()
+    };
+    program.push("a", placed.fixed());
+    let path = Some("assembly.geop".into());
+    handled(&mut editor, Command::Load { program, path });
+    let gone = BTreeMap::from([("box.geop".to_string(), None)]);
+    handled(&mut editor, Command::Files { files: gone });
+    handled(
+        &mut editor,
+        Command::Open {
+            id: "a".into(),
+            placed: None,
+        },
+    );
+    let refused = editor.handle(Command::Commit);
+    let error = refused.error.expect("the step does not build");
+    let root = (error.lines())
+        .find_map(|line| line.strip_prefix("RootError: "))
+        .unwrap_or_default();
+    assert!(
+        root.contains("there is no file \"box.geop\""),
+        "the root message is {root:?}"
+    );
+}
