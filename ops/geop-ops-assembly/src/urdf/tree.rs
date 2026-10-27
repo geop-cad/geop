@@ -13,7 +13,7 @@
 
 use std::collections::{BTreeMap, HashMap, HashSet};
 
-use crate::JointKind;
+use crate::{Joint, JointKind, Motion};
 use geop_core_math::{
     geop_error::{GeopError, GeopResult},
     solvers::walk::{Take, flood},
@@ -68,7 +68,7 @@ fn groups(mechanism: &Mechanism) -> Vec<usize> {
         groups.union(node(*a), node(*b));
     }
     for joint in &mechanism.joints {
-        if matches!(joint.kind, JointKind::Fastened) {
+        if joint.kind.joint == Joint::Fastened {
             groups.union(node(joint.a.body), node(joint.b.body));
         }
     }
@@ -103,7 +103,7 @@ pub fn tree(mechanism: &Mechanism) -> GeopResult<Tree> {
     };
 
     let moving: Vec<usize> = (0..mechanism.joints.len())
-        .filter(|&j| !matches!(mechanism.joints[j].kind, JointKind::Fastened))
+        .filter(|&j| mechanism.joints[j].kind.joint != Joint::Fastened)
         .collect();
     let ends = |j: usize| {
         let joint = &mechanism.joints[j];
@@ -181,25 +181,32 @@ pub fn tree(mechanism: &Mechanism) -> GeopResult<Tree> {
     Ok(tree)
 }
 
-/// Refuses a joint no URDF joint is: a cylindrical one, or limits URDF
-/// cannot write — a revolute joint limited one way only, a slider not
-/// limited both ways.
+/// Refuses a joint no URDF joint is — one that turns and slides, or turns
+/// more ways than one — or limits URDF cannot write: a revolute joint
+/// limited one way only, a slider not limited both ways.
 fn check_joint(name: &str, kind: &JointKind) -> GeopResult<()> {
-    let problem = match kind {
-        JointKind::Cylindrical => Some(
-            "is cylindrical, and URDF has no joint that both turns and slides: use a revolute or a slider joint"
-                .to_string(),
-        ),
-        JointKind::Revolute { min, max } if min.is_some() != max.is_some() => Some(format!(
+    let problem = match kind.joint {
+        Joint::Revolute | Joint::Slider | Joint::Fastened => None,
+        other => Some(format!(
+            "is {}, and a URDF joint turns about one axis or slides along one, or neither: use a revolute, a slider or a fastened joint",
+            other.label().to_lowercase(),
+        )),
+    };
+    let [min, max] = match kind.joint {
+        Joint::Slider => kind.limits(Motion::Slide),
+        _ => kind.limits(Motion::Turn),
+    };
+    let problem = problem.or_else(|| match kind.joint {
+        Joint::Revolute if min.is_some() != max.is_some() => Some(format!(
             "is limited one way only ({}), and a URDF revolute joint is limited both ways or not at all (continuous): give it both limits or neither",
             if min.is_some() { "a min" } else { "a max" }
         )),
-        JointKind::Slider { min, max } if min.is_none() || max.is_none() => Some(
+        Joint::Slider if min.is_none() || max.is_none() => Some(
             "slides without a min and a max, and a URDF prismatic joint needs both: give the joint its travel"
                 .to_string(),
         ),
         _ => None,
-    };
+    });
     match problem {
         Some(problem) => Err(GeopError::new(format!("the joint {name:?} {problem}"))),
         None => Ok(()),
@@ -242,7 +249,7 @@ pub fn check_rigid(
         .collect();
     mates.extend(
         (mechanism.joints.iter())
-            .filter(|j| matches!(j.kind, JointKind::Fastened) && in_links([j.a.body, j.b.body]))
+            .filter(|j| j.kind.joint == Joint::Fastened && in_links([j.a.body, j.b.body]))
             .map(|j| j.name.as_str()),
     );
     Err(GeopError::new(format!(

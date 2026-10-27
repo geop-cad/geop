@@ -67,7 +67,8 @@ use geop_ops_model::mate_entity::MateEntity;
 /// The operations the tests of assemblies write their programs in — the
 /// examples' parts sketched, extruded, rounded and mirrored, the tests'
 /// own given as solids and datums, a datum made on a placed part — with
-/// everything assemblies offer an editor, their examples among it.
+/// everything assemblies offer an editor, their examples among it, and the
+/// inspectors a motion is checked with.
 pub(crate) fn registry() -> Registry {
     let registry = (|| -> GeopResult<Registry> {
         let r = Registry::default();
@@ -78,6 +79,7 @@ pub(crate) fn registry() -> Registry {
         let r = geop_ops_extrude_revolve::register(r)?;
         let r = geop_ops_fillet::register(r)?;
         let r = geop_ops_pattern::register(r)?;
+        let r = geop_ops_inspect::register(r)?;
         let r = crate::register(r)?;
         Ok(r)
     })();
@@ -836,7 +838,8 @@ fn an_example_of_several_files_adds_its_files() {
             "parametric_plates",
             "four_bar",
             "arm",
-            "bolted_plate"
+            "bolted_plate",
+            "cam_follower"
         ]
     );
     let part = update.scene.unwrap().part;
@@ -1710,16 +1713,13 @@ fn a_part_pattern_is_made_again_only_when_what_it_reads_changes() {
 /// the second to -45°.
 #[test]
 fn a_gear_coupling_turns_the_driven_link_by_its_ratio() {
-    use crate::{CouplingKind, JointKind, Mate, Transmission};
+    use crate::{CouplingKind, Joint, JointKind, Mate, Transmission};
     let (files, _) = workspace_example("arm");
     let workspace = workspace(files);
     let library = workspace.clone();
     let joint = |on_hole: usize, link: &str| {
         Mate::joint(
-            JointKind::Revolute {
-                min: None,
-                max: None,
-            },
+            JointKind::new(Joint::Revolute),
             vec![
                 examples::link_rim("base", on_hole, "end"),
                 examples::link_rim(link, 0, "start"),
@@ -1745,6 +1745,7 @@ fn a_gear_coupling_turns_the_driven_link_by_its_ratio() {
             transmission: Transmission::Gear,
             value: n(2.0),
             reverse: true,
+            offset: None,
         },
         vec!["add_part(driver,m1)".into(), "add_part(driven,m1)".into()],
     );
@@ -2320,4 +2321,148 @@ fn an_unknown_solid_names_the_known_ones() {
         build_file(&program, "box.geop", workspace(BTreeMap::new())).unwrap();
     let err = stl_triangles(&runner, &mut part, &program, &["nothing"]).unwrap_err();
     assert!(err.to_string().contains("cylinder(hole)"), "{err}");
+}
+
+/// The chain's links exploded, move by move: the last lifted 2 up, then
+/// the last two slid 1 along `x` and turned a quarter about it. Each is
+/// drawn where its moves put it, the first as assembled; the lift trails a
+/// line; and what the state and the mates say is as assembled.
+#[test]
+fn an_exploded_view_draws_the_links_moved_move_by_move() {
+    use crate::{Direction, ExplodeArgs};
+    use geop_ops_model::placed::explode::explosions;
+    let (files, mut program) = workspace_example("chain");
+    program.push(
+        "lift",
+        ExplodeArgs {
+            parts: vec!["link3".into()],
+            distance: 2.0,
+            ..Default::default()
+        },
+    );
+    program.push(
+        "spread",
+        ExplodeArgs {
+            parts: vec!["link2".into(), "link3".into()],
+            direction: Direction::X,
+            distance: 1.0,
+            angle: 90.0,
+            trails: false,
+            ..Default::default()
+        },
+    );
+    let part = build(&program, &workspace(files)).unwrap();
+    let reader = part.view();
+    assert_eq!(explosions(&reader).len(), 2, "a target others read");
+    assert!(part.check_mates().unwrap().converged);
+    let mut view = geop_core_editor::view::PartView::new();
+    crate::placed::draw_instances(&reader, &mut view).unwrap();
+    let drawn = |name: &str| {
+        (view.instances.iter())
+            .find(|i| i.name == name)
+            .unwrap()
+            .pose
+    };
+    let assembled = |name: &str| locate(&reader, name).unwrap().world;
+    assert_eq!(drawn("link1"), assembled("link1"));
+    assert_eq!(
+        pose_of(&program, "link3"),
+        assembled("link3"),
+        "the state as it was"
+    );
+    // Both turned a quarter about x: their y now up.
+    for name in ["link2", "link3"] {
+        let up = drawn(name)
+            .motion()
+            .rotate(&Vector3::from_array([0.0, 1.0, 0.0].map(n)));
+        assert_close([0, 1, 2].map(|k| up[k].to_f64()), [0.0, 0.0, 1.0], 1e-9);
+    }
+    // The lift moved the last link 2 further up than the one before it,
+    // which the quarter turn about x turns into 2 along -y.
+    let origin = |name: &str| drawn(name).apply(&Vector3::zero());
+    let (two, three) = (origin("link2"), origin("link3"));
+    let apart = [0, 1, 2].map(|k| three[k].sub(two[k]).to_f64());
+    let before = [0, 1, 2].map(|k| {
+        let (a, b) = (assembled("link3"), assembled("link2"));
+        a.position()[k].sub(b.position()[k]).to_f64()
+    });
+    assert_close(apart, [before[0], -(before[2] + 2.0), before[1]], 1e-9);
+    // The lift trails a line, from the last link's middle up 2; the spread
+    // none.
+    let trails = geop_core_editor::view::annotations_of(&reader);
+    let [trail] = &trails[..] else {
+        panic!("one trail: {trails:?}");
+    };
+    assert_eq!(trail.name, "explode(lift,link3)");
+    let [from, to] = &trail.polyline[..] else {
+        panic!("a line: {trail:?}");
+    };
+    let up = [0, 1, 2].map(|k| to[k].sub(from[k]).to_f64());
+    assert_close(up, [0.0, 0.0, 2.0], 1e-12);
+}
+
+/// The `cam_follower` example: the follower rides on the eccentric cam as
+/// the motion turns it — at every time, its axis on the slider as far out
+/// as the cam's side, offset by the follower's radius, puts it — and the
+/// mates hold all the way round.
+#[test]
+fn the_cam_drives_its_follower_round() {
+    use geop_ops_model::placed::motion::motion_studies;
+    let (files, program) = workspace_example("cam_follower");
+    let mut part = build(&program, &workspace(files)).unwrap();
+    // Settled as the editor settles it: the foot point on the cam started
+    // where it is nearest the follower.
+    let state = part.program.state.clone();
+    let (moved, report) = solving::solve(&mut part.rerun(), &state, &[], None).unwrap();
+    assert!(report.converged, "{report:?}");
+    part.program.state.extend(moved);
+    // The cam's side closes round on itself: its foot point runs on round
+    // it, with no end to stop at.
+    {
+        let reader = part.view();
+        let whole = ElementReference::whole(crate::mate("add_part(follower,m2)"));
+        let mate = reader.retrieve_element(&whole).unwrap();
+        let Resolved::Constraint { a, .. } = mate else {
+            panic!("a tangent: {mate:?}");
+        };
+        let closing = a.what.parameters().iter().filter(|p| p.closes).count();
+        let crate::residuals::Geometry::Surface { surface } = &a.what else {
+            panic!("the cam's side: {:?}", a.what);
+        };
+        let (nu, nv) = (surface.num_u, surface.num_v);
+        assert_eq!(
+            closing,
+            1,
+            "{nu} x {nv}: first {:?}, last {:?}",
+            &surface.control_points[..nv],
+            &surface.control_points[(nu - 1) * nv..]
+        );
+    }
+    let study = {
+        let reader = part.view();
+        let studies = motion_studies(&reader);
+        let [(name, study)] = &studies[..] else {
+            panic!("one study: {studies:?}");
+        };
+        assert_eq!(name, "spin");
+        (*study).clone()
+    };
+    for time in [0.0, 0.5, 1.0, 1.5, 2.5, 3.5] {
+        let set = (study.at(time).into_iter())
+            .map(|(state, value)| (state, n(value)))
+            .collect();
+        let state = part.program.state.clone();
+        let (moved, report) = solving::set(&mut part.rerun(), &state, &set).unwrap();
+        assert!(report.converged, "at {time} s: {report:?}");
+        part.program.state.extend(moved);
+        let theta = (90.0 * time).to_radians();
+        let reach = 0.5 * theta.cos() + (2.4_f64.powi(2) - (0.5 * theta.sin()).powi(2)).sqrt();
+        let StateValue::Number(slid) = part.program.state["add_part(follower,m1).distance"] else {
+            panic!("the slide");
+        };
+        assert!(
+            (slid.to_f64() - reach).abs() < 1e-7,
+            "at {time} s: {slid:?}, not {reach}"
+        );
+    }
 }

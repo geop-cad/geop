@@ -21,7 +21,7 @@
 //! whose coordinate the state does not give starts where its parts are.
 
 pub use crate::{
-    joints::{Connector, CouplingKind, JointKind, Motion, Transmission},
+    joints::{Connector, CouplingKind, Joint, JointKind, Limits, MOTIONS, Motion, Transmission},
     residuals::{Geometry, Kind},
 };
 pub use geop_ops_model::mate_entity::MateEntity;
@@ -95,6 +95,12 @@ impl MateKind {
 /// `.distance`.
 pub fn joint_parameter(mate: &str, motion: Motion) -> String {
     format!("{mate}.{}", motion.name())
+}
+
+/// The name of the parameter `foot` of the foot point a constraint named
+/// `mate` keeps its follower at (see [`Kind::feet`]): `add_part(cam,m1).t`.
+pub fn foot_parameter(mate: &str, foot: &str) -> String {
+    format!("{mate}.{foot}")
 }
 
 /// A mate: what two entities must be to each other — or, for a coupling,
@@ -181,7 +187,10 @@ impl Mate {
     /// coupling, what its joints have to be.
     pub fn needs(&self) -> String {
         match self.kind {
-            MateKind::Constraint(_) => describe_roles(self.kind.roles()),
+            MateKind::Constraint(kind) => match (kind.needs(0), kind.needs(1)) {
+                (Some(first), Some(second)) => format!("first {first}, then {second}"),
+                _ => describe_roles(self.kind.roles()),
+            },
             MateKind::Joint(_) => {
                 "a face, an edge, a point or a datum: where it is picked, a frame is put"
                     .to_string()

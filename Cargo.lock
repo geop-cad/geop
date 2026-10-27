@@ -1669,6 +1669,7 @@ dependencies = [
  "geop-lib-sweep",
  "geop-ops-extrude-revolve",
  "geop-ops-fillet",
+ "geop-ops-inspect",
  "geop-ops-model",
  "geop-ops-pattern",
  "geop-ops-reference-geometry",

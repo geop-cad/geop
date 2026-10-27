@@ -57,7 +57,7 @@ export function JointsPanel({ joints, conflicting, enabled, onSet }: Props) {
                   if (e.key === "Enter") give(e);
                 }}
               />
-              <span className="parameter-value">{unit || v.motion}</span>
+              <span className="parameter-value">{unit || v.parameter.slice(v.parameter.lastIndexOf(".") + 1)}</span>
             </div>
           );
         }),

@@ -1391,6 +1391,19 @@ fillet needs of the third face — a plane, square to the edge — is true of
 both. `tool_end` counts faces of one plane as one wall. A refusal says which
 faces meet where (`corners_of`), so the next corner it cannot take is named.
 
+## A face is a piece of a wall
+
+A cam swept along a sketched circle is four faces, a quarter each, and a
+follower held tangent to the one picked ran to its end and stopped: the
+solve met the foot point's limit a quarter turn on. Nothing was wrong with
+the solve. What the user picked was the wall, and the face only a piece of
+it. A tangent's face is now joined with the faces it runs on into across
+an edge, tangent to it (`mate_entity::wall`, `NurbSurface3D::joined`), and a
+path's edge with the edges it carries on into (`mate_entity::run`); a
+parameter along which the joined wall closes on itself wraps round instead
+of ending. Where a pick names a piece of something the geometry continues,
+ask whether the operation means the piece or the whole.
+
 ## A reference direction is not left to noise
 
 A joint measures its turns from a direction square to its axis, chosen from

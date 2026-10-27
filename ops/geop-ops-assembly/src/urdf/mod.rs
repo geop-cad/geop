@@ -48,7 +48,7 @@ use geop_core_program::{reader::Reader, values::StateValue};
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 
 use crate::{
-    CouplingKind, JointKind, Motion, Resolved, joint_parameter,
+    CouplingKind, JointKind, MOTIONS, Motion, Resolved, joint_parameter,
     joints::{Connector, measure},
     mechanism::mates_of,
     residuals::D,
@@ -380,25 +380,24 @@ impl<'a> Mechanism<'a> {
                         &end_world(&a.connector, world(&a).as_ref()),
                         &end_world(&b.connector, world(&b).as_ref()),
                     );
-                    let mut coordinates = [Scalar::ZERO; 2];
-                    for (k, motion) in Motion::ALL.into_iter().enumerate() {
-                        if kind.moves(motion) {
-                            coordinates[k] =
-                                match reader.retrieve_state(&joint_parameter(name, motion)) {
-                                    StateValue::Number(value) => value,
-                                    // Where its parts are: what a solve
-                                    // would start it from.
-                                    _ => Scalar::from_f64(measured[k]),
-                                };
-                        }
+                    let mut coordinates = [Scalar::ZERO; MOTIONS];
+                    for motion in kind.motions() {
+                        let k = motion.index();
+                        coordinates[k] = match reader.retrieve_state(&joint_parameter(name, motion))
+                        {
+                            StateValue::Number(value) => value,
+                            // Where its parts are: what a solve would
+                            // start it from.
+                            _ => Scalar::from_f64(measured[k]),
+                        };
                     }
                     joints.push(MechanismJoint {
                         name: name.to_string(),
                         kind: *kind,
                         a,
                         b,
-                        angle: coordinates[0],
-                        distance: coordinates[1],
+                        angle: coordinates[Motion::Turn.index()],
+                        distance: coordinates[Motion::Slide.index()],
                     });
                 }
                 Resolved::Coupling { kind, joints } => {
@@ -595,9 +594,9 @@ pub fn export(output: &mut Output, name: &str, quality: usize) -> GeopResult<Urd
         let start = frame(&joint.a, bodies).with_context(&jctx)?;
         // What of the joint's motion stays — a revolute joint's offset
         // along its axis, a slider's turn about it — and what moves.
-        let (fixed, moving, motion) = match joint.kind {
-            JointKind::Revolute { .. } => (slide(joint.distance), turn(joint.angle)?, Motion::Turn),
-            JointKind::Slider { .. } => (turn(joint.angle)?, slide(joint.distance), Motion::Slide),
+        let (fixed, moving, motion) = match joint.kind.joint {
+            crate::Joint::Revolute => (slide(joint.distance), turn(joint.angle)?, Motion::Turn),
+            crate::Joint::Slider => (turn(joint.angle)?, slide(joint.distance), Motion::Slide),
             _ => unreachable!("tree refuses every other moving joint"),
         };
         let at_zero = start.compose(&fixed);
@@ -621,7 +620,7 @@ pub fn export(output: &mut Output, name: &str, quality: usize) -> GeopResult<Urd
                 lower: lower / 1000.0,
                 upper: upper / 1000.0,
             },
-            (Motion::Slide, _, _) => unreachable!("tree refuses a slider without limits"),
+            _ => unreachable!("tree refuses a slider without limits"),
         };
         joints.push(Joint {
             name: joint.name.clone(),
@@ -725,7 +724,7 @@ fn mimics(mechanism: &Mechanism, tree: &tree::Tree, joints: &mut [Joint]) -> Geo
         let [ma, mb] = coupling.kind.transmission.motions();
         let unit = |m: Motion| match m {
             Motion::Turn => 1.0,
-            Motion::Slide => 1e-3,
+            Motion::Slide | Motion::SlideX | Motion::SlideY => 1e-3,
         };
         let multiplier = coupling.kind.factor()?.to_f64() * unit(mb) / unit(ma);
         if let Some((_, _, other)) = drives.insert(coupling.b, (coupling.a, multiplier, i)) {

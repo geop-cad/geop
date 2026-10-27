@@ -379,7 +379,7 @@ fn a_revolute_joint_is_dragged_up_to_its_limit() {
         panic!("the joint's angle is shown");
     };
     assert_eq!(angle.value, 150.0);
-    assert!(step.presentation.dialog.get("mate:m1:max").is_some());
+    assert!(step.presentation.dialog.get("mate:m1:max:angle").is_some());
 
     // Set in the dialog: the forearm turns there.
     handled(&mut editor, dialog("mate:m1:angle", Value::Number(-60.0)));
@@ -1193,6 +1193,400 @@ fn a_step_of_a_placed_part_is_edited_where_it_is_placed() {
         matches!(distance, Some(Control::Number(number)) if number.value == 2.0),
         "cancelled, the file is as committed"
     );
+}
+
+/// A planar joint, added in the dialog between the two cubes' frames: its
+/// coordinates are offered in the dialog and the joints panel, the part
+/// goes where they are set, and dragged it slides in the plane and no
+/// higher.
+#[test]
+fn a_planar_joint_is_set_and_dragged_in_its_plane() {
+    let mut step = placing(args(false, &[]));
+    step.dialog("add_mate", Value::Choice("planar".into()));
+    let picked: Vec<PickedElement> = [origin("a"), origin("b")]
+        .iter()
+        .map(Selectable::picked)
+        .collect();
+    step.dialog("mate:m1:entities", Value::Elements(picked));
+    step.dialog("mate:m1", Value::Press);
+    for coordinate in ["angle", "x", "y"] {
+        let key = format!("mate:m1:{coordinate}");
+        assert!(
+            step.presentation().dialog.get(&key).is_some(),
+            "{key} offered"
+        );
+        let limit = format!("mate:m1:limited:{coordinate}");
+        assert!(
+            step.presentation().dialog.get(&limit).is_some(),
+            "{limit} offered"
+        );
+    }
+    step.dialog("mate:m1:x", Value::Number(2.0));
+    step.dialog("mate:m1:angle", Value::Number(90.0));
+    let pose = moved_to(&step, "b");
+    assert_close(apply(&pose, [0.0; 3]), [2.0, 0.0, 0.0], 1e-6);
+    assert_close(apply(&pose, [1.0, 0.0, 0.0]), [2.0, 1.0, 0.0], 1e-6);
+
+    // Grabbed at its top and dragged up and away: it slides, and stays on
+    // the plane.
+    step.send(StepEditEvent::Hover {
+        pointer: down_at(1.5, 0.5, 1.0),
+        shift: false,
+    });
+    step.send(StepEditEvent::Drag {
+        from: pointer([1.5, 0.5, 11.0], [0.0, 0.0, -1.0]),
+        to: pointer([3.0, 2.0, 11.0], [0.0, 0.0, -1.0]),
+        done: true,
+        shift: false,
+    });
+    let pose = moved_to(&step, "b");
+    let corner = apply(&pose, [0.0; 3]);
+    assert!(corner[2].abs() < 1e-7, "on its plane: {corner:?}");
+    assert!(corner[0] > 2.5, "slid along: {corner:?}");
+
+    let mut editor = step.editor;
+    let update = handled(&mut editor, Command::Commit);
+    let program = update.program.unwrap();
+    let joints = &joints_panel(&program)["joints"];
+    let values: Vec<&str> = (joints[0]["values"].as_array().unwrap().iter())
+        .map(|v| v["parameter"].as_str().unwrap())
+        .collect();
+    assert_eq!(
+        values,
+        [
+            "add_part(b,m1).angle",
+            "add_part(b,m1).x",
+            "add_part(b,m1).y"
+        ]
+    );
+    handled(&mut editor, set_joint("add_part(b,m1).y", -1.0));
+    assert!((state_number(&editor, "add_part(b,m1).y") + 1.0).abs() < 1e-9);
+}
+
+/// A roller is put against a drum by clicking: the tangent mate added, a
+/// click on the drum's side and one on the roller's top rim — and it rolls
+/// to touch the drum, its axis the roller's radius off the drum's side.
+#[test]
+fn a_roller_is_mated_to_a_drum_by_clicking_its_face_and_rim() {
+    let mut editor = editor();
+    let part = |radius| {
+        let mut program = Program::new();
+        program.push("c", PrimitiveArgs::cylinder_z([0.0; 3], radius, 1.0));
+        Some(program.to_json().unwrap())
+    };
+    let files = BTreeMap::from([
+        ("drum.geop".to_string(), part(2.0)),
+        ("roller.geop".to_string(), part(0.5)),
+    ]);
+    handled(&mut editor, Command::Files { files });
+    let mut program = Program::new();
+    program.push(
+        "drum",
+        AddPartArgs {
+            file: "drum.geop".into(),
+            ..Default::default()
+        }
+        .fixed(),
+    );
+    program.push(
+        "roller",
+        AddPartArgs {
+            file: "roller.geop".into(),
+            ..Default::default()
+        },
+    );
+    program.state.insert(
+        pose_state("roller"),
+        StateValue::Pose(
+            Pose::from_euler(Vector3::from_array([0.0, 3.5, -0.3].map(n)), [n(0.0); 3]).unwrap(),
+        ),
+    );
+    handled(
+        &mut editor,
+        Command::Load {
+            program,
+            path: Some("assembly.geop".into()),
+        },
+    );
+    let mut step = geop_core_editor::testing::Stepping::open(editor, "roller");
+    step.dialog("add_mate", Value::Choice("tangent".into()));
+    let hint = match step.presentation().dialog.get("mate_hint") {
+        Some(Control::Text { text, .. }) => text.clone(),
+        other => panic!("a hint: {other:?}"),
+    };
+    assert!(hint.contains("first a face"), "{hint}");
+    let click = |pointer| StepEditEvent::Click {
+        pointer,
+        button: geop_core_editor::editing::Button::Primary,
+        double: false,
+        shift: false,
+    };
+    // The drum's side, from the side; the roller's top rim, from above: a
+    // click by a rim picks its face there, and the tangent takes the rim.
+    step.send(click(pointer([10.0, 0.6, 0.5], [-1.0, 0.0, 0.0])));
+    step.send(click(down_at(
+        0.353_553_390_593_273_8,
+        3.853_553_390_593_274,
+        0.7,
+    )));
+    let mates = step.args::<AddPartArgs>().mates;
+    let entities = &mates["m1"].entities;
+    assert!(
+        matches!(&entities[..], [face, rim] if matches!(face.on, Selected::Face(_)) && matches!((&rim.on, &rim.at), (Selected::Edge(_), None) | (Selected::Face(_), Some(Selected::Edge(_))))),
+        "{entities:?}"
+    );
+    let pose = moved_to(&step, "roller");
+    let [x, y, z] = apply(&pose, [0.0, 0.0, 1.0]);
+    assert!((x.hypot(y) - 2.5).abs() < 1e-7, "{x} {y} {z}");
+    assert!(z <= 1.0 + 1e-7, "the rim no higher than the drum: {z}");
+}
+
+/// Where the scene `update` sent draws the placed part `name`: its frame's
+/// origin, if it sent it.
+fn sent_at(update: &Update, name: &str) -> Option<[f64; 3]> {
+    let scene = update.scene.as_ref()?;
+    let instance = scene.instances.iter().find(|i| i.name == name)?;
+    Some([0, 1, 2].map(|k| instance.frame.origin()[k].to_f64()))
+}
+
+/// Where the editor draws the placed part `name` of the part as it last
+/// ran: its frame's origin.
+fn drawn_at(editor: &Editor, name: &str) -> [f64; 3] {
+    let drawings = geop_core_editor::registry::Drawings::default();
+    let view = (editor.registry().draw(&editor.part(), &drawings, None)).unwrap();
+    let instance = view.instances.iter().find(|i| i.name == name).unwrap();
+    [0, 1, 2].map(|k| instance.frame.origin()[k].to_f64())
+}
+
+/// An exploded view made as a user makes it: a new explode step, a click
+/// on the chain's last link takes it in, and dragging it from the side
+/// lifts it the way it is dragged. The scene draws it lifted, a trail
+/// below it; seeking back before the step draws it assembled again.
+#[test]
+fn a_link_is_exploded_by_clicking_and_dragging_it() {
+    let mut editor = editor();
+    handled(
+        &mut editor,
+        Command::LoadWorkspaceExample {
+            name: "chain".into(),
+            folder: None,
+        },
+    );
+    let mut step = Stepping::new(editor, "explode");
+    step.send(StepEditEvent::Click {
+        pointer: from_above(8.0, 0.2),
+        button: geop_core_editor::editing::Button::Primary,
+        double: false,
+        shift: false,
+    });
+    assert_eq!(step.args::<crate::ExplodeArgs>().parts, ["link3"]);
+    assert!(step.presentation().dialog.get("distance").is_some());
+    // Grabbed on its side, looking along y, and dragged 2 up.
+    step.send(StepEditEvent::Drag {
+        from: pointer([8.0, -10.0, 0.5], [0.0, 1.0, 0.0]),
+        to: pointer([8.0, -10.0, 2.5], [0.0, 1.0, 0.0]),
+        done: true,
+        shift: false,
+    });
+    let distance = step.args::<crate::ExplodeArgs>().distance;
+    assert!((distance - 2.0).abs() < 1e-9, "{distance}");
+    let mut editor = step.editor;
+    handled(&mut editor, Command::Commit);
+    assert_close(drawn_at(&editor, "link3"), [6.0, 0.0, 2.4], 1e-9);
+    assert_close(drawn_at(&editor, "link2"), [3.0, 0.0, 0.2], 1e-9);
+    let trails = geop_core_editor::view::annotations_of(&editor.part());
+    assert_eq!(trails.len(), 1, "{trails:?}");
+    // What the state says is as assembled.
+    match editor.program().state.get(&pose_state("link3")) {
+        Some(StateValue::Pose(pose)) => {
+            let at = pose.position();
+            assert!((at[2].to_f64() - 0.4).abs() < 1e-9, "{at:?}")
+        }
+        other => panic!("the link's pose: {other:?}"),
+    }
+    // Grabbed where it is drawn, lifted, by the drag tool, it turns towards
+    // the pointer as it would assembled, and stays lifted.
+    handled(
+        &mut editor,
+        Command::Tool {
+            key: Some("drag".into()),
+        },
+    );
+    let update = handled(
+        &mut editor,
+        Command::Event {
+            event: StepEditEvent::Hover {
+                pointer: from_above(8.0, 0.2),
+                shift: false,
+            },
+        },
+    );
+    assert!(update.tool.unwrap().grab, "a press grabs the lifted link");
+    handled(
+        &mut editor,
+        Command::Event {
+            event: StepEditEvent::Drag {
+                from: from_above(8.0, 0.2),
+                to: from_above(7.0, 1.9),
+                done: true,
+                shift: false,
+            },
+        },
+    );
+    // The chain gives way as it would assembled: drawn lifted still.
+    let [_, _, z] = drawn_at(&editor, "link3");
+    assert!((z - 2.4).abs() < 1e-6, "{z}");
+    let turned = match editor.program().state.get(&pose_state("link3")) {
+        Some(StateValue::Pose(pose)) => pose.euler_degrees()[2],
+        other => panic!("the link's pose: {other:?}"),
+    };
+    assert!(turned > 30.0, "it turned towards the pointer: {turned}");
+    handled(&mut editor, Command::Tool { key: None });
+
+    let steps = editor.program().steps.len();
+    let update = handled(
+        &mut editor,
+        Command::Seek {
+            marker: Some(steps - 1),
+        },
+    );
+    let assembled = sent_at(&update, "link3").expect("the link is sent again");
+    assert!((assembled[2] - 0.4).abs() < 1e-9, "{assembled:?}");
+}
+
+/// The command `command` to the motion panel, as a front end sends it.
+fn motion(command: crate::MotionCommand) -> Command {
+    Command::panel::<crate::MotionPanel>(&command).expect("a motion's command is plain data")
+}
+
+/// A motion made and played as a user does: a cube on a slider above
+/// another, a new motion step driving the slider — from where it is, the
+/// table's last keyframe typed down into the other cube — shown halfway in
+/// its dialog; then played in the motion panel, checked for collisions,
+/// and exported frame by frame.
+#[test]
+fn a_slider_is_driven_played_checked_and_exported() {
+    use crate::{Joint, JointKind, MotionCommand};
+    let slider = MateKind::Joint(JointKind::new(Joint::Slider));
+    let mut editor = editor();
+    let files = BTreeMap::from([("cube.geop".to_string(), Some(cube().to_json().unwrap()))]);
+    handled(&mut editor, Command::Files { files });
+    let mut program = Program::new();
+    program.push("a", args(true, &[]));
+    program.push(
+        "b",
+        args(false, &[("m1", slider, [origin("a"), origin("b")])]),
+    );
+    program.state.insert(
+        pose_state("b"),
+        StateValue::Pose(
+            Pose::from_euler(Vector3::from_array([0.0, 0.0, 2.0].map(n)), [n(0.0); 3]).unwrap(),
+        ),
+    );
+    handled(
+        &mut editor,
+        Command::Load {
+            program,
+            path: Some("assembly.geop".into()),
+        },
+    );
+    let slide = "add_part(b,m1).distance";
+
+    let mut step = Stepping::new(editor, "motion");
+    let args: crate::MotionArgs = step.args();
+    assert_eq!(args.study.drivers, [slide]);
+    assert_eq!(args.study.keys, [vec![0.0, 2.0], vec![2.0, 3.0]]);
+    step.dialog(
+        "keys",
+        Value::Table(geop_core_editor::editing::TableEdit::Cell {
+            row: 1,
+            column: 1,
+            text: "0.25".into(),
+        }),
+    );
+    step.dialog("frames", Value::Number(5.0));
+    // Shown halfway: the slider half way down.
+    step.dialog("time", Value::Number(1.0));
+    let [_, _, z] = apply(&moved_to(&step, "b"), [0.0; 3]);
+    assert!((z - 1.125).abs() < 1e-7, "{z}");
+    let mut editor = step.editor;
+    handled(&mut editor, Command::Commit);
+
+    // Played in the panel: at a time, the slider where the table says.
+    let update = handled(
+        &mut editor,
+        motion(MotionCommand::Seek {
+            study: "motion1".into(),
+            time: 1.5,
+        }),
+    );
+    assert!((state_number(&editor, slide) - 0.6875).abs() < 1e-9);
+    let panel = &update.program.unwrap().panels["motion"];
+    assert_eq!(panel["studies"][0]["name"], "motion1");
+    assert_eq!(panel["studies"][0]["end"], 2.0);
+    assert_eq!(panel["shown"], serde_json::json!(["motion1", 1.5]));
+    // Scrubbing moves the parts, and resolves no mate again: what a frame
+    // costs is a solve, whatever else the assembly holds.
+    let resolved = crate::mates_resolved();
+    for time in [1.6, 1.7, 1.8] {
+        let study = "motion1".into();
+        handled(&mut editor, motion(MotionCommand::Seek { study, time }));
+    }
+    assert_eq!(crate::mates_resolved(), resolved, "a seek resolves no mate");
+    handled(
+        &mut editor,
+        motion(MotionCommand::Seek {
+            study: "motion1".into(),
+            time: 1.5,
+        }),
+    );
+
+    // Checked: the cubes overlap at the last two frames, and the slider is
+    // shown where it was.
+    let update = handled(
+        &mut editor,
+        motion(MotionCommand::Check {
+            study: "motion1".into(),
+        }),
+    );
+    assert!((state_number(&editor, slide) - 0.6875).abs() < 1e-9);
+    let checked = &update.program.unwrap().panels["motion"]["checked"];
+    let times: Vec<f64> = (checked["collisions"].as_array().unwrap().iter())
+        .map(|c| c["time"].as_f64().unwrap())
+        .collect();
+    assert_eq!(times, [1.5, 2.0], "{checked}");
+    let pair = &checked["collisions"][0];
+    assert!(pair["a"].as_str().unwrap().starts_with("/a:"), "{pair}");
+    assert!(pair["b"].as_str().unwrap().starts_with("/b:"), "{pair}");
+
+    // Exported: a row a frame, the slide and where each cube is.
+    let update = handled(
+        &mut editor,
+        Command::Export {
+            exporter: "motion".into(),
+            format: Some("csv".into()),
+            options: serde_json::Value::Null,
+            date: String::new(),
+        },
+    );
+    let export = update.export.unwrap();
+    let text = match &export.content {
+        Content::Text(text) => text.clone(),
+        other => panic!("text: {other:?}"),
+    };
+    let lines: Vec<&str> = text.lines().collect();
+    assert_eq!(lines.len(), 6, "{text}");
+    assert!(
+        lines[0].starts_with("\"time\",\"add_part(b,m1).distance\",\"a.x\""),
+        "{}",
+        lines[0]
+    );
+    let last: Vec<f64> = lines[5].split(',').map(|v| v.parse().unwrap()).collect();
+    assert_eq!((last[0], last[1]), (2.0, 0.25));
+    // b's position, after a's seven numbers.
+    assert!((last[2 + 7 + 2] - 0.25).abs() < 1e-9, "{}", lines[5]);
+    // The part is left as it was shown.
+    assert!((state_number(&editor, slide) - 0.6875).abs() < 1e-9);
 }
 
 /// Moving the pointer over a part being placed, once its placement was

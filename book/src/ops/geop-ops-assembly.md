@@ -81,17 +81,35 @@ A `Mate` is what two entities must be to each other (`MateKind`):
 
 - **constraints** (`Kind`): coincident, concentric, parallel,
   perpendicular, distance and angle, each taking a point, a line or a plane
-  of each entity, where its part puts it;
-- **joints** (`JointKind`): revolute, slider, cylindrical, fastened — one
-  part turning about, or sliding along, the other's axis. A joint is made
+  of each entity, where its part puts it; and tangent and path, which keep
+  a point of one part on a face or a curve of the other: a tangent keeps a
+  circle (a roller's rim, a pin's) its radius off a face — a cam and its
+  follower, a pin in a slot of any shape — and a path keeps a point on a
+  curve. Where on the face or curve is the foot point, its parameters
+  values of the state (`foot_parameter`: `add_part(follower,m2).u`). The
+  face is the wall it is of, the faces it runs on into smoothly joined
+  into one surface, and the curve the run of edges it carries on into: a
+  follower rolls round every face of a cam. A parameter along which the
+  wall or run closes on itself wraps round; one along which it does not is
+  kept within its domain by limits;
+- **joints** (`JointKind`): one table of how the second frame may move on
+  the first (`Joint::frees`) — revolute, slider, cylindrical, planar, pin
+  in slot, ball, universal and fastened — every one held by one residual
+  (`joint_residuals`): the second frame's origin the first's moved along
+  its axes by the joint's slides, and its axes turned about the first's
+  `z` by its angle, kept square to it for a universal joint's cross, or
+  free for a ball. A ball's and a cross's turn is no coordinate: angles of
+  them go singular. Limits are kept per coordinate, written by name
+  (`{"type": "planar", "limits": {"x": {"min": -1.0}}}`). A joint is made
   between two frames, one on each part, which a click puts on whatever is
   picked — a face, an edge, a point or a datum — at a corner or side of a
   face or an end of an edge (`MateEntity::frame`, `at`). Its coordinates —
   how far it is turned and slid — are values of the state, named after the
   mate (`joint_parameter`: `add_part(arm2,m1).angle`): set to a value,
   held there, kept within limits;
-- **couplings** (`CouplingKind`): two joints tied linearly — a gear pair, a
-  rack and its pinion, a screw;
+- **couplings** (`CouplingKind`): a coordinate of one joint tied to one of
+  another by a factor and an offset — gear, belt or chain, rack and
+  pinion, screw and linear are its presets;
 - **fixed** (`{ "type": "fixed" }`): in an `add_part` step and with no
   entity, it holds the part the step places (the first part placed gets
   one).
@@ -157,6 +175,26 @@ a whole drag one edit to undo); the `AssemblyDrawer`, which draws the
 placed parts as instances of their components and lists those placed in
 the part itself; and the examples of assemblies (`examples::set`).
 
+## Exploded views and motion
+
+`Explode` is one move of an exploded view: placed parts moved off where
+they are assembled, along an axis or the `z` of what a pick's frame gives,
+turned about it, a line trailing each (an annotation). Each move is a step,
+on from where the ones before left the parts: seeking the timeline through
+them takes the assembly apart. The move is a target of the model's
+vocabulary (`geop_ops_model::placed::explode`), which the scene draws placed
+parts by and a drawing can; the state and the mates stay as assembled. In
+its dialog a click on a placed part takes it in or out, and dragging one
+of them, or the distance's handle, slides them.
+
+`Drive` (operation `motion`) drives joint coordinates by a time table
+(`geop_ops_model::placed::motion::MotionStudy`): a keyframe per row, a
+value per joint, straight between. The motion panel (`MotionPanel`, key
+`motion`) plays and scrubs a study — `seek` solves each time from the one
+before — and `check` plays it through, asking the interference inspector
+about every frame. `MotionExport` (exporter `motion`) writes every frame:
+the drivers' values and each placed part's pose, as CSV or JSON.
+
 ## STL and URDF
 
 `geop_ops_model::placed::solids` lists the solids a part shows, wherever
@@ -177,7 +215,7 @@ its solids, its meshes as STL in one ZIP archive.
 `examples` (feature `examples`) holds the examples of assemblies: the parts they place (`pin`,
 `link`, `bar`, `metric_plate`) and the examples made of several files
 (`workspaces`: `press`, `pin_in_plate`, `chain`, `parametric_plates`,
-`four_bar`, `arm`, `bolted_plate`), with the mates and frames they are
+`four_bar`, `arm`, `bolted_plate`, `cam_follower`), with the mates and frames they are
 written with (`link_rim`, `link_holes`), public for other crates' tests.
 An example's state is written as a file holds it (`examples::pose`, see
 `Pose::saved`), so it saves and loads as it is.

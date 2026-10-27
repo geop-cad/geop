@@ -53,9 +53,9 @@ use geop_ops_model::selection::Selected;
 use geop_ops_model::placed::{drawn, locate, moved_by};
 
 use crate::{
-    joints::{Connector, JointKind, Motion, joint_residuals, measure},
-    mates::{Mate, MateKind, On, Resolved, joint_parameter, mate, mate_name},
-    residuals::{D, Geometry, Kind, residuals},
+    joints::{Connector, Coordinates, JointKind, MOTIONS, Motion, joint_residuals, measure},
+    mates::{Mate, MateKind, On, Resolved, foot_parameter, joint_parameter, mate, mate_name},
+    residuals::{D, Geometry, Kind, contact_residuals, residuals, seed_feet},
     solving::{Setting, Settings, largest, scale_of, settings_of},
 };
 use geop_ops_model::mate_entity::MateEntity;
@@ -91,17 +91,34 @@ fn size(reader: &Reader, bodies: &[&Option<String>]) -> GeopResult<Scalar> {
     largest(rigid.iter().map(|body| drawn(reader, body)))
 }
 
-/// The geometry `entity` of `mate`, a constraint of `kind`, is to it, in its
-/// own part.
+/// The geometry `entity`, the `k`th of `mate`, a constraint of `kind`, is
+/// to it, in its own part — or, where what it is on is not what the kind
+/// takes, the element it was picked at: a click by a face's rim picks the
+/// face at the rim, and a tangent takes the rim.
 fn geometry_in(
     kind: &Kind,
     mate: &Mate,
+    k: usize,
     entity: &MateEntity,
     reader: &Reader,
 ) -> GeopResult<Geometry> {
     let shape = entity.shape(reader)?;
-    kind.geometry(&shape)
-        .ok_or_else(|| GeopError::new(format!("{} is not {}", entity.label(), mate.needs())))
+    let (surface, curve) = (|| entity.surface(reader), || entity.curve(reader));
+    if let Some(geometry) = kind.geometry(k, &shape, surface, curve)? {
+        return Ok(geometry);
+    }
+    let at = (entity.at.as_ref()).map(|at| MateEntity::on(at.clone()));
+    let picked_at = match &at {
+        Some(at) => {
+            let (surface, curve) = (|| at.surface(reader), || at.curve(reader));
+            kind.geometry(k, &at.shape(reader)?, surface, curve)?
+        }
+        None => None,
+    };
+    picked_at.ok_or_else(|| {
+        let needs = kind.needs(k).map_or_else(|| mate.needs(), str::to_string);
+        GeopError::new(format!("{} is not {needs}", entity.label()))
+    })
 }
 
 /// The connector `entity` is to a joint, in its own part: what it makes one
@@ -143,8 +160,8 @@ pub(crate) fn resolve(reader: &Reader, (name, mate): &(String, Mate)) -> GeopRes
                 .pair()
                 .ok_or_else(|| GeopError::new("it needs two elements"))
                 .with_context(ctx)?;
-            let geometry = |e: &MateEntity, r: &Reader| geometry_in(&kind, mate, e, r);
-            let (a, b) = (on(reader, a, geometry)?, on(reader, b, geometry)?);
+            let geometry = |k| move |e: &MateEntity, r: &Reader| geometry_in(&kind, mate, k, e, r);
+            let (a, b) = (on(reader, a, geometry(0))?, on(reader, b, geometry(1))?);
             // Whether the kind can hold between the two is a question of
             // their geometry alone, whatever bodies they are of.
             kind.fits(&a.what, &b.what).with_context(ctx)?;
@@ -243,14 +260,17 @@ impl Reading<'_> {
         })
     }
 
-    /// The coordinates `[angle, distance]` of the joint `name` of `kind`:
-    /// zero for a motion it does not free.
-    fn coordinates(&mut self, reader: &Reader, name: &str, kind: &JointKind) -> GeopResult<[D; 2]> {
-        let mut out = [D::cst(Scalar::ZERO); 2];
-        for (k, motion) in Motion::ALL.into_iter().enumerate() {
-            if kind.moves(motion) {
-                out[k] = self.coordinate(reader, &joint_parameter(name, motion))?;
-            }
+    /// The coordinates of the joint `name` of `kind`, by
+    /// [`Motion::index`]: zero for a motion it does not free.
+    fn coordinates(
+        &mut self,
+        reader: &Reader,
+        name: &str,
+        kind: &JointKind,
+    ) -> GeopResult<Coordinates> {
+        let mut out = [D::cst(Scalar::ZERO); MOTIONS];
+        for motion in kind.motions() {
+            out[motion.index()] = self.coordinate(reader, &joint_parameter(name, motion))?;
         }
         Ok(out)
     }
@@ -292,14 +312,20 @@ fn residuals_of(
     match resolved {
         Resolved::Constraint { kind, a, b } => {
             let (scale, [pa, pb]) = reading.ends(reader, a, b)?;
-            let (wa, wb) = (a.what.placed(pa.as_ref())?, b.what.placed(pb.as_ref())?);
-            residuals(kind, &wa, &wb, scale)
+            if kind.feet().is_empty() {
+                let (wa, wb) = (a.what.placed(pa.as_ref())?, b.what.placed(pb.as_ref())?);
+                return residuals(kind, &wa, &wb, scale);
+            }
+            let feet = (kind.feet().iter())
+                .map(|foot| reading.coordinate(reader, &foot_parameter(name, foot)))
+                .collect::<GeopResult<Vec<D>>>()?;
+            contact_residuals(kind, &a.what, pa.as_ref(), &b.what, pb.as_ref(), &feet)
         }
         Resolved::Joint { kind, a, b } => {
             let (scale, [pa, pb]) = reading.ends(reader, a, b)?;
-            let [angle, distance] = reading.coordinates(reader, name, kind)?;
+            let at = reading.coordinates(reader, name, kind)?;
             let (ca, cb) = (a.what.placed(pa.as_ref()), b.what.placed(pb.as_ref()));
-            joint_residuals(&ca, &cb, angle, distance, scale)
+            joint_residuals(kind, &ca, &cb, &at, scale)
         }
         Resolved::Coupling { kind, joints } => {
             let [ja, jb] = [&joints[0], &joints[1]].map(|j| joint(reader, j));
@@ -387,7 +413,7 @@ fn limit(reader: &Reader, name: &str, motion: Motion, upper: bool) -> GeopResult
     // one, and is not multiplied by an exact one.
     let scale = match motion {
         Motion::Turn => Some(size(reader, &[&a.body, &b.body])?),
-        Motion::Slide => None,
+        Motion::Slide | Motion::SlideX | Motion::SlideY => None,
     };
     let state = joint_parameter(name, motion);
     differentiated(reader, Bound::AtMost, |reader, reading| {
@@ -404,8 +430,40 @@ fn limit(reader: &Reader, name: &str, motion: Motion, upper: bool) -> GeopResult
     })
 }
 
+/// The constraint that keeps the `k`th parameter of the foot point of the
+/// constraint `name` (see [`Kind::feet`]) within its domain's upper end,
+/// or its lower — where the curve or face does not close on itself along
+/// it: a limit, as a length — a step of the parameter turned into one by
+/// the parts' size per the domain's width, a free choice of scale.
+fn foot_limit(reader: &Reader, name: &str, k: usize, upper: bool) -> GeopResult<Constraint> {
+    let Resolved::Constraint { kind, a, b } = resolved(reader, name)? else {
+        return Err(GeopError::new(format!(
+            "the mate {name:?} keeps no foot point"
+        )));
+    };
+    let (Some(foot), Some(domain)) = (kind.feet().get(k), a.what.parameters().get(k).copied())
+    else {
+        return Err(GeopError::new(format!(
+            "the mate {name:?} has no foot parameter {k}"
+        )));
+    };
+    let bound = if upper { domain.hi } else { domain.lo };
+    let width = domain.hi.sub(domain.lo);
+    let scale = D::cst(size(reader, &[&a.body, &b.body])?.div(width)?);
+    let state = foot_parameter(name, foot);
+    differentiated(reader, Bound::AtMost, |reader, reading| {
+        let value = reading.coordinate(reader, &state)?;
+        let past = match upper {
+            true => value.sub(D::cst(bound)),
+            false => D::cst(bound).sub(value),
+        };
+        Ok(vec![past.mul(scale)])
+    })
+}
+
 /// The constraints the mates `names`, resolved already in the part, put on
-/// the state: each mate's own, named as the mate is, and its limits'. A
+/// the state: each mate's own, named as the mate is, and its limits' — a
+/// joint's coordinates', a foot point's parameters' within their domain. A
 /// fixed mate puts none: it declares the part it holds fixed. The generator
 /// of a step's constraints.
 fn constraints_of_mates(
@@ -419,6 +477,19 @@ fn constraints_of_mates(
             continue;
         }
         out.insert(name.clone(), constrain(reader, name)?);
+        if let Resolved::Constraint { kind, a, .. } = resolved {
+            let ends = a.what.parameters();
+            for (k, foot) in kind.feet().iter().enumerate() {
+                if ends.get(k).is_none_or(|end| end.closes) {
+                    continue;
+                }
+                let state = foot_parameter(name, foot);
+                for upper in [false, true] {
+                    let constraint = foot_limit(reader, name, k, upper)?;
+                    out.insert(limit_name(&state, upper), constraint);
+                }
+            }
+        }
         if let Resolved::Joint { kind, .. } = resolved {
             for motion in kind.motions() {
                 let state = joint_parameter(name, motion);
@@ -436,8 +507,9 @@ fn constraints_of_mates(
 
 /// The unknowns a step declares: the pose state `placed` of the part it
 /// places, if it places one, held where it is as far as the mates let it;
-/// and those its mates `names` declare: the part a fixed mate holds, and
-/// each joint's coordinates. The generator of a step's unknowns.
+/// and those its mates `names` declare: the part a fixed mate holds, each
+/// joint's coordinates and each foot point's parameters. The generator of a
+/// step's unknowns.
 fn unknowns_of_mates(
     reader: &Reader,
     (placed, names): &(Option<String>, Vec<String>),
@@ -460,10 +532,47 @@ fn unknowns_of_mates(
                     out.push(coordinate(reader, name, motion)?);
                 }
             }
-            Resolved::Constraint { .. } | Resolved::Coupling { .. } => {}
+            Resolved::Constraint { kind, a, b } => out.extend(feet(reader, name, kind, a, b)?),
+            Resolved::Coupling { .. } => {}
         }
     }
     Ok(out)
+}
+
+/// The parameters of the foot point of the constraint `name` of `kind`
+/// between `a` and `b`, as values a solve moves: following their parts,
+/// and — where it does not hold — started at the foot point nearest the
+/// follower's point where the parts are: a seed, so a free choice, which
+/// the solve makes exact.
+fn feet(
+    reader: &Reader,
+    name: &str,
+    kind: &Kind,
+    a: &On<Geometry>,
+    b: &On<Geometry>,
+) -> GeopResult<Vec<Unknown>> {
+    if kind.feet().is_empty() {
+        return Ok(Vec::new());
+    }
+    let world = |on: &On<Geometry>| -> GeopResult<Option<Pose>> {
+        (on.body.as_ref())
+            .map(|body| Ok(locate(reader, body)?.world))
+            .transpose()
+    };
+    // Where the parts cannot be placed, there is nothing to start from.
+    let seeds = (world(a).and_then(|pa| Ok((pa, world(b)?))))
+        .and_then(|(pa, pb)| seed_feet(&a.what, pa.as_ref(), &b.what, pb.as_ref()))
+        .ok();
+    Ok((kind.feet().iter().enumerate())
+        .map(|(k, foot)| Unknown {
+            state: foot_parameter(name, foot),
+            mobility: Mobility::Follows,
+            seed: (seeds.as_ref())
+                .and_then(|s| s.get(k))
+                .map(|v| StateValue::Number(*v)),
+            unless: Some(name.to_string()),
+        })
+        .collect())
 }
 
 /// Defines what the mates `mates` of the step being run, each resolved
@@ -522,17 +631,19 @@ fn connectors_at(
     Ok([a.what.placed(wa.as_ref()), b.what.placed(wb.as_ref())])
 }
 
-/// The coordinates `[angle, distance]` of a joint, measured where its parts
-/// are — an angle at the turn nearest `near`.
+/// The coordinates of a joint, by [`Motion::index`], measured where its
+/// parts are — an angle at the turn nearest `near`.
 fn measured(
     reader: &Reader,
     a: &On<Connector>,
     b: &On<Connector>,
     near: f64,
-) -> GeopResult<[f64; 2]> {
+) -> GeopResult<[f64; MOTIONS]> {
     let [ca, cb] = connectors_at(reader, a, b)?;
-    let [angle, distance] = measure(&ca, &cb);
-    Ok([angle + 360.0 * ((near - angle) / 360.0).round(), distance])
+    let mut at = measure(&ca, &cb);
+    let angle = &mut at[Motion::Turn.index()];
+    *angle += 360.0 * ((near - *angle) / 360.0).round();
+    Ok(at)
 }
 
 /// What a fixed mate declares of the placed part `body` it holds: its
@@ -559,12 +670,8 @@ fn coordinate(reader: &Reader, name: &str, motion: Motion) -> GeopResult<Unknown
     };
     let (_, a, b) = joint(reader, name)?;
     // Where the parts cannot be measured, there is nothing to start from.
-    let seed = measured(reader, a, b, near).ok().map(|[angle, distance]| {
-        StateValue::Number(Scalar::from_f64(match motion {
-            Motion::Turn => angle,
-            Motion::Slide => distance,
-        }))
-    });
+    let seed = (measured(reader, a, b, near).ok())
+        .map(|at| StateValue::Number(Scalar::from_f64(at[motion.index()])));
     Ok(Unknown {
         state,
         mobility: Mobility::Follows,

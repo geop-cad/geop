@@ -31,7 +31,8 @@ use geop_lib_fixtures::{GivenDatumArgs, PrimitiveArgs};
 use geop_ops_model::{datums::datum, element, mate_entity::MateEntity, selection::Selected};
 
 use crate::{
-    AddPartArgs, CouplingKind, JointKind, Kind, Mate, Motion, Transmission, joint_parameter,
+    AddPartArgs, CouplingKind, Joint, JointKind, Kind, Limits, Mate, Motion, Transmission,
+    joint_parameter,
 };
 
 /// The sizes of a [`robot_arm`].
@@ -307,10 +308,13 @@ fn gripper() -> Program {
     let mut state = StateValues::from([(pose_state("palm"), saved(Pose::identity()))]);
     for k in 0..2 {
         let id = format!("finger{k}");
-        let slider = JointKind::Slider {
-            min: Some(Scalar::ZERO),
-            max: Some(Scalar::from_f64(10.0)),
-        };
+        let slider = JointKind::new(Joint::Slider).limited(
+            Motion::Slide,
+            Limits {
+                min: Some(Scalar::ZERO),
+                max: Some(Scalar::from_f64(10.0)),
+            },
+        );
         let rail = datum_of("palm", &format!("rail{k}"));
         program.push(
             &id,
@@ -333,11 +337,16 @@ fn gripper() -> Program {
 /// The files of the arm `arm`, by path, its top program [`ARM`] among
 /// them; the motors and pulleys are standard parts.
 pub fn robot_arm(arm: &RobotArm) -> BTreeMap<String, String> {
-    let revolute = || JointKind::Revolute {
-        min: Some(Scalar::from_f64(-170.0)),
-        max: Some(Scalar::from_f64(170.0)),
+    let revolute = || {
+        JointKind::new(Joint::Revolute).limited(
+            Motion::Turn,
+            Limits {
+                min: Some(Scalar::from_f64(-170.0)),
+                max: Some(Scalar::from_f64(170.0)),
+            },
+        )
     };
-    let fastened = || JointKind::Fastened;
+    let fastened = || JointKind::new(Joint::Fastened);
     let frames: BTreeMap<String, Pose> = (link_frames(arm).into_iter())
         .map(|(name, pose, _)| (name, pose))
         .collect();
@@ -394,6 +403,7 @@ pub fn robot_arm(arm: &RobotArm) -> BTreeMap<String, String> {
                 transmission: Transmission::Gear,
                 value: Scalar::from_f64(ratio),
                 reverse: false,
+                offset: None,
             },
             vec![format!("add_part({driver},m1)"), RobotArm::joint(i)],
         );
@@ -405,10 +415,7 @@ pub fn robot_arm(arm: &RobotArm) -> BTreeMap<String, String> {
                     (
                         "m1".to_string(),
                         joint(
-                            JointKind::Revolute {
-                                min: None,
-                                max: None,
-                            },
+                            JointKind::new(Joint::Revolute),
                             datum_of(&motor, "axis"),
                             datum_of(&driver, "axis"),
                         ),

@@ -15,3 +15,36 @@ export interface JointsState {
 
 /** What the joints panel is sent — see `geop_ops_assembly::JointsCommand`. */
 export type JointsCommand = { command: "set"; parameter: string; value: number };
+
+/** A motion study as the motion panel lists it — see `geop_ops_assembly::StudyState`. */
+export interface StudyState {
+  /** The id of its step. */
+  name: string;
+  /** When it starts and ends, in seconds. */
+  start: number;
+  end: number;
+  frames: number;
+  /** The joint coordinates it drives. */
+  drivers: string[];
+}
+
+/** Two solids found overlapping at a time of a motion. */
+export interface Collision {
+  time: number;
+  a: string;
+  b: string;
+}
+
+/** What the motion panel shows — see `geop_ops_assembly::MotionState`. */
+export interface MotionState {
+  studies: StudyState[];
+  /** The study played last, and the time it was shown at. */
+  shown: [string, number] | null;
+  /** What the last check of a study found. */
+  checked: { study: string; collisions: Collision[] } | null;
+}
+
+/** What the motion panel is sent — see `geop_ops_assembly::MotionCommand`. */
+export type MotionCommand =
+  | { command: "seek"; study: string; time: number }
+  | { command: "check"; study: string };

@@ -8,7 +8,11 @@
 //! ([`DragTool`]) with no step edited. The joints panel ([`JointsPanel`])
 //! sets a joint's coordinates, and says how free the placed parts are and
 //! which constraints conflict. [`PartPattern`] places copies of a placed
-//! part in a row or round an axis.
+//! part in a row or round an axis. [`Explode`] moves placed parts off
+//! where they are assembled, one move of an exploded view per step, and
+//! [`Drive`] drives joints by a time table, played and checked for
+//! collisions in the motion panel ([`MotionPanel`]) and written frame by
+//! frame ([`MotionExport`]).
 //!
 //! Also what is exported of an assembly: an STL file of a part with the
 //! parts placed in it ([`Stl`]), and its mechanism as a robot description
@@ -26,14 +30,18 @@ pub mod editor;
 mod editor_tests;
 #[cfg(any(test, feature = "examples"))]
 pub mod examples;
+mod explode;
 #[cfg(test)]
 mod frame_tests;
 mod icons;
+#[cfg(test)]
+mod joint_tests;
 pub mod joints;
 #[cfg(test)]
 mod kept_tests;
 pub mod mates;
 pub mod mechanism;
+mod motion;
 mod panel;
 mod part_pattern;
 pub mod placed;
@@ -60,11 +68,16 @@ use geop_core_math::geop_error::GeopResult;
 pub use add_part::{AddPart, AddPartArgs};
 pub use drag_tool::DragTool;
 pub use draw::AssemblyDrawer;
+pub use explode::{Direction, Explode, ExplodeArgs};
 pub use mates::{
-    Anchor, CouplingKind, JointKind, Kind, Mate, MateKind, Motion, On, Resolved, Transmission,
-    joint_parameter, mate, mate_name,
+    Anchor, CouplingKind, Joint, JointKind, Kind, Limits, MOTIONS, Mate, MateKind, Motion, On,
+    Resolved, Transmission, foot_parameter, joint_parameter, mate, mate_name,
 };
 pub use mechanism::mates_resolved;
+pub use motion::{
+    Checked, Collision, Drive, MotionArgs, MotionCommand, MotionExport, MotionOptions, MotionPanel,
+    MotionState, StudyState,
+};
 pub use panel::{JointsCommand, JointsPanel, JointsState};
 pub use part_pattern::{Layout, PartPattern, PartPatternArgs, PatternAxis};
 pub use placed::define_placed;
@@ -82,10 +95,14 @@ pub fn register(r: Registry) -> GeopResult<Registry> {
     let r = r
         .operation(AddPart)?
         .operation(PartPattern)?
+        .operation(Explode)?
+        .operation(Drive)?
         .exporter(Stl)?
         .exporter(Urdf)?
+        .exporter(MotionExport)?
         .drawer(AssemblyDrawer)?
         .panel(JointsPanel::new(settled.clone()))?
+        .panel(MotionPanel::default())?
         .tool(DragTool::INFO, DragTool::default())?
         .settler(Settler { settled })?;
     #[cfg(any(test, feature = "examples"))]

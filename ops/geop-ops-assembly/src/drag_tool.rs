@@ -6,8 +6,9 @@ use geop_core_editor::{
     editor::{Changed, EditorContext},
     tools::{Tool, ToolInfo},
 };
-use geop_core_math::{geop_error::GeopResult, vector::Vector3};
+use geop_core_math::{geop_error::GeopResult, primitives::Pose, vector::Vector3};
 use geop_core_program::program::Program;
+use geop_ops_model::placed::locate;
 
 use crate::{
     icons,
@@ -37,6 +38,9 @@ struct Grabbed {
     /// The plane it is dragged in: through the point grabbed, facing the
     /// eye — `(point, normal)`.
     plane: (Vector3, Vector3),
+    /// How far it is drawn off where it is assembled, by the moves of an
+    /// exploded view: none where it is drawn as assembled.
+    drawn_off: Option<Pose>,
     /// The program when it was grabbed: what undoing the drag goes back to.
     before: Program,
 }
@@ -64,11 +68,23 @@ impl Tool for DragTool {
     /// with that pull, every part that is not fixed free to give way. A
     /// drag, once released, is one edit to undo.
     fn handle(&mut self, ctx: &mut EditorContext, event: &StepEditEvent) -> GeopResult<Changed> {
+        // A part is grabbed where it is drawn; an exploded view draws it
+        // moved off where it is assembled, and what is dragged is where it
+        // is assembled: the grab is taken back by that move.
         let part_at = |ctx: &EditorContext, pointer| {
             let view = ctx.drawn()?;
             let (instance, t) = view.part_to_drag(pointer)?;
             let parameter = instance.state.clone()?;
-            Some((instance.name.clone(), parameter, instance.pose, t))
+            let assembled = locate(&ctx.part(), &instance.name).ok()?.world;
+            let drawn_off =
+                (instance.pose != assembled).then(|| instance.pose.compose(&assembled.inverse()));
+            Some((
+                instance.name.clone(),
+                parameter,
+                instance.pose,
+                t,
+                drawn_off,
+            ))
         };
         Ok(match event {
             StepEditEvent::Hover { pointer, .. } => {
@@ -81,7 +97,7 @@ impl Tool for DragTool {
             }
             StepEditEvent::Drag { from, to, done, .. } => {
                 if self.grab.is_none()
-                    && let Some((name, parameter, pose, t)) = part_at(ctx, from)
+                    && let Some((name, parameter, pose, t, drawn_off)) = part_at(ctx, from)
                 {
                     let at = from.ray.at(t);
                     self.grab = Some(Grabbed {
@@ -89,6 +105,7 @@ impl Tool for DragTool {
                         parameter,
                         local: pose.inverse().apply(&at).sharpen(),
                         plane: (at, *from.ray.dir()),
+                        drawn_off,
                         before: ctx.program().clone(),
                     });
                 }
@@ -98,6 +115,10 @@ impl Tool for DragTool {
                 let (point, normal) = &grab.plane;
                 if let Some((_, target)) = to.ray.intersect_plane(point, normal) {
                     ctx.run_all();
+                    let target = match &grab.drawn_off {
+                        Some(off) => off.inverse().apply(&target),
+                        None => target,
+                    };
                     let pull = Pull::Point {
                         parameter: grab.parameter.clone(),
                         local: grab.local,

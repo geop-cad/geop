@@ -2142,6 +2142,20 @@ button,
   font-size: 0.75rem;
   white-space: nowrap;
 }
+.motion-study {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.motion-play {
+  min-width: 28px;
+  padding: 0.1rem 0.35rem;
+}
+.motion-scrub {
+  accent-color: var(--accent);
+  border: none;
+  background: transparent;
+}
 button.icon-only {
   display: inline-flex;
   align-items: center;
