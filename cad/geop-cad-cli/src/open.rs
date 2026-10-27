@@ -30,11 +30,11 @@
 //! sender of commands to it.
 
 use crate::session::Session;
+use geop_cad_base::disk::{Folder, MOST_BYTES, extensions, workspace_of};
 use geop_core_math::geop_error::{GeopError, GeopResult};
 use std::{
-    collections::BTreeMap,
     io::Read,
-    path::{Path, PathBuf},
+    path::PathBuf,
     sync::mpsc,
 };
 
@@ -53,11 +53,6 @@ pub struct OpenArgs {
     pub no_browser: bool,
 }
 
-/// The most files, and bytes in all, of a folder the editor is sent: a
-/// folder much larger is no workspace, but a home directory opened by
-/// mistake.
-const MOST_FILES: usize = 10_000;
-const MOST_BYTES: u64 = 512 << 20;
 
 /// The page, as `vite build --mode open` writes it (`web/dist-open`).
 #[cfg(feature = "frontend")]
@@ -95,141 +90,6 @@ pub fn media_type(path: &str) -> &'static str {
         Some("wasm") => "application/wasm",
         Some("txt") => "text/plain; charset=utf-8",
         _ => "application/octet-stream",
-    }
-}
-
-// ── the folder ─────────────────────────────────────────────────────────
-
-/// The folder edited: the files under it of the extensions the explorer
-/// shows — programs, and the data files operations read (see
-/// `OperationInfo::reads`).
-pub struct Folder {
-    /// Canonical: what every file's own canonical path must start with.
-    root: PathBuf,
-    /// In lower case, `geop` among them.
-    extensions: Vec<String>,
-}
-
-impl Folder {
-    pub fn new(root: &Path, extensions: Vec<String>) -> GeopResult<Self> {
-        let root = std::fs::canonicalize(root)
-            .map_err(|e| GeopError::new(format!("opening {}: {e}", root.display())))?;
-        if !root.is_dir() {
-            return Err(GeopError::new(format!("{} is no folder", root.display())));
-        }
-        Ok(Self { root, extensions })
-    }
-
-    /// Whether `path` — relative, `/`-separated — can name a file of the
-    /// folder: no empty, `.` or `..` segment, nothing a platform reads as
-    /// a root, a drive or a stream (`/`, `\`, `:`), and an extension shown.
-    pub fn names_file(&self, path: &str) -> bool {
-        let segments_ok = (path.split('/'))
-            .all(|s| !s.is_empty() && s != "." && s != ".." && !s.contains(['\\', ':', '\0']));
-        let lower = path.to_ascii_lowercase();
-        let extension_ok = (self.extensions.iter()).any(|e| lower.ends_with(&format!(".{e}")));
-        segments_ok && extension_ok
-    }
-
-    /// The file `path` names under the folder — checked, before it is read
-    /// or written, to stay in it: where it is already, its own canonical
-    /// path; where it is not yet, that of the nearest folder above it
-    /// that is. A link out of the folder is refused like `..`.
-    pub fn file(&self, path: &str) -> GeopResult<PathBuf> {
-        if !self.names_file(path) {
-            return Err(GeopError::new(format!(
-                "{path:?} names no file of the workspace"
-            )));
-        }
-        let file = path.split('/').fold(self.root.clone(), |p, s| p.join(s));
-        let existing = (file.ancestors())
-            .find(|p| p.symlink_metadata().is_ok())
-            .ok_or_else(|| GeopError::new(format!("{path:?}: nothing of it exists")))?;
-        let canonical = std::fs::canonicalize(existing)
-            .map_err(|e| GeopError::new(format!("{path:?}: {e}")))?;
-        if !canonical.starts_with(&self.root) {
-            return Err(GeopError::new(format!(
-                "{path:?} lies outside the workspace"
-            )));
-        }
-        Ok(file)
-    }
-
-    /// Every file of the folder, by path, its text read as for a compile
-    /// (what is not UTF-8 replaced). Hidden folders, `node_modules` and
-    /// `target` are left out, and so is a link out of the folder.
-    pub fn files(&self) -> GeopResult<BTreeMap<String, String>> {
-        let mut files = BTreeMap::new();
-        let mut bytes = 0;
-        let mut folders = vec![(self.root.clone(), String::new())];
-        while let Some((dir, prefix)) = folders.pop() {
-            let entries = std::fs::read_dir(&dir)
-                .map_err(|e| GeopError::new(format!("listing {}: {e}", dir.display())))?;
-            for entry in entries.flatten() {
-                let Some(name) = entry.file_name().to_str().map(String::from) else {
-                    continue;
-                };
-                let path = format!("{prefix}{name}");
-                let Ok(kind) = entry.file_type() else {
-                    continue;
-                };
-                if kind.is_dir() {
-                    if !name.starts_with('.') && name != "node_modules" && name != "target" {
-                        folders.push((entry.path(), format!("{path}/")));
-                    }
-                    continue;
-                }
-                // A link to a file is followed only within the folder; to
-                // a folder, never (it could lead round in a circle).
-                let Ok(file) = self.file(&path) else { continue };
-                if !file.is_file() {
-                    continue;
-                }
-                let text = std::fs::read(&file)
-                    .map_err(|e| GeopError::new(format!("reading {}: {e}", file.display())))?;
-                bytes += text.len() as u64;
-                files.insert(path, String::from_utf8_lossy(&text).into_owned());
-                if files.len() > MOST_FILES || bytes > MOST_BYTES {
-                    return Err(GeopError::new(format!(
-                        "{} holds more than {MOST_FILES} files or {} MB of programs and data: open a folder of one project",
-                        self.root.display(),
-                        MOST_BYTES >> 20
-                    )));
-                }
-            }
-        }
-        Ok(files)
-    }
-
-    /// Write `text` to the file `path`, whole, then put it in place: a
-    /// reader meanwhile sees the old file or the new, never half of one.
-    pub fn write(&self, path: &str, text: &[u8]) -> GeopResult<()> {
-        let file = self.file(path)?;
-        let io = |e: std::io::Error| GeopError::new(format!("writing {}: {e}", file.display()));
-        let dir = file.parent().expect("a file of the folder is in it");
-        std::fs::create_dir_all(dir).map_err(io)?;
-        let name = file
-            .file_name()
-            .expect("a file has a name")
-            .to_string_lossy();
-        let partial = dir.join(format!(".{name}.{}.partial", std::process::id()));
-        let written =
-            std::fs::write(&partial, text).and_then(|()| std::fs::rename(&partial, &file));
-        if written.is_err() {
-            let _ = std::fs::remove_file(&partial);
-        }
-        written.map_err(io)
-    }
-
-    /// Remove the file `path`; one already gone is no error.
-    pub fn remove(&self, path: &str) -> GeopResult<()> {
-        let file = self.file(path)?;
-        match std::fs::remove_file(&file) {
-            Err(e) if e.kind() != std::io::ErrorKind::NotFound => {
-                Err(GeopError::new(format!("removing {}: {e}", file.display())))
-            }
-            _ => Ok(()),
-        }
     }
 }
 
@@ -473,7 +333,7 @@ impl Server {
             }
             (Route::Api, Get, "/api/files") => match self.folder.files() {
                 Ok(files) => json(serde_json::json!({
-                    "root": self.folder.root.display().to_string(),
+                    "root": self.folder.root().display().to_string(),
                     "files": files,
                     "active": self.active,
                 })),
@@ -489,7 +349,7 @@ impl Server {
                     let read = (request.as_reader().take(MOST_BYTES + 1))
                         .read_to_end(&mut body)
                         .map_err(|e| GeopError::new(format!("reading {file}: {e}")));
-                    read.and_then(|_| self.folder.write(&file, &body))
+                    read.and_then(|_| self.folder.write(&file, &String::from_utf8_lossy(&body)))
                 } else {
                     self.folder.remove(&file)
                 };
@@ -556,29 +416,6 @@ fn open_browser(url: &str) -> std::io::Result<()> {
         .map(drop)
 }
 
-/// The folder `path` names, and the program in it to edit first if it
-/// names one.
-fn workspace_of(path: &Path) -> GeopResult<(PathBuf, Option<String>)> {
-    if path.is_dir() {
-        return Ok((path.to_path_buf(), None));
-    }
-    let is_program = path.extension().is_some_and(|e| e == "geop");
-    let name = path.file_name().and_then(|n| n.to_str());
-    match (is_program && path.is_file(), name) {
-        (true, Some(name)) => {
-            let dir = path.parent().filter(|p| !p.as_os_str().is_empty());
-            Ok((
-                dir.unwrap_or(Path::new(".")).to_path_buf(),
-                Some(name.to_string()),
-            ))
-        }
-        _ => Err(GeopError::new(format!(
-            "{} is neither a folder nor a .geop program",
-            path.display()
-        ))),
-    }
-}
-
 pub fn open(args: &OpenArgs) -> GeopResult<()> {
     if page_file("index.html").is_none() {
         return Err(GeopError::new(
@@ -588,13 +425,7 @@ pub fn open(args: &OpenArgs) -> GeopResult<()> {
         ));
     }
     let (dir, active) = workspace_of(&args.path)?;
-    let mut extensions: Vec<String> = vec!["geop".into()];
-    for listed in geop_cad_base::registry()?.infos() {
-        extensions.extend(listed.info.reads.iter().map(|e| e.to_ascii_lowercase()));
-    }
-    extensions.sort();
-    extensions.dedup();
-    let folder = Folder::new(&dir, extensions)?;
+    let folder = Folder::new(&dir, extensions(&geop_cad_base::registry()?))?;
 
     let http = tiny_http::Server::http(("127.0.0.1", args.port.unwrap_or(0)))
         .map_err(|e| GeopError::new(format!("serving on 127.0.0.1: {e}")))?;
@@ -603,12 +434,12 @@ pub fn open(args: &OpenArgs) -> GeopResult<()> {
         .ok_or_else(|| GeopError::new("serving on no port"))?;
     let server = std::sync::Arc::new(Server {
         access: Access::new(port)?,
-        session: SessionHandle::start(folder.root.clone()),
+        session: SessionHandle::start(folder.root().to_path_buf()),
         folder,
         active,
     });
     let url = server.access.url();
-    eprintln!("geop is editing {}", server.folder.root.display());
+    eprintln!("geop is editing {}", server.folder.root().display());
     eprintln!("open the editor at {url}");
     eprintln!("(Ctrl+C stops it)");
     if !args.no_browser && open_browser(&url).is_err() {
@@ -632,92 +463,9 @@ mod tests {
         dir
     }
 
-    fn folder(dir: &Path) -> Folder {
-        Folder::new(dir, vec!["geop".into(), "step".into(), "stp".into()]).unwrap()
-    }
 
-    #[test]
-    fn a_path_names_a_file_of_the_folder_only_relatively_and_by_a_shown_extension() {
-        let dir = scratch("names");
-        let f = folder(&dir);
-        for ok in ["part.geop", "parts/bolt.geop", "a b/c.STEP", "x.stp"] {
-            assert!(f.names_file(ok), "{ok}");
-        }
-        for bad in [
-            "",
-            "/etc/passwd.geop",
-            "../up.geop",
-            "a/../../up.geop",
-            "./part.geop",
-            "a//b.geop",
-            "a\\..\\b.geop",
-            "C:/x.geop",
-            "c:x.geop",
-            "part.geop:stream",
-            "notes.txt",
-            "part.geop/",
-            "part.geopc",
-        ] {
-            assert!(!f.names_file(bad), "{bad}");
-            assert!(f.file(bad).is_err(), "{bad}");
-        }
-    }
 
-    #[test]
-    fn files_are_read_and_written_in_the_folder() {
-        let dir = scratch("rw");
-        let f = folder(&dir);
-        f.write("parts/bolt.geop", b"{\"steps\": []}\n").unwrap();
-        f.write("part.geop", b"{}").unwrap();
-        std::fs::write(dir.join("notes.txt"), "not shown").unwrap();
-        std::fs::create_dir_all(dir.join(".git")).unwrap();
-        std::fs::write(dir.join(".git/hidden.geop"), "{}").unwrap();
-        let files = f.files().unwrap();
-        assert_eq!(
-            files.keys().collect::<Vec<_>>(),
-            ["part.geop", "parts/bolt.geop"]
-        );
-        assert_eq!(files["parts/bolt.geop"], "{\"steps\": []}\n");
-        f.remove("part.geop").unwrap();
-        f.remove("part.geop").unwrap();
-        assert!(!dir.join("part.geop").exists());
-        // No partial file is left behind.
-        let left: Vec<_> = std::fs::read_dir(dir.join("parts")).unwrap().collect();
-        assert_eq!(left.len(), 1);
-    }
 
-    #[cfg(unix)]
-    #[test]
-    fn a_link_out_of_the_folder_is_refused() {
-        let dir = scratch("links");
-        let outside = scratch("links-outside");
-        std::fs::write(outside.join("secret.geop"), "secret").unwrap();
-        let root = dir.join("root");
-        std::fs::create_dir_all(&root).unwrap();
-        std::fs::write(root.join("inside.geop"), "inside").unwrap();
-        std::os::unix::fs::symlink(&outside, root.join("out")).unwrap();
-        std::os::unix::fs::symlink(outside.join("secret.geop"), root.join("secret.geop")).unwrap();
-        std::os::unix::fs::symlink(root.join("inside.geop"), root.join("alias.geop")).unwrap();
-        let f = folder(&root);
-        assert!(f.file("out/secret.geop").is_err());
-        assert!(f.file("out/new/new.geop").is_err());
-        assert!(f.file("secret.geop").is_err());
-        assert!(f.write("out/written.geop", b"x").is_err());
-        assert!(!outside.join("written.geop").exists());
-        assert!(f.write("secret.geop", b"x").is_err());
-        assert_eq!(
-            std::fs::read_to_string(outside.join("secret.geop")).unwrap(),
-            "secret"
-        );
-        assert!(f.remove("secret.geop").is_err());
-        assert!(outside.join("secret.geop").exists());
-        // Listed: what is in the folder, a link within it included.
-        let files = f.files().unwrap();
-        assert_eq!(
-            files.keys().collect::<Vec<_>>(),
-            ["alias.geop", "inside.geop"]
-        );
-    }
 
     fn access() -> Access {
         Access {
@@ -804,18 +552,6 @@ mod tests {
         assert_eq!(percent_decoded("%2e%2E%2fx").as_deref(), Some("../x"));
     }
 
-    #[test]
-    fn a_program_named_is_opened_in_its_folder() {
-        let dir = scratch("workspace-of");
-        std::fs::write(dir.join("a.geop"), "{}").unwrap();
-        assert_eq!(workspace_of(&dir).unwrap(), (dir.clone(), None));
-        assert_eq!(
-            workspace_of(&dir.join("a.geop")).unwrap(),
-            (dir.clone(), Some("a.geop".into()))
-        );
-        assert!(workspace_of(&dir.join("missing.geop")).is_err());
-        assert!(workspace_of(&dir.join("missing")).is_err());
-    }
 
     #[test]
     fn the_page_is_served_as_what_it_is() {
