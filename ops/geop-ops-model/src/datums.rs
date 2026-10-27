@@ -475,7 +475,9 @@ mod tests {
 
         let part = given_part(&unit_cube()).unwrap();
         let registry = crate::register(Registry::default()).unwrap();
-        let view = registry.draw(&part.current(), &Default::default()).unwrap();
+        let view = registry
+            .draw(&part.current(), &Default::default(), None)
+            .unwrap();
         let down = |x: f64, y: f64| pointer([x, y, 5.0], [0.0, 0.0, -1.0]);
         let frame = [drawn::DATUM, drawn::VERTEX, drawn::EDGE, drawn::FACE].map(String::from);
         let name = |x: f64, y: f64| view.pick(&down(x, y), &frame).map(|h| h.element.name);

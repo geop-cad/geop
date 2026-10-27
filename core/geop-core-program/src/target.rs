@@ -143,11 +143,10 @@ pub enum Read {
     File(String, u64),
     /// Which targets of one type there are, in order, and who produced
     /// each: what listing them read ([`crate::reader::Reader::targets_of`]).
-    /// A target that is added or removed changes it. The type by its id,
-    /// and by its name, which another process knows it by.
+    /// A target that is added or removed changes it. The type by its name,
+    /// which another process knows it by too.
     Listed {
-        kind: TypeId,
-        kind_name: &'static str,
+        kind: Rc<str>,
         targets: Vec<(String, String)>,
     },
     /// `read`, in the part placed as `instance`.
@@ -163,7 +162,7 @@ impl Read {
             Read::Input(name, _) => format!("i:{name}"),
             Read::State(name, _) => format!("s:{name}"),
             Read::File(path, _) => format!("f:{path}"),
-            Read::Listed { kind, .. } => format!("l:{kind:?}"),
+            Read::Listed { kind, .. } => format!("l:{kind}"),
             Read::Inside { instance, read } => key_behind(instance, &read.key()),
         }
     }

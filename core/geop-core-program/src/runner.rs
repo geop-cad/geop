@@ -296,7 +296,7 @@ impl Runner {
         {
             return *digest;
         }
-        let digest = (workspace.read(path).ok()).map(|text| Digest(digest_text(&text)));
+        let digest = workspace.digest(path).map(Digest);
         (self.shared.files.borrow_mut()).insert(path.to_string(), (revision, digest));
         digest
     }
@@ -352,6 +352,11 @@ impl Runner {
         let path = workspace.resolve(&self.location.file, name);
         let content =
             (workspace.read(&path)).map_err(|e| e.with_context(format!("reading {path}")))?;
+        // What it was read as is what a node reading it was made from: its
+        // digest is taken now, not by reading it again.
+        let digest = Some(Digest(digest_text(&content)));
+        let revision = workspace.revision(&path);
+        (self.shared.files.borrow_mut()).insert(path.clone(), (revision, digest));
         Ok((path, content))
     }
 

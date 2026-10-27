@@ -174,6 +174,31 @@ mod editor {
         (editor, update)
     }
 
+    /// An editor opening a file another editor had open, with the cache that
+    /// one kept, draws it without meshing a face — and sends the same scene.
+    #[test]
+    fn a_file_reopened_draws_no_face_again() {
+        let shelf = geop_core_program::testing::Shelf::of("kept");
+        let open = || {
+            let mut editor = crate::editor_with(shelf.cache());
+            let program = crate::registry()
+                .unwrap()
+                .example("box_with_drill_hole")
+                .unwrap();
+            let path = Some("box.geop".to_string());
+            let drawn = geop_core_editor::view::faces_drawn();
+            let update = handled(&mut editor, Command::Load { program, path });
+            let scene = serde_json::to_string(&update.scene).unwrap();
+            (geop_core_editor::view::faces_drawn() - drawn, scene)
+        };
+        let (drawn, scene) = open();
+        assert!(drawn > 0);
+        assert!(shelf.files.borrow().contains_key("box.geop.geopc"));
+        let (drawn_again, scene_again) = open();
+        assert_eq!(drawn_again, 0);
+        assert_eq!(scene_again, scene);
+    }
+
     fn distance(editor: &Editor, id: &str) -> f64 {
         let program = editor.program();
         let args: ExtrudeArgs = args(&program.steps[program.index_of(id).unwrap()]);
@@ -416,7 +441,7 @@ mod editor {
 mod incremental {
     use geop_core_program::{
         program::Program,
-        testing::{assert_incremental, edit_sequence},
+        testing::{assert_incremental, assert_reopens, edit_sequence},
         workspace::Workspace,
     };
     use geop_ops_model::parameters::{ParameterKind, parameters_of, set_parameters};
@@ -531,6 +556,67 @@ mod incremental {
     #[ignore = "slow: every example built several times over — run with `cargo test -- --ignored`"]
     fn every_example_builds_incrementally_what_it_builds_from_scratch() {
         assert_examples_incremental(None);
+    }
+
+    /// Every example program named in `only` — all, for none — and every
+    /// file of every example made of several, built in one process and
+    /// reopened in another, from what the first kept, makes none of what
+    /// is kept, and builds what the first built (see [`assert_reopens`]).
+    /// The standard parts placed are kept too, in a folder of the cache's
+    /// own. Returns how many nodes were read back.
+    fn assert_examples_reopen(only: Option<&[&str]>) -> u64 {
+        let offered = crate::registry().unwrap();
+        let registry = Rc::new(offered.operations());
+        let wanted = |name: &str| only.is_none_or(|only| only.contains(&name));
+        let mut restored = 0;
+        let mut reopen = |texts: BTreeMap<String, String>, file: &str| {
+            let workspace = |cache| -> Rc<dyn Workspace> {
+                crate::registry::workspace_with(texts.clone(), cache)
+            };
+            let [_, reopened] = assert_reopens(registry.clone(), workspace, file);
+            restored += reopened.restored;
+        };
+        for (name, make) in offered.example_programs() {
+            if wanted(name) {
+                let file = format!("{name}.geop");
+                reopen(
+                    BTreeMap::from([(file.clone(), make().to_json().unwrap())]),
+                    &file,
+                );
+            }
+        }
+        for name in offered
+            .workspace_example_names()
+            .filter(|name| wanted(name))
+        {
+            let files = offered.workspace_example(name).unwrap();
+            let texts: BTreeMap<String, String> = (files.iter())
+                .map(|(file, program)| (file.to_string(), program.to_json().unwrap()))
+                .collect();
+            for (file, _) in &files {
+                reopen(texts.clone(), file);
+            }
+        }
+        restored
+    }
+
+    /// [`assert_examples_reopen`] on a few cheap examples: a part with a
+    /// hole, a part with a table, an assembly placing parts.
+    #[test]
+    fn examples_reopen_making_nothing_they_kept() {
+        let restored = assert_examples_reopen(Some(&[
+            "box_with_drill_hole",
+            "parametric_plate",
+            "pin_in_plate",
+        ]));
+        assert!(restored > 0);
+    }
+
+    /// [`assert_examples_reopen`] on every example.
+    #[test]
+    #[ignore = "slow: every example built twice — run with `cargo test -- --ignored`"]
+    fn every_example_reopens_making_nothing_it_kept() {
+        assert_examples_reopen(None);
     }
 }
 

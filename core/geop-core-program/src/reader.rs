@@ -413,8 +413,7 @@ impl<'a> Reader<'a> {
     fn listed<T: 'static>(&self) -> Vec<(&'a str, &'a Node)> {
         let listed = self.part.listed(TypeId::of::<T>(), self.before, self.own);
         self.record(Read::Listed {
-            kind: TypeId::of::<T>(),
-            kind_name: std::any::type_name::<T>(),
+            kind: std::any::type_name::<T>().into(),
             targets: (listed.iter())
                 .map(|(name, node)| (name.to_string(), node.step.clone()))
                 .collect(),
@@ -475,7 +474,7 @@ impl<'a> Reader<'a> {
 
 /// What a reader read of its part ([`Reader::recorded`]), each thing once.
 #[derive(Clone, Default)]
-pub struct Reads(Vec<Read>);
+pub struct Reads(pub(crate) Vec<Read>);
 
 /// Everything a [`Reader`] reads from ([`Reader::seen`]): the version of
 /// every target it sees, by name, and the inputs and the state its part

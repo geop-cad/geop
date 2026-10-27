@@ -23,6 +23,7 @@
 //! instance's path ([`Located`]): `/bolt:model`.
 
 pub mod icons;
+pub mod kept;
 #[cfg(test)]
 mod tests;
 
@@ -188,6 +189,10 @@ pub struct ViewFace {
 /// A face triangulated, with the surface's normal at each corner, and what
 /// it is known by: its key, a hash of what a viewer is sent of it — so a
 /// face drawn alike, in this part or another, is one mesh to a viewer.
+///
+/// Its corners and normals are sharp: a mesh is a polygon drawn near the
+/// face, and which point of a corner's enclosure it is drawn through is a
+/// free choice — the middle — which a viewer is sent and a pick tests.
 #[derive(Debug, Serialize)]
 pub struct FaceMesh {
     #[serde(skip)]
@@ -198,10 +203,16 @@ pub struct FaceMesh {
 
 impl FaceMesh {
     /// The mesh of `triangles`, each with the normals `normals` at its
-    /// corners.
+    /// corners, each taken at the middle of its enclosure.
     pub fn new(triangles: Vec<[Vector3; 3]>, normals: Vec<[Vector3; 3]>) -> Rc<Self> {
         use std::hash::{Hash, Hasher};
         FACES_DRAWN.set(FACES_DRAWN.get() + 1);
+        let sharp = |corners: Vec<[Vector3; 3]>| -> Vec<[Vector3; 3]> {
+            (corners.into_iter())
+                .map(|corner| corner.map(|p| p.map(|x| Scalar::from_f64(x.to_f64()))))
+                .collect()
+        };
+        let (triangles, normals) = (sharp(triangles), sharp(normals));
         let mut key = std::hash::DefaultHasher::new();
         for p in triangles.iter().chain(&normals).flatten() {
             for x in p.to_array() {

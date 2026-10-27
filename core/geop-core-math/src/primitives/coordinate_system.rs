@@ -120,6 +120,23 @@ impl CoordinateSystem {
     }
 }
 
+/// Its origin and axes, each exactly ([`crate::exact`]); read back, the
+/// reciprocal basis is computed again from them, as it was.
+impl crate::exact::Exact for CoordinateSystem {
+    fn write<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        use crate::exact::Written;
+        let axes = [&self.origin, &self.u, &self.v, &self.w].map(Written);
+        serde::Serialize::serialize(&axes, serializer)
+    }
+
+    fn read<'de, D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        use crate::exact::Read;
+        let [Read(origin), Read(u), Read(v), Read(w)]: [Read<Vector3>; 4] =
+            serde::Deserialize::deserialize(deserializer)?;
+        Self::try_new(origin, u, v, w).map_err(serde::de::Error::custom)
+    }
+}
+
 /// Serializes as `{origin, u, v, w}`, for a viewer.
 impl serde::Serialize for CoordinateSystem {
     fn serialize<Ser: serde::Serializer>(&self, serializer: Ser) -> Result<Ser::Ok, Ser::Error> {

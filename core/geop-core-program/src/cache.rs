@@ -14,7 +14,8 @@
 //! made again rather than trusted.
 //!
 //! On disk, what the file `path` was made into is kept in `path.geopc`
-//! beside it: `AX-12A.STEP.geopc`. Its values are written exactly
+//! beside it: `AX-12A.STEP.geopc` (a shared library's file in a folder of
+//! the store's own, see [`cache_path`]). Its values are written exactly
 //! ([`geop_core_math::exact`]), so the value read back is the value that
 //! was made. A `.geopc` file is a cache: deleting it costs a make, and it
 //! belongs in no repository.
@@ -132,17 +133,13 @@ impl Cache {
 
     /// `use_builds` of what the program in the file `path` built, as its
     /// store keeps it — read from the store the first time — if it keeps
-    /// builds of that file: it has a store, and the file is the workspace's
-    /// own, not a shared library's (see [`is_shared`]).
+    /// builds of that file: it has a store, and the program is in a file.
     pub(crate) fn builds<R>(
         &self,
         path: &str,
         use_builds: impl FnOnce(&mut Builds) -> R,
     ) -> Option<R> {
-        let store = self
-            .store
-            .as_ref()
-            .filter(|_| !path.is_empty() && !is_shared(path))?;
+        let store = self.store.as_ref().filter(|_| !path.is_empty())?;
         let mut builds = self.builds.borrow_mut();
         let builds = (builds.entry(path.to_string())).or_insert_with(|| {
             Builds::read(store.read(&cache_path(path)).as_deref(), store.build())
@@ -169,7 +166,7 @@ impl Cache {
     /// this build from this text. A file that does not read, of another
     /// build or text or kind, is none.
     fn read<T: DeserializeOwned>(&self, kind: &str, path: &str, text: &str) -> Option<T> {
-        let store = self.store.as_ref().filter(|_| !is_shared(path))?;
+        let store = self.store.as_ref()?;
         let kept = store.read(&cache_path(path))?;
         let entry: Entry<T> = serde_json::from_str(&kept).ok()?;
         (entry.build == store.build() && entry.kind == kind && entry.source == source(text))
@@ -178,9 +175,7 @@ impl Cache {
 
     /// Keeps `value`, made of `text` of `path` as `kind`, in its store.
     fn write<T: Serialize>(&self, kind: &str, path: &str, text: &str, value: &T) {
-        // A shared library's file is not where the files of the workspace
-        // are: nothing is kept beside it.
-        let Some(store) = self.store.as_ref().filter(|_| !is_shared(path)) else {
+        let Some(store) = self.store.as_ref() else {
             return;
         };
         let entry = Entry {
@@ -197,9 +192,16 @@ impl Cache {
     }
 }
 
-/// The cache file of the file `path`: beside it, `path.geopc`.
+/// The cache file of the file `path`: beside it, `path.geopc` — or, for a
+/// file of a library every workspace shares, which is not where the files
+/// of the workspace are (see [`is_shared`]), in a folder of the store's
+/// own, by the library's scheme: `std:hex_nut.geop` in
+/// `.geopc/std/hex_nut.geop.geopc`.
 pub fn cache_path(path: &str) -> String {
-    format!("{path}.{CACHE_EXTENSION}")
+    match path.split_once(':').filter(|_| is_shared(path)) {
+        Some((scheme, name)) => format!(".{CACHE_EXTENSION}/{scheme}/{name}.{CACHE_EXTENSION}"),
+        None => format!("{path}.{CACHE_EXTENSION}"),
+    }
 }
 
 /// What tells a text from others: its digest and its length.

@@ -267,8 +267,8 @@ impl Part {
             Read::Input(name, value) => self.inputs.get(name) == value.as_ref(),
             Read::State(name, value) => self.state.get(name) == value.as_ref(),
             Read::File(path, revision) => runner.is_some_and(|r| r.revision(path) == *revision),
-            Read::Listed { kind, targets, .. } => {
-                let now = self.listed(*kind, before, own);
+            Read::Listed { kind, targets } => {
+                let now = self.listed_where(|node| node.kind_name == &**kind, before, own);
                 now.len() == targets.len()
                     && (now.iter().zip(targets))
                         .all(|((name, node), (was, by))| name == was && node.step == *by)
@@ -318,10 +318,8 @@ impl Part {
             Read::Input(name, _) => (KeptRead::Input(name.clone()), self.input_digest(name)),
             Read::State(name, _) => (KeptRead::State(name.clone()), self.state_digest(name)),
             Read::File(path, _) => (KeptRead::File(path.clone()), runner.file_digest(path)?),
-            Read::Listed {
-                kind_name, targets, ..
-            } => (
-                KeptRead::Listed(kind_name.to_string()),
+            Read::Listed { kind, targets } => (
+                KeptRead::Listed(kind.to_string()),
                 listed_digest(
                     targets
                         .iter()
@@ -339,8 +337,7 @@ impl Part {
     /// What `kept`, a read made in another process, reads for a reader
     /// before `before` for the node `own` now, as a read of this part, with
     /// the digest of what it reads: [`Part::read_digest`] undone. None for
-    /// what has no digest, and for a listing of a type no node of which is
-    /// listed, which this process cannot name.
+    /// what has no digest.
     pub(crate) fn resolve(
         &self,
         kept: &KeptRead,
@@ -375,10 +372,8 @@ impl Part {
             ),
             KeptRead::Listed(kind_name) => {
                 let listed = self.listed_where(|node| node.kind_name == kind_name, before, own);
-                let (_, first) = listed.first()?;
                 let read = Read::Listed {
-                    kind: first.kind,
-                    kind_name: first.kind_name,
+                    kind: kind_name.as_str().into(),
                     targets: (listed.iter())
                         .map(|(name, node)| (name.to_string(), node.step.clone()))
                         .collect(),

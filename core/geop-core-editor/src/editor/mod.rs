@@ -614,7 +614,7 @@ impl Editor {
             .run(&program, Some(index + usize::from(self.preview)));
         let Build { runner, part, .. } = &self.build;
         let editor = StepEditor::new(self.registry.editors(), runner, part, &program, &id, new)?;
-        let view = self.draw(&self.build.view_at(&program, index))?;
+        let view = self.draw(&self.build.view_at(&program, index), &self.build.runner)?;
         self.open = Some(Open {
             index,
             id,
@@ -644,7 +644,8 @@ impl Editor {
         let program = (*self.workspace.program(&location.file).map_err(ctx)?).clone();
         let text = self.workspace.files().read(&location.file).map_err(ctx)?;
         let index = program.index_of(&id).map_err(ctx)?;
-        let pose = (self.draw(&self.build.part.current())?.instances.iter())
+        let current = self.build.part.current();
+        let pose = (self.draw(&current, &self.build.runner)?.instances.iter())
             .find(|placed| placed.name == instance)
             .map(|placed| placed.pose)
             .ok_or_else(|| GeopError::new(format!("the part placed as `{instance}` is not drawn")))
@@ -659,7 +660,7 @@ impl Editor {
             false,
         )
         .map_err(ctx)?;
-        let view = self.draw(&part.before(&id))?;
+        let view = self.draw(&part.before(&id), &runner)?;
         self.open = Some(Open {
             index,
             id,
@@ -957,7 +958,7 @@ impl Editor {
                     let placed = (self.open.as_ref()).is_some_and(|open| open.within.is_some());
                     self.run_to(if placed { self.marker } else { Some(index) });
                     if let Some(open) = &self.open {
-                        let view = self.draw(&self.picks_in(open))?;
+                        let view = self.draw(&self.picks_in(open), self.edited_with(open).0)?;
                         if let Some(open) = &mut self.open {
                             open.view = view;
                         }
@@ -1196,7 +1197,7 @@ impl Editor {
             .collect();
         if let Some(open) = &self.open
             && self.picks_built(open)
-            && let Ok(view) = self.draw(&self.picks_in(open))
+            && let Ok(view) = self.draw(&self.picks_in(open), self.edited_with(open).0)
             && let Some(open) = &mut self.open
         {
             open.view = view;
@@ -1341,7 +1342,7 @@ impl Editor {
 
     /// The part `steps` steps build, as drawn.
     fn view_of(&self, steps: usize) -> Rc<PartView> {
-        (self.draw(&self.shown_part(steps))).unwrap_or_else(|_| {
+        (self.draw(&self.shown_part(steps), &self.build.runner)).unwrap_or_else(|_| {
             Rc::new(PartView::blank(Extent {
                 center: Vector3::zero(),
                 size: Scalar::from_f64(EMPTY_EXTENT),
@@ -1351,13 +1352,15 @@ impl Editor {
 
     /// The part `reader` reads, as the registry draws it: as it was drawn
     /// last, if it is made of the same (see [`Self::views`]), else of what
-    /// each drawer drew of what reads the same (see [`Self::drawings`]).
-    fn draw(&self, reader: &Reader) -> GeopResult<Rc<PartView>> {
+    /// each drawer drew of what reads the same (see [`Self::drawings`]) —
+    /// in this process, or, kept, in an earlier one, of the program
+    /// `runner` runs, whose part it is.
+    fn draw(&self, reader: &Reader, runner: &Runner) -> GeopResult<Rc<PartView>> {
         let seen = reader.seen();
         let mut views = self.views.borrow_mut();
         let view = match views.iter().position(|(drawn, _)| *drawn == seen) {
             Some(k) => views.remove(k).1,
-            None => Rc::new(self.registry.draw(reader, &self.drawings)?),
+            None => Rc::new(self.registry.draw(reader, &self.drawings, Some(runner))?),
         };
         views.push((seen, view.clone()));
         if views.len() > KEPT_VIEWS {

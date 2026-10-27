@@ -21,6 +21,10 @@
 //! records — the faces two revisions of a model have alike — are written
 //! once ([`Pool`]).
 //!
+//! What is made of a part outside its program — a drawing of it, which an
+//! editor makes of what a reader reads — is kept the same way, as made of
+//! the program as a whole rather than by one of its steps ([`made_kept`]).
+//!
 //! A cache file is of one build of the kernel and one version of its format
 //! ([`FORMAT`]): any other is not read, and is replaced when it is written
 //! again.
@@ -34,6 +38,76 @@ use std::{
 use geop_core_math::geop_error::{GeopError, GeopResult};
 use serde::{Deserialize, Deserializer, Serialize, Serializer, de::DeserializeOwned};
 use serde_json::value::RawValue;
+
+use crate::{
+    reader::{Reader, Reads},
+    runner::Runner,
+};
+
+/// What `make` makes of what `reader` reads — what an editor draws of the
+/// part — kept between processes as `key` of the program `runner` runs,
+/// whose part `reader` reads: read back as `keeper` wrote it where an
+/// earlier process made it of what reads the same now, else made, and
+/// noted to be kept. With what it read ([`Reader::recorded`]).
+pub fn made_kept<T: 'static>(
+    reader: &Reader,
+    runner: &Runner,
+    key: &str,
+    keeper: Keeper<T>,
+    make: impl FnOnce(&Reader) -> GeopResult<T>,
+) -> (GeopResult<Rc<T>>, Reads) {
+    let (part, before, own) = (reader.part(), reader.position(), reader.own());
+    let path = &runner.location.file;
+    let Some(cache) = runner.workspace.as_deref().and_then(|w| w.cache()) else {
+        let (made, reads) = reader.recorded(make);
+        return (made.map(Rc::new), reads);
+    };
+    let kind = std::any::type_name::<T>();
+    let args = digest_debug("made of the program", key);
+    let records = cache.builds(path, |builds| builds.records("", key));
+    for record in records.iter().flatten().rev() {
+        if record.kind != kind || record.derivation.args != args {
+            continue;
+        }
+        let reads = (record.derivation.reads.iter())
+            .map(|(kept, digest)| {
+                let (read, now) = part.resolve(kept, before, own, runner)?;
+                (now == *digest).then_some(read)
+            })
+            .collect::<Option<Vec<_>>>();
+        let Some(reads) = reads else {
+            continue;
+        };
+        if let Some(Ok(value)) = cache.builds(path, |builds| builds.value(record, &keeper)) {
+            cache.builds(path, |builds| builds.used(record));
+            runner.count_restored();
+            return (Ok(Rc::new(value)), Reads(reads));
+        }
+    }
+    let (made, reads) = reader.recorded(make);
+    let made = made.map(Rc::new);
+    let derivation = (reads.0.iter())
+        .map(|read| part.read_digest(read, before, own, runner))
+        .collect::<Option<Vec<_>>>()
+        .map(|reads| Derivation { args, reads });
+    if let (Ok(value), Some(derivation)) = (&made, derivation) {
+        let digest = derivation.digest("", key, kind);
+        let value = value.clone();
+        cache.builds(path, |builds| {
+            if !builds.has("", key, &derivation, digest) {
+                builds.add(Made {
+                    step: String::new(),
+                    target: key.to_string(),
+                    kind,
+                    derivation: Rc::new(derivation),
+                    digest,
+                    write: Box::new(move |pool| (keeper.write)(&value, pool)),
+                });
+            }
+        });
+    }
+    (made, reads)
+}
 
 /// The version of the format a build is kept in: a cache file of another
 /// version is not read.
@@ -445,7 +519,8 @@ impl Builds {
             }));
         }
         if let Some(order) = &self.order {
-            self.records.retain(|(step, _), _| order.contains(step));
+            // What was made of the program as a whole is of no step.
+            (self.records).retain(|(step, _), _| step.is_empty() || order.contains(step));
         }
         for records in self.records.values_mut() {
             let excess = records.len().saturating_sub(KEPT_RECORDS);
