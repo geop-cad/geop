@@ -18,7 +18,7 @@ use geop_core_math::{
     geop_error::{GeopError, GeopResult, WithContext},
     primitives::{Motion, Pose},
     scalars::{Number, Scalar, as_f64},
-    vector::Vector3,
+    vector::{Vector, Vector3},
     with_context,
 };
 use geop_ops_model::selection::{Role, Shape};
@@ -227,8 +227,9 @@ impl Kind {
 
     /// The geometry the `k`th entity of a constraint of this kind
     /// contributes, `shape` — as the first of its [`Kind::roles`] it fits —
-    /// and `surface`, the surface of a face, asked of a tangent's first
-    /// only: of a tangent constraint, the
+    /// and `surface` and `curve`, the wall of a face and the run of an edge,
+    /// asked of a tangent's first and of a path's first only: of a tangent
+    /// constraint, the
     /// face first and then the circle or the point that touches it; of a
     /// path, the curve and then the point that runs along it.
     pub fn geometry(
@@ -236,6 +237,7 @@ impl Kind {
         k: usize,
         shape: &Shape,
         surface: impl FnOnce() -> GeopResult<Option<NurbSurface3D>>,
+        curve: impl FnOnce() -> GeopResult<Option<NurbCurve3D>>,
     ) -> GeopResult<Option<Geometry>> {
         Ok(match (self, k) {
             (Kind::Tangent, 0) => surface()?.map(|surface| Geometry::Surface { surface }),
@@ -245,7 +247,7 @@ impl Kind {
                     radius: arc.circle.radius,
                 })
                 .or_else(|| Geometry::as_role(Role::Point, shape)),
-            (Kind::Path, 0) => (shape.curve.clone()).map(|curve| Geometry::Curve { curve }),
+            (Kind::Path, 0) => curve()?.map(|curve| Geometry::Curve { curve }),
             (Kind::Path, _) => Geometry::as_role(Role::Point, shape),
             _ => (self.roles().iter()).find_map(|&role| Geometry::as_role(role, shape)),
         })
@@ -369,51 +371,107 @@ impl Geometry {
 
     /// The point of a curve at `feet`, `[t]`, or of a surface at `[u, v]`
     /// — off it by `offset` along its normal — in the part's own frame,
-    /// with the derivatives the feet carry. Past the domain's end, which a
-    /// solve may try on its way, the curve or surface goes on along its
-    /// tangents there: the feet's limits keep a solution within (see
-    /// [`Geometry::domains`]).
+    /// with the derivatives the feet carry. A parameter along which the
+    /// curve or surface closes on itself runs on round it, past one end
+    /// from the other. Past an end where it does not, which a solve may try
+    /// on its way, it goes on along its tangents there: the feet's limits
+    /// keep a solution within (see [`Geometry::parameters`]).
     fn foot(&self, feet: &[D], offset: Option<Scalar>) -> GeopResult<Vector3<D>> {
-        match (self, feet) {
-            (Geometry::Curve { curve }, [t]) => {
-                let (lo, hi) = curve.domain();
-                let at = t.v.clamped(lo, hi);
-                let (p, dp) = (curve.evaluate(at)?, curve.tangent(at)?);
-                let past = t.sub(D::cst(at));
-                Ok(first_order(&p, &[(&dp, &past)]))
-            }
-            (Geometry::Surface { surface }, [u, v]) => {
-                let ((u0, u1), (v0, v1)) = (surface.domain_u(), surface.domain_v());
-                let (uc, vc) = (u.v.clamped(u0, u1), v.v.clamped(v0, v1));
-                let (du, dv) = (u.sub(D::cst(uc)), v.sub(D::cst(vc)));
-                let order = if offset.is_some() { 2 } else { 1 };
-                let s = surface.partials(uc, vc, order)?;
-                let at = first_order(&s[0][0], &[(&s[1][0], &du), (&s[0][1], &dv)]);
-                let Some(offset) = offset else {
-                    return Ok(at);
-                };
-                // The normal, its derivatives by the second partials: of
-                // the tangents, each to first order.
-                let su = first_order(&s[1][0], &[(&s[2][0], &du), (&s[1][1], &dv)]);
-                let sv = first_order(&s[0][1], &[(&s[1][1], &du), (&s[0][2], &dv)]);
-                let normal = su.prod_cross(&sv).normalize()?;
-                Ok(at.add(&normal.prod_scalar(D::cst(offset))))
-            }
-            _ => Err(GeopError::new(format!(
+        let domains = self.parameters();
+        if domains.len() != feet.len() {
+            return Err(GeopError::new(format!(
                 "{} has no foot point at {} parameters",
                 self.kind(),
                 feet.len()
-            ))),
+            )));
+        }
+        // Each parameter where it is evaluated, and the step from there to
+        // the foot's — of no length unless past an end it does not close
+        // at.
+        let (at, steps): (Vec<Scalar>, Vec<D>) = (feet.iter().zip(&domains))
+            .map(|(x, foot)| {
+                let x = foot.round(*x);
+                let at = x.v.clamped(foot.lo, foot.hi);
+                (at, x.sub(D::cst(at)))
+            })
+            .unzip();
+        match self {
+            Geometry::Curve { curve } => {
+                let (p, dp) = (curve.evaluate(at[0])?, curve.tangent(at[0])?);
+                Ok(first_order(&p, &[(&dp, &steps[0])]))
+            }
+            Geometry::Surface { surface } => {
+                let (du, dv) = (&steps[0], &steps[1]);
+                let order = if offset.is_some() { 2 } else { 1 };
+                let s = surface.partials(at[0], at[1], order)?;
+                let point = first_order(&s[0][0], &[(&s[1][0], du), (&s[0][1], dv)]);
+                let Some(offset) = offset else {
+                    return Ok(point);
+                };
+                // The normal, its derivatives by the second partials: of
+                // the tangents, each to first order.
+                let su = first_order(&s[1][0], &[(&s[2][0], du), (&s[1][1], dv)]);
+                let sv = first_order(&s[0][1], &[(&s[1][1], du), (&s[0][2], dv)]);
+                let normal = su.prod_cross(&sv).normalize()?;
+                Ok(point.add(&normal.prod_scalar(D::cst(offset))))
+            }
+            _ => unreachable!("only a curve or a surface has feet"),
         }
     }
 
-    /// The domains of its foot point's parameters: a curve's `t`, a
-    /// surface's `u` and `v`.
-    pub fn domains(&self) -> Vec<(Scalar, Scalar)> {
+    /// The parameters of its foot point: a curve's `t`, a surface's `u`
+    /// and `v` — each its domain, and whether it closes there.
+    pub fn parameters(&self) -> Vec<Foot> {
+        // Closed where its last control points could be its first: of a
+        // circle, or a surface swept round one, they are the same.
+        let ends = |a: &[Vector<4>], b: &[Vector<4>]| {
+            a.len() == b.len() && a.iter().zip(b).all(|(p, q)| p.could_be_equal(q))
+        };
+        let foot = |(lo, hi): (Scalar, Scalar), closes| Foot { lo, hi, closes };
         match self {
-            Geometry::Curve { curve } => vec![curve.domain()],
-            Geometry::Surface { surface } => vec![surface.domain_u(), surface.domain_v()],
+            Geometry::Curve { curve } => {
+                let points = &curve.control_points;
+                let closes = ends(&points[..1], &points[points.len() - 1..]);
+                vec![foot(curve.domain(), closes)]
+            }
+            Geometry::Surface { surface } => {
+                let (nu, nv) = (surface.num_u, surface.num_v);
+                let at = |i: usize, j: usize| surface.control_points[i * nv + j];
+                let row = |i: usize| (0..nv).map(|j| at(i, j)).collect::<Vec<_>>();
+                let column = |j: usize| (0..nu).map(|i| at(i, j)).collect::<Vec<_>>();
+                vec![
+                    foot(surface.domain_u(), ends(&row(0), &row(nu - 1))),
+                    foot(surface.domain_v(), ends(&column(0), &column(nv - 1))),
+                ]
+            }
             _ => Vec::new(),
+        }
+    }
+}
+
+/// A parameter of a foot point: its domain, and whether the curve or
+/// surface closes on itself along it — then the parameter has no end, and
+/// a value past one stands for the point as far past the other.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Foot {
+    pub lo: Scalar,
+    pub hi: Scalar,
+    pub closes: bool,
+}
+
+impl Foot {
+    /// `x`, brought into the domain by whole periods where it closes: which
+    /// of the values that stand for one point is evaluated is a free
+    /// choice.
+    fn round(&self, x: D) -> D {
+        if !self.closes {
+            return x;
+        }
+        let (lo, period) = (self.lo.to_f64(), self.hi.sub(self.lo).to_f64());
+        let turns = ((x.v.to_f64() - lo) / period).floor();
+        match turns == 0.0 {
+            true => x,
+            false => x.sub(D::cst(self.hi.sub(self.lo).mul(Scalar::from_f64(turns)))),
         }
     }
 }

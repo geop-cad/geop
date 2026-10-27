@@ -1,7 +1,8 @@
 import { Fragment, type ReactNode } from "react";
 import type { Update } from "./geop";
 import { JointsPanel } from "./JointsPanel";
-import type { JointsCommand, JointsState } from "./panels";
+import { MotionPanel } from "./MotionPanel";
+import type { JointsCommand, JointsState, MotionCommand, MotionState } from "./panels";
 
 /** What a panel is shown with: its state — none before the kernel sent it — and how it sends its commands. */
 interface PanelProps<State, Payload> {
@@ -42,6 +43,20 @@ const PANELS: Record<string, PanelView> = {
           conflicting={conflicting}
           enabled={enabled && idle}
           onSet={(parameter, value) => send({ command: "set", parameter, value })}
+        />
+      </>
+    );
+  }),
+  motion: panel(({ state, enabled, idle, send }: PanelProps<MotionState, MotionCommand>) => {
+    if (!state || state.studies.length === 0) return null;
+    return (
+      <>
+        <h2>Motion</h2>
+        <MotionPanel
+          state={state}
+          enabled={enabled && idle}
+          onSeek={(study, time) => send({ command: "seek", study, time })}
+          onCheck={(study) => void send({ command: "check", study })}
         />
       </>
     );

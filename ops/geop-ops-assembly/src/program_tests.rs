@@ -67,7 +67,8 @@ use geop_ops_model::mate_entity::MateEntity;
 /// The operations the tests of assemblies write their programs in — the
 /// examples' parts sketched, extruded, rounded and mirrored, the tests'
 /// own given as solids and datums, a datum made on a placed part — with
-/// everything assemblies offer an editor, their examples among it.
+/// everything assemblies offer an editor, their examples among it, and the
+/// inspectors a motion is checked with.
 pub(crate) fn registry() -> Registry {
     let registry = (|| -> GeopResult<Registry> {
         let r = Registry::default();
@@ -78,6 +79,7 @@ pub(crate) fn registry() -> Registry {
         let r = geop_ops_extrude_revolve::register(r)?;
         let r = geop_ops_fillet::register(r)?;
         let r = geop_ops_pattern::register(r)?;
+        let r = geop_ops_inspect::register(r)?;
         let r = crate::register(r)?;
         Ok(r)
     })();
@@ -829,7 +831,8 @@ fn an_example_of_several_files_adds_its_files() {
             "parametric_plates",
             "four_bar",
             "arm",
-            "bolted_plate"
+            "bolted_plate",
+            "cam_follower"
         ]
     );
     let part = update.scene.unwrap().part;
@@ -2380,4 +2383,70 @@ fn an_exploded_view_draws_the_links_moved_move_by_move() {
     };
     let up = [0, 1, 2].map(|k| to[k].sub(from[k]).to_f64());
     assert_close(up, [0.0, 0.0, 2.0], 1e-12);
+}
+
+/// The `cam_follower` example: the follower rides on the eccentric cam as
+/// the motion turns it — at every time, its axis on the slider as far out
+/// as the cam's side, offset by the follower's radius, puts it — and the
+/// mates hold all the way round.
+#[test]
+fn the_cam_drives_its_follower_round() {
+    use geop_ops_model::placed::motion::motion_studies;
+    let (files, program) = workspace_example("cam_follower");
+    let mut part = build(&program, &workspace(files)).unwrap();
+    // Settled as the editor settles it: the foot point on the cam started
+    // where it is nearest the follower.
+    let state = part.program.state.clone();
+    let (moved, report) = solving::solve(&mut part.rerun(), &state, &[], None).unwrap();
+    assert!(report.converged, "{report:?}");
+    part.program.state.extend(moved);
+    // The cam's side closes round on itself: its foot point runs on round
+    // it, with no end to stop at.
+    {
+        let reader = part.view();
+        let whole = ElementReference::whole(crate::mate("add_part(follower,m2)"));
+        let mate = reader.retrieve_element(&whole).unwrap();
+        let Resolved::Constraint { a, .. } = mate else {
+            panic!("a tangent: {mate:?}");
+        };
+        let closing = a.what.parameters().iter().filter(|p| p.closes).count();
+        let crate::residuals::Geometry::Surface { surface } = &a.what else {
+            panic!("the cam's side: {:?}", a.what);
+        };
+        let (nu, nv) = (surface.num_u, surface.num_v);
+        assert_eq!(
+            closing,
+            1,
+            "{nu} x {nv}: first {:?}, last {:?}",
+            &surface.control_points[..nv],
+            &surface.control_points[(nu - 1) * nv..]
+        );
+    }
+    let study = {
+        let reader = part.view();
+        let studies = motion_studies(&reader);
+        let [(name, study)] = &studies[..] else {
+            panic!("one study: {studies:?}");
+        };
+        assert_eq!(name, "spin");
+        (*study).clone()
+    };
+    for time in [0.0, 0.5, 1.0, 1.5, 2.5, 3.5] {
+        let set = (study.at(time).into_iter())
+            .map(|(state, value)| (state, n(value)))
+            .collect();
+        let state = part.program.state.clone();
+        let (moved, report) = solving::set(&mut part.rerun(), &state, &set).unwrap();
+        assert!(report.converged, "at {time} s: {report:?}");
+        part.program.state.extend(moved);
+        let theta = (90.0 * time).to_radians();
+        let reach = 0.5 * theta.cos() + (2.4_f64.powi(2) - (0.5 * theta.sin()).powi(2)).sqrt();
+        let StateValue::Number(slid) = part.program.state["add_part(follower,m1).distance"] else {
+            panic!("the slide");
+        };
+        assert!(
+            (slid.to_f64() - reach).abs() < 1e-7,
+            "at {time} s: {slid:?}, not {reach}"
+        );
+    }
 }

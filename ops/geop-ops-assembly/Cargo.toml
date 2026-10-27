@@ -51,6 +51,9 @@ geop-ops-fillet.workspace = true
 geop-ops-sketch.workspace = true
 geop-lib-stdlib.workspace = true
 geop-ops-pattern.workspace = true
+# A motion is checked for collisions by the interference inspector, as an
+# editor composed with it does.
+geop-ops-inspect.workspace = true
 # A datum made on a placed part follows the part
 # (`a_later_mate_moves_an_earlier_part_for_every_step`).
 geop-ops-reference-geometry.workspace = true

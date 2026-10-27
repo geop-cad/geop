@@ -86,7 +86,7 @@ fn skin(rows: &[NurbCurve3D], params: &[Scalar]) -> GeopResult<NurbSurface3D> {
 
 impl NurbSurface3D {
     /// The same surface with `u` and `v` swapped.
-    fn transposed(&self) -> Self {
+    pub(crate) fn transposed(&self) -> Self {
         let (nu, nv) = (self.num_u, self.num_v);
         let control_points = (0..nv)
             .flat_map(|j| (0..nu).map(move |i| (i, j)))

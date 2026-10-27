@@ -557,7 +557,7 @@ fn a_roller_keeps_touching_the_drum() {
 }
 
 /// A path keeps a point on a curve: the cube's corner on the drum's top
-/// rim, a circle of radius 2 at height 1, wherever it is dragged.
+/// rim, a circle of radius 2 at height 1, wherever round it it is dragged.
 #[test]
 fn a_corner_runs_along_the_rim() {
     let top = MateEntity::of(
@@ -590,6 +590,21 @@ fn a_corner_runs_along_the_rim() {
         4,
         "along the rim, and turned any way"
     );
+    // The rim is four edges, a quarter each: the corner runs on round all
+    // of them, dragged to the far side.
+    let pull = Pull::Point {
+        parameter: pose_state("b"),
+        local: v3(0.0, 0.0, 0.0),
+        target: v3(-2.3, -0.4, 1.0),
+    };
+    let report = mechanism.solve(&[pull]);
+    assert!(report.converged, "{report:?}");
+    let [x, y, z] = mechanism.at("b", [0.0; 3]);
+    assert!(
+        (x.hypot(y) - 2.0).abs() < SOLVED && (z - 1.0).abs() < SOLVED,
+        "{x} {y} {z}"
+    );
+    assert!(x < -1.5 && y < 0.0, "round on the far side: {x} {y}");
 }
 
 /// The name of the edge of `model` nearest `near`.

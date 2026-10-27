@@ -87,13 +87,16 @@ fn geometry_in(
     reader: &Reader,
 ) -> GeopResult<Geometry> {
     let shape = entity.shape(reader)?;
-    let surface = || entity.surface(reader);
-    if let Some(geometry) = kind.geometry(k, &shape, surface)? {
+    let (surface, curve) = (|| entity.surface(reader), || entity.curve(reader));
+    if let Some(geometry) = kind.geometry(k, &shape, surface, curve)? {
         return Ok(geometry);
     }
     let at = (entity.at.as_ref()).map(|at| MateEntity::on(at.clone()));
     let picked_at = match &at {
-        Some(at) => kind.geometry(k, &at.shape(reader)?, || at.surface(reader))?,
+        Some(at) => {
+            let (surface, curve) = (|| at.surface(reader), || at.curve(reader));
+            kind.geometry(k, &at.shape(reader)?, surface, curve)?
+        }
         None => None,
     };
     picked_at.ok_or_else(|| {
@@ -411,24 +414,26 @@ fn limit(reader: &Reader, name: &str, motion: Motion, upper: bool) -> GeopResult
     })
 }
 
-/// The constraint that keeps the parameter `foot` of the foot point of the
-/// constraint `name` — the `k`th its kind has (see [`Kind::feet`]) — within
-/// its domain's upper end, or its lower: a limit, as a length — a step of
-/// the parameter turned into one by the parts' size per the domain's
-/// width, a free choice of scale.
+/// The constraint that keeps the `k`th parameter of the foot point of the
+/// constraint `name` (see [`Kind::feet`]) within its domain's upper end,
+/// or its lower — where the curve or face does not close on itself along
+/// it: a limit, as a length — a step of the parameter turned into one by
+/// the parts' size per the domain's width, a free choice of scale.
 fn foot_limit(reader: &Reader, name: &str, k: usize, upper: bool) -> GeopResult<Constraint> {
     let Resolved::Constraint { kind, a, b } = resolved(reader, name)? else {
         return Err(GeopError::new(format!(
             "the mate {name:?} keeps no foot point"
         )));
     };
-    let (Some(foot), Some(&(lo, hi))) = (kind.feet().get(k), a.what.domains().get(k)) else {
+    let (Some(foot), Some(domain)) = (kind.feet().get(k), a.what.parameters().get(k).copied())
+    else {
         return Err(GeopError::new(format!(
             "the mate {name:?} has no foot parameter {k}"
         )));
     };
-    let bound = if upper { hi } else { lo };
-    let scale = D::cst(size(reader, &[&a.body, &b.body])?.div(hi.sub(lo))?);
+    let bound = if upper { domain.hi } else { domain.lo };
+    let width = domain.hi.sub(domain.lo);
+    let scale = D::cst(size(reader, &[&a.body, &b.body])?.div(width)?);
     let state = foot_parameter(name, foot);
     differentiated(reader, Bound::AtMost, |reader, reading| {
         let value = reading.coordinate(reader, &state)?;
@@ -456,8 +461,12 @@ fn constraints_of_mates(
             continue;
         }
         out.insert(name.clone(), constrain(reader, name)?);
-        if let Resolved::Constraint { kind, .. } = resolved {
+        if let Resolved::Constraint { kind, a, .. } = resolved {
+            let ends = a.what.parameters();
             for (k, foot) in kind.feet().iter().enumerate() {
+                if ends.get(k).is_none_or(|end| end.closes) {
+                    continue;
+                }
                 let state = foot_parameter(name, foot);
                 for upper in [false, true] {
                     let constraint = foot_limit(reader, name, k, upper)?;

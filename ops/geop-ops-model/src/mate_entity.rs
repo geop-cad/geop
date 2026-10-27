@@ -12,6 +12,7 @@ use geop_core_editor::editing::{Style, Visual};
 use geop_core_editor::selectable::Selectable;
 use geop_core_editor::view::{FramePick, drawn};
 use geop_core_geometry::{
+    nurb_curve::NurbCurve3D,
     nurb_surface::NurbSurface3D,
     search::{MAX_NODES, min_subdivision_size},
     shape::Axis,
@@ -24,7 +25,7 @@ use geop_core_math::{
     with_context,
 };
 use geop_core_program::{element::PickedElement, reader::Reader};
-use geop_core_topology::{CoedgeGeometry, FaceId};
+use geop_core_topology::{CoedgeGeometry, EdgeId, FaceId};
 use serde::{Deserialize, Serialize};
 
 /// What a mate holds by: the element `on`, of the part itself or of a part
@@ -81,10 +82,13 @@ impl MateEntity {
         Ok(self.on.shape_in_instance(reader)?.element)
     }
 
-    /// The surface of the face it is on, in its own part — the part
-    /// `reader` reads, or the one placed in it that it is of — its normal out
-    /// of its solid: none for any other element. Reads no state, as
-    /// [`MateEntity::shape`] does not.
+    /// The surface of the wall the face it is on is of, in its own part —
+    /// the part `reader` reads, or the one placed in it that it is of — its
+    /// normal out of its solid: the face's, and those of the faces it runs
+    /// on into smoothly, joined (see [`wall`]). A cam's side swept along a
+    /// profile is a face per piece of the profile, and a follower rolls
+    /// round all of them. None for any element but a face. Reads no state,
+    /// as [`MateEntity::shape`] does not.
     pub fn surface(&self, reader: &Reader) -> GeopResult<Option<NurbSurface3D>> {
         let Selected::Face(face) = self.on.local() else {
             return Ok(None);
@@ -95,8 +99,26 @@ impl MateEntity {
             part => reader.placed_part(part).with_context(ctx)?,
         };
         let found = inside.retrieve_element(&face).with_context(ctx)?;
-        let surface = &found.model.topology().get_face(found.id)?.surface;
-        Ok(Some(surface.clone()))
+        wall(found.model, found.id).map(Some).with_context(ctx)
+    }
+
+    /// The curve it runs along, in its own part — the part `reader` reads,
+    /// or the one placed in it that it is of: of an edge, the edge's and
+    /// those of the edges it runs on into smoothly at its ends, joined (see
+    /// [`run`]): a slot's rim is an edge per piece of its outline, and a pin
+    /// runs round all of them. A sketch's curve as it is; none for what is
+    /// no curve. Reads no state.
+    pub fn curve(&self, reader: &Reader) -> GeopResult<Option<NurbCurve3D>> {
+        let ctx = with_context!("the curve of {}", self.label());
+        let Selected::Edge(edge) = self.on.local() else {
+            return Ok(self.shape(reader).with_context(ctx)?.curve);
+        };
+        let inside = match self.part() {
+            "" => reader.clone(),
+            part => reader.placed_part(part).with_context(ctx)?,
+        };
+        let found = inside.retrieve_element(&edge).with_context(ctx)?;
+        run(found.model, found.id).map(Some).with_context(ctx)
     }
 
     /// The frame it gives in its own part — the part `reader` reads, or
@@ -138,6 +160,148 @@ impl MateEntity {
                 .with_context(with_context!("the frame on {}", self.label())),
         }
     }
+}
+
+/// The surface of `face` of `named`, and of every face it runs on into
+/// across an edge — and they on — where one surface carries on from the
+/// other's side, tangent to it: joined into one along the way they run
+/// (see [`NurbSurface3D::joined`]). The faces are taken in the order of
+/// their ids, which a model gives in creation order.
+fn wall(named: &NamedModel, face: FaceId) -> GeopResult<NurbSurface3D> {
+    let model = named.topology();
+    let mut wall = model.get_face(face)?.surface.clone();
+    let mut used = vec![face];
+    let mut along = None;
+    loop {
+        let mut next: Vec<FaceId> = (used.iter())
+            .flat_map(|&f| model.face_edges(f).collect::<Vec<_>>())
+            .filter_map(|edge| model.faces_of_edge(edge))
+            .flatten()
+            .filter(|f| !used.contains(f))
+            .collect();
+        next.sort();
+        next.dedup();
+        let joined = next.iter().find_map(|&f| {
+            let surface = &model.get_face(f).ok()?.surface;
+            let ways = along.map_or(vec![true, false], |along| vec![along]);
+            ways.into_iter().find_map(|way| {
+                let after = (runs_on(&wall, surface, way))
+                    .then(|| wall.joined(surface, way).ok())
+                    .flatten();
+                let before = || {
+                    (runs_on(surface, &wall, way))
+                        .then(|| surface.joined(&wall, way).ok())
+                        .flatten()
+                };
+                Some((f, way, after.or_else(before)?))
+            })
+        });
+        let Some((f, way, joined)) = joined else {
+            return Ok(wall);
+        };
+        (wall, along) = (joined, Some(way));
+        used.push(f);
+    }
+}
+
+/// The curve of `edge` of `named`, and of every edge it runs on into at
+/// either end — and they on — tangent to it: joined into one (see
+/// [`NurbCurve3D::joined`]), each turned to run on the way the run goes.
+/// Edges are taken in the order of their ids.
+fn run(named: &NamedModel, edge: EdgeId) -> GeopResult<NurbCurve3D> {
+    let model = named.topology();
+    let first = model.get_edge(edge)?;
+    let mut run = first.curve.clone();
+    let mut ends = [first.start_vertex, first.end_vertex];
+    let mut used = vec![edge];
+    loop {
+        let mut grown = false;
+        for at_end in [true, false] {
+            let vertex = ends[usize::from(at_end)];
+            let mut next = model.edges_at_vertex(vertex);
+            next.retain(|e| !used.contains(e));
+            next.sort();
+            for e in next {
+                let found = model.get_edge(e)?;
+                // Turned to leave the vertex, or to arrive there.
+                let leaves = found.start_vertex == vertex;
+                let curve = match leaves == at_end {
+                    true => found.curve.clone(),
+                    false => found.curve.reverse(),
+                };
+                let far = if leaves {
+                    found.end_vertex
+                } else {
+                    found.start_vertex
+                };
+                let joined = match at_end {
+                    true => tangent(&run, &curve).then(|| run.joined(&curve).ok()),
+                    false => tangent(&curve, &run).then(|| curve.joined(&run).ok()),
+                };
+                if let Some(Some(joined)) = joined {
+                    run = joined;
+                    ends[usize::from(at_end)] = far;
+                    used.push(e);
+                    grown = true;
+                    break;
+                }
+            }
+        }
+        // Closed round: back where it started.
+        if !grown || ends[0] == ends[1] {
+            return Ok(run);
+        }
+    }
+}
+
+/// Whether `next` carries on from where `curve` ends, tangent to it: the
+/// step from its first control point to its second along the step from
+/// `curve`'s last but one to its last, as far as their enclosures can tell.
+fn tangent(curve: &NurbCurve3D, next: &NurbCurve3D) -> bool {
+    let point = |p: &geop_core_math::vector::Vector<4>| {
+        Vector3::from_array([0, 1, 2].map(|k| p[k].div(p[3]).unwrap_or(Scalar::ZERO)))
+    };
+    let (a, b) = (&curve.control_points, &next.control_points);
+    if a.len() < 2 || b.len() < 2 {
+        return false;
+    }
+    let (end, before) = (point(&a[a.len() - 1]), point(&a[a.len() - 2]));
+    let (start, after) = (point(&b[0]), point(&b[1]));
+    let (into, out) = (end.sub(&before), after.sub(&start));
+    end.could_be_equal(&start)
+        && into.prod_cross(&out).norm_sq().could_be_equal(Scalar::ZERO)
+        && into.prod_dot(&out).definitely_greater(Scalar::ZERO)
+}
+
+/// Whether `next` carries on from where `surface` ends along `u` — along
+/// `v`, if not `along_u` — tangent to it: at every control point of the row
+/// they share, the step to the next one on is along the step from the one
+/// before, as far as the points' enclosures can tell.
+fn runs_on(surface: &NurbSurface3D, next: &NurbSurface3D, along_u: bool) -> bool {
+    let point = |s: &NurbSurface3D, i: usize, j: usize| {
+        let p = match along_u {
+            true => s.control_points[i * s.num_v + j],
+            false => s.control_points[j * s.num_v + i],
+        };
+        let w = p[3];
+        Vector3::from_array([0, 1, 2].map(|k| p[k].div(w).unwrap_or(Scalar::ZERO)))
+    };
+    let count = |s: &NurbSurface3D| match along_u {
+        true => (s.num_u, s.num_v),
+        false => (s.num_v, s.num_u),
+    };
+    let ((n, m), (n2, m2)) = (count(surface), count(next));
+    if m != m2 || n < 2 || n2 < 2 {
+        return false;
+    }
+    (0..m).all(|j| {
+        let (end, before) = (point(surface, n - 1, j), point(surface, n - 2, j));
+        let (start, after) = (point(next, 0, j), point(next, 1, j));
+        let (into, out) = (end.sub(&before), after.sub(&start));
+        end.could_be_equal(&start)
+            && into.prod_cross(&out).norm_sq().could_be_equal(Scalar::ZERO)
+            && into.prod_dot(&out).definitely_greater(Scalar::ZERO)
+    })
 }
 
 /// The frame `on` gives in the part `reader` reads, put at `at` (see

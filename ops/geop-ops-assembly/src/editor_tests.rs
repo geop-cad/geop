@@ -1452,3 +1452,123 @@ fn a_link_is_exploded_by_clicking_and_dragging_it() {
     let assembled = sent_at(&update, "link3").expect("the link is sent again");
     assert!((assembled[2] - 0.4).abs() < 1e-9, "{assembled:?}");
 }
+
+/// The command `command` to the motion panel, as a front end sends it.
+fn motion(command: crate::MotionCommand) -> Command {
+    Command::panel::<crate::MotionPanel>(&command).expect("a motion's command is plain data")
+}
+
+/// A motion made and played as a user does: a cube on a slider above
+/// another, a new motion step driving the slider — from where it is, the
+/// table's last keyframe typed down into the other cube — shown halfway in
+/// its dialog; then played in the motion panel, checked for collisions,
+/// and exported frame by frame.
+#[test]
+fn a_slider_is_driven_played_checked_and_exported() {
+    use crate::{Joint, JointKind, MotionCommand};
+    let slider = MateKind::Joint(JointKind::new(Joint::Slider));
+    let mut editor = editor();
+    let files = BTreeMap::from([("cube.geop".to_string(), Some(cube().to_json().unwrap()))]);
+    handled(&mut editor, Command::Files { files });
+    let mut program = Program::new();
+    program.push("a", args(true, &[]));
+    program.push(
+        "b",
+        args(false, &[("m1", slider, [origin("a"), origin("b")])]),
+    );
+    program.state.insert(
+        pose_state("b"),
+        StateValue::Pose(
+            Pose::from_euler(Vector3::from_array([0.0, 0.0, 2.0].map(n)), [n(0.0); 3]).unwrap(),
+        ),
+    );
+    handled(
+        &mut editor,
+        Command::Load {
+            program,
+            path: Some("assembly.geop".into()),
+        },
+    );
+    let slide = "add_part(b,m1).distance";
+
+    let mut step = Stepping::new(editor, "motion");
+    let args: crate::MotionArgs = step.args();
+    assert_eq!(args.study.drivers, [slide]);
+    assert_eq!(args.study.keys, [vec![0.0, 2.0], vec![2.0, 3.0]]);
+    step.dialog(
+        "keys",
+        Value::Table(geop_core_editor::editing::TableEdit::Cell {
+            row: 1,
+            column: 1,
+            text: "0.25".into(),
+        }),
+    );
+    step.dialog("frames", Value::Number(5.0));
+    // Shown halfway: the slider half way down.
+    step.dialog("time", Value::Number(1.0));
+    let [_, _, z] = apply(&moved_to(&step, "b"), [0.0; 3]);
+    assert!((z - 1.125).abs() < 1e-7, "{z}");
+    let mut editor = step.editor;
+    handled(&mut editor, Command::Commit);
+
+    // Played in the panel: at a time, the slider where the table says.
+    let update = handled(
+        &mut editor,
+        motion(MotionCommand::Seek {
+            study: "motion1".into(),
+            time: 1.5,
+        }),
+    );
+    assert!((state_number(&editor, slide) - 0.6875).abs() < 1e-9);
+    let panel = &update.program.unwrap().panels["motion"];
+    assert_eq!(panel["studies"][0]["name"], "motion1");
+    assert_eq!(panel["studies"][0]["end"], 2.0);
+    assert_eq!(panel["shown"], serde_json::json!(["motion1", 1.5]));
+
+    // Checked: the cubes overlap at the last two frames, and the slider is
+    // shown where it was.
+    let update = handled(
+        &mut editor,
+        motion(MotionCommand::Check {
+            study: "motion1".into(),
+        }),
+    );
+    assert!((state_number(&editor, slide) - 0.6875).abs() < 1e-9);
+    let checked = &update.program.unwrap().panels["motion"]["checked"];
+    let times: Vec<f64> = (checked["collisions"].as_array().unwrap().iter())
+        .map(|c| c["time"].as_f64().unwrap())
+        .collect();
+    assert_eq!(times, [1.5, 2.0], "{checked}");
+    let pair = &checked["collisions"][0];
+    assert!(pair["a"].as_str().unwrap().starts_with("/a:"), "{pair}");
+    assert!(pair["b"].as_str().unwrap().starts_with("/b:"), "{pair}");
+
+    // Exported: a row a frame, the slide and where each cube is.
+    let update = handled(
+        &mut editor,
+        Command::Export {
+            exporter: "motion".into(),
+            format: Some("csv".into()),
+            options: serde_json::Value::Null,
+            date: String::new(),
+        },
+    );
+    let export = update.export.unwrap();
+    let text = match &export.content {
+        Content::Text(text) => text.clone(),
+        other => panic!("text: {other:?}"),
+    };
+    let lines: Vec<&str> = text.lines().collect();
+    assert_eq!(lines.len(), 6, "{text}");
+    assert!(
+        lines[0].starts_with("\"time\",\"add_part(b,m1).distance\",\"a.x\""),
+        "{}",
+        lines[0]
+    );
+    let last: Vec<f64> = lines[5].split(',').map(|v| v.parse().unwrap()).collect();
+    assert_eq!((last[0], last[1]), (2.0, 0.25));
+    // b's position, after a's seven numbers.
+    assert!((last[2 + 7 + 2] - 0.25).abs() < 1e-9, "{}", lines[5]);
+    // The part is left as it was shown.
+    assert!((state_number(&editor, slide) - 0.6875).abs() < 1e-9);
+}

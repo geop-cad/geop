@@ -7,6 +7,7 @@ mod fill;
 pub use fill::Fill;
 mod fit_pcurve;
 mod flat;
+mod join;
 pub use flat::FlatPatch;
 mod gordon;
 mod net;

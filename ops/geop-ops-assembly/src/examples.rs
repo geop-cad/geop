@@ -44,8 +44,15 @@ use geop_ops_model::sketch::{
 use geop_ops_model::{Combine, PartDescription, element, read_model};
 use geop_ops_sketch::{AddSketch, AddSketchArgs};
 
-use crate::{AddPartArgs, Joint, JointKind, Kind, Limits, Mate, Motion, joint_parameter};
+use crate::{
+    AddPartArgs, ExplodeArgs, Joint, JointKind, Kind, Limits, Mate, Motion, MotionArgs,
+    joint_parameter,
+};
+use geop_core_math::primitives::DatumComponent;
+use geop_core_program::element::ElementReference;
+use geop_ops_model::datums::{ORIGIN, component_name, datums};
 use geop_ops_model::mate_entity::MateEntity;
+use geop_ops_model::placed::motion::MotionStudy;
 
 /// The plane of the origin normal to `normal`, as a plane to sketch on.
 fn on_origin(normal: FrameAxis) -> SketchPlane {
@@ -573,6 +580,111 @@ pub fn bolted_plate() -> Program {
     program
 }
 
+/// A cam: a disc of radius 2 whose center is 0.5 off the origin along `x`
+/// — so turned about the origin's `z` axis it is eccentric — 1 thick,
+/// half of it either side of the origin's `xy` plane.
+pub fn cam() -> Program {
+    let mut program = Program::new();
+    let mut sketch = Sketch::new();
+    circle(&mut sketch, [0.5, 0.0], 2.0);
+    program.push(
+        "cam_sketch",
+        AddSketchArgs::on(on_origin(FrameAxis::Z), solved(sketch)),
+    );
+    program.push(
+        "cam",
+        ExtrudeArgs {
+            sketch: whole_sketch("cam_sketch"),
+            extent: Extents {
+                symmetric: true,
+                ..Extents::blind(1.0)
+            },
+            output: Output::Solid(Combine::NewBody),
+            draft: 0.0,
+        },
+    );
+    program
+}
+
+/// The datum `name` of the origin of the part placed as `instance` — of
+/// the part itself, for none.
+fn origin_datum(instance: Option<&str>, name: String) -> MateEntity {
+    let datum = Selected::Datum(ElementReference::new(datums(), name));
+    match instance {
+        Some(instance) => MateEntity::of(instance, datum),
+        None => MateEntity::on(datum),
+    }
+}
+
+/// The assembly of `cam_follower`: the cam (`cam.geop`, [`cam`]) turning
+/// on a revolute joint about the origin's `z` axis, and the follower — a
+/// [`pin`] (`pin.geop`) — on a slider along the origin's `x` axis, the rim
+/// of its foot touching the cam's side (a tangent mate). A motion, `spin`,
+/// turns the cam once round in 4 s, the follower riding on it; and a move
+/// of an exploded view, `apart`, lifts the follower off the cam.
+pub fn cam_follower_assembly() -> Program {
+    let mut program = Program::new();
+    let frame = |instance| origin_datum(instance, ORIGIN.to_string());
+    let x_plane = |instance| {
+        let name = component_name(ORIGIN, DatumComponent::Plane(FrameAxis::X));
+        origin_datum(instance, name)
+    };
+    let spin = Mate::joint(
+        JointKind::new(Joint::Revolute),
+        vec![frame(None), frame(Some("cam"))],
+    );
+    program.push("cam", placed("cam.geop", false, vec![spin]));
+    let slide = Mate::joint(
+        JointKind::new(Joint::Slider),
+        vec![x_plane(None), x_plane(Some("follower"))],
+    );
+    let touch = Mate::constraint(
+        Kind::Tangent,
+        vec![
+            placed_face("cam", "extrude(cam,cam_sketch,c1)"),
+            MateEntity::of(
+                "follower",
+                Selected::Edge(element("extrude(pin,pin_sketch,c1,start)")),
+            ),
+        ],
+    );
+    program.push("follower", placed("pin.geop", false, vec![slide, touch]));
+    program.push(
+        "spin",
+        MotionArgs {
+            study: MotionStudy {
+                drivers: vec![joint_parameter("add_part(cam,m1)", Motion::Turn)],
+                keys: vec![vec![0.0, 0.0], vec![4.0, 360.0]],
+                frames: 25,
+            },
+        },
+    );
+    program.push(
+        "apart",
+        ExplodeArgs {
+            parts: vec!["follower".into()],
+            distance: 3.0,
+            ..Default::default()
+        },
+    );
+    // The cam at a turn of none, its far side 2.5 out along x, and the
+    // follower's axis its radius, 0.4, further.
+    let at = |x| StateValue::Pose(pose([x, 0.0, 0.0], [0.0; 3]));
+    program.state = StateValues::from([
+        (pose_state("cam"), at(0.0)),
+        (pose_state("follower"), at(2.9)),
+        (
+            joint_parameter("add_part(cam,m1)", Motion::Turn),
+            StateValue::Number(n(0.0)),
+        ),
+        (
+            joint_parameter("add_part(follower,m1)", Motion::Slide),
+            StateValue::Number(n(2.9)),
+        ),
+    ]);
+    program
+}
+
 /// An example drawn in the editor, kept as the program it saved (in
 /// `src/drawn/`): its sketches as they were drawn, which no code here says
 /// better. Its tests build it like every other example, so a change to the
@@ -642,6 +754,13 @@ pub fn workspaces() -> Vec<Example<ExampleFiles>> {
             vec![
                 ("bolted_plate.geop", bolted_plate()),
                 ("plate.geop", metric_plate()),
+            ]
+        }),
+        ("cam_follower", || {
+            vec![
+                ("cam_follower.geop", cam_follower_assembly()),
+                ("cam.geop", cam()),
+                ("pin.geop", pin()),
             ]
         }),
     ]
