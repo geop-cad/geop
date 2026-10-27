@@ -32,9 +32,7 @@ fn insert_once<const D: usize>(
             // the new point is the old one, exactly.
             if knots[i] == t_bar {
                 Scalar::ZERO
-            } else if knots[i + p] == t_bar {
-                Scalar::ONE
-            } else if denom.could_be_equal(Scalar::ZERO) {
+            } else if knots[i + p] == t_bar || denom.could_be_equal(Scalar::ZERO) {
                 Scalar::ONE
             } else {
                 t_bar.sub(knots[i]).div(denom).unwrap_or(Scalar::ONE)
