@@ -11,6 +11,10 @@ pub enum GeopError {
         inner: Box<GeopError>,
         message: String,
     },
+    /// `inner`, caused by the argument `key` of the step it was raised in:
+    /// what an editor shows the error beside — the field of that key (see
+    /// [`GeopError::concerning`]).
+    Argument { inner: Box<GeopError>, key: String },
 }
 
 impl GeopError {
@@ -31,12 +35,35 @@ impl GeopError {
         }
     }
 
+    /// Caused by the argument `key` of the step it is raised in — its
+    /// sketch, its distance — by a value that argument holds or an element
+    /// it refers to: an editor shows it beside that argument's field.
+    pub fn concerning(self, key: impl Into<String>) -> Self {
+        GeopError::Argument {
+            inner: Box::new(self),
+            key: key.into(),
+        }
+    }
+
+    /// The argument it was caused by (see [`GeopError::concerning`]): the
+    /// outermost one said, which the step that failed said — an argument of
+    /// a step it read from is that step's.
+    pub fn argument(&self) -> Option<&str> {
+        match self {
+            GeopError::Root { .. } => None,
+            GeopError::Context { inner, .. } => inner.argument(),
+            GeopError::Argument { key, .. } => Some(key),
+        }
+    }
+
     /// What went wrong at the root, without the context it was reported
     /// through: what a user is shown.
     pub fn root_message(&self) -> &str {
         match self {
             GeopError::Root { message, .. } => message,
-            GeopError::Context { inner, .. } => inner.root_message(),
+            GeopError::Context { inner, .. } | GeopError::Argument { inner, .. } => {
+                inner.root_message()
+            }
         }
     }
 }
@@ -52,6 +79,10 @@ impl std::fmt::Display for GeopError {
             GeopError::Context { inner, message } => {
                 write!(f, "{}", inner)?;
                 writeln!(f, "Context:\n{}", message)
+            }
+            GeopError::Argument { inner, key } => {
+                write!(f, "{}", inner)?;
+                writeln!(f, "Argument: {}", key)
             }
         }
     }
@@ -108,6 +139,10 @@ impl<F: Fn(GeopError) -> GeopError + ?Sized> ContextSource for F {
 
 pub trait WithContext<T> {
     fn with_context(self, ctx: &(impl ContextSource + ?Sized)) -> GeopResult<T>;
+
+    /// Its error caused by the step's argument `key` (see
+    /// [`GeopError::concerning`]).
+    fn concerning(self, key: &str) -> GeopResult<T>;
 }
 
 impl<T> WithContext<T> for GeopResult<T> {
@@ -116,6 +151,10 @@ impl<T> WithContext<T> for GeopResult<T> {
             Ok(v) => Ok(v),
             Err(err) => Err(ctx.apply(err)),
         }
+    }
+
+    fn concerning(self, key: &str) -> GeopResult<T> {
+        self.map_err(|e| e.concerning(key))
     }
 }
 

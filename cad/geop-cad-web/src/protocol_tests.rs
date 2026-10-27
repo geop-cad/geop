@@ -86,6 +86,9 @@ fn session(kinds: &[&str]) -> Vec<Value> {
     }
     commands.extend([
         json!({ "command": "open", "id": "hole" }),
+        // A draft past square: the step fails, said at the draft.
+        dialog("draft", json!({ "type": "number", "value": 95.0 })),
+        dialog("draft", json!({ "type": "number", "value": 0.0 })),
         event(json!({ "type": "hover", "pointer": above, "shift": false })),
         event(json!({ "type": "hover", "pointer": tube, "shift": true })),
         event(json!({ "type": "click", "pointer": above, "button": "primary", "double": false, "shift": false })),

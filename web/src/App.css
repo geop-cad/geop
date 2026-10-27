@@ -2703,3 +2703,11 @@ button.danger:hover:not(:disabled) {
 .dropdown-menu > * {
   break-inside: avoid;
 }
+
+/* A field the step does not build with: its control outlined, why said under it. */
+.popup .field-failed input,
+.popup .field-failed select,
+.popup .field-failed .reference-box {
+  border-color: #ff8080;
+  box-shadow: 0 0 0 1px rgba(255, 128, 128, 0.35);
+}

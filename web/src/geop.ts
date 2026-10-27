@@ -534,7 +534,8 @@ export type Control =
   | ({ type: "table" } & Table);
 
 /** A control, under the key the events it sends carry. */
-export type Field = { key: string } & Control;
+/** A control, the key its events carry, and — where the step does not build with its value — why, said beside it. */
+export type Field = { key: string; failure?: string } & Control;
 
 export type Shape =
   | { shape: "point"; at: Vec3 }

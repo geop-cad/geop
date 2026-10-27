@@ -17,6 +17,10 @@ pub(super) struct Build {
     pub(super) ran: usize,
     /// Why each step of the last run that failed did, by its id.
     pub(super) errors: BTreeMap<String, String>,
+    /// Of those failed because of one of their arguments, which, and what
+    /// went wrong with it, by the step's id (see
+    /// [`geop_core_math::geop_error::GeopError::concerning`]).
+    pub(super) arguments: BTreeMap<String, (String, String)>,
 }
 
 impl Build {
@@ -27,6 +31,7 @@ impl Build {
             part: Part::default(),
             ran: 0,
             errors: BTreeMap::new(),
+            arguments: BTreeMap::new(),
         }
     }
 
@@ -38,6 +43,12 @@ impl Build {
         let upto = steps.steps.get(end).map(|step| step.id.as_str());
         let output = (self.runner).run(&mut self.part, steps, upto);
         self.ran = end;
+        self.arguments = (output.step_errors.iter())
+            .filter_map(|(step, error)| {
+                let key = error.argument()?.to_string();
+                Some((step.clone(), (key, error.root_message().to_string())))
+            })
+            .collect();
         self.errors = (output.step_errors.into_iter())
             .map(|(step, error)| (step, error.to_string()))
             .collect();

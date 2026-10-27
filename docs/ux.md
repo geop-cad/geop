@@ -14,10 +14,27 @@ agree; a front end only draws what it is sent and sends what the user did.
   lights and draws exactly what a click there would put in the field —
   a mate's face with the frame put on it, a pattern's whole feature — not
   the raw element under the pointer (`selectable::previewed`).
+- **The kernel says what is lit.** What a pick, a hover, a list item or an
+  answer's row lights is decided once, by the kernel (`view::lit::Lit`),
+  and sent as `Update::lit` — a `Lit` per drawn part, only when it
+  changed; a list item or a row pointed at is sent as `Command::Light`. A
+  front end draws it and classifies nothing, so web, VS Code and desktop
+  light the same faces, edges, sketches and datums.
 - **Show what is only for picking only while it can be picked.** The
   datums of placed parts (`Drawer::hidden`) are shown while a field that
   takes a datum waits, and hidden otherwise, the whole time a part is
   placed included.
+
+## Errors
+
+- **An error stands beside its cause.** A step that does not build because
+  of one of its arguments says so by `GeopError::concerning(key)` (or
+  `.concerning(key)` on a result), `key` the field's: the dialog shows
+  why under that field and outlines it (`Field::failure`), and the
+  summary under the fields keeps the whole error. Tag where an operation
+  reads a reference or checks a value; an error of the geometry as a
+  whole (a blend that cannot be rolled) concerns no one field and is
+  left untagged.
 
 ## Keys
 

@@ -1372,20 +1372,28 @@ impl Editor {
         let open = self.open.as_ref()?;
         let listed = self.registry.editors().info(&open.step().ok()?.operation)?;
         let info = listed.info;
-        let presentation = self.presentation(open).ok()?;
+        let mut presentation = self.presentation(open).ok()?;
         let missing: Vec<String> = (presentation.dialog.missing().into_iter())
             .map(str::to_string)
             .collect();
+        // A step not previewed is not built, so whether it builds is not
+        // known until it is committed.
+        let error = (missing.is_empty() && self.preview)
+            .then(|| self.step_error(open))
+            .flatten();
+        // Said beside the field whose value it fails with, too.
+        if error.is_some()
+            && open.within.is_none()
+            && let Some((key, why)) = self.build.arguments.get(&open.id)
+        {
+            presentation.dialog.concerning(key, why);
+        }
         Some(StepState {
             kind: listed.kind,
             label: info.label,
             doc: info.doc,
             id: (!open.new).then(|| open.id.clone()),
-            // A step not previewed is not built, so whether it builds is not
-            // known until it is committed.
-            error: (missing.is_empty() && self.preview)
-                .then(|| self.step_error(open))
-                .flatten(),
+            error,
             missing,
             presentation,
             preview: self.preview,

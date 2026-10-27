@@ -198,13 +198,13 @@ impl ModelOperation for Extrude {
         args: &ExtrudeArgs,
     ) -> GeopResult<()> {
         let namer = Namer::new("extrude", step)?;
-        let placed = reader.retrieve_element(&args.sketch)?;
+        let placed = reader.retrieve_element(&args.sketch).concerning("sketch")?;
         let sketch = &placed.sketch;
         let geometry = sketch.enclose()?;
         let shape = args.output.shape(sketch)?;
         let slope = match args.draft {
             0.0 => None,
-            angle => Some(draft_slope(angle, &args.output, &shape)?),
+            angle => Some(draft_slope(angle, &args.output, &shape).concerning("draft")?),
         };
         let loops: Vec<_> = (shape_profiles(&placed.name, sketch, &geometry, shape)?.into_iter())
             .map(SweepLoop::plain)

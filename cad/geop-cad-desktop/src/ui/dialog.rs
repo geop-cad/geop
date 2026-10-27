@@ -211,6 +211,10 @@ fn fields(window: &GeopApp, ui: &mut Ui, step: &StepState) -> Vec<Act> {
         let key = field.key.as_str();
         ui.push_id(key, |ui| {
             control(ui, theme, busy, key, &field.control, &mut acts);
+            // Why the step does not build with this field's value.
+            if let Some(failure) = &field.failure {
+                ui.label(RichText::new(failure).small().color(theme.error()));
+            }
         });
         ui.add_space(2.0);
     }

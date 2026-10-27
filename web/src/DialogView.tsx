@@ -421,9 +421,16 @@ function FieldView({
 export function DialogView({ step, onDialog, onChooseFile, setPreview, error, onCommit, onCancel, onDownload }: Props) {
   const popup = step.presentation.layout === "popup";
   const blocked = step.error != null || step.missing.length > 0;
-  const fields = step.presentation.dialog.map(({ key, ...c }) => (
-    <div key={key} className={`field field-${c.type}`}>
+  // Why the step does not build is said beside the field it fails with,
+  // and summed up under the fields.
+  const fields = step.presentation.dialog.map(({ key, failure, ...c }) => (
+    <div key={key} className={`field field-${c.type}${failure ? " field-failed" : ""}`} data-field-key={key}>
       <FieldView k={key} c={c as Control} onDialog={onDialog} onChooseFile={onChooseFile} onDownload={onDownload} />
+      {failure && (
+        <p className="op-error-text field-note field-failure" role="alert">
+          {failure}
+        </p>
+      )}
     </div>
   ));
   const status = (

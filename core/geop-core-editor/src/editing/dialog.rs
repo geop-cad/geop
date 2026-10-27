@@ -5,6 +5,8 @@
 //! that is the editor's, the same for every operation (see
 //! the step editor, [`crate::step_editor`]).
 
+#[cfg(doc)]
+use geop_core_math::geop_error::GeopError;
 use geop_core_math::vector::Vector3;
 use serde::Serialize;
 
@@ -596,6 +598,11 @@ pub struct Field {
     pub key: String,
     #[serde(flatten)]
     pub control: Control,
+    /// Why the step does not build, where it is this field's value that
+    /// it does not build with (see [`GeopError::concerning`]): shown
+    /// beside it.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub failure: Option<String>,
 }
 
 /// The fields an operation shows for a step, in order: an ordered
@@ -617,7 +624,11 @@ impl Dialog {
             self.0.iter().all(|f| f.key != key),
             "dialog key {key:?} used twice"
         );
-        self.0.push(Field { key, control });
+        self.0.push(Field {
+            key,
+            control,
+            failure: None,
+        });
         self
     }
 
@@ -875,6 +886,12 @@ impl Dialog {
 
     /// What an editor draws of every element its reference fields hold:
     /// what the step builds on, to light.
+    /// Says `error` beside the field `key`, if it has one: whether it did.
+    pub fn concerning(&mut self, key: &str, error: &str) -> bool {
+        let field = self.0.iter_mut().find(|f| f.key == key);
+        field.map(|f| f.failure = Some(error.to_string())).is_some()
+    }
+
     pub fn picked(&self) -> impl Iterator<Item = &PickedElement> {
         self.0
             .iter()
