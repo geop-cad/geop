@@ -199,11 +199,7 @@ mod tests {
         let radius = Scalar::from_f64(2.0);
         for [x, y, z] in [[2.0, 2.0, 2.0], [1e5 + 2.0, -1e5 + 2.0, 2.0]] {
             let center = v3(x, y, z);
-            let corners = [
-                v3(x - 2.0, y, z),
-                v3(x, y - 2.0, z),
-                v3(x, y, z - 2.0),
-            ];
+            let corners = [v3(x - 2.0, y, z), v3(x, y - 2.0, z), v3(x, y, z - 2.0)];
             let s = NurbSurface3D::spherical_triangle(&center, radius, corners).unwrap();
             let widest = (s.control_points.iter())
                 .flat_map(|p| (0..4).map(move |c| p[c].width().to_f64()))
