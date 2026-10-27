@@ -474,3 +474,40 @@ fn meshes_of_solids_are_closed() {
         assert_closed(drilled.topology(), n);
     }
 }
+
+/// A [`Rasterizer`] meshes a face again only when it changed: a sphere,
+/// and then the sphere with a cube beside it, meshes the cube's faces
+/// alone the second time, and none the third — and draws each model as
+/// [`rasterize`] draws it, bit for bit, though it joined its faces from
+/// pieces meshed for another model.
+#[test]
+fn a_rasterizer_meshes_again_only_the_faces_that_changed() {
+    use geop_core_rasterize::{RasterizedModel, Rasterizer, faces_meshed};
+
+    let triangles = |raster: &RasterizedModel| {
+        (raster.faces.iter())
+            .map(|(&id, tris)| {
+                let corners = tris.iter().map(|t| ([t.a, t.b, t.c], t.vertex_normals));
+                (id, corners.collect::<Vec<_>>())
+            })
+            .collect::<Vec<_>>()
+    };
+    let mut sphere = NamedModel::new();
+    sphere_solid(&mut sphere, "ball", Vector3::zero(), Scalar::ONE).unwrap();
+    let mut both = sphere.clone();
+    let v = |p: [f64; 3]| Vector3::from_array(p.map(Scalar::from_f64));
+    cube_solid(&mut both, "box", v([3.0, 0.0, 0.0]), v([4.0, 1.0, 1.0])).unwrap();
+    let mut rasterizer = Rasterizer::default();
+    let meshed = faces_meshed();
+    rasterizer.rasterize(sphere.topology(), 24).unwrap();
+    let spheres = faces_meshed() - meshed;
+    assert_eq!(spheres, sphere.topology().faces.len());
+
+    for again in [6, 0] {
+        let meshed = faces_meshed();
+        let drawn = rasterizer.rasterize(both.topology(), 24).unwrap();
+        assert_eq!(faces_meshed() - meshed, again);
+        let fresh = rasterize(both.topology(), 24).unwrap();
+        assert!(triangles(&drawn) == triangles(&fresh));
+    }
+}

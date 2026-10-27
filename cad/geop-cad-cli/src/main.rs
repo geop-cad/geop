@@ -22,15 +22,11 @@ mod session;
 mod vscode;
 
 use clap::{Parser, Subcommand};
-use geop_cad_base::{BuiltPart, outputs, workspace_with};
+use geop_cad_base::{BuiltPart, disk::DiskCache, outputs, workspace_with};
 use geop_core_editor::editor::Rerun;
 use geop_core_editor::output::Output;
 use geop_core_math::geop_error::{GeopError, GeopResult};
-use geop_core_program::{
-    cache::{CACHE_EXTENSION, Cache, CacheStore},
-    program::Program,
-    workspace::FileStore,
-};
+use geop_core_program::{program::Program, workspace::FileStore};
 use geop_ops_assembly::solving::{check as check_mates, solve};
 use session::Session;
 use std::{
@@ -72,6 +68,33 @@ enum Command {
     /// Install the VS Code extension of this version of geop into VS Code
     /// (or Cursor, or VSCodium), downloaded from its GitHub release.
     Vscode(vscode::VscodeArgs),
+    /// Edit the files of a folder in geop's desktop app: the same editor
+    /// as `open`, in a native window, its kernel in this process.
+    Desktop(DesktopArgs),
+}
+
+#[derive(clap::Args)]
+struct DesktopArgs {
+    /// The folder to edit the files of — or a program in it, to edit first.
+    #[arg(default_value = ".")]
+    path: PathBuf,
+}
+
+/// The desktop app on `args.path`, if this geop was built with it (the
+/// feature `desktop`).
+fn desktop(args: &DesktopArgs) -> GeopResult<()> {
+    #[cfg(feature = "desktop")]
+    return geop_cad_desktop::ui::run(args.path.clone())
+        .map_err(|e| GeopError::new(format!("the desktop app: {e}")));
+    #[cfg(not(feature = "desktop"))]
+    {
+        let _ = args;
+        Err(GeopError::new(
+            "this geop was built without the desktop app: \
+             `cargo build --release -p geop-cad-cli --features desktop`, \
+             or run `cargo run --release -p geop-cad-desktop`",
+        ))
+    }
 }
 
 #[derive(clap::Args)]
@@ -190,69 +213,6 @@ impl FileStore for Disk {
     /// Nothing: a compile only reads what the program places.
     fn list(&self) -> Vec<String> {
         Vec::new()
-    }
-}
-
-/// Cache files on disk: `path.geopc` under `root` for the file `path`, of
-/// this build of the kernel (see `geop_core_program::cache`).
-struct DiskCache {
-    root: PathBuf,
-    build: String,
-}
-
-impl DiskCache {
-    /// The cache files under `root`, of the executable running: its version,
-    /// and its size and time on disk, so that a kernel built again makes
-    /// again what an older one kept. None if the executable cannot be told
-    /// apart: nothing is then kept on disk.
-    fn of(root: PathBuf) -> Option<Self> {
-        let exe = std::fs::metadata(std::env::current_exe().ok()?).ok()?;
-        let modified = exe
-            .modified()
-            .ok()?
-            .duration_since(std::time::UNIX_EPOCH)
-            .ok()?;
-        let build = format!(
-            "{} {} {}",
-            env!("CARGO_PKG_VERSION"),
-            exe.len(),
-            modified.as_nanos()
-        );
-        Some(Self { root, build })
-    }
-
-    /// What `self` makes of files: kept in it, if there is one, and in
-    /// memory.
-    fn cache(this: Option<Self>) -> Cache {
-        match this {
-            Some(store) => Cache::stored(Box::new(store)),
-            None => Cache::new(),
-        }
-    }
-}
-
-impl CacheStore for DiskCache {
-    fn build(&self) -> &str {
-        &self.build
-    }
-
-    fn read(&self, path: &str) -> Option<String> {
-        std::fs::read_to_string(self.root.join(path)).ok()
-    }
-
-    /// Written whole, then put in place: a run reading it meanwhile, or one
-    /// cut short, sees the old file or the new, never half of one. Not
-    /// written is only made again next time, so it is said on stderr and
-    /// nothing else.
-    fn write(&self, path: &str, text: &str) {
-        let target = self.root.join(path);
-        let partial = target.with_extension(format!("{CACHE_EXTENSION}.{}", std::process::id()));
-        let written =
-            std::fs::write(&partial, text).and_then(|()| std::fs::rename(&partial, &target));
-        if let Err(e) = written {
-            let _ = std::fs::remove_file(&partial);
-            eprintln!("geop: could not keep {}: {e}", target.display());
-        }
     }
 }
 
@@ -412,6 +372,7 @@ fn main() -> ExitCode {
         Command::Serve(args) => serve(&args),
         Command::Mcp(McpArgs {}) => mcp::serve(),
         Command::Open(args) => open::open(&args),
+        Command::Desktop(args) => desktop(&args),
         Command::Vscode(args) => vscode::install(&args),
         Command::Compile(args) => compile(&args).map(|c| {
             if !c.solved_for.is_empty() {
@@ -613,6 +574,11 @@ mod tests {
             panic!("not vscode")
         };
         assert_eq!(vscode.editor.as_deref(), Some("cursor"));
+        let Command::Desktop(desktop) = parse(&["desktop", "proj/part.geop"]).unwrap().command
+        else {
+            panic!("not desktop")
+        };
+        assert_eq!(desktop.path, PathBuf::from("proj/part.geop"));
     }
 
     #[test]

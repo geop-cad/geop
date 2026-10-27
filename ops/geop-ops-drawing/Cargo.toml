@@ -38,6 +38,7 @@ geop-ops-extrude-revolve.workspace = true
 geop-ops-hole = { workspace = true, features = ["examples"] }
 geop-ops-subd.workspace = true
 geop-ops-fillet.workspace = true
+geop-ops-shell.workspace = true
 geop-ops-pattern = { workspace = true, features = ["examples"] }
 geop-ops-reference-geometry = { workspace = true, features = ["examples"] }
 geop-lib-stdlib.workspace = true

@@ -19,6 +19,13 @@ drew, and an exported mesh is exactly what is on screen.
 geometry that actually curves is approximated, while a straight edge or a
 flat face stays cheap.
 
+A `Rasterizer` rasterizes models one after another, as an editor draws the
+part before a step and the part with it. Each face is meshed on its own
+once while what it is meshed from stays the same (its surface, and its
+loops' pcurves, edges and their ends), and the faces are joined along their
+edges anew each time, so it draws what `rasterize` draws, bit for bit.
+Opening a step meshes again only the faces the steps after it changed.
+
 ## Triangulating a face
 
 `face_triangles_uv` (implemented by `grid::triangulate_face`) triangulates a

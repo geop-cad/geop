@@ -751,7 +751,7 @@ await check("a 3-D sketch point is dragged along an axis by the gizmo", async ()
   const selected = await presented();
   const at = selected.gizmo?.at;
   expect(at, `the point selected has no gizmo: ${JSON.stringify(selected.dialog.map((f) => f.key))}`);
-  expect(selected.gizmo.modes.translate && !selected.gizmo.modes.rotate, "a point is only moved");
+  expect(selected.gizmo.parts.every((p) => p.part === "free" || p.part === "move" || p.part === "plane"), "a point is only moved");
   const before = numbers(selected, ["x", "y", "z"]);
   const reach = await reachAt(at);
   const step = gridStep(reach);

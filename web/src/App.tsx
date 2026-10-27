@@ -1,13 +1,11 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import "./App.css";
 import {
-  applyScene,
   loadGeop,
   runTool,
   send,
   type Command,
   type EditEvent,
-  type Placed,
   type PickedElement,
   type Inspection,
   type OperationInfo,
@@ -15,12 +13,12 @@ import {
   type Presentation,
   type Program,
   type ProgramState,
-  type SceneState,
   type StepState,
   type Update,
   type Value,
 } from "./geop";
 import { host, onRestart, store } from "./backend";
+import { applyScene, NOTHING_PLACED, type DrawnScene, type Placed } from "./kept";
 import { KernelCrashed } from "./crash";
 import { DEFAULT_POSE, headOnPose, wantsFraming, type CameraPose, type Drawn, type Projection } from "./camera";
 import { DialogView } from "./DialogView";
@@ -42,7 +40,6 @@ import {
 import { InspectPanel } from "./InspectPanel";
 import { sectionPlane, type Section } from "./section";
 import { ProgramPanels } from "./ProgramPanels";
-import { structureDetails } from "./panels";
 import { SceneViewer } from "./SceneViewer";
 import { StructurePanel } from "./StructurePanel";
 import { OperationGrid, OperationRibbon, type Tool } from "./OperationRibbon";
@@ -96,13 +93,13 @@ function App() {
   const [wasmError, setWasmError] = useState<string | null>(null);
 
   const [program, setProgram] = useState<ProgramState | null>(null);
-  const [scene, setScene] = useState<SceneState | null>(null);
+  const [scene, setScene] = useState<DrawnScene | null>(null);
   /**
    * The placed parts drawn, and the views of their components: the kernel
    * sends what changed (see [[applyScene]]). Kept in a ref too, so that
    * updates answered one after another each apply to the one before.
    */
-  const [placed, setPlaced] = useState<Placed>({ instances: new Map(), components: {} });
+  const [placed, setPlaced] = useState<Placed>(NOTHING_PLACED);
   const placedRef = useRef(placed);
   const instances = useMemo(() => [...placed.instances.values()], [placed]);
   const components = placed.components;
@@ -194,14 +191,15 @@ function App() {
       );
     }
     if (update.scene) {
-      setScene(update.scene);
+      const applied = applyScene(placedRef.current, update.scene);
+      setScene(applied.scene);
       // The answers were about the part as it was.
       setAnswers({});
-      placedRef.current = applyScene(placedRef.current, update.scene);
+      placedRef.current = applied.placed;
       setPlaced(placedRef.current);
       const drawn = {
-        extent: update.scene.part.extent,
-        solids: update.scene.part.solids.length + placedRef.current.instances.size,
+        extent: applied.scene.part.extent,
+        solids: applied.scene.part.solids.length + placedRef.current.instances.size,
       };
       if (drawnRef.current && wantsFraming(drawnRef.current, drawn, poseRef.current)) frameRef.current = true;
       drawnRef.current = drawn;
@@ -771,7 +769,7 @@ function App() {
         <h2>Part</h2>
         <StructurePanel
           items={scene?.structure ?? []}
-          details={structureDetails(program?.panels ?? {})}
+          details={program?.details ?? {}}
           enabled={wasmReady}
           onVisibility={(name, visible) => dispatch({ command: "visibility", name, visible })}
           onLight={setLights}

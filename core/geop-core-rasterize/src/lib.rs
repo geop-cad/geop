@@ -27,6 +27,7 @@ pub type Triangle2 = (Vector2, Vector2, Vector2);
 
 use std::collections::BTreeMap;
 
+use geop_core_geometry::nurb_surface::NurbSurface3D;
 use geop_core_math::{
     geop_error::{GeopError, GeopResult},
     plain::distance,
@@ -36,7 +37,8 @@ use geop_core_math::{
     vector::{Vector2, Vector3},
 };
 use geop_core_topology::{
-    CoedgeGeometry, EdgeId, Face, FaceId, Model, VertexId, boundary::BoundaryType,
+    CoedgeGeometry, CoedgeId, Curve2, Edge, EdgeId, Face, FaceId, Model, Sense, VertexId,
+    boundary::BoundaryType,
 };
 use grid::dist_point_to_segment;
 
@@ -201,83 +203,210 @@ fn sample_curve(
 /// approximated (see [`sample_curve`] and [`grid::triangulate_face`]), not
 /// a fixed sample count — a straight edge or flat face stays cheap.
 pub fn rasterize(model: &Model, n: usize) -> GeopResult<RasterizedModel> {
-    if n < 2 {
-        return Err(GeopError::new("rasterize: n must be >= 2"));
-    }
+    Rasterizer::default().rasterize(model, n)
+}
 
-    let vertices = model
-        .vertices
-        .iter()
-        .map(|(&id, vertex)| (id, vertex.point))
-        .collect();
+/// How many models a [`Rasterizer`] keeps the faces of: those of the part
+/// before the step an editor shows, the part with it, and those of the
+/// last steps opened.
+const KEPT_MODELS: u64 = 4;
 
-    let mut edges = BTreeMap::new();
-    for &id in model.edges.keys() {
-        edges.insert(id, sample_edge(model, id, n)?);
-    }
-    let last: BTreeMap<EdgeId, usize> = edges.iter().map(|(&e, p)| (e, p.len() - 1)).collect();
+/// What a face is meshed from on its own ([`face_mesh`]), at a quality:
+/// its surface, and each of its loops, the outer first, as the coedges it
+/// runs through — each one's pcurve and sense, and its edge, with the
+/// edge's ends. Two faces of equal sources are meshed alike, bit for bit,
+/// whatever their shells or their coedges' ids.
+#[derive(PartialEq)]
+struct FaceSource {
+    n: usize,
+    surface: NurbSurface3D,
+    loops: Vec<Vec<CoedgeSource>>,
+}
 
-    // Every face meshed on its own, then all joined along their edges.
-    let mut ids = Vec::new();
-    let mut all_samples = Vec::new();
-    let mut all_boundaries = Vec::new();
-    let mut triangles = Vec::new();
-    for (&id, face) in model.faces.iter() {
-        let mut samples = grid::Samples::new(face);
-        let (tris, boundaries) = face_mesh(model, face, n, &edges, &mut samples)?;
-        ids.push(id);
-        all_samples.push(samples);
-        all_boundaries.push(boundaries);
-        triangles.push(tris);
-    }
-    let trims: Vec<mesh::Trim> = all_boundaries
-        .iter()
-        .map(|boundaries| mesh::Trim {
-            model,
-            boundaries,
-            last: &last,
-        })
-        .collect();
-    let mut meshes: Vec<mesh::Mesh> = triangles
-        .iter()
-        .zip(&trims)
-        .map(|(tris, trim)| mesh::Mesh::new(tris, trim))
-        .collect::<GeopResult<_>>()?;
-    mesh::zip(&mut meshes, &trims);
+/// A coedge of a [`FaceSource`]: what it runs along, which way, its pcurve,
+/// and its edge's curve and ends, if it has an edge.
+type CoedgeSource = (CoedgeGeometry, Sense, Curve2, Option<(Edge, [Vector3; 2])>);
 
-    let mut faces = BTreeMap::new();
-    for ((id, m), samples) in ids.into_iter().zip(&meshes).zip(&mut all_samples) {
-        let points = (0..m.uv.len())
-            .map(|i| match mesh::placed(model, m.on[i], &edges)? {
-                Some(p) => Ok(p),
-                None => samples.point(m.uv[i]),
-            })
-            .collect::<GeopResult<Vec<_>>>()?;
-        let mut tris = Vec::new();
-        for &[a, b, c] in &m.triangles {
-            // A triangle without area — three points along an edge — has
-            // no normal: it covers nothing, and the triangles beside it
-            // meet each other.
-            let Ok(t) = TriangleFace::try_new(points[a], points[b], points[c]) else {
-                continue;
+impl FaceSource {
+    fn of(model: &Model, face: &Face, n: usize) -> GeopResult<Self> {
+        let coedge = |c: CoedgeId| -> GeopResult<CoedgeSource> {
+            let coedge = model.get_coedge(c)?;
+            let edge = match coedge.geometry {
+                CoedgeGeometry::Edge(e) => {
+                    let edge = model.get_edge(e)?;
+                    let start = model.get_vertex(edge.start_vertex)?.point;
+                    let end = model.get_vertex(edge.end_vertex)?.point;
+                    Some((edge.clone(), [start, end]))
+                }
+                CoedgeGeometry::Vertex(_) => None,
             };
-            // The surface's own normal at each corner, for smooth shading.
-            // A corner where it does not exist leaves the whole triangle
-            // flat.
-            let mut normal = |i: usize| samples.normal(m.uv[i]);
-            tris.push(match (normal(a), normal(b), normal(c)) {
-                (Some(na), Some(nb), Some(nc)) => t.with_vertex_normals([na, nb, nc]),
-                _ => t,
-            });
-        }
-        faces.insert(id, tris);
+            Ok((coedge.geometry, coedge.sense, coedge.pcurve.clone(), edge))
+        };
+        let loops = (loops(face).into_iter())
+            .map(|anchor| model.iterate_loop_coedges(anchor).map(coedge).collect())
+            .collect::<GeopResult<_>>()?;
+        Ok(Self {
+            n,
+            surface: face.surface.clone(),
+            loops,
+        })
     }
+}
 
-    Ok(RasterizedModel {
-        vertices,
-        edges,
-        faces,
-    })
+/// A face meshed on its own, before it is joined to its neighbours (see
+/// [`mesh`]): its triangles in `(u, v)`, its trim loops, and its surface
+/// where they sampled it.
+struct Meshed {
+    triangles: Vec<[clip::Point; 3]>,
+    boundaries: Vec<mesh::Boundary>,
+    samples: grid::Samples,
+}
+
+/// Rasterizes models one after another, meshing a face on its own only
+/// once while it stays the same: the part before a step and the part with
+/// it share the faces the step left as they were, and those are not
+/// meshed again. The faces are joined along their edges anew each time,
+/// so what it makes of a model is what [`rasterize`] makes of it.
+#[derive(Default)]
+pub struct Rasterizer {
+    /// How many models it rasterized.
+    models: u64,
+    /// The faces it meshed, by id: from what, and the model that last
+    /// used each — kept while one of the last [`KEPT_MODELS`] did.
+    faces: BTreeMap<FaceId, Vec<(FaceSource, Meshed, u64)>>,
+}
+
+thread_local! {
+    static FACES_MESHED: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
+/// How many faces this thread has meshed on its own ever: what a
+/// [`Rasterizer`] does not do again for a face that stayed the same — so a
+/// test bounds it by counting these, not by timing it.
+pub fn faces_meshed() -> usize {
+    FACES_MESHED.get()
+}
+
+impl Rasterizer {
+    /// `model` rasterized as [`rasterize`] does, of the faces meshed
+    /// before what stayed the same.
+    pub fn rasterize(&mut self, model: &Model, n: usize) -> GeopResult<RasterizedModel> {
+        if n < 2 {
+            return Err(GeopError::new("rasterize: n must be >= 2"));
+        }
+        self.models += 1;
+        let now = self.models;
+
+        let vertices = model
+            .vertices
+            .iter()
+            .map(|(&id, vertex)| (id, vertex.point))
+            .collect();
+
+        let mut edges = BTreeMap::new();
+        for &id in model.edges.keys() {
+            edges.insert(id, sample_edge(model, id, n)?);
+        }
+        let last: BTreeMap<EdgeId, usize> = edges.iter().map(|(&e, p)| (e, p.len() - 1)).collect();
+
+        // Every face meshed on its own, or as it was, then all joined along
+        // their edges.
+        let mut ids = Vec::new();
+        let mut sources = Vec::new();
+        let mut all_samples = Vec::new();
+        let mut all_boundaries = Vec::new();
+        let mut triangles = Vec::new();
+        for (&id, face) in model.faces.iter() {
+            let source = FaceSource::of(model, face, n)?;
+            let kept = self.faces.entry(id).or_default();
+            let meshed = match kept.iter().position(|(meshed, ..)| *meshed == source) {
+                Some(k) => kept.swap_remove(k).1,
+                None => {
+                    FACES_MESHED.set(FACES_MESHED.get() + 1);
+                    let mut samples = grid::Samples::new(face);
+                    let (triangles, boundaries) = face_mesh(model, face, n, &edges, &mut samples)?;
+                    Meshed {
+                        triangles,
+                        boundaries,
+                        samples,
+                    }
+                }
+            };
+            ids.push(id);
+            sources.push(source);
+            all_samples.push(meshed.samples);
+            all_boundaries.push(meshed.boundaries);
+            triangles.push(meshed.triangles);
+        }
+        let trims: Vec<mesh::Trim> = all_boundaries
+            .iter()
+            .map(|boundaries| mesh::Trim {
+                model,
+                boundaries,
+                last: &last,
+            })
+            .collect();
+        let mut meshes: Vec<mesh::Mesh> = triangles
+            .iter()
+            .zip(&trims)
+            .map(|(tris, trim)| mesh::Mesh::new(tris, trim))
+            .collect::<GeopResult<_>>()?;
+        mesh::zip(&mut meshes, &trims);
+
+        let mut faces = BTreeMap::new();
+        for ((&id, m), samples) in ids.iter().zip(&meshes).zip(&mut all_samples) {
+            let points = (0..m.uv.len())
+                .map(|i| match mesh::placed(model, m.on[i], &edges)? {
+                    Some(p) => Ok(p),
+                    None => samples.point(m.uv[i]),
+                })
+                .collect::<GeopResult<Vec<_>>>()?;
+            let mut tris = Vec::new();
+            for &[a, b, c] in &m.triangles {
+                // A triangle without area — three points along an edge —
+                // has no normal: it covers nothing, and the triangles
+                // beside it meet each other.
+                let Ok(t) = TriangleFace::try_new(points[a], points[b], points[c]) else {
+                    continue;
+                };
+                // The surface's own normal at each corner, for smooth
+                // shading. A corner where it does not exist leaves the
+                // whole triangle flat.
+                let mut normal = |i: usize| samples.normal(m.uv[i]);
+                tris.push(match (normal(a), normal(b), normal(c)) {
+                    (Some(na), Some(nb), Some(nc)) => t.with_vertex_normals([na, nb, nc]),
+                    _ => t,
+                });
+            }
+            faces.insert(id, tris);
+        }
+
+        // Each face kept as it was meshed on its own, with what its surface
+        // was sampled at since, for the next model.
+        let meshed = (triangles.into_iter().zip(all_boundaries).zip(all_samples)).map(
+            |((triangles, boundaries), samples)| Meshed {
+                triangles,
+                boundaries,
+                samples,
+            },
+        );
+        for ((id, source), meshed) in ids.into_iter().zip(sources).zip(meshed) {
+            self.faces
+                .entry(id)
+                .or_default()
+                .push((source, meshed, now));
+        }
+        self.faces.retain(|_, kept| {
+            kept.retain(|(.., used)| used + KEPT_MODELS > now);
+            !kept.is_empty()
+        });
+
+        Ok(RasterizedModel {
+            vertices,
+            edges,
+            faces,
+        })
+    }
 }
 
 #[cfg(test)]
