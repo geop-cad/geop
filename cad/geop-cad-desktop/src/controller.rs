@@ -866,6 +866,46 @@ impl Controller {
         );
     }
 
+    /// Add `chosen` — files chosen from disk, by name, with their contents
+    /// — beside the programs, each under a name not taken: data files the
+    /// operations read as they are, programs only if they read as one
+    /// (`.json` named `.geop`); and edit the first program added.
+    pub fn add_files(&mut self, chosen: Vec<(String, String)>) {
+        let reads: Vec<&str> = (self.program.iter().flat_map(|p| &p.operations))
+            .flat_map(|o| o.info.reads.iter().copied())
+            .collect();
+        let mut taken = self.files();
+        let mut added = BTreeMap::new();
+        for (name, content) in chosen {
+            let lower = name.to_ascii_lowercase();
+            let data = reads.iter().any(|e| lower.ends_with(&format!(".{e}")));
+            let name = if data {
+                name
+            } else if let Err(e) = parse_program(&content) {
+                self.error = Some(format!(
+                    "{name} is not a geop program: {}",
+                    e.root_message()
+                ));
+                continue;
+            } else if name.ends_with(".geop") {
+                name
+            } else {
+                format!("{}.geop", name.trim_end_matches(".json"))
+            };
+            let path = free_path(&taken, &name);
+            taken.insert(path.clone(), content.clone());
+            added.insert(path, Some(content));
+        }
+        if added.is_empty() {
+            return;
+        }
+        let opened = added.keys().find(|p| is_program(p)).cloned();
+        self.change_files(added);
+        if let Some(path) = opened {
+            self.open_file(&path);
+        }
+    }
+
     /// Bytes chosen from disk, as a workspace holds a file.
     pub fn content_of(bytes: Vec<u8>) -> String {
         geop_core_program::workspace::content(bytes)

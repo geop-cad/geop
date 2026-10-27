@@ -421,7 +421,8 @@ fn prompt(window: &mut GeopApp, ctx: &egui::Context, rect: Rect) {
                 if fresh {
                     response.request_focus();
                 }
-                if response.has_focus() {
+                // A line of text gives its focus up on Enter and on Escape.
+                if response.lost_focus() || response.has_focus() {
                     if ui.input(|i| i.key_pressed(egui::Key::Enter)) {
                         given = Some(text.clone());
                     }

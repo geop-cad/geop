@@ -52,6 +52,11 @@ pub struct GeopApp {
     chosen: (mpsc::Sender<Chosen>, mpsc::Receiver<Chosen>),
     /// A folder chosen to open.
     folders: (mpsc::Sender<PathBuf>, mpsc::Receiver<PathBuf>),
+    /// Files chosen from disk to add to the workspace, read.
+    added: (
+        mpsc::Sender<Vec<(String, String)>>,
+        mpsc::Receiver<Vec<(String, String)>>,
+    ),
     /// What was said of a file saved, or why it was not.
     notes: (mpsc::Sender<String>, mpsc::Receiver<String>),
     pub note: Option<(String, f64)>,
@@ -76,6 +81,7 @@ impl GeopApp {
             explorer: explorer::ExplorerState::default(),
             chosen: mpsc::channel(),
             folders: mpsc::channel(),
+            added: mpsc::channel(),
             notes: mpsc::channel(),
             note: None,
             title: String::new(),
@@ -121,6 +127,7 @@ impl GeopApp {
             Action::OpenFolder => self.pick_folder(),
             Action::Reread => app.reread(),
             Action::OpenFile(path) => app.open_file(&path),
+            Action::OpenStep(id) => app.open_step(&id, None),
             Action::LoadExample(name) => app.load_example(&name),
             Action::LoadWorkspaceExample(name) => app.load_workspace_example(&name),
             Action::Export(exporter) => {
@@ -235,6 +242,9 @@ impl GeopApp {
                 Err(e) => self.app.error = Some(e.root_message().to_string()),
             }
         }
+        while let Ok(files) = self.added.1.try_recv() {
+            self.app.add_files(files);
+        }
         while let Ok(note) = self.notes.1.try_recv() {
             self.note(&note, ctx);
         }
@@ -247,6 +257,33 @@ impl GeopApp {
 
     fn note(&mut self, text: &str, ctx: &egui::Context) {
         self.note = Some((text.to_string(), ctx.input(|i| i.time) + 4.0));
+    }
+
+    /// Choose files from disk to add to the workspace: programs, and the
+    /// data files operations read.
+    pub fn pick_files(&mut self) {
+        let mut extensions = vec!["geop".to_string(), "json".to_string()];
+        for o in self.app.program.iter().flat_map(|p| &p.operations) {
+            extensions.extend(o.info.reads.iter().map(|e| e.to_string()));
+        }
+        let sender = self.added.0.clone();
+        let wake = self.wake.clone();
+        dialog_thread(move || {
+            let Some(paths) = rfd::FileDialog::new()
+                .add_filter("programs and data", &extensions)
+                .pick_files()
+            else {
+                return;
+            };
+            let read = (paths.iter())
+                .filter_map(|p| {
+                    let name = p.file_name()?.to_string_lossy().into_owned();
+                    Some((name, Controller::content_of(std::fs::read(p).ok()?)))
+                })
+                .collect();
+            let _ = sender.send(read);
+            wake();
+        });
     }
 
     fn pick_folder(&mut self) {

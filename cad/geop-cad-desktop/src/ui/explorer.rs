@@ -225,6 +225,7 @@ pub fn explorer(window: &mut GeopApp, ui: &mut Ui) {
         .map(|p| (p.clone(), true))
         .collect();
     let active = window.app.active().map(str::to_string);
+    let mut upload = false;
     let state = &mut window.explorer;
     if active != state.seen_active {
         if let Some(active) = &active {
@@ -243,6 +244,16 @@ pub fn explorer(window: &mut GeopApp, ui: &mut Ui) {
                     .clicked()
             {
                 state.creating = Some("part.geop".into());
+            }
+            let add =
+                icons::image("upload", 15.0, ui.visuals().text_color()).map(egui::Button::image);
+            if let Some(b) = add
+                && ui
+                    .add_enabled(enabled, b.frame(false))
+                    .on_hover_text("Add files from disk: programs, and the data they read")
+                    .clicked()
+            {
+                upload = true;
             }
             let open =
                 icons::image("open", 15.0, ui.visuals().text_color()).map(egui::Button::image);
@@ -443,6 +454,9 @@ pub fn explorer(window: &mut GeopApp, ui: &mut Ui) {
     }
     if let Some(path) = open {
         window.app.open_file(&path);
+    }
+    if upload {
+        window.pick_files();
     }
 }
 

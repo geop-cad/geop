@@ -184,3 +184,28 @@ fn hovers_are_sent_one_at_a_time_the_latest_winning() {
         "the first hover: the click says where the rest went"
     );
 }
+
+/// Files added from disk: a program under a free name, `.json` named
+/// `.geop`, and edited; a file that is no program refused by name.
+#[test]
+fn files_added_from_disk_are_kept_beside_the_programs() {
+    let (mut app, dir) = opened("add");
+    let program = crate::workspace::program_text(&Default::default());
+    app.add_files(vec![
+        ("part.geop".into(), program.clone()),
+        ("other.json".into(), program),
+        ("notes.json".into(), "not json".into()),
+    ]);
+    app.settle();
+    assert!(dir.join("part 2.geop").exists());
+    assert!(dir.join("other.geop").exists());
+    assert!(!dir.join("notes.geop").exists());
+    assert_eq!(app.active(), Some("other.geop"));
+    assert!(
+        app.error.is_none()
+            || app
+                .error
+                .as_deref()
+                .is_some_and(|e| e.contains("notes.json"))
+    );
+}

@@ -29,6 +29,8 @@ pub enum Action {
     OpenFolder,
     Reread,
     OpenFile(String),
+    /// Edit the step of this id.
+    OpenStep(String),
     LoadExample(String),
     LoadWorkspaceExample(String),
     Export(String),
@@ -108,9 +110,10 @@ impl Action {
             Action::Redo => app.can_redo(),
             Action::CopyStep => app.step.as_ref().is_some_and(|s| s.id.is_some()),
             Action::Inspect(_) | Action::Tool(_) | Action::Export(_) => app.ready() && idle,
-            Action::OpenFile(_) | Action::LoadExample(_) | Action::LoadWorkspaceExample(_) => {
-                app.ready() && idle
-            }
+            Action::OpenFile(_)
+            | Action::OpenStep(_)
+            | Action::LoadExample(_)
+            | Action::LoadWorkspaceExample(_) => app.ready() && idle,
             Action::NewPart => app.ready() && idle,
             _ => true,
         }
@@ -179,6 +182,15 @@ pub fn palette(app: &Controller) -> Vec<Entry> {
                 exporter.doc,
                 Some("save"),
                 Action::Export(exporter.kind.to_string()),
+            ));
+        }
+        for step in &program.steps {
+            entries.push(entry(
+                &step.id,
+                "Step",
+                &format!("{}: {}", step.label, step.summary),
+                None,
+                Action::OpenStep(step.id.clone()),
             ));
         }
         for name in &program.examples {
