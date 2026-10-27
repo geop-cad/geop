@@ -66,6 +66,7 @@ mod extent;
 mod feature;
 pub mod geometry;
 mod ids;
+mod kept;
 pub mod mate_entity;
 mod mesh;
 mod named_model;

@@ -19,6 +19,7 @@ pub mod solids;
 
 use geop_core_program::{
     element::{ElementReference, HasElements, Kind, whole},
+    kept::Keeper,
     placed::{INSTANCE_SEPARATOR, Located as LocatedName, instance_path, split_instance_path},
     reader::Reader,
     target::{Target, TargetReference},
@@ -55,8 +56,24 @@ impl PartialEq for Drawn {
     }
 }
 
-/// Each placed part's own.
-impl Target for Drawn {}
+/// Each placed part's own; kept between processes, its view as views are
+/// kept ([`geop_core_editor::view::kept`]), so that a placed part reopened
+/// is drawn without meshing it again.
+impl Target for Drawn {
+    const KEEPER: Option<Keeper<Self>> = Some(Keeper {
+        write: |drawn, pool| {
+            let view = geop_core_editor::view::kept::put(&drawn.view, pool)?;
+            serde_json::to_string(&(&drawn.key, view))
+                .map_err(|e| GeopError::new(format!("writing a kept drawing: {e}")))
+        },
+        read: |text, pool| {
+            let (key, view): (String, String) = serde_json::from_str(text)
+                .map_err(|e| GeopError::new(format!("reading a kept drawing: {e}")))?;
+            let view = geop_core_editor::view::kept::get(&view, pool)?;
+            Ok(Drawn { key, view })
+        },
+    });
+}
 
 /// Read whole.
 impl Kind for Drawn {

@@ -78,17 +78,21 @@ pub fn define_placed(
     };
     define_instance(ctx, name, &instance)?;
     let drawn = ctx.produce(&drawn_target(name), &name.to_string(), |reader, name| {
+        // Drawn once for every instance of one build: every screw of a size.
         let inside = reader.placed_part(name)?;
-        let mut view = draw(&inside)?;
-        view.sketches.clear();
-        let shown = serde_json::to_vec(&view)
-            .map_err(|e| GeopError::new(format!("the drawing of `{name}`: {e}")))?;
-        let mut key = std::hash::DefaultHasher::new();
-        shown.hash(&mut key);
-        Ok(Drawn {
-            key: format!("{:016x}", key.finish()),
-            view: Rc::new(view),
-        })
+        let drawn = inside.shared("drawn", |inside| {
+            let mut view = draw(inside)?;
+            view.sketches.clear();
+            let shown = serde_json::to_vec(&view)
+                .map_err(|e| GeopError::new(format!("the drawing of `{name}`: {e}")))?;
+            let mut key = std::hash::DefaultHasher::new();
+            shown.hash(&mut key);
+            Ok(Drawn {
+                key: format!("{:016x}", key.finish()),
+                view: Rc::new(view),
+            })
+        })?;
+        Ok((*drawn).clone())
     });
     // A part that failed to load is drawn as far as it was built, or not at
     // all: why it failed is what to report, not that it is not drawn.
@@ -120,6 +124,7 @@ pub(crate) fn draw_instances(reader: &Reader, view: &mut PartView) -> GeopResult
                 .and_then(|state| unknowns.get(state))
                 .is_none_or(|unknown| unknown.mobility == Mobility::Fixed),
             state: located.state,
+            color: None,
         });
     }
     Ok(())

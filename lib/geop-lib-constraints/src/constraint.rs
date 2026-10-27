@@ -277,7 +277,7 @@ pub type ConstraintGenerator<Args> = Make<Args, BTreeMap<String, Constraint>>;
 /// A step that fails here leaves a failed target, which fails
 /// [`Constraints::of`]: a solve must not go on without a constraint it
 /// could not make.
-pub fn define_constraints<Args: PartialEq + Clone + 'static>(
+pub fn define_constraints<Args: PartialEq + Clone + std::fmt::Debug + 'static>(
     ctx: &mut StepContext,
     args: &Args,
     generator: ConstraintGenerator<Args>,

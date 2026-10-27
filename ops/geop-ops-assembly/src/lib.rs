@@ -30,6 +30,8 @@ pub mod examples;
 mod frame_tests;
 mod icons;
 pub mod joints;
+#[cfg(test)]
+mod kept_tests;
 pub mod mates;
 pub mod mechanism;
 mod panel;

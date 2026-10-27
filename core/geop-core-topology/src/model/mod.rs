@@ -91,6 +91,20 @@ impl Model {
         }
     }
 
+    /// The id the next entity it creates gets: what a model written to be
+    /// read back as it was keeps with its entities ([`Model::with_next_id`]).
+    pub fn next_id(&self) -> u64 {
+        self.next_id
+    }
+
+    /// It, creating entities from the id `next_id` on: a model read back as
+    /// it was written, its entities set as they were. `next_id` is past
+    /// every id it holds, as [`Model::next_id`] gave it.
+    pub fn with_next_id(mut self, next_id: u64) -> Self {
+        self.next_id = next_id;
+        self
+    }
+
     fn fresh_id(&mut self) -> u64 {
         let id = self.next_id;
         self.next_id += 1;

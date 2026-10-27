@@ -8,8 +8,9 @@ use super::model::Curve3;
 /// separate `[start_t, end_t]` window into a possibly-larger curve.
 /// `start_vertex` lies at `curve.domain().0` and `end_vertex` at
 /// `curve.domain().1`.
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct Edge {
+    #[serde(with = "geop_core_math::exact")]
     pub curve: Curve3,
     pub start_vertex: VertexId,
     pub end_vertex: VertexId,

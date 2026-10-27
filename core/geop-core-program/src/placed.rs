@@ -364,6 +364,42 @@ pub fn build_placed(reader: &Reader, args: &PlacedArgs) -> GeopResult<PlacedPart
     Ok(PlacedPart { part, location })
 }
 
+impl Reader<'_> {
+    /// What `make` makes of the part this reader reads, whole — a part
+    /// placed, as [`Reader::placed_part`] reads it — made once for every
+    /// reader of the part, with what `make` read recorded for each: every
+    /// screw of a size, one build, is drawn once. `key` names what `make`
+    /// makes: two makes of one key make the same of the same part. A
+    /// reader of a part before one of its steps, or of a target being
+    /// made, makes it each time.
+    pub fn shared<T: 'static>(
+        &self,
+        key: &'static str,
+        make: impl FnOnce(&Reader) -> GeopResult<T>,
+    ) -> GeopResult<Rc<T>> {
+        let part = self.part();
+        let whole = self.position() == part.ran() && self.own().is_none();
+        if whole
+            && let Some((made, reads)) = part.shared.get(key)
+            && let Ok(made) = made.downcast::<T>()
+        {
+            for read in reads.0 {
+                self.record_raw(read);
+            }
+            return Ok(made);
+        }
+        let (made, reads) = self.recorded(make);
+        for read in &reads.0 {
+            self.record_raw(read.clone());
+        }
+        let made = Rc::new(made?);
+        if whole {
+            part.shared.insert(key, (made.clone(), reads));
+        }
+        Ok(made)
+    }
+}
+
 /// What a placed part is built from, exactly: the program — its file, that
 /// file's revision, and the program itself, the same `Rc` while the file
 /// does not change — its inputs and its state.

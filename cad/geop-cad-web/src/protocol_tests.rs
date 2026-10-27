@@ -24,7 +24,7 @@ const SAMPLES: &str = concat!(
 );
 
 /// How many kinds of [`Command`] there are: what [`kind`] tells apart.
-const COMMAND_KINDS: usize = 24;
+const COMMAND_KINDS: usize = 26;
 
 /// The kind of `command`. A kind added to [`Command`] does not compile
 /// here until it is named, and [`COMMAND_KINDS`] counted up, and then
@@ -51,6 +51,8 @@ fn kind(command: &Command) -> &'static str {
         Command::Redo => "redo",
         Command::Panel { .. } => "panel",
         Command::Visibility { .. } => "visibility",
+        Command::Appearance { .. } => "appearance",
+        Command::Isolate { .. } => "isolate",
         Command::Tool { .. } => "tool",
         Command::Inspect { .. } => "inspect",
         Command::Export { .. } => "export",
@@ -141,6 +143,10 @@ fn session(kinds: &[&str]) -> Vec<Value> {
         json!({ "command": "tool", "key": null }),
         json!({ "command": "open", "id": "pin" }),
         json!({ "command": "cancel" }),
+        json!({ "command": "appearance", "name": "pin", "color": "#ff8800" }),
+        json!({ "command": "isolate", "names": ["pin"] }),
+        json!({ "command": "isolate", "names": [] }),
+        json!({ "command": "appearance", "name": "pin", "color": null }),
         json!({ "command": "new", "kind": "no_such_operation" }),
     ]);
     commands

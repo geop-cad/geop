@@ -1,6 +1,6 @@
 use crate::{CoedgeId, VertexId};
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum BoundaryType {
     /// A boundary defined by a single vertex — no edge exists yet.
     Vertex(VertexId),

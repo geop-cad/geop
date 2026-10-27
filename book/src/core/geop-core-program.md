@@ -214,6 +214,33 @@ counted by the revision), each program checked against the operations it
 is written in. A file of a library every workspace shares is named by a
 scheme, `std:hex_nut.geop` (`is_shared`), the same from anywhere.
 
+## Kept between processes
+
+The `cache` and `kept` modules. Given a `CacheStore` (a folder on disk,
+for the command line or an editor's host), a workspace's `Cache` keeps
+what its programs built beside each program's file, `part.geop.geopc`,
+so that reopening a program whose steps and inputs did not change builds
+nothing.
+
+Every node knows how it was made in terms that mean the same in another
+process: a digest of its arguments (by their `Debug`, which writes every
+number exactly), and of each read what it read and a digest of that — the
+node it read, an input's or the state's value, a file's text. Its own
+digest is one of that `Derivation`. A target type with a `Keeper` (the
+model, a placed part's drawing) has its nodes written to the cache file
+when the cache is flushed (an editor does when an edit is done, the
+command line when it has built). A run takes a node from there instead of
+making it when its arguments and every read are the same now, and only
+then: a record is never trusted, it is checked. What is made of a part
+outside its program, a drawer's drawing, is kept the same way
+(`made_kept`). Values two records hold alike — the faces two revisions of
+a model share — are written once (`Pool`). A cache file is of one build
+of the kernel and one `FORMAT`; any other is not read.
+
+`assert_reopens` (feature `testing`) builds a program in one process and
+again in another from what the first kept, and asserts the second makes
+nothing kept and builds the same part.
+
 ## Numbers as formulas
 
 The `numeric` module. A `NumericInput` is a number an operation is given —

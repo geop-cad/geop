@@ -7,6 +7,7 @@ use std::sync::Arc;
 use geop_core_math::geop_error::{GeopError, GeopResult};
 use geop_core_program::{
     element::ElementReference,
+    kept::Keeper,
     target::{Target, TargetReference},
 };
 use geop_core_topology::Model;
@@ -37,9 +38,15 @@ pub struct NamedModel {
     pub(crate) features: Vec<(String, Arc<Feature>)>,
 }
 
-/// Every step that builds into the model produces it from the last.
+/// Every step that builds into the model produces it from the last; it is
+/// kept between processes, exactly, its entities shared between revisions
+/// ([`crate::kept`]).
 impl Target for NamedModel {
     const CHAIN: bool = true;
+    const KEEPER: Option<Keeper<Self>> = Some(Keeper {
+        write: crate::kept::write,
+        read: crate::kept::read,
+    });
 }
 
 /// Equal when the topology, the names and the features are: a model built

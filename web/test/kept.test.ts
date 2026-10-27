@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import type { FaceMesh, SceneState, SentPartView } from "../src/geop.ts";
-import { applyScene, NOTHING_PLACED } from "../src/kept.ts";
+import type { FaceMesh, SceneState, SentFaceMesh, SentPartView } from "../src/geop.ts";
+import { applyScene, NOTHING_PLACED, readMesh } from "../src/kept.ts";
 
 /** A mesh of one triangle at height `z`. */
 function mesh(z: number): FaceMesh {
@@ -22,6 +22,46 @@ function mesh(z: number): FaceMesh {
     ],
   };
 }
+
+/** `values` as the kernel sends numbers: little endian, in base64. */
+function base64(values: Float32Array | Uint32Array): string {
+  return btoa(String.fromCharCode(...new Uint8Array(values.buffer)));
+}
+
+/** `mesh` as the kernel sends it: each corner once, each triangle by its corners. */
+function sent(mesh: FaceMesh): SentFaceMesh {
+  const corners: number[][] = [];
+  const indices: number[] = [];
+  mesh.triangles.forEach((triangle, t) =>
+    triangle.forEach((p, k) => {
+      const corner = [...p, ...mesh.normals[t][k]];
+      let at = corners.findIndex((c) => c.every((x, i) => x === corner[i]));
+      if (at < 0) at = corners.push(corner) - 1;
+      indices.push(at);
+    }),
+  );
+  return {
+    positions: base64(new Float32Array(corners.flatMap((c) => c.slice(0, 3)))),
+    normals: base64(new Float32Array(corners.flatMap((c) => c.slice(3)))),
+    indices: base64(new Uint32Array(indices)),
+  };
+}
+
+test("a mesh is read as the kernel sent it", () => {
+  const two: FaceMesh = {
+    triangles: [...mesh(0.5).triangles, [[1, 0, 0.5], [1, 1, 0.5], [0, 1, 0.5]]],
+    normals: [...mesh(0.5).normals, mesh(0.5).normals[0]],
+  };
+  assert.deepEqual(readMesh(sent(two)), two);
+  // As `geop_core_editor::view::FaceMesh` writes one triangle at z = 1:
+  // its three corners, then indices 0 1 2.
+  const kernel: SentFaceMesh = {
+    positions: "AAAAAAAAAAAAAIA/AACAPwAAAAAAAIA/AAAAAAAAgD8AAIA/",
+    normals: "AAAAAAAAAAAAAIA/AAAAAAAAAAAAAIA/AAAAAAAAAAAAAIA/",
+    indices: "AAAAAAEAAAACAAAA",
+  };
+  assert.deepEqual(readMesh(kernel), mesh(1));
+});
 
 /** A part of the faces `faces`, each named with the key of its mesh. */
 function part(faces: [string, string][]): SentPartView {
@@ -55,7 +95,7 @@ function scene(
     removed: [],
     components: {},
     forgotten: [],
-    meshes,
+    meshes: Object.fromEntries(Object.entries(meshes).map(([key, m]) => [key, sent(m)])),
     forgotten_meshes: forgotten,
   };
 }

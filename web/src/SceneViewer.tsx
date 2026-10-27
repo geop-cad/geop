@@ -655,6 +655,7 @@ export function SceneViewer({
       visualLayer.update(camera, height, controls.target);
       gizmoLayer.sync(gizmoRef.current);
       gizmoLayer.update(camera, height);
+      placed.detail(camera, height);
       grid.sync(gridRef.current ? planeRef.current : null);
       grid.update(camera, height, controls.target);
 

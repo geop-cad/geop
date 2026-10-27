@@ -8,6 +8,10 @@
 //! parts it places included, each where it is placed, read from the
 //! program files next to it.
 //!
+//! `geop prebuild` builds programs on several threads at once, each in a
+//! kernel of its own, keeping what each builds beside its file, so that
+//! opening them next builds nothing of them (see [`prebuild`]).
+//!
 //! `geop serve` is the other way in: the same editor the web app runs, as a
 //! process a front end spawns and talks to over stdin/stdout (see
 //! [`serve`]). `geop mcp` is that editor as a Model Context Protocol server,
@@ -26,7 +30,7 @@ use geop_cad_base::{BuiltPart, disk::DiskCache, outputs, workspace_with};
 use geop_core_editor::editor::Rerun;
 use geop_core_editor::output::Output;
 use geop_core_math::geop_error::{GeopError, GeopResult};
-use geop_core_program::{program::Program, workspace::FileStore};
+use geop_core_program::{program::Program, runner::Counts, workspace::FileStore};
 use geop_ops_assembly::solving::{check as check_mates, solve};
 use session::Session;
 use std::{
@@ -52,6 +56,8 @@ enum Command {
     Compile(CompileArgs),
     /// Write every built-in example (see `geop_cad_base::registry`) as a program and its part, in the default format.
     Examples(ExamplesArgs),
+    /// Build programs on several threads at once, keeping what each builds beside its file (`.geopc`): opening them next builds nothing of them.
+    Prebuild(PrebuildArgs),
     /// Run the editor (see `geop_core_editor::editor`) as a host process for a
     /// front end: one JSON command per line on stdin, one JSON update per
     /// line on stdout. This is how the VS Code extension drives the kernel.
@@ -109,6 +115,15 @@ struct ServeArgs {
 
 #[derive(clap::Args)]
 struct McpArgs {}
+
+#[derive(clap::Args)]
+struct PrebuildArgs {
+    /// The programs to build, e.g. every `.geop` file of a folder.
+    programs: Vec<PathBuf>,
+    /// How many to build at once: as many as the machine has cores, if not given.
+    #[arg(short, long)]
+    jobs: Option<usize>,
+}
 
 #[derive(clap::Args)]
 struct CompileArgs {
@@ -237,7 +252,43 @@ fn build(path: &Path) -> GeopResult<(Program, BuiltPart, Vec<String>)> {
         program.state.extend(moved);
         program.run(&built.runner, &mut built.part)?;
     }
+    // What it built is kept beside the files, for the next build to read.
+    if let Some(cache) = geop_core_program::workspace::Workspace::cache(&*workspace) {
+        cache.flush();
+    }
     Ok((program, built, report.failed))
+}
+
+/// Builds `args.programs`, `args.jobs` at once, each on a thread of its own
+/// in a kernel of its own — a kernel shares nothing with another thread —
+/// keeping what each builds beside its file ([`build`]): the cache files
+/// are what the threads share. Says, of each, what its build did, or why it
+/// failed.
+fn prebuild(args: &PrebuildArgs) -> Vec<(PathBuf, GeopResult<Counts>)> {
+    let jobs = args.jobs.unwrap_or_else(|| {
+        std::thread::available_parallelism().map_or(1, std::num::NonZeroUsize::get)
+    });
+    let next = std::sync::atomic::AtomicUsize::new(0);
+    let built = std::sync::Mutex::new(Vec::new());
+    std::thread::scope(|scope| {
+        for _ in 0..jobs.clamp(1, args.programs.len().max(1)) {
+            scope.spawn(|| {
+                loop {
+                    let at = next.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                    let Some(path) = args.programs.get(at) else {
+                        break;
+                    };
+                    let counts = build(path).map(|(_, part, _)| part.runner.counts());
+                    if let Ok(mut built) = built.lock() {
+                        built.push((path.clone(), counts));
+                    }
+                }
+            });
+        }
+    });
+    let mut built = built.into_inner().unwrap_or_default();
+    built.sort_by(|a, b| a.0.cmp(&b.0));
+    built
 }
 
 fn compile(args: &CompileArgs) -> GeopResult<Compiled> {
@@ -388,6 +439,26 @@ fn main() -> ExitCode {
                 c.output.display()
             );
         }),
+        Command::Prebuild(args) => {
+            let built = prebuild(&args);
+            let failed = built.iter().filter(|(_, b)| b.is_err()).count();
+            for (path, counts) in &built {
+                match counts {
+                    Ok(c) => eprintln!(
+                        "{}: {} made ({} of them kept), {} read back",
+                        path.display(),
+                        c.makes,
+                        c.kept_makes,
+                        c.restored
+                    ),
+                    Err(e) => eprintln!("{}: {e}", path.display()),
+                }
+            }
+            match failed {
+                0 => Ok(()),
+                n => Err(GeopError::new(format!("{n} program(s) did not build"))),
+            }
+        }
         Command::Examples(args) => export_examples(&args).map(|compiled| {
             for c in &compiled {
                 eprintln!("{} bytes -> {}", c.bytes, c.output.display());
@@ -411,6 +482,38 @@ fn main() -> ExitCode {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Programs built on two threads at once are kept beside their files:
+    /// built again, here, they make nothing they kept.
+    #[test]
+    fn programs_prebuilt_on_threads_are_kept() {
+        let dir = scratch("prebuild");
+        let registry = geop_cad_base::registry().unwrap();
+        let programs: Vec<PathBuf> = ["box_with_drill_hole", "parametric_plate", "pin"]
+            .iter()
+            .map(|name| {
+                let path = dir.join(format!("{name}.geop"));
+                let text = registry.example(name).unwrap().to_json().unwrap();
+                std::fs::write(&path, text).unwrap();
+                path
+            })
+            .collect();
+        let args = PrebuildArgs {
+            programs: programs.clone(),
+            jobs: Some(2),
+        };
+        for (path, counts) in prebuild(&args) {
+            let counts = counts.unwrap();
+            assert!(counts.kept_makes > 0, "{}: {counts:?}", path.display());
+        }
+        for path in &programs {
+            let (_, part, _) = build(path).unwrap();
+            let counts = part.runner.counts();
+            assert_eq!(counts.kept_makes, 0, "{}: {counts:?}", path.display());
+            assert!(counts.restored > 0);
+        }
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
 
     /// A fresh directory for one test's files.
     fn scratch(test: &str) -> PathBuf {

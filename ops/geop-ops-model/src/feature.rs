@@ -43,7 +43,7 @@ pub enum BooleanOp {
 
 /// What one step did by combining tools with a solid: each tool, in the
 /// order it was combined.
-#[derive(Clone, Debug, Default, PartialEq)]
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub struct Feature {
     pub tools: Vec<FeatureTool>,
 }
@@ -51,7 +51,7 @@ pub struct Feature {
 /// One tool of a [`Feature`]: the solid as its step built it, before it was
 /// combined — its geometry and the names of its entities — and how it was
 /// combined with the solid it was combined with.
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct FeatureTool {
     pub spec: BodySpec,
     pub names: BodyNames,
@@ -62,7 +62,7 @@ pub struct FeatureTool {
 /// How far a tool reaches when it is combined, and how what its
 /// combination creates is named: what, besides the [`BooleanOp`], a step
 /// combines a tool by, and a [`Feature`] records.
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ToolReach {
     /// For a tool going only up to the next face of the solid: the names
     /// of its start and end faces. None for all of the tool.

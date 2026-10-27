@@ -1290,7 +1290,8 @@ fn a_part_exported_as_step_is_imported_back() {
 }
 
 /// Cache files kept in memory as a folder on disk keeps them, counting how
-/// many were written: one for every time a file was made into something.
+/// many of a STEP file's were written: one for every time it was made into
+/// bodies. (What the programs built is kept too, beside their files.)
 #[derive(Clone, Default)]
 struct Shelf {
     files: Rc<RefCell<BTreeMap<String, String>>>,
@@ -1307,7 +1308,9 @@ impl CacheStore for Shelf {
     }
 
     fn write(&self, path: &str, text: &str) {
-        self.writes.set(self.writes.get() + 1);
+        if path.ends_with(".step.geopc") {
+            self.writes.set(self.writes.get() + 1);
+        }
         (self.files.borrow_mut()).insert(path.to_string(), text.to_string());
     }
 }

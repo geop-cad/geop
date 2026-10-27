@@ -3,7 +3,8 @@
 //! what a step sees of the steps before it, and how a program is checked,
 //! saved and read.
 
-mod instances;
+pub(crate) mod instances;
+mod kept;
 mod operations;
 
 use std::{cell::RefCell, collections::BTreeMap, rc::Rc};
@@ -136,7 +137,7 @@ pub(crate) fn runner() -> Running {
     }
 }
 
-fn add_two_frame(id: &str, data1: [f64; 3], data2: [f64; 3]) -> ProgramStep {
+pub(crate) fn add_two_frame(id: &str, data1: [f64; 3], data2: [f64; 3]) -> ProgramStep {
     let args = AddTwoFrameArgs {
         data1: vector(data1),
         data2: vector(data2),
@@ -160,7 +161,7 @@ pub(crate) fn input_frame(id: &str, target: &str, input: &str) -> ProgramStep {
     ProgramStep::new::<InputFrameOperation>(id, &args).unwrap()
 }
 
-fn shift_frame(id: &str, target: &str, x: f64) -> ProgramStep {
+pub(crate) fn shift_frame(id: &str, target: &str, x: f64) -> ProgramStep {
     let args = ShiftFrameArgs {
         targets: vec![target.to_string()],
         by: vector([x, 0.0, 0.0]),
@@ -168,7 +169,7 @@ fn shift_frame(id: &str, target: &str, x: f64) -> ProgramStep {
     ProgramStep::new::<ShiftFrameOperation>(id, &args).unwrap()
 }
 
-fn add_two_datums(id: &str, data1: [f64; 3], data2: [f64; 3]) -> ProgramStep {
+pub(crate) fn add_two_datums(id: &str, data1: [f64; 3], data2: [f64; 3]) -> ProgramStep {
     let args = AddTwoDatumsArgs {
         data1: vector(data1),
         data2: vector(data2),
@@ -176,7 +177,7 @@ fn add_two_datums(id: &str, data1: [f64; 3], data2: [f64; 3]) -> ProgramStep {
     ProgramStep::new::<AddTwoDatums>(id, &args).unwrap()
 }
 
-fn middle_datum(id: &str, a: &str, b: &str) -> ProgramStep {
+pub(crate) fn middle_datum(id: &str, a: &str, b: &str) -> ProgramStep {
     let args = MiddleDatumArgs {
         a: datum(a),
         b: datum(b),
@@ -191,11 +192,11 @@ pub(crate) fn inputs(values: &[(&str, f64)]) -> Settings {
         .collect()
 }
 
-fn no_state() -> StateValues {
+pub(crate) fn no_state() -> StateValues {
     BTreeMap::new()
 }
 
-fn frame(runner: &Running, name: &str) -> Vector3 {
+pub(crate) fn frame(runner: &Running, name: &str) -> Vector3 {
     let view = runner.part.current();
     view.retrieve_element(&whole_frame(name)).unwrap().data
 }
