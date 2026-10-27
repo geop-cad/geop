@@ -84,3 +84,61 @@ fn lip_and_groove_on_a_rounded_enclosure() {
     );
     assert_valid(&program.build_model(registry).unwrap());
 }
+
+/// The enclosure of [`crate::testing::enclosure`] — walls 0.2 thick — with a lip, and
+/// for the mating half a groove, 0.3 wide: wider than the rim they stand
+/// on. Both build, valid, without a word:
+///
+/// - the lip runs 0.3 out from the rim's inner edge, so it overhangs the
+///   outer wall by 0.1 all round, a ledge outside the part: the point
+///   `(-0.05, 1, 1.05)`, beside the wall just above the rim, is inside
+///   `lip(l)`;
+/// - the groove is cut 0.31 wide and so takes the whole rim away, the
+///   wall lowered by the groove's depth all round instead of grooved:
+///   `(0.02, 1, 0.95)`, in the outer skin of the wall just under the rim,
+///   is outside `groove(g)`.
+///
+/// A lip or groove as wide as the rim or wider is no lip or groove; it
+/// should be refused by name, as a lip ending at a corner is.
+#[test]
+#[ignore = "bug: a lip or groove wider than the rim builds silently — the lip overhangs the outer wall as a ledge, the groove removes the wall's whole top — instead of being refused"]
+fn lip_and_groove_wider_than_the_rim() {
+    use geop_core_topology::contains::shell::PointClassification::{Inside, Outside};
+    use geop_ops_model::testing::classify;
+    let rim = || ElementReference::new(model(), "shell(s,extrude(box,end))");
+    let mut lipped = crate::testing::enclosure();
+    lipped.push(
+        "l",
+        LipArgs {
+            face: rim(),
+            edges: Vec::new(),
+            width: 0.3,
+            height: 0.1,
+        },
+    );
+    let mut wrong = Vec::new();
+    if let Ok(part) = lipped.build_model(registry) {
+        let beside = classify(&part, "lip(l)", [-0.05, 1.0, 1.05]);
+        if beside != Outside {
+            wrong.push(format!("the lip overhangs the wall: beside it {beside:?}"));
+        }
+    }
+    let mut grooved = crate::testing::enclosure();
+    grooved.push(
+        "g",
+        GrooveArgs {
+            face: rim(),
+            edges: Vec::new(),
+            width: 0.3,
+            height: 0.1,
+            clearance: 0.01,
+        },
+    );
+    if let Ok(part) = grooved.build_model(registry) {
+        let skin = classify(&part, "groove(g)", [0.02, 1.0, 0.95]);
+        if skin != Inside {
+            wrong.push(format!("the groove takes the wall's outer skin: {skin:?}"));
+        }
+    }
+    assert!(wrong.is_empty(), "{wrong:?}");
+}
