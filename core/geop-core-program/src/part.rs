@@ -303,7 +303,7 @@ impl Part {
             .filter_map(|node| self.position(&node.step))
             .filter(|at| *at < self.ran)
             .max()?;
-        Some(Reader::new(self, at + 1).as_making(name))
+        Some(Reader::new(self, at + 1).for_make_of(name))
     }
 
     /// The part placed as `instance` that a reader before `before` sees.
@@ -628,10 +628,10 @@ impl Part {
                 Read::File(path, revision) => {
                     self.files_read.insert(path.clone(), *revision);
                 }
-                Read::Inside { instance, read } if instance == OUTSIDE => {
-                    if outside.insert(read.key()) {
-                        self.outside_read.push((**read).clone());
-                    }
+                Read::Inside { instance, read }
+                    if instance == OUTSIDE && outside.insert(read.key()) =>
+                {
+                    self.outside_read.push((**read).clone());
                 }
                 _ => {}
             }

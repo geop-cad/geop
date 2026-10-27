@@ -64,7 +64,7 @@ Legend — vendors: F Fusion, C Creo, O Onshape, N NX, S SolidWorks, K SMLib
 | Booleans incl. XOR, lumps/voids, multi-body | F C O N S K | done; N-ary, cellular merge, wire×solid missing (`booleans.md`) | H |
 | Direct edit: move/offset/replace/delete face, defeature, merge faces | F C O N S K | done (`geop-ops-edit`, `geop-lib-shell` rebuild) | H |
 | Scale / deform body (taper, twist, bend, pinch, shear) | F C N S K | done (`geop-ops-pattern`) | L |
-| Suppress / unsuppress a feature, conditional features | F C O N S | **missing** (Seek is a rollback bar, not suppression) | H |
+| Suppress / unsuppress a feature, conditional features | F C O N S | done (a step's `active` formula; Ctrl+E, the timeline's button; per configuration by a column of its table) | H |
 | Feature reorder, rollback, copy/paste steps, undo | F C O N S | done (`Command::Move/Seek/Copy/Paste/Undo`) | H |
 | Weldments / frames (structural members along a skeleton, end trims, cut list) | F(frame) C N S O(frame) | **missing** (T-slot std parts exist but placed one by one) | H for robot frames |
 | Mold tools (parting line/surface, core/cavity) | C N S F | missing | L |
@@ -104,15 +104,15 @@ Legend — vendors: F Fusion, C Creo, O Onshape, N NX, S SolidWorks, K SMLib
 | Belt/chain/cable coupling, linear-linear coupling | C N S O | missing | M |
 | Part patterns (linear/circular, pattern-driven by a feature) | F C O N S | partial (`Part pattern`; feature-driven pattern of fasteners missing) | H |
 | Smart fasteners (populate holes with screws) | C S N(reuse) O(partial) | missing | H |
-| Mirror component, derived part (copy with mods) | C N S O | missing | M |
-| Top-down: in-context editing, skeleton models, external references | C N S O F | **missing** (a part cannot read a sibling's geometry) | H |
+| Mirror component, derived part (copy with mods) | C N S O | done (`DerivedPart`, `MirrorPart`; `AddPartArgs::mirror` places a part's program then its mirror) | M |
+| Top-down: in-context editing, skeleton models, external references | C N S O F | done (`/../bracket:model` reads a part placed before it in the assembly; a step of a placed part edited — or added, `NewIn` — where it is placed picks the parts beside it) | H |
 | Interference / clearance check | F C O N S | done (`geop-ops-inspect/interference.rs`; O(n²) pairs, see §3) | H |
 | Collision while dragging, motion envelope | F C N S | missing | M |
 | Exploded views (steps, trails) | F C O N S | **missing** (roadmap Next) | M |
 | Motion study / animation by joint drivers, plots | F C O N S | missing (joint values set by hand, URDF export) | M |
 | Display states, hide/isolate, appearance per instance | F C O N S | partial (colour per part via input; no per-instance display states) | M |
 | BOM flat/indented, CSV, balloons | F C O N S | done (`geop-ops-bom`) | H |
-| Configurations (part families) chosen per instance | F C O N S | partial (`LookupTable` + `size` input; standard parts use it; no user-level configuration table with suppression, see §2 WP-C) | H |
+| Configurations (part families) chosen per instance | F C O N S | done (the table looked up by `configuration`, a panel to switch and add them and suppress steps in one; an instance chooses its row; display states saved with the program, not per configuration) | H |
 | Large-assembly modes (lightweight, LOD, SpeedPak, simplified reps) | C N S O(server) | **missing** (§3) | H at 1000+ parts |
 | Standard parts library | F C O N S | done (`geop-lib-stdlib`, 16 families) | H |
 | Wire harness routing | C N S F | done (`geop-ops-harness`); collision checks missing | M |

@@ -188,7 +188,7 @@ impl<'a> Reader<'a> {
 
     /// The same, as of the make of `own`, recording nothing: what reads a
     /// placed part's step, `placed:<instance>`, as its make did.
-    pub(crate) fn as_making(mut self, own: &'a str) -> Self {
+    pub(crate) fn for_make_of(mut self, own: &'a str) -> Self {
         self.own = Some(own);
         self
     }

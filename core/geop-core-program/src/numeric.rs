@@ -275,6 +275,10 @@ pub fn evaluate(expression: &str, lookup: impl FnMut(&str) -> Option<f64>) -> Ge
     Ok(value)
 }
 
+/// A comparison a formula may end in: how it is spelled, and whether it
+/// holds of two numbers.
+type Comparison = (&'static str, fn(f64, f64) -> bool);
+
 /// A recursive-descent reader of a formula: what is left of it to read.
 struct Parser<'t, F> {
     rest: &'t str,
@@ -309,7 +313,7 @@ impl<'t, F: FnMut(&str) -> Option<f64>> Parser<'t, F> {
     fn comparison(&mut self) -> GeopResult<f64> {
         let a = self.sum()?;
         self.skip_space();
-        let comparisons: [(&str, fn(f64, f64) -> bool); 6] = [
+        let comparisons: [Comparison; 6] = [
             ("<=", |a, b| a <= b),
             (">=", |a, b| a >= b),
             ("==", |a, b| a == b),
