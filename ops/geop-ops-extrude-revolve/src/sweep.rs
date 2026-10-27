@@ -116,6 +116,7 @@ impl PartOperation for Sweep {
         OperationGroup::Solid,
         OperationTier::Small,
     )
+    .shortcut("W")
     .icon(crate::icons::SWEEP);
     type Args = SweepArgs;
     type Session = ();

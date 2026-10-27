@@ -175,6 +175,7 @@ impl PartOperation for AddSketch {
         OperationGroup::Sketch,
         OperationTier::Big,
     )
+    .shortcut("S")
     .icon(crate::icons::ADD_SKETCH);
     type Args = AddSketchArgs;
     type Session = SketchSession;

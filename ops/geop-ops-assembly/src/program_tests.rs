@@ -378,12 +378,16 @@ fn the_editor_places_parts_from_its_files() {
             known.extend(scene.components.clone());
         }
     };
-    keep(&editor.handle(dialog("file", Value::Choice("plate.geop".into()))));
+    // The scene is sent as the part is placed; committed, it is drawn as
+    // it was, and not sent again.
+    let placed = editor.handle(dialog("file", Value::Choice("plate.geop".into())));
+    keep(&placed);
     let update = editor.handle(Command::Commit);
     keep(&update);
     assert!(update.error.is_none(), "{:?}", update.error);
     assert_eq!(update.program.unwrap().steps[0].id, "part1");
-    let scene = update.scene.unwrap();
+    assert!(update.scene.is_none(), "drawn as it was while placed");
+    let scene = placed.scene.unwrap();
     // Drawn by reference: the placed part where it is, and its component's
     // view, sent once.
     assert!(scene.part.faces.is_empty());
@@ -1309,22 +1313,33 @@ fn drags_around_the_fold_take_few_steps() {
     );
 }
 
-/// A placed part's datums are its own: drawn only while a part is being
-/// placed, for its mates to pick — hidden once it is.
+/// A placed part's datums are its own: drawn only while a mate waits for
+/// what it is between, for it to pick — hidden otherwise, while a part is
+/// placed too.
 #[test]
-fn placed_datums_show_only_while_placing() {
+fn placed_datums_show_only_while_a_mate_picks() {
     let mut editor = editor_on(examples::pin_in_plate_assembly());
-    let hidden = |update: Update| update.scene.unwrap().hidden;
-    let shown = hidden(editor.handle(Command::Show));
-    assert!(shown.contains(&"/pin:origin".to_string()), "{shown:?}");
-    assert!(shown.contains(&"/plate:origin".to_string()), "{shown:?}");
-    let placing = hidden(editor.handle(Command::Open {
-        id: "pin".into(),
-        placed: None,
-    }));
+    let hidden = |editor: &mut Editor| editor.handle(Command::Show).scene.unwrap().hidden;
+    let origins = ["/pin:origin".to_string(), "/plate:origin".to_string()];
+    let shown = hidden(&mut editor);
+    assert!(origins.iter().all(|o| shown.contains(o)), "{shown:?}");
+    handled(
+        &mut editor,
+        Command::Open {
+            id: "pin".into(),
+            placed: None,
+        },
+    );
+    let placing = hidden(&mut editor);
+    assert!(origins.iter().all(|o| placing.contains(o)), "{placing:?}");
+    handled(
+        &mut editor,
+        dialog("add_mate", Value::Choice("coincident".into())),
+    );
+    let picking = hidden(&mut editor);
     assert!(
-        !placing.iter().any(|name| name.starts_with('/')),
-        "{placing:?}"
+        !picking.iter().any(|name| name.starts_with('/')),
+        "{picking:?}"
     );
 }
 
@@ -1932,14 +1947,12 @@ fn a_joint_is_made_by_clicking_where_its_frames_go() {
         shift: false,
     }));
     let presentation = update.step.unwrap().presentation;
-    // Lit as the frame a click there puts on the pin's top.
+    // Lit as the frame a click there puts on the pin's top is lit once
+    // held: the pin's top.
     let pin_top = MateEntity::of("pin", Selected::Face(element("extrude(pin,end)")));
-    let lit = geop_core_editor::view::FramePick {
-        on: pin_top.picked(),
-        at: None,
-    };
-    assert!(
-        presentation.highlights.contains(&lit.picked()),
+    assert_eq!(
+        presentation.highlights,
+        pin_top.drawn(&editor.part()),
         "{:?}",
         presentation.highlights
     );

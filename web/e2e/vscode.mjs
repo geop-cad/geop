@@ -17,7 +17,6 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { startBridge } from "./bridge.mjs";
 import { Checks, clickOperation, fileMenu, ROOT, expect, launch, run, settle, shownErrors, stale, watchErrors } from "./lib.mjs";
 
 const browser = await launch();
@@ -31,6 +30,8 @@ const exe = path.join(ROOT, "target", "release", process.platform === "win32" ? 
 const folder = fs.mkdtempSync(path.join(os.tmpdir(), "geop-e2e-"));
 const examples = ["pin", "hole_plate", "bolted_plate", "arm"];
 run(exe, ["examples", "--out-dir", folder, "--option", "quality=4", ...examples.flatMap((e) => ["--only", e])]);
+// Imported once the extension is compiled: the bridge loads its code.
+const { startBridge } = await import("./bridge.mjs");
 const bridge = await startBridge({ media, exe, folder });
 
 const context = await browser.newContext({ viewport: { width: 1400, height: 900 } });

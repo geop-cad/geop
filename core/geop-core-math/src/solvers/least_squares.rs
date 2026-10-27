@@ -310,6 +310,7 @@ fn step(
     let jc: Vec<Vec<Scalar>> = jc_wide.iter().map(|r| sharp(r)).collect();
     let c = sharp(&e.constraints.values);
     let m = jc.len();
+    super::factorised(jr.len() + m, k);
 
     // H = J_rᵀJ_r + B + λ D, over the variables that move.
     let mut h: Vec<Vec<Scalar>> = keep.iter().map(|&i| squeeze(&b[i])).collect();

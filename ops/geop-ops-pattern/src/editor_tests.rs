@@ -98,7 +98,7 @@ fn new_linear_pattern_dragged_by_its_spacing_handle() {
 /// A new linear pattern picks the hole cut through a plate as a feature by
 /// a click on the hole's wall, through the hole's mouth from above: the
 /// dialog lists the feature and no body any more, hovering lights the
-/// hole, and committed with four instances two apart, the scene holds the
+/// hole as the click then holds it — all its faces — and committed with four instances two apart, the scene holds the
 /// plate alone, drilled four times.
 #[test]
 fn new_linear_pattern_picks_a_feature_by_its_wall() {
@@ -119,18 +119,21 @@ fn new_linear_pattern_picks_a_feature_by_its_wall() {
         },
     });
     let step = update.step.expect("the pattern is edited");
-    // What is hovered is the wall's face, as the pointer hits it.
+    // What is hovered is the hole a click picks: its faces, the four
+    // quarters of its wall.
     let walls: Vec<PickedElement> = (step.presentation.highlights.iter())
         .filter(|e| e.kind == drawn::FACE)
         .cloned()
         .collect();
-    assert_eq!(walls.len(), 1, "{:?}", step.presentation.highlights);
+    assert_eq!(walls.len(), 4, "{:?}", step.presentation.highlights);
     let update = handled(&mut editor, click_at(wall));
     let step = update.step.expect("the pattern is edited");
     assert!(step.missing.is_empty(), "{:?}", step.missing);
-    // The hole picked is lit as its faces, the wall among them.
+    // The hole picked is lit as it was hovered.
     assert!(
-        step.presentation.highlights.contains(&walls[0]),
+        walls
+            .iter()
+            .all(|w| step.presentation.highlights.contains(w)),
         "{:?}",
         step.presentation.highlights
     );

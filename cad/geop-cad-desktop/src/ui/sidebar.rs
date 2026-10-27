@@ -60,12 +60,16 @@ fn structure(window: &mut GeopApp, ui: &mut Ui, lights: &mut Option<Vec<PickedEl
             .show(ui, |ui| {
                 for item in list {
                     let row = ui.horizontal(|ui| {
-                        let mut text = RichText::new(item.label.as_deref().unwrap_or(&item.name));
+                        let mut text = RichText::new(&item.name);
                         if item.visible == Some(false) {
                             text = text.color(theme.weak());
                         }
                         ui.add(egui::Label::new(text).truncate())
                             .on_hover_text(&item.name);
+                        // The file a placed part is from, quieter.
+                        if let Some(detail) = &item.detail {
+                            ui.label(RichText::new(detail).small().color(theme.weak()));
+                        }
                         if let Some(detail) = details.get(&item.name) {
                             ui.label(RichText::new(detail).small().color(theme.weak()));
                         }

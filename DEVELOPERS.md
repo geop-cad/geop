@@ -157,6 +157,10 @@ file and prints what passed, what was healed and the causes of what failed
 (`STEP_CORPUS_FULL=1` validates fully, `STEP_CORPUS_ONLY=<name>` imports
 the files matching a name and prints their errors in full).
 
+The rules the editor's user experience follows — picking in what is seen,
+the keys the kernel names, Enter and Escape, what a pointer event may cost
+— are in `docs/ux.md`; follow them in every front end.
+
 The web app draws placed parts batched per component — one
 `InstancedMesh` each (`web/src/placed3d.ts`) — and takes the scene's
 changes rather than the whole scene. Its section view (`section.ts`)

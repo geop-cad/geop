@@ -11,7 +11,9 @@ use crate::controller::Controller;
 /// What the user can ask for.
 #[derive(Clone, Debug, PartialEq)]
 pub enum Action {
-    NewStep(String),
+    /// A new step of the operation `kind`, started by the key the kernel
+    /// gives it (`OperationInfo::shortcut`), if it gives one.
+    NewStep(String, Option<&'static str>),
     Commit,
     Cancel,
     Undo,
@@ -55,6 +57,7 @@ impl Action {
     /// which the web app has too.
     pub fn shortcut(&self) -> Option<KeyboardShortcut> {
         match self {
+            Action::NewStep(_, shortcut) => shortcut.and_then(kernel_shortcut),
             Action::Palette => key(COMMAND, Key::K),
             Action::Undo => key(COMMAND, Key::Z),
             Action::Redo => key(COMMAND_SHIFT, Key::Z),
@@ -101,7 +104,7 @@ impl Action {
     pub fn enabled(&self, app: &Controller) -> bool {
         let idle = app.step.is_none();
         match self {
-            Action::NewStep(kind) => {
+            Action::NewStep(kind, _) => {
                 app.ready() && app.step.as_ref().is_none_or(|s| s.kind == kind)
             }
             Action::Commit => app.can_commit(),
@@ -118,6 +121,17 @@ impl Action {
             _ => true,
         }
     }
+}
+
+/// The key the kernel names — `E`, `Shift+F` (see
+/// `geop_core_editor::editable::OperationInfo::shortcut`) — as egui
+/// presses it.
+pub fn kernel_shortcut(text: &str) -> Option<KeyboardShortcut> {
+    let (modifiers, letter) = match text.strip_prefix("Shift+") {
+        Some(letter) => (Modifiers::SHIFT, letter),
+        None => (Modifiers::NONE, text),
+    };
+    Some(KeyboardShortcut::new(modifiers, Key::from_name(letter)?))
 }
 
 /// An entry of the command palette: what it says, what it does.
@@ -151,7 +165,7 @@ pub fn palette(app: &Controller) -> Vec<Entry> {
                 "Operation",
                 listed.info.doc,
                 listed.info.icon,
-                Action::NewStep(listed.kind.to_string()),
+                Action::NewStep(listed.kind.to_string(), listed.info.shortcut),
             ));
         }
         for tool in &program.tools {
@@ -291,6 +305,18 @@ mod tests {
         assert!(score("dx", "Extrude").is_none());
         assert!(score("fil", "Fillet").unwrap() > score("fil", "Profile line").unwrap());
         assert_eq!(score("", "anything"), Some(0));
+    }
+
+    #[test]
+    fn the_kernels_keys_are_pressed_as_named() {
+        assert_eq!(
+            kernel_shortcut("Shift+F"),
+            Some(KeyboardShortcut::new(Modifiers::SHIFT, Key::F))
+        );
+        assert_eq!(
+            kernel_shortcut("E"),
+            Some(KeyboardShortcut::new(Modifiers::NONE, Key::E))
+        );
     }
 
     #[test]
