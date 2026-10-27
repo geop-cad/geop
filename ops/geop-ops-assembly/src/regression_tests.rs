@@ -126,3 +126,63 @@ fn hover(pointer: Pointer) -> Command {
     };
     Command::Event { event }
 }
+
+/// A cube on a fixed cube, its side `block(c,c1)` at an angle to the fixed
+/// cube's: at 179° it is turned nearly half way round, and at 180° all the
+/// way — its side facing opposite the other's — not left facing the same
+/// way, as at 0°.
+#[test]
+#[ignore = "bug: residuals::Kind::Angle holds 180° as it holds 0°, as a parallel (either way), so \
+            the cube placed as `b` on the fixed cube `a` with an angle mate of 180° between their \
+            faces `block(c,c1)` stays turned 0° (where it starts at 20°), while 179° turns it \
+            179°: the mate's geometry jumps half a turn between 179.9° and 180°"]
+fn an_angle_mate_of_half_a_turn_turns_the_part_half_way_round() {
+    use crate::{Kind, Mate};
+    use geop_ops_model::{element, mate_entity::MateEntity, selection::Selected};
+    let face = |instance: &str, name: &str| MateEntity::of(instance, Selected::Face(element(name)));
+    let mut cube = Program::new();
+    cube.push("c", PrimitiveArgs::block([0.0; 3], [1.0; 3]));
+    let turned = |degrees: f64| {
+        let mates = BTreeMap::from([
+            (
+                "m1".to_string(),
+                Mate::constraint(
+                    Kind::Coincident,
+                    vec![face("b", "block(c,start)"), face("a", "block(c,end)")],
+                ),
+            ),
+            (
+                "m2".to_string(),
+                Mate::constraint(
+                    Kind::Angle {
+                        value: Scalar::from_f64(degrees),
+                    },
+                    vec![face("b", "block(c,c1)"), face("a", "block(c,c1)")],
+                ),
+            ),
+        ]);
+        let mut program = Program::new();
+        let placed = AddPartArgs {
+            file: "cube.geop".into(),
+            ..Default::default()
+        };
+        program.push("a", placed.clone().fixed());
+        program.push("b", AddPartArgs { mates, ..placed });
+        let start = crate::examples::pose([2.0, 0.3, 0.4], [0.0, 0.0, 20.0]);
+        program.state.insert(pose_state("b"), StateValue::Pose(start));
+        let mut editor = editor();
+        let files = BTreeMap::from([("cube.geop".to_string(), Some(cube.to_json().unwrap()))]);
+        handled(&mut editor, Command::Files { files });
+        let path = Some("cubes.geop".into());
+        handled(&mut editor, Command::Load { program, path });
+        assert!(crate::solving::check(&editor.part()).unwrap().converged);
+        match editor.program().state.get(&pose_state("b")) {
+            Some(StateValue::Pose(pose)) => pose.euler_degrees()[2].abs(),
+            other => panic!("the cube has no pose: {other:?}"),
+        }
+    };
+    let nearly = turned(179.0);
+    assert!((nearly - 179.0).abs() < 1e-6, "turned {nearly}° at 179°");
+    let half = turned(180.0);
+    assert!((half - 180.0).abs() < 1e-6, "turned {half}° at 180°");
+}
