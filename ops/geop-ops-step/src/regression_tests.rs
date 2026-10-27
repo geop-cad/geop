@@ -3,9 +3,11 @@
 //! imports them again.
 
 use geop_core_math::{geop_error::GeopResult, primitives::FrameAxis};
+use geop_core_program::element::ElementReference;
 use geop_core_program::{operation_registry::OperationRegistry, program::Program};
 use geop_lib_fixtures::{Primitive, PrimitiveArgs};
 use geop_ops_extrude_revolve::{Extents, ExtrudeArgs, Output};
+use geop_ops_fillet::{Fillet, FilletArgs};
 use geop_ops_model::datums::{origin_axis, origin_plane};
 use geop_ops_model::sketch::{
     Sketch, SketchPlane,
@@ -14,12 +16,13 @@ use geop_ops_model::sketch::{
 };
 use geop_ops_model::spacing::Spacing;
 use geop_ops_model::{
-    Combine, NamedModel, Namer,
-    testing::{Built, assert_valid},
+    Combine, NamedModel, Namer, model,
+    testing::{Built, assert_valid, edges_with_middle_where, face_towards},
 };
 use geop_ops_pattern::{
     Direction, LinearPattern, LinearPatternArgs, Mirror, MirrorArgs, PatternDirection, Seeds, body,
 };
+use geop_ops_shell::{Shell, ShellArgs};
 use geop_ops_sketch::AddSketchArgs;
 
 use crate::{add_bodies, read_step, write_step};
@@ -191,6 +194,48 @@ fn mirrored_l_bracket_with_a_slot_round_trips() {
 #[test]
 fn mirrored_l_bracket_merged_round_trips() {
     round_trip(&merged(&mirrored_l_bracket()));
+}
+
+/// The operations of [`registry`], and the fillet and shell.
+fn finishing_registry() -> GeopResult<OperationRegistry> {
+    registry()?.with(Fillet)?.with(Shell)
+}
+
+/// A 40 x 20 x 10 block with its upright edge at the origin rounded by 3
+/// (the first fillet of every tutorial), exported as STEP and imported
+/// again.
+///
+/// The rounded block builds valid. Read back, it fails `assert_valid`
+/// twice, on the two planar sides the blend is tangent to:
+///
+/// > coedge 28's pcurve sample 0 (t=0.000) maps through its face's surface
+/// > to a point that is not on edge 11's curve at all (coedge on face 27,
+/// > (u, v) = (0, 0.15), point (0, 3, ..))
+///
+/// and the same at `(3, 0, ..)` on the side `y = 0`: the start of each
+/// side's pcurve along the edge where the blend leaves it. The edges are
+/// `import(.., e0)` and `import(.., e13)`, the blend's tangent lines, and
+/// validation finds every sample of them off the side they lie in: the
+/// line read back for the side `x = 0` runs at
+/// `x = [-8.9e-16, -6.7e-80]`, definitely off the plane by a hair, and the
+/// import did not widen it to reach the plane. A block with a rounded
+/// rectangle extruded as its outline, the same solid with arcs instead of
+/// a blend, round-trips cleanly.
+#[test]
+#[ignore = "bug: a block with one upright edge rounded round-trips through STEP into an invalid body: the planar sides' pcurves start at the blend's tangent vertices (0,3,z)/(3,0,z), not on the imported tangent edges' curves; a rounded rectangle extruded round-trips"]
+fn block_with_one_rounded_edge_round_trips() {
+    let mut program = Program::new();
+    program.push(
+        "box",
+        PrimitiveArgs::block([0.0, 0.0, 0.0], [40.0, 20.0, 10.0]),
+    );
+    let before = program.build_model(finishing_registry).unwrap();
+    let edge = edges_with_middle_where(&before, |m| {
+        m[0].abs() < 1e-9 && m[1].abs() < 1e-9 && (m[2] - 5.0).abs() < 1e-9
+    });
+    assert_eq!(edge.len(), 1, "{edge:?}");
+    program.push("round", FilletArgs::constant(edge, 3.0));
+    round_trip(&program.build_model(finishing_registry).unwrap());
 }
 
 /// A bar cut in two by a slab across its middle is one solid of two lumps,

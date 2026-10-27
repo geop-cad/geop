@@ -31,3 +31,7 @@ geop-ops-pattern.workspace = true
 geop-lib-stdlib.workspace = true
 serde_json.workspace = true
 geop-ops-assembly = { workspace = true, features = ["examples"] }
+# Rounded and hollowed parts written and read back (`regression_tests.rs`):
+# the surfaces and fitted edges a blend and a shell leave.
+geop-ops-fillet.workspace = true
+geop-ops-shell.workspace = true
