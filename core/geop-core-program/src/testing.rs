@@ -170,3 +170,43 @@ pub fn edit_sequence(original: &Program) -> Vec<Program> {
     }
     programs
 }
+
+// ── Keeping builds between processes ────────────────────────────────────────
+
+/// Cache files in memory, as a store on disk keeps them, of the build
+/// `build`: what a test of what one process keeps for the next shares
+/// between the two (see [`crate::cache`], [`crate::kept`]).
+#[derive(Clone, Default)]
+pub struct Shelf {
+    pub build: String,
+    pub files: Rc<std::cell::RefCell<std::collections::BTreeMap<String, String>>>,
+}
+
+impl Shelf {
+    /// An empty shelf of the build `build`.
+    pub fn of(build: &str) -> Self {
+        Self {
+            build: build.to_string(),
+            ..Self::default()
+        }
+    }
+
+    /// A cache kept on it.
+    pub fn cache(&self) -> crate::cache::Cache {
+        crate::cache::Cache::stored(Box::new(self.clone()))
+    }
+}
+
+impl crate::cache::CacheStore for Shelf {
+    fn build(&self) -> &str {
+        &self.build
+    }
+
+    fn read(&self, path: &str) -> Option<String> {
+        self.files.borrow().get(path).cloned()
+    }
+
+    fn write(&self, path: &str, text: &str) {
+        (self.files.borrow_mut()).insert(path.to_string(), text.to_string());
+    }
+}

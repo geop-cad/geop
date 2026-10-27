@@ -414,6 +414,7 @@ impl<'a> Reader<'a> {
         let listed = self.part.listed(TypeId::of::<T>(), self.before, self.own);
         self.record(Read::Listed {
             kind: TypeId::of::<T>(),
+            kind_name: std::any::type_name::<T>(),
             targets: (listed.iter())
                 .map(|(name, node)| (name.to_string(), node.step.clone()))
                 .collect(),

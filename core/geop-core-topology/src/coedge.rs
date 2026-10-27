@@ -39,7 +39,7 @@ impl Sense {
 }
 
 /// What a coedge's own `(u, v)` boundary segment is actually backed by.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum CoedgeGeometry {
     /// A real, shared edge — this coedge is one of exactly the two
     /// (opposite `Sense`) that trace it, one per adjoining face. The usual
@@ -57,10 +57,11 @@ pub enum CoedgeGeometry {
     Vertex(VertexId),
 }
 
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct Coedge {
     pub geometry: CoedgeGeometry,
     pub sense: Sense,
+    #[serde(with = "geop_core_math::exact")]
     pub pcurve: Curve2,
     pub next: CoedgeId,
     pub prev: CoedgeId,

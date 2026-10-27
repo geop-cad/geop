@@ -12,6 +12,7 @@ use std::{
 use geop_core_math::geop_error::{GeopError, GeopResult};
 
 use crate::{
+    kept::{Derivation, Digest, Keeper, Pool},
     placed::{Located, key_behind},
     values::{Setting, StateValue},
 };
@@ -19,7 +20,7 @@ use crate::{
 /// A type a part holds targets of. A plain value: compared by `PartialEq`,
 /// to tell a node made again into an equal value — whose readers are then
 /// reused — from one that changed.
-pub trait Target: PartialEq + 'static {
+pub trait Target: PartialEq + Sized + 'static {
     /// Whether several steps may produce a target of this type, each from
     /// what the steps before left (see [`crate::reader::Reader::previous`]):
     /// the model, the datums, the parameters' values, the listings — what
@@ -27,6 +28,11 @@ pub trait Target: PartialEq + 'static {
     /// placed part — has one producer, and a second is an error naming
     /// both.
     const CHAIN: bool = false;
+
+    /// How its values are written to be kept between processes (see
+    /// [`crate::kept`]): none for a target made again in every process —
+    /// one that is cheap to make, or holds what cannot be written.
+    const KEEPER: Option<Keeper<Self>> = None;
 }
 
 /// Plain values a target may hold: what a test produces, or a step that
@@ -137,9 +143,11 @@ pub enum Read {
     File(String, u64),
     /// Which targets of one type there are, in order, and who produced
     /// each: what listing them read ([`crate::reader::Reader::targets_of`]).
-    /// A target that is added or removed changes it.
+    /// A target that is added or removed changes it. The type by its id,
+    /// and by its name, which another process knows it by.
     Listed {
         kind: TypeId,
+        kind_name: &'static str,
         targets: Vec<(String, String)>,
     },
     /// `read`, in the part placed as `instance`.
@@ -201,20 +209,59 @@ pub(crate) struct Node {
     /// A state it read, directly or through what it read, if it read any:
     /// what makes it move with the state.
     pub(crate) state_read: Option<String>,
+    /// How it was made, and the digest of that, as another process would
+    /// make it (see [`crate::kept`]): none if it read what has none — a
+    /// file without a workspace, or a node that has none.
+    pub(crate) kept: Option<(Rc<Derivation>, Digest)>,
+    /// The name of its type, which another process knows it by.
+    pub(crate) kind_name: &'static str,
+    /// How its value is written to be kept, if its type is kept.
+    pub(crate) write: Option<WriteKept>,
+    /// Whether the cache of its workspace has been told of it, to keep it:
+    /// a node is noted once, however often its part is run.
+    pub(crate) noted: Cell<bool>,
+}
+
+/// What a node of a kept type writes its value with: [`write_kept`] of its
+/// type.
+pub(crate) type WriteKept = fn(&dyn Any, &mut Pool) -> GeopResult<String>;
+
+/// `value`, a `T`, written by `T`'s keeper: what a node of a kept type
+/// writes its value with.
+fn write_kept<T: Target>(value: &dyn Any, pool: &mut Pool) -> GeopResult<String> {
+    match (value.downcast_ref::<T>(), T::KEEPER) {
+        (Some(value), Some(keeper)) => (keeper.write)(value, pool),
+        _ => Err(GeopError::new(format!(
+            "a value kept as a `{}` is not one",
+            std::any::type_name::<T>()
+        ))),
+    }
+}
+
+/// What a node was made from, besides its arguments: what it read, the
+/// state it read through that, and how another process would make it.
+pub(crate) struct Provenance {
+    pub reads: Vec<Read>,
+    pub state_read: Option<String>,
+    pub kept: Option<(Rc<Derivation>, Digest)>,
 }
 
 impl Node {
-    /// The node `step` made of `args`, having read `reads`: `made`, in a
+    /// The node `step` made of `args` and what `from` says: `made`, in a
     /// new version unless it equals `previous`'s value.
     pub(crate) fn new<Out: Target, Args: PartialEq + 'static>(
         step: &str,
         args: Args,
-        reads: Vec<Read>,
         made: Result<Out, String>,
+        from: Provenance,
         previous: Option<&Node>,
         produced_in: u64,
-        state_read: Option<String>,
     ) -> Self {
+        let Provenance {
+            reads,
+            state_read,
+            kept,
+        } = from;
         let value = made.map(|value| Rc::new(value) as Rc<dyn Any>);
         let equal: fn(&dyn Any, &dyn Any) -> bool =
             |a, b| (a.downcast_ref::<Out>()).is_some_and(|a| b.downcast_ref::<Out>() == Some(a));
@@ -239,7 +286,24 @@ impl Node {
             },
             produced_in,
             state_read,
+            // Equal to what it was, it is what it was: what read it keeps
+            // its digest too, as it keeps its version.
+            kept: match (same, previous) {
+                (true, Some(old)) => match (old.digest(), kept) {
+                    (Some(digest), Some((derivation, _))) => Some((derivation, digest)),
+                    _ => None,
+                },
+                _ => kept,
+            },
+            kind_name: std::any::type_name::<Out>(),
+            write: Out::KEEPER.map(|_| write_kept::<Out> as WriteKept),
+            noted: Cell::new(false),
         }
+    }
+
+    /// Its digest, as another process would make it (see [`crate::kept`]).
+    pub(crate) fn digest(&self) -> Option<Digest> {
+        self.kept.as_ref().map(|(_, digest)| *digest)
     }
 
     /// Whether it was made, as an `Out`, from `args`, and holds a value: a

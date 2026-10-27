@@ -478,6 +478,13 @@ impl Editor {
             },
             false => None,
         };
+        // What an edit built is kept once it is done — not while a step
+        // being edited previews it, each event anew.
+        if self.open.is_none()
+            && let Some(cache) = self.workspace.cache()
+        {
+            cache.flush();
+        }
         Update {
             error,
             program,

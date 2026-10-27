@@ -277,6 +277,10 @@ fn build(path: &Path) -> GeopResult<(Program, BuiltPart, Vec<String>)> {
         program.state.extend(moved);
         program.run(&built.runner, &mut built.part)?;
     }
+    // What it built is kept beside the files, for the next build to read.
+    if let Some(cache) = geop_core_program::workspace::Workspace::cache(&*workspace) {
+        cache.flush();
+    }
     Ok((program, built, report.failed))
 }
 

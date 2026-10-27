@@ -18,6 +18,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::{
     element::{ElementReference, HasElements, Kind},
+    kept::Keeper,
     operation::Operation,
     part::StepContext,
     target::{Target, TargetReference},
@@ -25,14 +26,18 @@ use crate::{
     values::{Setting, StateValue},
 };
 
-#[derive(Debug, Clone, Default, PartialEq)]
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub struct Frame {
+    #[serde(with = "geop_core_math::exact")]
     pub data: Vector3,
 }
 
-/// Defined by one step, shifted by the ones after it.
+/// Defined by one step, shifted by the ones after it; kept between
+/// processes, written exactly. (The datums are not: what a kept frame reads
+/// of them is made again in every process.)
 impl Target for Frame {
     const CHAIN: bool = true;
+    const KEEPER: Option<Keeper<Self>> = Some(Keeper::SERDE);
 }
 
 /// A frame is read whole: a kind of its own.

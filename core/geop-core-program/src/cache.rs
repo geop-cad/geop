@@ -2,7 +2,9 @@
 //! kept by the workspace, so that a file is made into the same thing once
 //! for every build that reads it (a step's preview, the program it is
 //! committed to, a part placed from it in another file), and, with a
-//! [`CacheStore`], once for every process.
+//! [`CacheStore`], once for every process. With a store, it keeps what
+//! the programs of the workspace built too, so that reopening one whose
+//! steps and inputs did not change builds nothing (see [`crate::kept`]).
 //!
 //! What a cache keeps is the answer to "what does this text read as", and
 //! nothing else: it is looked up by the file's path and checked against
@@ -29,7 +31,7 @@ use geop_core_math::geop_error::GeopError;
 use geop_core_math::geop_error::GeopResult;
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
 
-use crate::workspace::is_shared;
+use crate::{kept::Builds, workspace::is_shared};
 
 /// The extension of a cache file: what the file it is beside was made
 /// into ([`Cache`]).
@@ -61,6 +63,9 @@ pub struct Cache {
     kept: RefCell<Kept>,
     /// How many values it made: what a test of what is made again counts.
     made: Cell<u64>,
+    /// What the program of each file built, as kept in the store, by the
+    /// file's path: read when a run first asks, written by [`Cache::flush`].
+    builds: RefCell<BTreeMap<String, Builds>>,
 }
 
 /// A cache file: what the file beside it was made into, and from what.
@@ -125,6 +130,41 @@ impl Cache {
         self.made.get()
     }
 
+    /// `use_builds` of what the program in the file `path` built, as its
+    /// store keeps it — read from the store the first time — if it keeps
+    /// builds of that file: it has a store, and the file is the workspace's
+    /// own, not a shared library's (see [`is_shared`]).
+    pub(crate) fn builds<R>(
+        &self,
+        path: &str,
+        use_builds: impl FnOnce(&mut Builds) -> R,
+    ) -> Option<R> {
+        let store = self
+            .store
+            .as_ref()
+            .filter(|_| !path.is_empty() && !is_shared(path))?;
+        let mut builds = self.builds.borrow_mut();
+        let builds = (builds.entry(path.to_string())).or_insert_with(|| {
+            Builds::read(store.read(&cache_path(path)).as_deref(), store.build())
+        });
+        Some(use_builds(builds))
+    }
+
+    /// Writes what the programs built since it was last written, each into
+    /// its file's cache file: what an editor does when an edit is done, and
+    /// the command line when it has built. Nothing is written of a file
+    /// whose builds did not change.
+    pub fn flush(&self) {
+        let Some(store) = self.store.as_ref() else {
+            return;
+        };
+        for (path, builds) in self.builds.borrow_mut().iter_mut() {
+            if let Some(text) = builds.write(store.build()) {
+                store.write(&cache_path(path), &text);
+            }
+        }
+    }
+
     /// What its store kept of `text` of `path` as `kind`, if it was made by
     /// this build from this text. A file that does not read, of another
     /// build or text or kind, is none.
@@ -183,28 +223,7 @@ pub fn digest(text: &str) -> u128 {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    /// Cache files in memory, as a store on disk keeps them, of the build
-    /// `build`.
-    #[derive(Clone)]
-    struct Shelf {
-        build: String,
-        files: Rc<RefCell<BTreeMap<String, String>>>,
-    }
-
-    impl CacheStore for Shelf {
-        fn build(&self) -> &str {
-            &self.build
-        }
-
-        fn read(&self, path: &str) -> Option<String> {
-            self.files.borrow().get(path).cloned()
-        }
-
-        fn write(&self, path: &str, text: &str) {
-            (self.files.borrow_mut()).insert(path.to_string(), text.to_string());
-        }
-    }
+    use crate::testing::Shelf;
 
     fn words(text: &str) -> GeopResult<Vec<String>> {
         Ok(text.split_whitespace().map(str::to_string).collect())
@@ -238,13 +257,10 @@ mod tests {
     /// text.
     #[test]
     fn a_store_keeps_what_was_made_between_processes() {
-        let shelf = Shelf {
-            build: "1".into(),
-            files: Rc::default(),
-        };
+        let shelf = Shelf::of("1");
         let text: Rc<str> = Rc::from("a b");
         let made = |shelf: &Shelf, text: &Rc<str>| {
-            let cache = Cache::stored(Box::new(shelf.clone()));
+            let cache = shelf.cache();
             let value = cache.made_of("words", "f.txt", text, words).unwrap();
             (value, cache.made())
         };

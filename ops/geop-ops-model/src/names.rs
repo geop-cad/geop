@@ -9,6 +9,12 @@ use geop_core_program::program::validate_operation_id;
 
 use super::ids::RefId;
 
+/// Every entity's name, by its id ([`NameRegistry::entries`]).
+pub(crate) type Names = Vec<(RefId, String)>;
+
+/// Every alias, with the name it stands for.
+pub(crate) type Aliases = Vec<(String, String)>;
+
 /// A two-way `RefId <-> String` mapping. Every entity a
 /// [`super::NamedModel`] exposes — a vertex, edge, face or solid — has
 /// exactly one live entry here for as long as it exists. Its maps share
@@ -125,6 +131,33 @@ impl NameRegistry {
     pub fn id_of(&self, name: &str) -> Option<RefId> {
         (self.name_to_id.get(name).copied())
             .or_else(|| self.name_to_id.get(self.aliases.get(name)?).copied())
+    }
+
+    /// Every `(id, name)`, sorted by the kind of entity and its id, and
+    /// every alias with the name it stands for, sorted: what a model kept
+    /// between processes writes of its names ([`NameRegistry::from_entries`]).
+    pub(crate) fn entries(&self) -> (Names, Aliases) {
+        let mut names: Vec<(RefId, String)> = (self.id_to_name.iter())
+            .map(|(&id, name)| (id, name.clone()))
+            .collect();
+        names.sort_by_key(|(id, _)| crate::kept::ref_id(id));
+        let mut aliases: Vec<(String, String)> = (self.aliases.iter())
+            .map(|(name, into)| (name.clone(), into.clone()))
+            .collect();
+        aliases.sort();
+        (names, aliases)
+    }
+
+    /// The registry of the `names` and `aliases` [`NameRegistry::entries`]
+    /// gave.
+    pub(crate) fn from_entries(names: Names, aliases: Aliases) -> Self {
+        Self {
+            name_to_id: (names.iter())
+                .map(|(id, name)| (name.clone(), *id))
+                .collect(),
+            id_to_name: names.into_iter().collect(),
+            aliases: aliases.into_iter().collect(),
+        }
     }
 
     /// Every `(id, name)`, in no particular order.
