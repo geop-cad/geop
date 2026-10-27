@@ -811,10 +811,13 @@ fn the_arm_solves_its_links_not_its_screws() {
     );
 }
 
-/// A drag of the wrist costs as many program runs, and resolves as many
-/// mates — none — however many screws the brackets carry; its dense
-/// linear algebra grows with them no faster than they do: each screw is
-/// enclosed on its own, a system of six variables.
+/// A drag of the wrist costs as many program runs — two: where the solve
+/// starts and where it ends; at every state it tries, it makes only the
+/// constraints it asks again — and resolves as many mates — none —
+/// however many screws the brackets carry; its dense linear algebra grows
+/// with them no faster than they do: each screw is enclosed on its own, a
+/// system of six variables. Before, every state tried ran the program
+/// again, 96 runs an event, each walking every step.
 #[test]
 fn drag_work_grows_with_the_moving_links_not_the_screws() {
     let costs: Vec<Vec<DragCost>> = [5, 20]
@@ -831,6 +834,7 @@ fn drag_work_grows_with_the_moving_links_not_the_screws() {
     println!("{few:?}\n{many:?}");
     for (k, (few, many)) in few.iter().zip(many).enumerate() {
         assert_eq!((few.resolved, many.resolved), (0, 0), "event {k}");
+        assert!(few.runs <= 2, "event {k}: {} program runs", few.runs);
         assert!(
             many.runs <= few.runs,
             "event {k}: {} program runs with 20 screws a bracket, {} with 5",

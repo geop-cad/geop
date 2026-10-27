@@ -69,6 +69,11 @@ pub struct Reader<'a> {
     /// The path of the part it reads in the part of the node being made:
     /// empty for that part itself.
     path: Vec<String>,
+    /// The state it reads in place of its part's, where that gives a value
+    /// — a state a solve tries ([`Reader::trying`]) — by the names of the
+    /// part it was given for, and the path of the part it reads in that
+    /// part.
+    trying: Option<(&'a StateValues, String)>,
 }
 
 impl<'a> Reader<'a> {
@@ -83,6 +88,34 @@ impl<'a> Reader<'a> {
             runner: None,
             recording: None,
             path: Vec::new(),
+            trying: None,
+        }
+    }
+
+    /// It as if its part were run at the state `state`, where that gives a
+    /// value — `/bolt:b.pose` the state `b.pose` of the part placed as
+    /// `bolt` — every target as its part built it: what a solve reads at
+    /// every state it tries, without running the program again.
+    ///
+    /// Only for what reads no target that itself read the state, which
+    /// would be as built at the part's own: a constraint's make, which
+    /// refuses any such read (see [`Reader::targets_reading_state`]).
+    pub fn trying(&self, state: &'a StateValues) -> Reader<'a> {
+        Reader {
+            trying: Some((state, String::new())),
+            ..self.clone()
+        }
+    }
+
+    /// The same part after the step `step` of its last run, with what that
+    /// step produced: what the step's make read, as of the end of the
+    /// step. The finished part for a step that did not run.
+    pub fn after_step(&self, step: &str) -> Reader<'a> {
+        Reader {
+            before: (self.part.position(step)).map_or(self.part.ran(), |at| at + 1),
+            own: None,
+            last: None,
+            ..self.clone()
         }
     }
 
@@ -104,6 +137,7 @@ impl<'a> Reader<'a> {
             runner: Some(runner),
             recording: Some(recording),
             path: Vec::new(),
+            trying: None,
         }
     }
 
@@ -300,6 +334,8 @@ impl<'a> Reader<'a> {
             inside.recording = level.recording;
             inside.path = level.path.clone();
             inside.path.push(name.to_string());
+            inside.trying = (level.trying.as_ref())
+                .map(|(state, at)| (*state, crate::placed::instance_path(at, name)));
             level = inside;
         }
         Ok(level)
@@ -337,7 +373,11 @@ impl<'a> Reader<'a> {
     /// with. Else it is read inside the placed part — the placed program's
     /// own, or none before a step placed it.
     pub fn given_state(&self, name: &str) -> Option<StateValue> {
-        let value = self.part.state.get(name).cloned();
+        let tried = (self.trying.as_ref()).and_then(|(state, at)| match at.is_empty() {
+            true => state.get(name),
+            false => state.get(&key_behind(at, name)),
+        });
+        let value = tried.or_else(|| self.part.state.get(name)).cloned();
         self.record(Read::State(name.to_string(), value.clone()));
         match (value, outermost_instance(name)) {
             (Some(value), _) => Some(value),

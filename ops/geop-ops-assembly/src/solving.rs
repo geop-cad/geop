@@ -11,7 +11,8 @@
 //! holds one fixed, as an [`Unknown`]; and the values a user sets directly
 //! — a joint's coordinates — as [`Settings`], for an editor to list.
 //! [`geop_lib_constraints::solve`] solves, encloses and measures, running the
-//! program again at every state it tries ([`Rerun`]).
+//! program ([`Rerun`]) where it starts and where it ends, and making only
+//! the constraints it asks again at every state it tries.
 
 use geop_core_program::{
     element::{ElementReference, HasElements, Kind, whole},

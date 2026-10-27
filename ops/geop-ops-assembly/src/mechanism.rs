@@ -19,9 +19,11 @@
 //! computed in dual numbers, one state at a time.
 //!
 //! The editor solves ([`crate::solving::solve`]): the solve moves the state
-//! until the constraints hold, running the program again for every state it
-//! tries — what read no state that changed is reused — and the editor runs
-//! the program once more with the state found.
+//! until the constraints hold, making only the constraints it asks again
+//! at every state it tries, of the part as built (see
+//! [`geop_lib_constraints::constraint::make_again`]) — which is why a
+//! constraint reads only the state and what reads none — and the editor
+//! runs the program once more with the state found.
 //!
 //! The constraints of one step's mates are defined together, and so are
 //! their unknowns (see [`define`]).

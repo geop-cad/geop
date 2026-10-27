@@ -169,7 +169,7 @@ impl Part {
     }
 
     /// The position of the step `step` in the last run.
-    fn position(&self, step: &str) -> Option<usize> {
+    pub(crate) fn position(&self, step: &str) -> Option<usize> {
         self.positions.get(step).copied()
     }
 

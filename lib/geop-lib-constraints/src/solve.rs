@@ -7,8 +7,11 @@
 //! ([`Problem::free`]), each a block of the system, stepped along its own
 //! steps ([`geop_core_math::solvers::system::Variable::retract`]: a pose by
 //! the exponential map of a twist). The constraints are those the program
-//! defines, run again at every state tried: what did not read the state
-//! that changed is reused, not built again. What a solve
+//! defines, run once at the state a solve starts from: at every state it
+//! tries, only the constraints it asks are made again, each by its step's
+//! generator, of the part as built and the state tried
+//! ([`crate::constraint::make_again`]) — no program is run, and the work
+//! of a solve step is that of the constraints it asks. What a solve
 //! should prefer among the states the constraints allow is the caller's
 //! too: [`Preference`]s pull — a drag — and every value nothing pulls stays
 //! as near where it was as the constraints let it.
@@ -44,7 +47,7 @@ use geop_core_program::{
     values::{Settings, StateValue, StateValues},
 };
 
-use crate::constraint::{Constraint, Constraints, DefinedAt};
+use crate::constraint::{Constraint, Constraints, DefinedAt, make_again};
 
 /// A program to run again at every state a solve tries, with its inputs:
 /// its state is the state tried.
@@ -263,13 +266,21 @@ impl Equations for Solving<'_, '_> {
                 }
             }
         }
-        let mut run = self.run.borrow_mut();
-        let reader = run.at(&self.working.borrow()).current();
+        let run = self.run.borrow();
+        let working = self.working.borrow();
+        let reader = run.part.current().trying(&working);
+        let asked: Vec<&DefinedAt> = (which.iter())
+            .filter_map(|term| match term {
+                Term::Constraint(c) => self.constraints.get(*c).map(|(.., at)| at),
+                Term::Preference(_) => None,
+            })
+            .collect();
+        let mut made = make_again(&reader, &asked).into_iter();
         (which.iter())
             .map(|term| match term {
                 Term::Constraint(c) => {
-                    let (.., at) = self.constraints.get(*c)?;
-                    Some(self.linearized(&at.read(&reader).ok()?))
+                    self.constraints.get(*c)?;
+                    Some(self.linearized(&made.next()?.ok()?))
                 }
                 Term::Preference(p) => {
                     let preference = self.preferences.get(*p)?.evaluate(&reader).ok()?;

@@ -22,7 +22,7 @@ use super::{
     Running, assert_translation, body_at, errors, input_frame, inputs, pin, pose_of, registry,
 };
 use crate::{
-    constraint::Constraints,
+    constraint::{Constraints, make_again},
     solve::{Problem, solve},
     unknown::{Unknown, Unknowns, declare_unknowns},
 };
@@ -183,4 +183,46 @@ fn an_instance_is_solved_in_the_part_it_is_placed_in() {
         .to_array()
         .map(|c| c.to_f64());
     assert!((at[0] - 1.0).abs() < 1e-8 && at[1].abs() < 1e-8, "{at:?}");
+}
+
+/// What a solve reads at every state it tries: each constraint made again
+/// by its step, of the part as built at another state, is the constraint a
+/// run of the program at the state tried makes — the part's own, and an
+/// instance's behind its name — without running the program.
+#[test]
+fn a_constraint_made_again_at_a_state_tried_is_the_one_a_run_there_makes() {
+    let inner = vec![
+        input_frame("a", "a", "x"),
+        free("free", "body"),
+        pin("pin", "a", "body"),
+    ];
+    let program = Program::from_steps(vec![
+        input_frame("b", "b", "x"),
+        place("q", inner),
+        pin("own", "b", "body"),
+    ]);
+    let x = inputs(&[("x", 2.0)]);
+    let at = |dx: f64| {
+        StateValues::from([
+            ("body".to_string(), body_at([dx, 1.0, 0.0])),
+            ("/q:body".to_string(), body_at([3.0 + dx, 0.0, 0.0])),
+        ])
+    };
+    let mut runner = Running::of(registry());
+    assert_eq!(errors(&runner.run(&program, &x, &at(0.0))), []);
+    let built = Constraints::of(&runner.part.current()).unwrap();
+    let tried = at(5.0);
+    let again = {
+        let reader = runner.part.current().trying(&tried);
+        let asked: Vec<_> = built.defining().map(|(_, at)| at).collect();
+        let made: GeopResult<Vec<_>> = make_again(&reader, &asked).into_iter().collect();
+        made.unwrap()
+    };
+
+    assert_eq!(errors(&runner.run(&program, &x, &tried)), []);
+    let ran = Constraints::of(&runner.part.current()).unwrap();
+    let ran: Vec<_> = ran.iter().map(|(_, c)| c.clone()).collect();
+    assert_eq!(again, ran);
+    let was: Vec<_> = built.iter().map(|(_, c)| c.clone()).collect();
+    assert_ne!(again, was, "the state tried moves both");
 }
