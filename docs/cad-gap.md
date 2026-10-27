@@ -306,6 +306,12 @@ independent.
    hundreds. Fastened parts carry no motion, so rigid-cluster reduction
    (#1) collapses that to 6 × (number of moving links). This is the first
    thing a real robot will hit; the current benchmark does not exercise it.
+   *Done (WP-A):* the `robot_arm` benchmark measured it — a drag of its
+   101-part form ran for over 50 minutes. Blocks that only hang off others
+   (fastened brackets, mated screws, motors, pulleys) are now pendants,
+   solved and enclosed layer by layer after what they hang off
+   (`System::structure`): the arm's largest group is its links and joints,
+   42 variables, at 101, 281, 1013 and 1973 parts alike.
 2. **Every evaluation reruns the program.** `Run::at`
    (`lib/geop-lib-constraints/src/solve.rs`) clones the state and runs the
    whole program (memoised, so cost ∝ steps, not geometry); per solve
@@ -342,7 +348,13 @@ independent.
    (`System::groups` evaluates all terms at the start), O(mates) per drag
    step — fine now, but means a drag cannot be cheaper than the whole
    mate set; caching the group partition between drag steps (it changes
-   only when mates change) removes it.
+   only when mates change) removes it. *Measured (WP-A):* the structure
+   takes two of a drag's ~96 program runs — one at the point, which the
+   memoised run answers cheaply, and one over a box — so it is not cached
+   yet. What a drag of the 1973-part arm costs instead: ~96 program runs
+   (a run re-makes every moved part's constraints, and walks every step),
+   and the editor rebuilding the forms of every placed standard part's
+   sketches for the step list on every event (about a third of it).
 
 ### 3.3 What to measure
 
