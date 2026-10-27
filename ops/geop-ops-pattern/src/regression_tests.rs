@@ -37,8 +37,23 @@ fn registry() -> GeopResult<OperationRegistry> {
 /// each an edge of `combine(p,4,hole,..)`, `combine(p,10,hole,..)`, ...,
 /// where one copy's wall crosses the next's. With 6 holes (apart) or 30
 /// (overlapping more) the pattern builds valid.
+///
+/// Measured (not fixed): `EdgeId(1713)` is the vertical line where copy
+/// 3's wall crosses copy 4's, traced from `VertexId(1657)`, the crossing
+/// of their bottom arcs (`combine(p,4,hole,..c1#1,start..c1#2,start..,0,1)`,
+/// `1e-11` wide). During that boolean another vertex, `VertexId(1664)`,
+/// lies on both walls' surfaces to within its own width, `1.5e-4` by
+/// `3.1e-4`, `6.7e-4` from 1657 on the bottom face; it is gone from the
+/// finished model. The trace takes it for the end the curve runs to
+/// (`candidate_within`'s half step) and marches `7e-5`, `1.1e-4`, then
+/// strides of `0.3` to `3`: the cubic through points spaced that unevenly
+/// (knots `0, 2.2e-5, 3.2e-5, 0.083, 0.25, 0.5, 1`) is widened to
+/// `1.7e-4` in its middle. The pair's other line, traced in
+/// even strides, is `7e-6` wide. To find next: which crossing made 1664
+/// that wide (an edge x face crossing left unrefined?), and that a vertex
+/// within its own width of a surface is proximity, not membership.
 #[test]
-#[ignore = "bug: a circular pattern of 24 holes that overlap their neighbours by a sliver builds an invalid body — edges where one copy's wall crosses the next's carry control points ~1.7e-4 wide; 6 or 30 holes build valid"]
+#[ignore = "bug: a circular pattern of 24 holes that overlap their neighbours by a sliver builds an invalid body — the trace from the crossing of copies 3 and 4 half-steps towards a transient vertex 3e-4 wide, 6.7e-4 away, and the cubic through its uneven march is 1.7e-4 wide; 6 or 30 holes build valid"]
 fn ring_of_24_holes_each_just_overlapping_the_next() {
     let mut program = Program::new();
     program.push(
