@@ -1372,3 +1372,54 @@ fn a_part_of_a_sub_assembly_goes_where_its_placement_fields_say() {
     };
     assert_close(plate, [5.0, 0.0, 0.0], 1e-9);
 }
+
+/// The step placing a plate, copied from `parts/asm.geop` — which names the
+/// plate beside it, `plate.geop` — and pasted into `top.geop` at the top of
+/// the workspace: it places the same plate, `parts/plate.geop`.
+#[test]
+#[ignore = "bug: Command::Copy keeps an add_part step's file as it is spelled relative to the \
+            program copied from, and Command::Paste inserts it unchanged: pasted into `top.geop`, \
+            the step copied from `parts/asm.geop` looks for `plate.geop` beside top.geop and \
+            fails with `there is no file \"plate.geop\"`"]
+fn a_placed_part_pasted_into_a_file_in_another_folder_places_the_same_file() {
+    let mut editor = editor();
+    let mut asm = Program::new();
+    let plate = AddPartArgs {
+        file: "plate.geop".into(),
+        ..Default::default()
+    };
+    asm.push("plate", plate.fixed());
+    let box_text = geop_ops_extrude_revolve::examples::box_with_drill_hole()
+        .to_json()
+        .unwrap();
+    let files = BTreeMap::from([
+        ("parts/plate.geop".to_string(), Some(box_text)),
+        ("parts/asm.geop".to_string(), Some(asm.to_json().unwrap())),
+    ]);
+    handled(&mut editor, Command::Files { files });
+    let path = Some("parts/asm.geop".into());
+    handled(&mut editor, Command::Load { program: asm, path });
+    let copied = handled(
+        &mut editor,
+        Command::Copy {
+            id: "plate".into(),
+        },
+    );
+    let Content::Text(text) = copied.export.expect("the step as text").content else {
+        panic!("a step is copied as text");
+    };
+    let path = Some("top.geop".into());
+    handled(
+        &mut editor,
+        Command::Load {
+            program: Program::new(),
+            path,
+        },
+    );
+    let pasted = handled(&mut editor, Command::Paste { text });
+    let steps = pasted.program.expect("the program is sent").steps;
+    let errors: Vec<_> = steps.iter().filter_map(|s| s.error.as_ref()).collect();
+    assert!(errors.is_empty(), "{errors:?}");
+    let args: AddPartArgs = step_args(&editor.program().steps[0]);
+    assert_eq!(args.file, "parts/plate.geop");
+}
