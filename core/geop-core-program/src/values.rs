@@ -111,4 +111,15 @@ impl Variable for StateValue {
     fn same(&self, other: &Self) -> bool {
         self == other
     }
+
+    /// A pose by a pose, as poses are (see [`Pose`]'s); a number by
+    /// nothing.
+    fn carried(&self, from: &Self, to: &Self) -> Option<Self> {
+        match (self, from, to) {
+            (StateValue::Pose(pose), StateValue::Pose(from), StateValue::Pose(to)) => {
+                pose.carried(from, to).map(StateValue::Pose)
+            }
+            _ => None,
+        }
+    }
 }

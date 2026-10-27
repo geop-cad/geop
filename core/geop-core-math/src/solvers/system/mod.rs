@@ -10,13 +10,18 @@
 //! size — the algorithms are generic:
 //!
 //! - **Groups.** Blocks no term ties together are solved, enclosed and
-//!   measured apart ([`System::groups`]): a plate with hundreds of screws
-//!   is hundreds of systems of one screw. The answer is the same, since
-//!   what a solve minimizes is a sum over the groups; a group whose
-//!   constraints hold and that nothing pulls is not solved at all. The
-//!   groups are worked on in lockstep ([`lockstep`]): one evaluation
-//!   answers every group waiting, so the evaluations a solve takes do not
-//!   grow with the number of groups.
+//!   measured apart ([`System::structure`]): a plate with hundreds of
+//!   screws is hundreds of systems of one screw. The answer is the same,
+//!   since what a solve minimizes is a sum over the groups; a group whose
+//!   constraints hold and that nothing pulls is not solved at all. Within a
+//!   group, a block whose constraints only hang it off others — a screw on
+//!   a bracket, the bracket on a link — is a pendant: solved and enclosed
+//!   after them, alone ([`structure`]), so a chain of links carrying
+//!   hundreds of parts is a small system and hundreds of tiny ones, not one
+//!   dense system of every part. The groups of a layer are worked on in
+//!   lockstep ([`lockstep`]): one evaluation answers every group waiting,
+//!   so the evaluations a solve takes do not grow with the number of
+//!   groups.
 //! - **Solve** ([`System::solve`]) by the driver every solve shares
 //!   ([`driver`]): the constraints held exactly, the
 //!   preferences and staying put ([`Variable::stay`]) only choosing among
@@ -48,18 +53,19 @@ use crate::{
     geop_error::{GeopError, GeopResult},
     scalars::Scalar,
     solvers::least_squares::Rows,
-    union_find::UnionFind,
 };
 
 mod driver;
 mod enclose;
 mod lockstep;
+mod structure;
 
 pub use driver::{DAMPING, Mobility, Phase, RELATIVE_TOLERANCE, tolerance};
 use driver::{Values, largest};
 
 pub use enclose::{EncloseError, Enclosure};
 use lockstep::{Batch, Made};
+pub use structure::Structure;
 
 /// A value a solve moves: a block of variables, stepped along its own
 /// tangent space.
@@ -92,6 +98,15 @@ pub trait Variable: Clone + std::fmt::Debug {
 
     /// Whether it is no different from `other`: a step that changed nothing.
     fn same(&self, other: &Self) -> bool;
+
+    /// Where it goes carried along by `leader` moving from `from` to `to`,
+    /// as if fastened to it — a seed for a solve of what hangs off the
+    /// leader (see [`Structure`]), a free choice, so sharp. `None` for a
+    /// value nothing carries: a number.
+    fn carried(&self, from: &Self, to: &Self) -> Option<Self> {
+        let _ = (from, to);
+        None
+    }
 }
 
 /// A number steps by what is added to it.
@@ -195,13 +210,27 @@ pub trait Equations {
     fn evaluate(&self, values: &[Self::Value], which: &[Term]) -> Vec<Option<Linearized>>;
 }
 
-/// Blocks no term ties together, and the terms on them.
+/// Blocks a solve works on together, and the terms on them (see
+/// [`Structure`]): a core no term ties to another, or a pendant hanging
+/// off blocks of earlier layers.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct Group {
     /// Its blocks, in order: what its variables are, one after another.
     pub blocks: Vec<usize>,
     pub constraints: Vec<usize>,
     pub preferences: Vec<usize>,
+    /// The blocks outside it its terms read: what it hangs off. None for a
+    /// core.
+    pub on: Vec<usize>,
+    /// Its layer: none for a core, one past every group it hangs off for a
+    /// pendant.
+    pub layer: usize,
+    /// The component it is part of, by index (see
+    /// [`Structure::components`]).
+    pub component: usize,
+    /// For a pendant, how many ways its terms leave it to move, what it
+    /// hangs off held.
+    pub own: usize,
 }
 
 /// Which constraints hold, and the largest residual: an upper bound,
@@ -220,8 +249,8 @@ pub struct Held {
 #[derive(Debug)]
 pub struct Solution<V: Variable> {
     pub values: Vec<V>,
-    /// The groups solved: those a preference pulled, or whose constraints
-    /// did not hold.
+    /// The groups moved: those a preference pulled, whose constraints did
+    /// not hold, or that hang off a group that moved.
     pub solved: Vec<Group>,
     /// The limits the solve held at their bounds, by index.
     pub at_limit: Vec<usize>,
@@ -270,49 +299,6 @@ fn every_term((constraints, preferences): (usize, usize)) -> Vec<Term> {
 }
 
 impl<E: Equations> System<'_, E> {
-    /// The groups of the blocks, as the terms read them at `at`, each with
-    /// the terms on it. A term that reads no block, or cannot be made at
-    /// `at`, is in none: nothing can be done about it.
-    pub fn groups(&self, at: &[E::Value]) -> Vec<Group> {
-        let terms = every_term(self.equations.count());
-        let made = self.equations.evaluate(at, &terms);
-        let mut sets = UnionFind::new(self.mobility.len());
-        let mut firsts = Vec::new();
-        for (&term, made) in terms.iter().zip(&made) {
-            let Some(made) = made else {
-                continue;
-            };
-            let mut read = (made.jacobian.iter())
-                .map(|(block, _)| *block)
-                .filter(|&b| b < self.mobility.len());
-            let Some(first) = read.next() else {
-                continue;
-            };
-            for other in read {
-                sets.union(first, other);
-            }
-            firsts.push((term, first));
-        }
-        let mut by_root: std::collections::BTreeMap<usize, Group> = Default::default();
-        for block in 0..self.mobility.len() {
-            by_root
-                .entry(sets.find(block))
-                .or_default()
-                .blocks
-                .push(block);
-        }
-        for (term, first) in firsts {
-            let Some(group) = by_root.get_mut(&sets.find(first)) else {
-                continue;
-            };
-            match term {
-                Term::Constraint(c) => group.constraints.push(c),
-                Term::Preference(p) => group.preferences.push(p),
-            }
-        }
-        by_root.into_values().collect()
-    }
-
     /// Which constraints hold at `at`.
     pub fn held(&self, at: &[E::Value]) -> GeopResult<Held> {
         let (count, _) = self.equations.count();
@@ -345,36 +331,21 @@ impl<E: Equations> System<'_, E> {
 
     /// Where the blocks have to be, from `start`, for every constraint to
     /// hold, as near where the preferences pull them and, among those, as
-    /// near `start` as the constraints allow (see the module docs) — and an
-    /// enclosure of a true solution near there.
+    /// near `start` as the constraints allow — and an enclosure of a true
+    /// solution near there.
+    ///
+    /// Layer by layer (see [`Structure`]): the cores first, then each
+    /// pendant, alone, from where what it hangs off carried it
+    /// ([`Variable::carried`]) — solved only where its constraints do not
+    /// hold there, or where its own freedom has to stay as near where it
+    /// was as they let it. A component a pendant of which cannot follow
+    /// after all is solved again as one.
     ///
     /// The blocks are moved even where the constraints cannot all hold, to
     /// where they come closest; [`System::held`] says which do not.
     pub fn solve(&self, start: &[E::Value]) -> GeopResult<Solution<E::Value>> {
         let tolerance = tolerance(self.scale)?;
-        let groups = self.groups(start);
-        let batch = Batch::new(self, start);
-        let solved = batch.run(groups.iter().map(|group| {
-            let batch = &batch;
-            async move {
-                let solving = Solving::new(self, start, group, batch);
-                let first = solving.start();
-                let needs = !group.preferences.is_empty()
-                    || !(solving.check(&first, &group.constraints, tolerance).await).1;
-                if !needs {
-                    return Ok(None);
-                }
-                let mut active = Vec::new();
-                loop {
-                    let (solved, phases) = solving.solve(first.clone(), &active, &[]).await?;
-                    let beyond = solving.beyond(&solved, &active, tolerance).await;
-                    if beyond.is_empty() {
-                        return Ok(Some((solved, phases, active)));
-                    }
-                    active.extend(beyond);
-                }
-            }
-        }))?;
+        let structure = self.structure(start);
         let mut values = start.to_vec();
         let mut solution = Solution {
             values: Vec::new(),
@@ -382,33 +353,110 @@ impl<E: Equations> System<'_, E> {
             at_limit: Vec::new(),
             iterations: 0,
             phases: Vec::new(),
-            evaluations: batch.evaluations(),
+            evaluations: 0,
             enclosure: Enclosure::empty(self.mobility.len()),
         };
-        for (group, solved) in groups.into_iter().zip(solved) {
-            let Some((solved, group_phases, active)) = solved else {
-                continue;
-            };
-            solution.iterations = solution
-                .iterations
-                .max(group_phases.iter().map(|p| p.iterations).sum());
-            worst(&mut solution.phases, group_phases);
-            for (&block, value) in group.blocks.iter().zip(solved) {
-                values[block] = value;
+        let mut failed: Vec<usize> = Vec::new();
+        for layer in 0..structure.layers() {
+            let groups: Vec<&Group> = (structure.layer(layer).into_iter())
+                .map(|g| &structure.groups[g])
+                .collect();
+            let base = values.clone();
+            let (ended, evaluations) = self.solve_groups(start, &base, &groups, tolerance)?;
+            solution.evaluations += evaluations;
+            for (group, ended) in groups.into_iter().zip(ended) {
+                let Some(ended) = ended else {
+                    continue;
+                };
+                if !ended.holds && group.layer > 0 && !failed.contains(&group.component) {
+                    failed.push(group.component);
+                }
+                solution.record(&mut values, group.clone(), ended);
             }
-            solution.at_limit.extend(active);
-            solution.solved.push(group);
+        }
+        if !failed.is_empty() {
+            // Solved again as one, from the start.
+            solution.solved.retain(|g| !failed.contains(&g.component));
+            let whole: Vec<&Group> = (failed.iter()).map(|&c| &structure.components[c]).collect();
+            for group in &whole {
+                for &b in &group.blocks {
+                    values[b] = start[b].clone();
+                }
+            }
+            let base = values.clone();
+            let (ended, evaluations) = self.solve_groups(start, &base, &whole, tolerance)?;
+            solution.evaluations += evaluations;
+            for (group, ended) in whole.into_iter().zip(ended) {
+                if let Some(ended) = ended {
+                    solution.record(&mut values, group.clone(), ended);
+                }
+            }
         }
         solution.at_limit.sort_unstable();
+        solution.at_limit.dedup();
         solution.enclosure = self.enclose_groups(&values, &solution.solved)?;
         solution.values = values;
         Ok(solution)
     }
 
+    /// The groups `groups` — of one layer — solved in lockstep, every
+    /// block outside them where `base` has it, from where the solve
+    /// started at `start`: per group where it ended, if it moved; and how
+    /// many evaluations that took.
+    fn solve_groups(
+        &self,
+        start: &[E::Value],
+        base: &[E::Value],
+        groups: &[&Group],
+        tolerance: Scalar,
+    ) -> GeopResult<Layer<E::Value>> {
+        let batch = Batch::new(self, base);
+        let ended = batch.run(groups.iter().map(|&group| {
+            let batch = &batch;
+            async move {
+                let solving = Solving::new(self, base, group, batch);
+                let (first, carried) = solving.carried(start);
+                let holds = solving.check(&first, &group.constraints, tolerance).await.1;
+                // What its own freedom does, carried, is decided by where
+                // it was held.
+                let own = carried
+                    && group.own > 0
+                    && (group.blocks.iter()).any(|&b| self.mobility[b] == Mobility::Held);
+                if group.preferences.is_empty() && holds && !own {
+                    return Ok(carried.then_some(Ended {
+                        values: first,
+                        phases: Vec::new(),
+                        active: Vec::new(),
+                        holds,
+                    }));
+                }
+                let mut active = Vec::new();
+                loop {
+                    let (solved, phases) = solving.solve(first.clone(), &active, &[]).await?;
+                    let beyond = solving.beyond(&solved, &active, tolerance).await;
+                    if beyond.is_empty() {
+                        let holds = solving
+                            .check(&solved, &group.constraints, tolerance)
+                            .await
+                            .1;
+                        return Ok(Some(Ended {
+                            values: solved,
+                            phases,
+                            active,
+                            holds,
+                        }));
+                    }
+                    active.extend(beyond);
+                }
+            }
+        }))?;
+        Ok((ended, batch.evaluations()))
+    }
+
     /// An enclosure of a true solution near `at` — a solution to the
     /// solver's tolerance — group by group (see [`Enclosure`]).
     pub fn enclose(&self, at: &[E::Value]) -> GeopResult<Enclosure<E::Value>> {
-        self.enclose_groups(at, &self.groups(at))
+        self.enclose_groups(at, &self.structure(at).groups)
     }
 
     /// `enclosure` — of the blocks at `at`, as [`Solution::enclosure`] is —
@@ -417,7 +465,7 @@ impl<E: Equations> System<'_, E> {
     pub fn enclose_rest(
         &self,
         at: &[E::Value],
-        mut enclosure: Enclosure<E::Value>,
+        enclosure: Enclosure<E::Value>,
     ) -> GeopResult<Enclosure<E::Value>> {
         let covered: Vec<bool> = (0..self.mobility.len())
             .map(|b| {
@@ -425,20 +473,10 @@ impl<E: Equations> System<'_, E> {
                     || (enclosure.failures.iter()).any(|(blocks, _)| blocks.contains(&b))
             })
             .collect();
-        let rest: Vec<Group> = (self.groups(at).into_iter())
+        let rest: Vec<Group> = (self.structure(at).groups.into_iter())
             .filter(|group| !group.blocks.iter().all(|&b| covered[b]))
             .collect();
-        let more = self.enclose_groups(at, &rest)?;
-        for group in &rest {
-            for &b in &group.blocks {
-                enclosure.boxes[b] = more.boxes[b].clone();
-                enclosure.freedom[b] = more.freedom[b];
-            }
-        }
-        enclosure.total += more.total;
-        enclosure.failures.extend(more.failures);
-        enclosure.evaluations += more.evaluations;
-        Ok(enclosure)
+        self.enclose_into(at, &rest, enclosure)
     }
 
     /// How free the blocks are where they are at `at`: the directions in
@@ -468,7 +506,7 @@ impl<E: Equations> System<'_, E> {
     /// there are constraints, so for a dialog to show, never for every drag.
     pub fn conflicting(&self, start: &[E::Value]) -> GeopResult<Vec<usize>> {
         let tolerance = tolerance(self.scale)?;
-        let groups = self.groups(start);
+        let groups = self.structure(start).groups;
         let batch = Batch::new(self, start);
         let found = batch.run(groups.iter().map(|group| {
             let batch = &batch;
@@ -535,6 +573,33 @@ impl<E: Equations> System<'_, E> {
     }
 }
 
+/// Per group of a layer where its solve ended, if it moved; and how many
+/// evaluations the layer took.
+type Layer<V> = (Vec<Option<Ended<V>>>, usize);
+
+/// Where a group's solve ended: its values, the phases that put them
+/// there, the limits held at their bounds, and whether its constraints
+/// hold there.
+struct Ended<V> {
+    values: Vec<V>,
+    phases: Vec<Phase>,
+    active: Vec<usize>,
+    holds: bool,
+}
+
+impl<V: Variable> Solution<V> {
+    /// `group` moved as `ended` says: its values written into `values`.
+    fn record(&mut self, values: &mut [V], group: Group, ended: Ended<V>) {
+        self.iterations = (self.iterations).max(ended.phases.iter().map(|p| p.iterations).sum());
+        worst(&mut self.phases, ended.phases);
+        for (&block, value) in group.blocks.iter().zip(ended.values) {
+            values[block] = value;
+        }
+        self.at_limit.extend(ended.active);
+        self.solved.push(group);
+    }
+}
+
 /// `phases` with each of `group`'s phases merged into the one of its
 /// index: the most steps, and the largest residual.
 fn worst(phases: &mut Vec<Phase>, group: Vec<Phase>) {
@@ -598,6 +663,25 @@ impl<'s, 'e, E: Equations> Solving<'s, 'e, E> {
         (self.group.blocks.iter())
             .map(|&b| self.base[b].clone())
             .collect()
+    }
+
+    /// Where a solve of the group starts: for a pendant, carried along by
+    /// the first block it hangs off that moved since `start` and can carry
+    /// it — and whether one did; otherwise where it is.
+    fn carried(&self, start: &[E::Value]) -> (Vec<E::Value>, bool) {
+        let mut carried = false;
+        let values = (self.group.blocks.iter())
+            .map(|&b| {
+                let by = (self.group.on.iter()).find_map(|&s| {
+                    (!self.base[s].same(&start[s]))
+                        .then(|| self.base[b].carried(&start[s], &self.base[s]))
+                        .flatten()
+                });
+                carried |= by.is_some();
+                by.unwrap_or_else(|| self.base[b].clone())
+            })
+            .collect();
+        (values, carried)
     }
 
     /// The terms `which` with the group at `values` (see

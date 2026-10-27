@@ -3,11 +3,13 @@
 //!
 //! A step defines its constraints with [`define_constraints`] in a target
 //! of its own, made by its make and made again only when what that
-//! read changes. A solve runs the program at every state it tries, and
-//! gathers them all once per run ([`Constraints::of`]): no step builds on
-//! the constraints of the steps before it, so a constraint that moves makes
-//! no other step's again — which a target revised by every step would, at a
-//! cost growing with the square of the steps.
+//! read changes. A solve gathers them all once ([`Constraints::of`]), and
+//! at every state it tries reads only those it asks, each from its own
+//! step's target ([`DefinedAt::read`]): gathered at every state, every
+//! constraint of an assembly is copied for the few a solve asks. No step builds on the constraints of the steps before
+//! it, so a constraint that moves makes no other step's again — which a
+//! target revised by every step would, at a cost growing with the square
+//! of the steps.
 
 use geop_core_math::scalars::Scalar;
 use std::collections::BTreeMap;
@@ -90,11 +92,50 @@ const CONSTRAINTS: &str = "constraints";
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct Constraints(BTreeMap<String, Defined>);
 
-/// A constraint, and the step that defined it.
+/// A constraint, the step that defined it, and where.
 #[derive(Debug, Clone, PartialEq)]
 struct Defined {
     step: String,
     constraint: Constraint,
+    at: DefinedAt,
+}
+
+/// Where a constraint is defined: behind the instances `path`, outermost
+/// first, by the step `step` of the part placed there, as `name` — what
+/// reads it alone again (see [`DefinedAt::read`]).
+#[derive(Debug, Clone, PartialEq)]
+pub struct DefinedAt {
+    path: Vec<String>,
+    step: String,
+    name: String,
+}
+
+impl DefinedAt {
+    /// The constraint, of the part `reader` reads, as [`Constraints::of`]
+    /// has it — by the states behind its path — made of its own step's
+    /// target alone: what a solve asking a few constraints at every state
+    /// it tries reads, rather than gathering every one of the part.
+    pub fn read(&self, reader: &Reader) -> GeopResult<Constraint> {
+        let mut inside = reader.clone();
+        for instance in &self.path {
+            inside = inside.placed_part(instance)?;
+        }
+        let own = TargetReference::<StepConstraints>::new(format!("{CONSTRAINTS}:{}", self.step));
+        let own = inside.retrieve_element(&ElementReference::whole(own))?;
+        let constraint = own.constraints.get(&self.name).ok_or_else(|| {
+            GeopError::new(format!(
+                "step `{}` defines no constraint `{}`",
+                self.step, self.name
+            ))
+        })?;
+        let mut constraint = constraint.clone();
+        for instance in self.path.iter().rev() {
+            constraint.jacobian = (constraint.jacobian.into_iter())
+                .map(|(state, rows)| (key_behind(instance, &state), rows))
+                .collect();
+        }
+        Ok(constraint)
+    }
 }
 
 impl Constraints {
@@ -119,12 +160,15 @@ impl Constraints {
                 let jacobian = (defined.constraint.jacobian.into_iter())
                     .map(|(state, rows)| (key_behind(name, &state), rows))
                     .collect();
+                let mut at = defined.at;
+                at.path.insert(0, name.to_string());
                 let defined = Defined {
                     step: key_behind(name, &defined.step),
                     constraint: Constraint {
                         jacobian,
                         ..defined.constraint
                     },
+                    at,
                 };
                 all.0.insert(key_behind(name, &constraint), defined);
             }
@@ -150,6 +194,11 @@ impl Constraints {
                 let defined = Defined {
                     step: own.step.clone(),
                     constraint: constraint.clone(),
+                    at: DefinedAt {
+                        path: Vec::new(),
+                        step: own.step.clone(),
+                        name: name.clone(),
+                    },
                 };
                 all.0.insert(name.clone(), defined);
             }
@@ -165,6 +214,11 @@ impl Constraints {
     /// Every constraint, in order of their names.
     pub fn iter(&self) -> impl Iterator<Item = (&str, &Constraint)> {
         (self.0.iter()).map(|(name, defined)| (name.as_str(), &defined.constraint))
+    }
+
+    /// Where each is defined, in order of their names.
+    pub fn defining(&self) -> impl Iterator<Item = (&str, &DefinedAt)> {
+        (self.0.iter()).map(|(name, defined)| (name.as_str(), &defined.at))
     }
 
     pub fn len(&self) -> usize {

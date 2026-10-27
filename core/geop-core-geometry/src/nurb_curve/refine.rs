@@ -56,6 +56,12 @@ impl<const D: usize> NurbCurve<D> {
     /// cut by thirty-two slots ended `4e-10` off its cap. A sharp cut adds
     /// the rounding of one subdivision per cut, nothing more.
     ///
+    /// A knot in the refined enclosure is the good choice there: the curve
+    /// is cut at it as at the knot it already has, where cutting beside it
+    /// would leave a piece a sliver of a span, a hair long, its control
+    /// points one point and its end without a tangent (a chamfer's contact
+    /// edge cut where its run-out span begins, as a fillet then found).
+    ///
     /// Refused if `t` could be an end of the domain — then `point` is an
     /// end of the curve, nothing to cut — or if the curve at the chosen
     /// parameter does not reach `point`.
@@ -74,7 +80,13 @@ impl<const D: usize> NurbCurve<D> {
                 "the parameter {refined:?} of {point:?} could be an end of the domain ({lo:?}, {hi:?}): the point is an end of the curve, not inside it"
             )));
         }
-        let cut = refined.sharpen();
+        let cut = self
+            .knot_vector
+            .iter()
+            .find(|k| {
+                k.could_be_equal(refined) && k.definitely_greater(lo) && k.definitely_less(hi)
+            })
+            .map_or_else(|| refined.sharpen(), |k| k.sharpen());
         let reached = self.evaluate_cartesian(cut)?;
         if !reached.could_be_equal(point) {
             return Err(GeopError::new(format!(
