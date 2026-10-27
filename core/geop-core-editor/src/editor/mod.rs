@@ -1473,6 +1473,7 @@ impl Editor {
                     summary,
                     error: (i < runs_to).then(|| error(&step.id)).flatten(),
                     runs: i < runs_to,
+                    suppressed: i < runs_to && part.suppressed().contains(&step.id),
                     editing: editing == Some(step.id.as_str()),
                     placed,
                 }

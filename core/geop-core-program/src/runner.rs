@@ -62,6 +62,12 @@ pub struct Counts {
     pub kept_makes: u64,
 }
 
+/// `names`, each in backticks, joined: `` `a`, `b` ``.
+pub(crate) fn quoted(names: &[&str]) -> String {
+    let quoted: Vec<String> = names.iter().map(|name| format!("`{name}`")).collect();
+    quoted.join(", ")
+}
+
 /// How a run went.
 pub struct RunOutput {
     /// The steps that failed, in program order, with why. A failed step does
@@ -129,9 +135,7 @@ impl Runner {
         for (at, step) in steps.iter().enumerate().take(end) {
             part.begin_step(at);
             let ran = match ids.insert(step.id.as_str()) {
-                true => (self.registry.get(&step.operation)).and_then(|operation| {
-                    operation.run(&mut StepContext::new(self, part, &step.id, at), &step.args)
-                }),
+                true => self.run_step_of(part, step, at),
                 // A step's id names what it produces: two steps of one id
                 // could not be told apart.
                 false => Err(GeopError::new(format!(
@@ -141,6 +145,15 @@ impl Runner {
             };
             part.end_step(at);
             if let Err(e) = ran {
+                // What fails for what a step suppressed did not make says
+                // which steps those are.
+                let suppressed = part.suppressed_before(at);
+                let e = match suppressed.is_empty() {
+                    true => e,
+                    false => {
+                        e.with_context(format!("built with {} suppressed", quoted(&suppressed)))
+                    }
+                };
                 step_errors.push((step.id.clone(), e));
             }
         }
@@ -153,6 +166,20 @@ impl Runner {
             self.keep(part);
         }
         RunOutput { step_errors }
+    }
+
+    /// Runs `step`, at position `at`, on `part` — unless it is suppressed
+    /// (see [`crate::program::ProgramStep::active`]): then it produces
+    /// nothing, and the steps after it see the part as the steps before it
+    /// left it.
+    fn run_step_of(&self, part: &mut Part, step: &ProgramStep, at: usize) -> GeopResult<()> {
+        let mut ctx = StepContext::new(self, part, &step.id, at);
+        if !ctx.active(step.active.as_deref())? {
+            part.suppress(&step.id);
+            return Ok(());
+        }
+        let operation = self.registry.get(&step.operation)?;
+        operation.run(&mut ctx, &step.args)
     }
 
     /// Notes what `part`, built from the program it runs, and the parts

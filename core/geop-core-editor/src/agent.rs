@@ -342,6 +342,7 @@ impl Session {
                     id: id.clone(),
                     operation: kind,
                     args: step_args,
+                    active: None,
                 };
                 program.steps.insert(at, step);
                 self.load(program)

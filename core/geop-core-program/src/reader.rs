@@ -14,7 +14,7 @@ use crate::{
         INSTANCE_SEPARATOR, InInstance, Located, PLACED, PlacedPart, key_behind, outermost_instance,
     },
     program::Program,
-    runner::Runner,
+    runner::{Runner, quoted},
     target::{Node, Read, TargetReference},
     values::{Setting, Settings, StateValue, StateValues},
     workspace::Location,
@@ -210,8 +210,14 @@ impl<'a> Reader<'a> {
                     true => "none".to_string(),
                     false => seen.join(", "),
                 };
+                let suppressed = self.part.suppressed_before(self.before);
+                let suppressed = match suppressed.is_empty() {
+                    true => String::new(),
+                    false => format!("; suppressed before here: {}", quoted(&suppressed)),
+                };
                 Err(GeopError::new(format!(
-                    "no step before here produces target `{name}` (the targets before here: {seen})"
+                    "no step before here produces target `{name}` (the targets before here: \
+                     {seen}{suppressed})"
                 )))
             }
         }

@@ -458,6 +458,7 @@ mod editor {
             id: "mystery".into(),
             operation: "no_such_operation".into(),
             args: serde_json::json!({}),
+            active: None,
         });
         let refused = editor.handle(Command::Load {
             program: unknown.clone(),

@@ -21,12 +21,17 @@ use geop_core_math::geop_error::{GeopError, GeopResult};
 
 use crate::{
     kept::{Derivation, Digest, Hasher, Keeper, KeptRead, digest_debug},
+    numeric::{evaluate, read_parameter},
     placed::{PLACED, PlacedPart, placed},
     reader::{Reader, Recording},
     runner::Runner,
     target::{Node, Provenance, Read, Target, TargetReference, next_version},
     values::{Settings, StateValues},
 };
+
+/// What the target a step's [`StepContext::active`] comes to is named, before
+/// the step's id.
+pub const ACTIVE: &str = "active:";
 
 /// What makes a node's value from its arguments and what it reads. A plain
 /// function, not a closure: what it makes may depend only on its
@@ -76,6 +81,9 @@ pub struct Part {
     pub(crate) state: StateValues,
     /// The steps of the last run that failed, with why.
     failures: Vec<(String, String)>,
+    /// The steps of the run going on, or of the last, that are suppressed
+    /// (see [`crate::program::ProgramStep::active`]), in order.
+    suppressed: Vec<String>,
     /// Changes whenever a run changes any node (see [`Part::revision`]).
     revision: u64,
     changed: bool,
@@ -161,6 +169,26 @@ impl Part {
     /// The steps of its last run that failed, in order, with why.
     pub fn failures(&self) -> &[(String, String)] {
         &self.failures
+    }
+
+    /// The steps of the last run that are suppressed — that ran, and found
+    /// they were not to — in order (see
+    /// [`crate::program::ProgramStep::active`]).
+    pub fn suppressed(&self) -> &[String] {
+        &self.suppressed
+    }
+
+    /// The steps suppressed before position `before`, in order.
+    pub(crate) fn suppressed_before(&self, before: usize) -> Vec<&str> {
+        (self.suppressed.iter())
+            .filter(|step| self.position(step).is_some_and(|at| at < before))
+            .map(String::as_str)
+            .collect()
+    }
+
+    /// Notes that the step running is suppressed.
+    pub(crate) fn suppress(&mut self, step: &str) {
+        self.suppressed.push(step.to_string());
     }
 
     /// How many steps of the last run ran.
@@ -462,6 +490,7 @@ impl Part {
         self.ran = 0;
         self.running = None;
         self.run += 1;
+        self.suppressed.clear();
         self.changed = false;
         if self.inputs != *inputs {
             self.inputs = inputs.clone();
@@ -645,6 +674,26 @@ impl<'a> StepContext<'a> {
     /// that declares one node per element of something asks.
     pub fn reader(&self) -> Reader<'_> {
         Reader::new(self.part, self.position)
+    }
+
+    /// Whether the step runs, as `active` says: a formula of the program's
+    /// parameters, not 0 where it does (see
+    /// [`crate::program::ProgramStep::active`]); always, for none. What the
+    /// formula comes to is a node of the step's own (`active:<step>`), so a
+    /// parameter it reads that changes runs the step again or suppresses
+    /// it, and nothing else does. Fails, naming the formula, where it does
+    /// not come to a number.
+    pub(crate) fn active(&mut self, active: Option<&str>) -> GeopResult<bool> {
+        let Some(formula) = active else {
+            return Ok(true);
+        };
+        let target = TargetReference::<bool>::new(format!("{ACTIVE}{}", self.step));
+        let ctx = |e: GeopError| e.with_context(format!("whether the step runs: {formula:?}"));
+        self.produce(&target, &formula.to_string(), |reader, formula| {
+            Ok(evaluate(formula, |name| read_parameter(reader, name))? != 0.0)
+        })
+        .map_err(ctx)?;
+        self.reader().target(&target).copied().map_err(ctx)
     }
 
     /// Produces the step's node of `target`: reused if it was made from

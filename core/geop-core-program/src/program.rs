@@ -20,15 +20,25 @@ use crate::{
     values::StateValues,
 };
 
-/// One step of a program: which operation, with which arguments, as saved.
-/// The operation reads its arguments from their saved form each time it
-/// runs or is edited, so a program is plain data: it is copied for undo,
-/// compared for change, and saved as it is.
+/// One step of a program: which operation, with which arguments, as saved,
+/// and whether it runs. The operation reads its arguments from their saved
+/// form each time it runs or is edited, so a program is plain data: it is
+/// copied for undo, compared for change, and saved as it is.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ProgramStep {
     pub id: String,
     pub operation: String,
     pub args: serde_json::Value,
+    /// Whether the step runs, as a formula of the program's parameters
+    /// ([`crate::numeric::evaluate`]): it runs where the formula is not 0
+    /// — always, for none. A step that does not run is suppressed: it
+    /// produces nothing, and the steps after it see the part as the steps
+    /// before it left it (see [`crate::runner::Runner::run`]). `"0"`
+    /// suppresses it outright; a column of the table a program's
+    /// configurations are looked up in, `configuration.fillet`, suppresses
+    /// it in the configurations whose row has 0 there.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub active: Option<String>,
 }
 
 impl ProgramStep {
@@ -43,6 +53,7 @@ impl ProgramStep {
             id,
             operation: A::KIND.to_string(),
             args,
+            active: None,
         })
     }
 
@@ -53,6 +64,7 @@ impl ProgramStep {
             id,
             operation: O::KIND.to_string(),
             args,
+            active: None,
         })
     }
 }

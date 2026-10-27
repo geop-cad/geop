@@ -200,6 +200,10 @@ pub struct StepInfo {
     pub error: Option<String>,
     /// Whether it runs: it is before where the program runs to.
     pub runs: bool,
+    /// Whether it is suppressed: it ran, and found it was not to (see
+    /// [`geop_core_program::program::ProgramStep::active`]), so it built
+    /// nothing.
+    pub suppressed: bool,
     /// Whether it is the step being edited.
     pub editing: bool,
     /// The parts it placed, each with its program's steps, to edit where

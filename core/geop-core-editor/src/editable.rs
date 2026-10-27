@@ -412,6 +412,7 @@ impl Editors {
             id: id.to_string(),
             operation: operation.kind().to_string(),
             args: operation.new_args(&context)?,
+            active: None,
         })
     }
 
