@@ -1,10 +1,10 @@
 //! Blending the edges of basic solids.
 
-use geop_core_math::scalars::Scalar;
+use geop_core_math::{scalars::Scalar, vector::Vector3};
 use geop_core_topology::SolidId;
 use geop_lib_booleans::{RemeshParams, boolean};
 use geop_lib_sweep::shapes::{self, block, block_part, v3};
-use geop_ops_model::BooleanOp;
+use geop_ops_model::{BooleanOp, Profile};
 use geop_ops_model::{
     NamedModel, Namer,
     testing::{assert_valid, edges_where, edges_with_middle_where, has_vertex},
@@ -412,6 +412,113 @@ fn pocket_floor_corner_with_mixed_radii_is_filled_smoothly() {
     // setback, twice the largest radius.
     assert_eq!(at([0.505, 0.505, 0.605]), P::Inside);
     assert_eq!(at([0.85, 0.85, 0.95]), P::Outside);
+}
+
+/// A prism in `model`, named `prism(name)`: the polygon `corners`,
+/// counter-clockwise in the plane through `origin` spanned by `u` and `v`,
+/// extruded along its normal `u x v` between `heights`.
+fn prism(
+    model: &mut NamedModel,
+    name: &str,
+    [origin, u, v]: [Vector3; 3],
+    corners: &[[f64; 2]],
+    heights: [f64; 2],
+) -> SolidId {
+    let namer = Namer::new("prism", name).unwrap();
+    let corners: Vec<_> = corners.iter().map(|&[x, y]| shapes::v2(x, y)).collect();
+    let profile = Profile::closed(geop_lib_sweep::polygon(&corners).unwrap());
+    geop_lib_sweep::extrude(
+        model,
+        &namer,
+        Some(&namer.root()),
+        &shapes::plane(origin, u, v),
+        &heights.map(Scalar::from_f64),
+        &[geop_lib_sweep::SweepLoop::plain(profile)],
+    )
+    .unwrap()
+    .solid
+    .unwrap()
+}
+
+/// A pyramid-shaped stock with a pocket shaped as a pyramid upside down
+/// through its top: the pocket's apex `(0, 0, -1.5)` a corner of four
+/// faces, every edge at it concave, its slanted edges running to `(±1, ±1,
+/// 0)`, two roofs crossed. Each slanted edge leaves the stock squarely, 0.4
+/// of the way up (`z = -0.9`): the stock is a block cut down by a plane
+/// square to each, so that a fill along the edge ends filled up to it.
+fn pyramid_pocketed() -> NamedModel {
+    let mut model = NamedModel::new();
+    let (x, y, z) = (v3(1.0, 0.0, 0.0), v3(0.0, 1.0, 0.0), v3(0.0, 0.0, 1.0));
+    let o = v3(0.0, 0.0, 0.0);
+    let triangle = [[-1.0, 0.0], [0.0, -1.5], [1.0, 0.0]];
+    let along_x = prism(&mut model, "x", [o, y, z], &triangle, [-3.0, 3.0]);
+    // Taller, as steep: the roofs' tops in one plane would leave the
+    // intersection coplanar faces to resolve.
+    let taller = [[-1.2, 0.3], [0.0, -1.5], [1.2, 0.3]];
+    let along_y = prism(&mut model, "y", [o, x, z], &taller, [-3.0, 3.0]);
+    let pyramid = combined(
+        &mut model,
+        ("pyramid", "Q"),
+        along_x,
+        along_y,
+        BooleanOp::Intersection,
+    );
+    let mut stock = block(&mut model, "b", [-3.0, -3.0, -3.0], [3.0, 3.0, 1.0]);
+    for (k, [a, b]) in [[1.0, 1.0], [-1.0, 1.0], [-1.0, -1.0], [1.0, -1.0]]
+        .into_iter()
+        .enumerate()
+    {
+        // The plane square to the edge `(a, b, 1.5)` through its point
+        // 0.4 of the way up, the stock kept below it.
+        let along = v3(a, b, 1.5).normalize().unwrap();
+        let u = v3(-b, a, 0.0).normalize().unwrap();
+        let v = along.prod_cross(&u);
+        let at = v3(0.4 * a, 0.4 * b, -0.9);
+        let square = [[-8.0, -8.0], [8.0, -8.0], [8.0, 8.0], [-8.0, 8.0]];
+        let below = prism(
+            &mut model,
+            &format!("s{k}"),
+            [at, u, v],
+            &square,
+            [-10.0, 0.0],
+        );
+        stock = combined(
+            &mut model,
+            ("stock", &format!("S{k}")),
+            stock,
+            below,
+            BooleanOp::Intersection,
+        );
+    }
+    combined(
+        &mut model,
+        ("pocket", "P"),
+        stock,
+        pyramid,
+        BooleanOp::Difference,
+    );
+    model
+}
+
+/// The pocket's four slanted edges filled in: at the apex, four concave
+/// edges meet and no ball touches the four faces, so the corner is set
+/// back and filled smoothly, the patch filling material in.
+#[test]
+fn pyramid_pockets_apex_filled_smoothly() {
+    let model = pyramid_pocketed();
+    let slanted = |p: [f64; 3]| p[0].abs() < 0.35 && p[2] < -1.0 && p[2] > -1.4;
+    let edges = edges_with_middle_where(&model, slanted);
+    assert_eq!(edges.len(), 4, "{edges:?}");
+    let model = blended(model, &edges, BlendShape::round(0.1));
+    assert_eq!(
+        crate::rolling_tests::assert_corner_is_smooth(&model, 1e-5),
+        8
+    );
+    let at = |p: [f64; 3]| geop_ops_model::testing::classify(&model, "fillet(F)", p);
+    use geop_core_topology::contains::shell::PointClassification as P;
+    // Filled in just above the apex, open further up the pocket's axis.
+    assert_eq!(at([0.0, 0.0, -1.49]), P::Inside);
+    assert_eq!(at([0.0, 0.0, -1.0]), P::Outside);
 }
 
 /// Every edge of the pocketed block rounded: at the rim's corners the rim
