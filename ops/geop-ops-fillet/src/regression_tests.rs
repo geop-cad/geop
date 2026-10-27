@@ -1192,3 +1192,33 @@ fn fillet_of_upright_edges_ending_on_a_chamfer() {
     program.push("round", FilletArgs::constant(uprights, 2.0));
     assert_builds_valid_with(&program, chamfer_registry);
 }
+
+/// The block of [`fillet_of_upright_edges_ending_on_a_chamfer`] the other
+/// way round: its two front upright edges rounded by 2 first, then the
+/// front edge of its top bevelled 2. That edge now ends where the two
+/// blends leave the top, tangent to them. The chamfer fails:
+///
+/// > Scalar::div: divisor interval contains zero
+///
+/// "moving from face FaceId(206) onto face FaceId(164)", at the ends of
+/// edge `block(box,c0,end)` along the top's front.
+#[test]
+#[ignore = "bug: bevelling a block's top front edge after its two front uprights are rounded fails with \"Scalar::div: divisor interval contains zero\" moving from face onto face at the edge's ends, where it runs tangentially into the blends"]
+fn chamfer_after_rounding_the_edges_it_runs_into() {
+    let mut program = Program::new();
+    program.push(
+        "box",
+        PrimitiveArgs::block([0.0, 0.0, 0.0], [40.0, 20.0, 10.0]),
+    );
+    let before = program.build_model(chamfer_registry).unwrap();
+    let uprights = edges_with_middle_where(&before, |m| {
+        (near(m[0], 0.0) || near(m[0], 40.0)) && near(m[1], 0.0)
+    });
+    assert_eq!(uprights.len(), 2, "{uprights:?}");
+    program.push("round", FilletArgs::constant(uprights, 2.0));
+    let rounded = program.build_model(chamfer_registry).unwrap();
+    let front = edges_at(&rounded, [20.0, 0.0, 10.0]);
+    assert_eq!(front.len(), 1, "{front:?}");
+    program.push("bevel", crate::ChamferArgs::even(front, 2.0));
+    assert_builds_valid_with(&program, chamfer_registry);
+}
