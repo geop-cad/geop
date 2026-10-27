@@ -314,15 +314,15 @@ fn shell_of_a_plate_with_a_rounded_boss() {
 /// `(100000, -100000, 0)`, the upright edge there rounded by 5, shelled 2
 /// thick open at its top. The rounded block is valid there, and so is the
 /// block shelled without the round, and both at the origin. Shelled, it
-/// is invalid, 1180 errors, vertices too wide:
-///
-/// > vertex VertexId(177)'s coordinate 1 is [-99995.000165, -99994.999835],
-/// > 0.00033 wide — wider than the 1e-4 every search downstream assumes
-///
-/// at `y = -99995`, 5 from the corner: where the blend and its inner copy
-/// meet the side `x = 100000` and its copy.
+/// was invalid, 1180 errors, the vertices where the blend's inner copy
+/// meets the side's `0.00033` wide. The blend's tangent line `ta` is a
+/// seam of one smooth surface, rebuilt on the side's new surface along its
+/// old pcurve carried on for room. That pcurve was fitted in twenty spans,
+/// `7e-11` wide here (`1.3e-12` at the origin), and carried on by its
+/// whole domain it extrapolated its end span twenty times its length. The
+/// room is now only as much as keeps the seam's ends within the drift its
+/// fit is held to.
 #[test]
-#[ignore = "bug: a block with a rounded upright edge at (1e5,-1e5,0), shelled open at the top, builds invalid — vertices where the blend meets the side are 3.3e-4 wide; at the origin, or unrounded, it is valid"]
 fn shell_of_a_rounded_block_far_from_the_origin() {
     let corner = [1e5, -1e5, 0.0];
     let mut program = Program::new();
