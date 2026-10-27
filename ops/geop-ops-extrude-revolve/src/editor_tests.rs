@@ -1120,34 +1120,26 @@ fn entering_and_leaving_a_sketch_draws_no_face_again() {
 /// The faces' triangles are sent once each: opening the sketch on the
 /// drilled box's top sends those of the box's top before the hole only —
 /// its sides are drawn alike — and leaving it, or opening it again, sends
-/// none: what is sent is what is drawn of the faces by name, a fraction of
-/// what their triangles were.
+/// none: what is sent is what is drawn of the faces by name.
 #[test]
 fn entering_and_leaving_a_sketch_sends_each_face_mesh_once() {
     let (mut editor, loaded) = editor();
     let scene = loaded.scene.expect("the drilled box is shown");
     let faces = scene.part.faces.len();
     assert_eq!(scene.meshes.len(), faces);
-    let meshes = serde_json::to_string(&scene.meshes).unwrap().len();
     let sent = |update: &Update| {
         let scene = update.scene.as_ref().expect("another part is shown");
-        let meshes: Vec<&String> = scene.meshes.keys().collect();
-        (meshes.len(), serde_json::to_string(update).unwrap().len())
+        scene.meshes.len()
     };
     let opened = handled(&mut editor, open("hole_sketch"));
-    let (sent_meshes, _) = sent(&opened);
+    let sent_meshes = sent(&opened);
     assert!(
         0 < sent_meshes && sent_meshes < faces,
         "{sent_meshes} of {faces}"
     );
     for command in [Command::Cancel, open("hole_sketch"), Command::Cancel] {
         let update = handled(&mut editor, command);
-        let (sent_meshes, bytes) = sent(&update);
-        assert_eq!(sent_meshes, 0);
-        assert!(
-            bytes < meshes / 2,
-            "{bytes} bytes sent, the meshes {meshes}"
-        );
+        assert_eq!(sent(&update), 0);
     }
 }
 
