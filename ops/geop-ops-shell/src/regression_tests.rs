@@ -308,3 +308,45 @@ fn shell_of_a_plate_with_a_rounded_boss() {
     let part = apply_to_model::<Shell>(rounded, "s", &args).unwrap();
     assert_valid(&part);
 }
+
+/// The enclosure of [`shell_of_a_block_with_a_rounded_upright_edge`] in a
+/// large assembly's coordinates: a 40 x 20 x 10 block with its corner at
+/// `(100000, -100000, 0)`, the upright edge there rounded by 5, shelled 2
+/// thick open at its top. The rounded block is valid there, and so is the
+/// block shelled without the round, and both at the origin. Shelled, it
+/// is invalid, 1180 errors, vertices too wide:
+///
+/// > vertex VertexId(177)'s coordinate 1 is [-99995.000165, -99994.999835],
+/// > 0.00033 wide — wider than the 1e-4 every search downstream assumes
+///
+/// at `y = -99995`, 5 from the corner: where the blend and its inner copy
+/// meet the side `x = 100000` and its copy.
+#[test]
+#[ignore = "bug: a block with a rounded upright edge at (1e5,-1e5,0), shelled open at the top, builds invalid — vertices where the blend meets the side are 3.3e-4 wide; at the origin, or unrounded, it is valid"]
+fn shell_of_a_rounded_block_far_from_the_origin() {
+    let corner = [1e5, -1e5, 0.0];
+    let mut program = Program::new();
+    program.push(
+        "box",
+        PrimitiveArgs::block(corner, [corner[0] + 40.0, corner[1] + 20.0, 10.0]),
+    );
+    let before = program.build_model(registry).unwrap();
+    let edge = edges_with_middle_where(&before, |m| {
+        near(m[0], corner[0]) && near(m[1], corner[1]) && near(m[2], 5.0)
+    });
+    assert_eq!(edge.len(), 1, "{edge:?}");
+    program.push("corner", FilletArgs::constant(edge, 5.0));
+    let rounded = program.build_model(registry).unwrap();
+    assert_valid(&rounded);
+    let top = face_name(&rounded, "fillet(corner)", [0.0, 0.0, 1.0]);
+    let args = ShellArgs {
+        solid: solid("fillet(corner)"),
+        faces: vec![ElementReference::new(model(), top)],
+        thickness: 2.0.into(),
+        other_faces: Vec::new(),
+        other_thickness: 0.2.into(),
+        outward: false,
+    };
+    let part = apply_to_model::<Shell>(rounded, "s", &args).unwrap();
+    assert_valid(&part);
+}
