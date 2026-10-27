@@ -39,13 +39,14 @@
 //! tangent to the fillets along the arcs and to the faces along the lines
 //! (see [`crate::tool`]). The lines need flat faces; where a face at the
 //! corner is curved, the corner is bevelled instead, each fillet ending on
-//! its own as where not every edge is filleted, and the boolean meeting
+//! its own as where not every edge is filleted (see
+//! [`crate::blend::tool_end`]: at more than three faces, a cut running out
+//! of the solid through all the other faces), and the boolean meeting
 //! them.
 //!
 //! Where more than three edges meet — a pyramid's apex — no ball touches
-//! all the faces either: the corner is bevelled alike, which needs each
-//! fillet to end on its own there (see [`crate::blend::tool_end`]: a cut
-//! running out of the solid through all the other faces). A corner where
+//! all the faces either (four planes generally have none): the corner is
+//! set back and filled alike, its loop of `2N` sides. A corner where
 //! every edge is filleted but the edges bend different ways — a pocket's
 //! rim, its upright edge filled in where the rim is cut away — is refused
 //! by name rather than left with the fillets overlapping. A chamfered
@@ -160,11 +161,6 @@ pub(crate) fn plan_corners(
             ))
             .with_context(ctx);
         }
-        // More than three faces have no one ball touching them all: the
-        // corner is bevelled, each fillet ending on its own there.
-        if incident.len() != 3 {
-            continue;
-        }
         // The fillets' radii at the corner: the ball's, where they agree.
         let mut at_corner = Vec::new();
         for &(k, at_end) in &reaching {
@@ -174,7 +170,7 @@ pub(crate) fn plan_corners(
                     .at_end(usize::from(at_end)),
             );
         }
-        let corner = if at_corner.iter().all(|&r| r == at_corner[0]) {
+        let corner = if incident.len() == 3 && at_corner.iter().all(|&r| r == at_corner[0]) {
             plan_corner(
                 model,
                 namer,
@@ -187,8 +183,9 @@ pub(crate) fn plan_corners(
                 &mut planned.chains,
             )
         } else {
-            // Fillets meeting with different radii have no one ball: the
-            // corner is set back and filled. The fill runs along the faces
+            // More than three faces, or fillets meeting with different
+            // radii, have no one ball touching them all: the corner is set
+            // back and filled. The fill runs along the faces
             // in straight lines, so only between flat faces; elsewhere the
             // corner is bevelled, each fillet ending on its own.
             if !set_back_fits(topology, chains, &reaching)? {

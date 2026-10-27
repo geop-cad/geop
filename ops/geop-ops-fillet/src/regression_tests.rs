@@ -31,7 +31,7 @@ use geop_ops_sketch::AddSketchArgs;
 
 use geop_core_topology::contains::shell::PointClassification;
 
-use crate::{Fillet, FilletArgs};
+use crate::{Fillet, FilletArgs, rolling_tests::assert_corner_is_smooth};
 
 /// The operations these programs are written in: given solids, blended.
 fn registry() -> GeopResult<OperationRegistry> {
@@ -1091,6 +1091,34 @@ fn fillet_of_two_opposite_edges_into_a_pyramids_apex() {
     assert_rounded_along_the_middle(&part);
 }
 
+/// Two opposite slanted edges of the lofted pyramid rounded, as in
+/// [`fillet_of_two_opposite_edges_into_a_pyramids_apex`]: each fillet runs
+/// out past the apex rolled on its faces carried on past it, and a lofted
+/// face's apex is a pole of its parametrization. Carried on, the pole row
+/// is no longer at the end of the domain, where `NurbSurface::normal`
+/// finds poles, but inside it, at the knot the continuation is joined on
+/// at. The ball rolled on from the station at the apex is seeded there
+/// (`u = 1 + 1.6e-15`), its faces' normals come out `±0.75` wide, and
+/// `roll` divides by `1 + n0·n1`, which could be zero. Past the pole the
+/// patch also runs inside out (`S_v` changes sign), so seeding elsewhere
+/// only moves the trouble. Needed: a pole row at a knot of full
+/// multiplicity found as one at the domain's end is, and the ball rolled
+/// on past it with the faces' normals continued through it, as the
+/// offset carries a surface through an apex (`NurbSurface3D::offset`).
+/// (With every edge rounded the corner is set back and no fillet runs
+/// out: [`fillet_of_every_edge_into_a_lofted_pyramids_apex`].)
+#[test]
+#[ignore = "a fillet run out past an apex that is a pole of its faces' parametrization: the faces carried on through the pole have no usable normal there (see the doc comment)"]
+fn fillet_of_two_opposite_edges_into_a_lofted_pyramids_apex() {
+    let (mut program, _) = lofted_pyramid();
+    let before = program.build_model(blade_registry).unwrap();
+    let opposite = edges_with_middle(&before, |m| near(m[2], 0.75) && m[0] * m[1] > 0.0);
+    assert_eq!(opposite.len(), 2, "{opposite:?}");
+    program.push("round", FilletArgs::constant(opposite, 0.1));
+    let part = program.build_model(blade_registry).unwrap();
+    assert_valid(&part);
+}
+
 /// Checks `part`, the pyramid with its slanted edge through `(1, 1, 0)`
 /// rounded by 0.1, is cut away halfway along it as deep as the round: its
 /// faces, of normals along `(1.5, 0, 1)` and `(0, 1.5, 1)`, meet at
@@ -1115,8 +1143,9 @@ fn assert_rounded_along_the_middle(part: &NamedModel) {
 }
 
 /// Every slanted edge of the pyramid rounded: no one ball touches the four
-/// faces at its apex, and the corner is bevelled, each fillet running out
-/// past it and the boolean meeting them.
+/// faces at its apex, and the corner is set back and filled smoothly, an
+/// eight-sided loop of the fillets' end arcs and the lines on the faces
+/// between them (see [`crate::corner`]).
 #[test]
 fn fillet_of_every_edge_into_a_pyramids_apex() {
     let (mut program, slanted) = pyramid();
@@ -1124,27 +1153,19 @@ fn fillet_of_every_edge_into_a_pyramids_apex() {
     let part = program.build_model(blade_registry).unwrap();
     assert_valid(&part);
     assert_rounded_along_the_middle(&part);
+    assert_eq!(assert_corner_is_smooth(&part, 1e-5), 8);
 }
 
 /// The lofted pyramid's slanted edges rounded, as the crossed roofs' are
-/// in [`fillet_of_every_edge_into_a_pyramids_apex`]. Each fillet runs out
-/// past the apex rolled on its faces carried on past it, and a lofted
-/// face's apex is a pole of its parametrization: carried on, the pole row
-/// is no longer at the end of the domain, where `NurbSurface::normal`
-/// finds poles, but inside it, at the knot the continuation is joined on
-/// at. The ball rolled on from the station at the apex is seeded there
-/// (`u = 1 + 1.6e-15`), its faces' normals come out `±0.75` wide, and
-/// `roll` divides by `1 + n0·n1`, which could be zero. Past the pole the
-/// patch also runs inside out (`S_v` changes sign), so seeding elsewhere
-/// only moves the trouble. Needed: a pole row at a knot of full
-/// multiplicity found as one at the domain's end is, and the ball rolled
-/// on past it with the faces' normals continued through it, as the
-/// offset carries a surface through an apex (`NurbSurface3D::offset`).
+/// in [`fillet_of_every_edge_into_a_pyramids_apex`]. A lofted face's apex
+/// is a pole of its parametrization, which a fillet run out past the apex
+/// could not be rolled through (its faces carried on through the pole have
+/// no usable normal there); set back, the fillets end before it.
 #[test]
-#[ignore = "a fillet run out past an apex that is a pole of its faces' parametrization: the faces carried on through the pole have no usable normal there (see the doc comment)"]
 fn fillet_of_every_edge_into_a_lofted_pyramids_apex() {
     let (mut program, slanted) = lofted_pyramid();
     program.push("round", FilletArgs::constant(slanted, 0.1));
     let part = program.build_model(blade_registry).unwrap();
     assert_valid(&part);
+    assert_eq!(assert_corner_is_smooth(&part, 1e-5), 8);
 }
