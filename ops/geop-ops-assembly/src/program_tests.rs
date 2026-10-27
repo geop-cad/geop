@@ -1692,16 +1692,13 @@ fn a_part_pattern_is_made_again_only_when_what_it_reads_changes() {
 /// the second to -45°.
 #[test]
 fn a_gear_coupling_turns_the_driven_link_by_its_ratio() {
-    use crate::{CouplingKind, JointKind, Mate, Transmission};
+    use crate::{CouplingKind, Joint, JointKind, Mate, Transmission};
     let (files, _) = workspace_example("arm");
     let workspace = workspace(files);
     let library = workspace.clone();
     let joint = |on_hole: usize, link: &str| {
         Mate::joint(
-            JointKind::Revolute {
-                min: None,
-                max: None,
-            },
+            JointKind::new(Joint::Revolute),
             vec![
                 examples::link_rim("base", on_hole, "end"),
                 examples::link_rim(link, 0, "start"),
@@ -1727,6 +1724,7 @@ fn a_gear_coupling_turns_the_driven_link_by_its_ratio() {
             transmission: Transmission::Gear,
             value: n(2.0),
             reverse: true,
+            offset: None,
         },
         vec!["add_part(driver,m1)".into(), "add_part(driven,m1)".into()],
     );

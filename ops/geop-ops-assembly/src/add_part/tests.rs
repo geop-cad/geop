@@ -542,10 +542,7 @@ fn constraint(reader: &Reader, name: &str) -> geop_lib_constraints::Constraint {
 /// coordinate turns the joint there.
 #[test]
 fn a_joint_turns_to_the_coordinate_set() {
-    let joint = MateKind::Joint(crate::JointKind::Revolute {
-        min: None,
-        max: None,
-    });
+    let joint = MateKind::Joint(crate::JointKind::new(crate::Joint::Revolute));
     let mates = args(false, &[("m1", joint, [origin("a"), origin("b")])]);
     // A pose the state gives — a state it does not give puts the part at
     // the origin, but is nothing a constraint is differentiated by.
@@ -652,10 +649,7 @@ fn assert_derivatives_are_true(assembly: &mut Assembly) {
 /// coordinate — are the true ones.
 #[test]
 fn mate_derivatives_are_true() {
-    let revolute = crate::JointKind::Revolute {
-        min: None,
-        max: None,
-    };
+    let revolute = crate::JointKind::new(crate::Joint::Revolute);
     let distance = Mate::constraint(
         Kind::Distance { value: n(1.5) },
         vec![origin("b"), origin("a")],
@@ -751,10 +745,13 @@ fn nested_mate_derivatives_are_true() {
 /// it is there.
 #[test]
 fn a_slider_stops_at_its_limits() {
-    let slider = crate::JointKind::Slider {
-        min: Some(n(-1.0)),
-        max: Some(n(2.0)),
-    };
+    let slider = crate::JointKind::new(crate::Joint::Slider).limited(
+        crate::Motion::Slide,
+        crate::Limits {
+            min: Some(n(-1.0)),
+            max: Some(n(2.0)),
+        },
+    );
     let mut assembly = Assembly::on_a(
         &[("b", mated(vec![jointed("m1", slider, "a", "b")]))],
         StateValues::new(),
@@ -786,10 +783,16 @@ fn a_screw_advances_its_lead_per_turn() {
             transmission: crate::Transmission::Screw,
             value: n(0.5),
             reverse: false,
+            offset: None,
         },
         vec!["add_part(b,m1)".into(), "add_part(b,m1)".into()],
     );
-    let joint = jointed("m1", crate::JointKind::Cylindrical, "a", "b");
+    let joint = jointed(
+        "m1",
+        crate::JointKind::new(crate::Joint::Cylindrical),
+        "a",
+        "b",
+    );
     let mut assembly = Assembly::on_a(
         &[("b", mated(vec![joint, ("m2".into(), screw)]))],
         StateValues::new(),
@@ -812,19 +815,14 @@ fn a_screw_advances_its_lead_per_turn() {
 /// turn moves the rack a quarter of the pitch circle along its axis.
 #[test]
 fn a_rack_follows_its_pinion() {
-    let revolute = crate::JointKind::Revolute {
-        min: None,
-        max: None,
-    };
-    let slider = crate::JointKind::Slider {
-        min: None,
-        max: None,
-    };
+    let revolute = crate::JointKind::new(crate::Joint::Revolute);
+    let slider = crate::JointKind::new(crate::Joint::Slider);
     let rack = Mate::coupling(
         crate::CouplingKind {
             transmission: crate::Transmission::RackPinion,
             value: n(0.5),
             reverse: false,
+            offset: None,
         },
         vec!["add_part(b,m1)".into(), "add_part(c,m1)".into()],
     );
@@ -875,19 +873,14 @@ fn conflicting_mates_are_named() {
 /// A gear coupling of a joint that does not turn is refused, saying why.
 #[test]
 fn a_coupling_of_a_joint_that_does_not_turn_is_refused() {
-    let slider = crate::JointKind::Slider {
-        min: None,
-        max: None,
-    };
-    let revolute = crate::JointKind::Revolute {
-        min: None,
-        max: None,
-    };
+    let slider = crate::JointKind::new(crate::Joint::Slider);
+    let revolute = crate::JointKind::new(crate::Joint::Revolute);
     let gear = Mate::coupling(
         crate::CouplingKind {
             transmission: crate::Transmission::Gear,
             value: n(2.0),
             reverse: false,
+            offset: None,
         },
         vec!["add_part(b,m1)".into(), "add_part(c,m1)".into()],
     );

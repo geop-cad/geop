@@ -580,7 +580,7 @@ fn gear_drive() -> Program {
         primitives::{DatumComponent, FrameAxis, Pose},
         vector::Vector3,
     };
-    use geop_ops_assembly::{AddPartArgs, CouplingKind, JointKind, Mate, Transmission};
+    use geop_ops_assembly::{AddPartArgs, CouplingKind, Joint, JointKind, Mate, Transmission};
     use geop_ops_model::datums::{ORIGIN, component_name, datum};
     use geop_ops_model::mate_entity::MateEntity;
     use geop_ops_model::selection::Selected;
@@ -637,10 +637,7 @@ fn gear_drive() -> Program {
     };
     let turning = |id: &str| {
         Mate::joint(
-            JointKind::Revolute {
-                min: None,
-                max: None,
-            },
+            JointKind::new(Joint::Revolute),
             vec![
                 MateEntity::on(Selected::Datum(datum(format!("{id}_shaft")))),
                 MateEntity::of(id, Selected::Datum(datum("axis"))),
@@ -660,6 +657,7 @@ fn gear_drive() -> Program {
             transmission: Transmission::Gear,
             value: n(15.0 / 12.0),
             reverse: true,
+            offset: None,
         },
         vec!["add_part(pinion,m1)".into(), "add_part(wheel,m1)".into()],
     );

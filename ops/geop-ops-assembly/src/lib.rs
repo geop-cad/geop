@@ -29,6 +29,8 @@ pub mod examples;
 #[cfg(test)]
 mod frame_tests;
 mod icons;
+#[cfg(test)]
+mod joint_tests;
 pub mod joints;
 #[cfg(test)]
 mod kept_tests;
@@ -61,8 +63,8 @@ pub use add_part::{AddPart, AddPartArgs};
 pub use drag_tool::DragTool;
 pub use draw::AssemblyDrawer;
 pub use mates::{
-    Anchor, CouplingKind, JointKind, Kind, Mate, MateKind, Motion, On, Resolved, Transmission,
-    joint_parameter, mate, mate_name,
+    Anchor, CouplingKind, Joint, JointKind, Kind, Limits, MOTIONS, Mate, MateKind, Motion, On,
+    Resolved, Transmission, foot_parameter, joint_parameter, mate, mate_name,
 };
 pub use mechanism::mates_resolved;
 pub use panel::{JointsCommand, JointsPanel, JointsState};

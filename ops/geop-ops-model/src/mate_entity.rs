@@ -12,6 +12,7 @@ use geop_core_editor::editing::{Style, Visual};
 use geop_core_editor::selectable::Selectable;
 use geop_core_editor::view::{FramePick, drawn};
 use geop_core_geometry::{
+    nurb_surface::NurbSurface3D,
     search::{MAX_NODES, min_subdivision_size},
     shape::Axis,
 };
@@ -78,6 +79,24 @@ impl MateEntity {
     /// placed, [`locate`](crate::placed::locate) says.
     pub fn shape(&self, reader: &Reader) -> GeopResult<Shape> {
         Ok(self.on.shape_in_instance(reader)?.element)
+    }
+
+    /// The surface of the face it is on, in its own part — the part
+    /// `reader` reads, or the one placed in it that it is of — its normal out
+    /// of its solid: none for any other element. Reads no state, as
+    /// [`MateEntity::shape`] does not.
+    pub fn surface(&self, reader: &Reader) -> GeopResult<Option<NurbSurface3D>> {
+        let Selected::Face(face) = self.on.local() else {
+            return Ok(None);
+        };
+        let ctx = with_context!("the surface of {}", self.label());
+        let inside = match self.part() {
+            "" => reader.clone(),
+            part => reader.placed_part(part).with_context(ctx)?,
+        };
+        let found = inside.retrieve_element(&face).with_context(ctx)?;
+        let surface = &found.model.topology().get_face(found.id)?.surface;
+        Ok(Some(surface.clone()))
     }
 
     /// The frame it gives in its own part — the part `reader` reads, or

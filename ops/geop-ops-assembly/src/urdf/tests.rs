@@ -20,7 +20,7 @@ use std::{
 };
 
 use crate::{
-    AddPartArgs, CouplingKind, JointKind, Mate, Transmission,
+    AddPartArgs, CouplingKind, Joint, JointKind, Limits, Mate, Motion, Transmission,
     examples::{self, pose},
     solving,
 };
@@ -267,8 +267,8 @@ fn assert_links_where_drawn(part: &Built, robot: &Robot) {
     let mechanism = Mechanism::of(&part.part.current()).unwrap();
     let mut coordinates = HashMap::new();
     for joint in &mechanism.joints {
-        let q = match joint.kind {
-            JointKind::Slider { .. } => joint.distance.to_f64() / 1000.0,
+        let q = match joint.kind.joint {
+            Joint::Slider => joint.distance.to_f64() / 1000.0,
             _ => joint.angle.to_f64().to_radians(),
         };
         coordinates.insert(joint.name.clone(), q);
@@ -436,10 +436,7 @@ fn the_arm_urdf_reads_back_as_a_tree() {
 /// the bar placed as `on`, on its top: turning all the way round.
 fn pin_joint(on: &str, hole: usize, link: &str, link_hole: usize) -> Mate {
     Mate::joint(
-        JointKind::Revolute {
-            min: None,
-            max: None,
-        },
+        JointKind::new(Joint::Revolute),
         vec![
             examples::link_rim(on, hole, "end"),
             examples::link_rim(link, link_hole, "start"),
@@ -541,6 +538,7 @@ fn a_gear_coupling_exports_as_a_mimic_joint() {
             transmission: Transmission::Gear,
             value: n(2.0),
             reverse: true,
+            offset: None,
         },
         vec!["add_part(driver,m1)".into(), "add_part(driven,m1)".into()],
     );
@@ -653,10 +651,13 @@ fn sliders_fastened_parts_and_reversed_joints() {
     let mut program = Program::new();
     program.push("base", placed("link.geop", true, Vec::new()));
     let slider = Mate::joint(
-        JointKind::Slider {
-            min: Some(n(0.0)),
-            max: Some(n(2.0)),
-        },
+        JointKind::new(Joint::Slider).limited(
+            Motion::Slide,
+            Limits {
+                min: Some(n(0.0)),
+                max: Some(n(2.0)),
+            },
+        ),
         vec![
             examples::link_rim("base", 0, "end"),
             examples::link_rim("lift", 0, "start"),
@@ -664,7 +665,7 @@ fn sliders_fastened_parts_and_reversed_joints() {
     );
     program.push("lift", placed("link.geop", false, vec![slider]));
     let fastened = Mate::joint(
-        JointKind::Fastened,
+        JointKind::new(Joint::Fastened),
         vec![
             examples::link_rim("lift", 1, "end"),
             examples::link_rim("tool", 0, "start"),
@@ -672,10 +673,13 @@ fn sliders_fastened_parts_and_reversed_joints() {
     );
     program.push("tool", placed("link.geop", false, vec![fastened]));
     let hinge = Mate::joint(
-        JointKind::Revolute {
-            min: Some(n(-90.0)),
-            max: Some(n(90.0)),
-        },
+        JointKind::new(Joint::Revolute).limited(
+            Motion::Turn,
+            Limits {
+                min: Some(n(-90.0)),
+                max: Some(n(90.0)),
+            },
+        ),
         vec![
             examples::link_rim("swing", 0, "start"),
             examples::link_rim("base", 1, "end"),
@@ -764,18 +768,24 @@ fn what_urdf_cannot_express_is_refused_by_name() {
         part.export("bad").unwrap_err().to_string()
     };
     let joint = "\"add_part(arm,m1)\"";
-    let err = refusal(Some(JointKind::Cylindrical), true);
+    let err = refusal(Some(JointKind::new(Joint::Cylindrical)), true);
     assert!(err.contains(joint) && err.contains("cylindrical"), "{err}");
-    let one_way = JointKind::Revolute {
-        min: None,
-        max: Some(n(90.0)),
-    };
+    let one_way = JointKind::new(Joint::Revolute).limited(
+        Motion::Turn,
+        Limits {
+            min: None,
+            max: Some(n(90.0)),
+        },
+    );
     let err = refusal(Some(one_way), true);
     assert!(err.contains(joint) && err.contains("one way only"), "{err}");
-    let endless = JointKind::Slider {
-        min: Some(n(0.0)),
-        max: None,
-    };
+    let endless = JointKind::new(Joint::Slider).limited(
+        Motion::Slide,
+        Limits {
+            min: Some(n(0.0)),
+            max: None,
+        },
+    );
     let err = refusal(Some(endless), true);
     assert!(err.contains(joint) && err.contains("its travel"), "{err}");
     let err = refusal(None, true);

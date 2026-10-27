@@ -44,7 +44,7 @@ use geop_ops_model::sketch::{
 use geop_ops_model::{Combine, PartDescription, element, read_model};
 use geop_ops_sketch::{AddSketch, AddSketchArgs};
 
-use crate::{AddPartArgs, JointKind, Kind, Mate, Motion, joint_parameter};
+use crate::{AddPartArgs, Joint, JointKind, Kind, Limits, Mate, Motion, joint_parameter};
 use geop_ops_model::mate_entity::MateEntity;
 
 /// The plane of the origin normal to `normal`, as a plane to sketch on.
@@ -279,10 +279,13 @@ pub fn link_rim(instance: &str, hole: usize, cap: &str) -> MateEntity {
 /// on it, pinned there — turning from `min` to `max` degrees.
 fn hinged(link: &str, on: &str, min: f64, max: f64) -> Mate {
     Mate::joint(
-        JointKind::Revolute {
-            min: Some(n(min)),
-            max: Some(n(max)),
-        },
+        JointKind::new(Joint::Revolute).limited(
+            Motion::Turn,
+            Limits {
+                min: Some(n(min)),
+                max: Some(n(max)),
+            },
+        ),
         vec![link_rim(on, 1, "end"), link_rim(link, 0, "start")],
     )
 }

@@ -378,7 +378,7 @@ fn a_revolute_joint_is_dragged_up_to_its_limit() {
         panic!("the joint's angle is shown");
     };
     assert_eq!(angle.value, 150.0);
-    assert!(step.presentation.dialog.get("mate:m1:max").is_some());
+    assert!(step.presentation.dialog.get("mate:m1:max:angle").is_some());
 
     // Set in the dialog: the forearm turns there.
     handled(&mut editor, dialog("mate:m1:angle", Value::Number(-60.0)));
@@ -1192,4 +1192,150 @@ fn a_step_of_a_placed_part_is_edited_where_it_is_placed() {
         matches!(distance, Some(Control::Number(number)) if number.value == 2.0),
         "cancelled, the file is as committed"
     );
+}
+
+/// A planar joint, added in the dialog between the two cubes' frames: its
+/// coordinates are offered in the dialog and the joints panel, the part
+/// goes where they are set, and dragged it slides in the plane and no
+/// higher.
+#[test]
+fn a_planar_joint_is_set_and_dragged_in_its_plane() {
+    let mut step = placing(args(false, &[]));
+    step.dialog("add_mate", Value::Choice("planar".into()));
+    let picked: Vec<PickedElement> = [origin("a"), origin("b")]
+        .iter()
+        .map(Selectable::picked)
+        .collect();
+    step.dialog("mate:m1:entities", Value::Elements(picked));
+    step.dialog("mate:m1", Value::Press);
+    for coordinate in ["angle", "x", "y"] {
+        let key = format!("mate:m1:{coordinate}");
+        assert!(
+            step.presentation().dialog.get(&key).is_some(),
+            "{key} offered"
+        );
+        let limit = format!("mate:m1:limited:{coordinate}");
+        assert!(
+            step.presentation().dialog.get(&limit).is_some(),
+            "{limit} offered"
+        );
+    }
+    step.dialog("mate:m1:x", Value::Number(2.0));
+    step.dialog("mate:m1:angle", Value::Number(90.0));
+    let pose = moved_to(&step, "b");
+    assert_close(apply(&pose, [0.0; 3]), [2.0, 0.0, 0.0], 1e-6);
+    assert_close(apply(&pose, [1.0, 0.0, 0.0]), [2.0, 1.0, 0.0], 1e-6);
+
+    // Grabbed at its top and dragged up and away: it slides, and stays on
+    // the plane.
+    step.send(StepEditEvent::Hover {
+        pointer: down_at(1.5, 0.5, 1.0),
+        shift: false,
+    });
+    step.send(StepEditEvent::Drag {
+        from: pointer([1.5, 0.5, 11.0], [0.0, 0.0, -1.0]),
+        to: pointer([3.0, 2.0, 11.0], [0.0, 0.0, -1.0]),
+        done: true,
+        shift: false,
+    });
+    let pose = moved_to(&step, "b");
+    let corner = apply(&pose, [0.0; 3]);
+    assert!(corner[2].abs() < 1e-7, "on its plane: {corner:?}");
+    assert!(corner[0] > 2.5, "slid along: {corner:?}");
+
+    let mut editor = step.editor;
+    let update = handled(&mut editor, Command::Commit);
+    let program = update.program.unwrap();
+    let joints = &joints_panel(&program)["joints"];
+    let values: Vec<&str> = (joints[0]["values"].as_array().unwrap().iter())
+        .map(|v| v["parameter"].as_str().unwrap())
+        .collect();
+    assert_eq!(
+        values,
+        [
+            "add_part(b,m1).angle",
+            "add_part(b,m1).x",
+            "add_part(b,m1).y"
+        ]
+    );
+    handled(&mut editor, set_joint("add_part(b,m1).y", -1.0));
+    assert!((state_number(&editor, "add_part(b,m1).y") + 1.0).abs() < 1e-9);
+}
+
+/// A roller is put against a drum by clicking: the tangent mate added, a
+/// click on the drum's side and one on the roller's top rim — and it rolls
+/// to touch the drum, its axis the roller's radius off the drum's side.
+#[test]
+fn a_roller_is_mated_to_a_drum_by_clicking_its_face_and_rim() {
+    let mut editor = editor();
+    let part = |radius| {
+        let mut program = Program::new();
+        program.push("c", PrimitiveArgs::cylinder_z([0.0; 3], radius, 1.0));
+        Some(program.to_json().unwrap())
+    };
+    let files = BTreeMap::from([
+        ("drum.geop".to_string(), part(2.0)),
+        ("roller.geop".to_string(), part(0.5)),
+    ]);
+    handled(&mut editor, Command::Files { files });
+    let mut program = Program::new();
+    program.push(
+        "drum",
+        AddPartArgs {
+            file: "drum.geop".into(),
+            ..Default::default()
+        }
+        .fixed(),
+    );
+    program.push(
+        "roller",
+        AddPartArgs {
+            file: "roller.geop".into(),
+            ..Default::default()
+        },
+    );
+    program.state.insert(
+        pose_state("roller"),
+        StateValue::Pose(
+            Pose::from_euler(Vector3::from_array([0.0, 3.5, -0.3].map(n)), [n(0.0); 3]).unwrap(),
+        ),
+    );
+    handled(
+        &mut editor,
+        Command::Load {
+            program,
+            path: Some("assembly.geop".into()),
+        },
+    );
+    let mut step = geop_core_editor::testing::Stepping::open(editor, "roller");
+    step.dialog("add_mate", Value::Choice("tangent".into()));
+    let hint = match step.presentation().dialog.get("mate_hint") {
+        Some(Control::Text { text, .. }) => text.clone(),
+        other => panic!("a hint: {other:?}"),
+    };
+    assert!(hint.contains("first a face"), "{hint}");
+    let click = |pointer| StepEditEvent::Click {
+        pointer,
+        button: geop_core_editor::editing::Button::Primary,
+        double: false,
+        shift: false,
+    };
+    // The drum's side, from the side; the roller's top rim, from above: a
+    // click by a rim picks its face there, and the tangent takes the rim.
+    step.send(click(pointer([10.0, 0.6, 0.5], [-1.0, 0.0, 0.0])));
+    step.send(click(down_at(
+        0.353_553_390_593_273_8,
+        3.853_553_390_593_274,
+        0.7,
+    )));
+    let mates = step.args::<AddPartArgs>().mates;
+    let entities = &mates["m1"].entities;
+    assert!(
+        matches!(&entities[..], [face, rim] if matches!(face.on, Selected::Face(_)) && matches!((&rim.on, &rim.at), (Selected::Edge(_), None) | (Selected::Face(_), Some(Selected::Edge(_))))),
+        "{entities:?}"
+    );
+    let pose = moved_to(&step, "roller");
+    let [x, y, z] = apply(&pose, [0.0, 0.0, 1.0]);
+    assert!((x.hypot(y) - 2.5).abs() < 1e-7, "{x} {y} {z}");
+    assert!(z <= 1.0 + 1e-7, "the rim no higher than the drum: {z}");
 }

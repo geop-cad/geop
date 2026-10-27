@@ -45,7 +45,8 @@ use geop_ops_model::parameters::{
 };
 
 use crate::{
-    AddPartArgs, Anchor, CouplingKind, JointKind, Kind, Mate, MateKind, Motion, Transmission,
+    AddPartArgs, Anchor, CouplingKind, Joint, JointKind, Kind, Limits, Mate, MateKind, Motion,
+    Transmission, joint_parameter,
     mechanism::mate_holds,
     solving::{SettingsState, check, settings},
 };
@@ -60,16 +61,19 @@ pub const PART: &str = "part";
 /// it does, and the group it is offered in.
 fn kinds() -> Vec<(&'static str, MateKind, &'static str, &'static str)> {
     let constraint = |name, kind, doc| (name, MateKind::Constraint(kind), doc, "Add");
-    let joint = |name, kind, doc| (name, MateKind::Joint(kind), doc, "Joint");
     let coupling = |name, transmission, value, reverse, doc| {
-        let kind = CouplingKind {
-            transmission,
-            value,
-            reverse,
-        };
+        let kind = CouplingKind::new(transmission, value, reverse);
         (name, MateKind::Coupling(kind), doc, "Couple")
     };
-    vec![
+    let joints = (Joint::ALL.into_iter()).map(|joint| {
+        (
+            joint.name(),
+            MateKind::Joint(JointKind::new(joint)),
+            joint.doc(),
+            "Joint",
+        )
+    });
+    let mut kinds = vec![
         (
             "fixed",
             MateKind::Anchor(Anchor::Fixed),
@@ -108,38 +112,32 @@ fn kinds() -> Vec<(&'static str, MateKind, &'static str, &'static str)> {
             },
             "Two lines or planes meet at an angle, in degrees.",
         ),
-        joint(
-            "revolute",
-            JointKind::Revolute {
-                min: None,
-                max: None,
-            },
-            "The second part turns about the first one's frame's z axis, and nothing else — a hinge: pick a frame on each part.",
+        constraint(
+            "tangent",
+            Kind::Tangent,
+            "A circular edge, a ball's center or a point keeps touching a face, flat or curved: a cam and its follower's roller, a pin in a slot of any shape. Pick the face first.",
         ),
-        joint(
-            "slider",
-            JointKind::Slider {
-                min: None,
-                max: None,
-            },
-            "The second part slides along the first one's frame's z axis, and nothing else: pick a frame on each part.",
+        constraint(
+            "path",
+            Kind::Path,
+            "A point — a vertex, a circle's center — runs along a curve: an edge or a sketch's curve. Pick the curve first.",
         ),
-        joint(
-            "cylindrical",
-            JointKind::Cylindrical,
-            "The second part turns about the first one's frame's z axis and slides along it — a shaft in a bearing.",
-        ),
-        joint(
-            "fastened",
-            JointKind::Fastened,
-            "The two parts are held together, their frames one: pick a frame on each part.",
-        ),
+    ];
+    kinds.extend(joints);
+    kinds.extend([
         coupling(
             "gear",
             Transmission::Gear,
             Scalar::ONE,
             true,
             "Two joints that turn — two gears' hinges — turn together: the first `ratio` times per turn of the second. Add the two joints first.",
+        ),
+        coupling(
+            "belt",
+            Transmission::Belt,
+            Scalar::ONE,
+            false,
+            "Two joints that turn — two pulleys' hinges, a belt or a chain round them — turn the same way: the first `ratio` times per turn of the second. Add the two joints first.",
         ),
         coupling(
             "rack_pinion",
@@ -155,7 +153,15 @@ fn kinds() -> Vec<(&'static str, MateKind, &'static str, &'static str)> {
             false,
             "A joint that slides moves its lead per turn of a joint that turns — of one cylindrical joint, say. Add the joints first.",
         ),
-    ]
+        coupling(
+            "linear",
+            Transmission::Linear,
+            Scalar::ONE,
+            false,
+            "Two joints that slide move together: the second `ratio` times as far as the first. Add the two joints first.",
+        ),
+    ]);
+    kinds
 }
 
 /// What the editor keeps while a placed part is edited.
@@ -248,7 +254,10 @@ fn selected<'a>(
         // The joints' fields, the value's — its name and unit — as each
         // transmission reads.
         let (labels, value_name, unit) = match kind.transmission {
-            Transmission::Gear => (["driving joint", "driven joint"], "ratio", Unit::Fraction),
+            Transmission::Gear | Transmission::Belt => {
+                (["driving joint", "driven joint"], "ratio", Unit::Fraction)
+            }
+            Transmission::Linear => (["driving joint", "driven joint"], "ratio", Unit::Fraction),
             Transmission::RackPinion => (
                 ["pinion's joint", "rack's joint"],
                 "pitch radius",
@@ -277,9 +286,9 @@ fn selected<'a>(
                     format!(
                         "No joint {}s yet: add one first — Joint, then {} — to the parts placed so far.",
                         motions[k].verb(),
-                        (JointKind::ALL.iter())
-                            .filter(|j| j.moves(motions[k]))
-                            .map(JointKind::label)
+                        (Joint::ALL.iter())
+                            .filter(|j| JointKind::new(**j).moves(motions[k]))
+                            .map(|j| j.label())
                             .collect::<Vec<_>>()
                             .join(" or "),
                     ),
@@ -325,6 +334,25 @@ fn selected<'a>(
                     args.mates.get_mut(&mate_id).map(|m| &mut m.kind)
                 {
                     *reverse = r;
+                }
+            },
+        );
+        // Where the driven joint is when the driving one is at zero.
+        let mate_id = id.to_string();
+        let driven = kind.transmission.motions()[1];
+        let unit = match driven {
+            Motion::Turn => Unit::Angle,
+            Motion::Slide | Motion::SlideX | Motion::SlideY => Unit::Length,
+        };
+        let offset = kind.offset.map_or(0.0, |o| o.to_f64());
+        f.number(
+            &format!("mate:{id}:offset"),
+            Number::new("offset", offset, unit),
+            move |Edit { args, .. }, v| {
+                if let Some(MateKind::Coupling(CouplingKind { offset, .. })) =
+                    args.mates.get_mut(&mate_id).map(|m| &mut m.kind)
+                {
+                    *offset = (v != 0.0).then(|| Scalar::from_f64(v));
                 }
             },
         );
@@ -383,6 +411,10 @@ fn selected<'a>(
              The first part holds, the second moves."
                 .to_string()
         }
+        MateKind::Constraint(kind) if kind.needs(0).is_some() => format!(
+            "Pick {} — of the placed part, of a part placed before, or of this part itself.",
+            mate.needs()
+        ),
         _ => format!(
             "Pick two entities, each {} — of the placed part, of a part placed before, or of this part itself.",
             mate.needs()
@@ -396,9 +428,10 @@ fn selected<'a>(
     for motion in kind.motions() {
         let unit = match motion {
             Motion::Turn => Unit::Angle,
-            Motion::Slide => Unit::Length,
+            Motion::Slide | Motion::SlideX | Motion::SlideY => Unit::Length,
         };
-        let value = joint.and_then(|j| j.values.iter().find(|v| v.measure == motion.measure()));
+        let value = joint
+            .and_then(|j| (j.values.iter()).find(|v| v.state == joint_parameter(&j.name, motion)));
         if let Some(value) = value {
             let key = format!("mate:{id}:{}", motion.name());
             let parameter = value.state.clone();
@@ -407,29 +440,27 @@ fn selected<'a>(
                 set_joint(edit.session, &parameter, v);
             });
         }
-        if !matches!(kind, JointKind::Revolute { .. } | JointKind::Slider { .. }) {
-            continue;
-        }
         let [min, max] = kind.limits(motion);
-        let mate_id = id.to_string();
+        let (mate_id, id_set) = (id.to_string(), id.to_string());
         // Limited to either side of where it is now, to start with.
         let here = value.map_or(0.0, |v| v.value);
         let reach = match motion {
             Motion::Turn => 90.0,
-            Motion::Slide => 1.0,
+            Motion::Slide | Motion::SlideX | Motion::SlideY => 1.0,
         };
         f.checkbox(
-            &format!("mate:{id}:limited"),
+            &format!("mate:{id}:limited:{}", motion.name()),
             format!("limit the {}", motion.name()),
             min.is_some() || max.is_some(),
-            move |Edit { args, .. }, limited| {
-                if let Some(MateKind::Joint(
-                    JointKind::Revolute { min, max } | JointKind::Slider { min, max },
-                )) = args.mates.get_mut(&mate_id).map(|m| &mut m.kind)
-                {
-                    let bound = |v: f64| limited.then(|| Scalar::from_f64(v));
-                    *min = bound(here - reach);
-                    *max = bound(here + reach);
+            move |Edit { args, .. }, on| {
+                if let Some(limits) = limits_of(args, &id_set, motion) {
+                    *limits = match on {
+                        true => Limits::between(
+                            Scalar::from_f64(here - reach),
+                            Scalar::from_f64(here + reach),
+                        ),
+                        false => Limits::NONE,
+                    };
                 }
             },
         );
@@ -437,20 +468,29 @@ fn selected<'a>(
             let Some(bound) = bound else {
                 continue;
             };
-            let mate_id = id.to_string();
+            let mate_id = mate_id.clone();
             f.number(
-                &format!("mate:{id}:{label}"),
+                &format!("mate:{id}:{label}:{}", motion.name()),
                 Number::new(format!("{label} {}", motion.name()), bound.to_f64(), unit),
                 move |Edit { args, .. }, v| {
-                    if let Some(MateKind::Joint(
-                        JointKind::Revolute { min, max } | JointKind::Slider { min, max },
-                    )) = args.mates.get_mut(&mate_id).map(|m| &mut m.kind)
-                    {
-                        *[min, max][k] = Some(Scalar::from_f64(v));
+                    if let Some(limits) = limits_of(args, &mate_id, motion) {
+                        *[&mut limits.min, &mut limits.max][k] = Some(Scalar::from_f64(v));
                     }
                 },
             );
         }
+    }
+}
+
+/// The limits of the coordinate of `motion` of the joint `mate` of `args`,
+/// to set — none if it is no joint.
+fn limits_of<'a>(args: &'a mut AddPartArgs, mate: &str, motion: Motion) -> Option<&'a mut Limits> {
+    match args.mates.get_mut(mate) {
+        Some(Mate {
+            kind: MateKind::Joint(kind),
+            ..
+        }) => Some(&mut kind.limits[motion.index()]),
+        _ => None,
     }
 }
 
