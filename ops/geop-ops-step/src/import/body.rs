@@ -846,24 +846,21 @@ impl Builder<'_> {
                 *count.entry(e).or_default() += 1;
             }
         }
+        // One another face uses too is no seam or bridge but an edge where
+        // the solid touches itself: a round pocket tangent to a wall slits
+        // the wall along the line it touches, and the pocket's faces meet
+        // there too. It bounds the face, and stays.
+        let used_elsewhere = |e: usize| {
+            (self.faces.iter().enumerate())
+                .any(|(g, face)| g != f && face.loops.iter().flatten().any(|&(x, _)| x == e))
+        };
         let mut doubled: Vec<usize> = count
             .into_iter()
-            .filter(|&(_, n)| n == 2)
+            .filter(|&(e, n)| n == 2 && !used_elsewhere(e))
             .map(|(e, _)| e)
             .collect();
         doubled.sort();
         for &e in &doubled {
-            if self
-                .faces
-                .iter()
-                .enumerate()
-                .any(|(g, face)| g != f && face.loops.iter().flatten().any(|&(x, _)| x == e))
-            {
-                return Err(GeopError::new(format!(
-                    "the edge {} it runs along twice is used by another face too",
-                    self.edges[e].label()
-                )));
-            }
             let loops = std::mem::take(&mut self.faces[f].loops);
             let mut out = Vec::new();
             for lp in loops {

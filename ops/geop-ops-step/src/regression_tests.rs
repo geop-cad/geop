@@ -270,18 +270,15 @@ fn cup_round_trips() {
 /// A 40 x 20 x 10 block with a round pocket of radius 10 milled 5 deep
 /// from its top, the cutter as wide as the block: the pocket's wall
 /// touches the block's two long sides along a line each (a "cylinder
-/// tangent to a wall"). It builds valid, and exported as STEP it cannot be
-/// read back:
-///
-/// > the edge e6 (#69) it runs along twice is used by another face too
-///
-/// (`e5 (#63)` for the same pocket sketched and extruded.) The pocket's
-/// wall meets each side in a line; as written, one face's loop runs along
-/// that edge twice and another face uses it too, which the reader refuses,
-/// though the kernel built and validated the part. A pocket of radius 5
-/// in the block's corner, touching two sides, fails alike.
+/// tangent to a wall"). It builds valid; exported as STEP it could not be
+/// read back: "the edge e6 (#69) it runs along twice is used by another
+/// face too". `#69` is the line where the wall touches the side `y = 20`,
+/// and the solid touches itself there: the side runs along it twice, a
+/// slit from its top edge down to the pocket's floor, and the wall's two
+/// quarters meet on it. The reader took every edge a face runs along twice
+/// for a seam or a bridge to take out, and refused one another face uses;
+/// such an edge now stays.
 #[test]
-#[ignore = "bug: a block with a round pocket tangent to its sides round-trips through STEP into \"the edge e6 (#69) it runs along twice is used by another face too\"; the kernel's own model is valid"]
 fn round_pocket_tangent_to_the_sides_round_trips() {
     let mut program = Program::new();
     program.push(
