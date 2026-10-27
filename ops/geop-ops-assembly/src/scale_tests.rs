@@ -928,3 +928,56 @@ fn robot_arm_timings() {
         );
     }
 }
+
+/// A screw dragged by the drag tool, each move of the pointer while the
+/// button is held: what the front end is sent is the screw where it went,
+/// and does not grow with the parts the robot has besides — four times the
+/// boards and screws, not three times the bytes. Counted in bytes, not
+/// timed (see "Count the work, not the seconds").
+#[test]
+#[ignore = "bug: every Drag event of the drag tool returns Changed::Run, so the editor sends the \
+            whole program state (every step listed), the scene's structure and its hidden list \
+            on each move of the pointer: 40 KB a move for a robot of one board and 20 screws, \
+            131 KB for four boards and 80, 588 KB (0.68 s) for 2000 parts — where one instance \
+            moved"]
+fn a_drag_event_sends_what_moved_however_large_the_assembly() {
+    let sent = |boards: usize, screws: usize| {
+        let (mut editor, _) = robot_editor(boards, screws);
+        handled(
+            &mut editor,
+            Command::Tool {
+                key: Some("drag".into()),
+            },
+        );
+        handled(
+            &mut editor,
+            Command::Event {
+                event: StepEditEvent::Hover {
+                    pointer: down_onto(5.25, 0.25),
+                    shift: false,
+                },
+            },
+        );
+        let moved = handled(
+            &mut editor,
+            Command::Event {
+                event: StepEditEvent::Drag {
+                    from: down_onto(5.25, 0.25),
+                    to: down_onto(5.3, 0.3),
+                    done: false,
+                    shift: false,
+                },
+            },
+        );
+        let names: Vec<String> = (moved.scene.iter())
+            .flat_map(|scene| scene.instances.iter().map(|i| i.name.clone()))
+            .collect();
+        assert_eq!(names, ["screw10"], "{}", size(&moved));
+        serde_json::to_string(&moved).unwrap().len()
+    };
+    let (few, many) = (sent(1, 20), sent(4, 80));
+    assert!(
+        many < 2 * few,
+        "a move of one screw sent {few} bytes with 20 screws, {many} with 80"
+    );
+}

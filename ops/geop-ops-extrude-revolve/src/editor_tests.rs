@@ -1161,3 +1161,81 @@ fn opening_a_sketch_meshes_again_only_the_faces_changed_after_it() {
         "{again} of {faces} faces meshed again"
     );
 }
+
+/// Seeking back, adding a step there, and taking it back by undo: the
+/// program runs to where it ran before the step was added — the marker
+/// back at 2, the hole not built — and redo puts the step back with the
+/// marker after it.
+#[test]
+#[ignore = "bug: Command::Undo and Command::Redo set the marker to None, so undoing a step added \
+            at the marker (2 of 4) runs the whole program — the marker jumps to the end (4) and \
+            the hole the user had rolled back reappears; redo leaves it at the end too (5)"]
+fn undo_keeps_where_the_program_runs_to() {
+    let (mut editor, _) = editor();
+    editor.handle(Command::Seek { marker: Some(2) });
+    editor.handle(Command::New {
+        kind: "extrude".into(),
+    });
+    handled(&mut editor, Command::Commit);
+    let undone = handled(&mut editor, Command::Undo);
+    let state = undone.program.expect("the program is sent");
+    assert_eq!(state.steps.len(), 4);
+    assert_eq!(state.marker, 2, "the program runs to where it ran");
+    let redone = handled(&mut editor, Command::Redo);
+    assert_eq!(redone.program.expect("the program is sent").marker, 3);
+}
+
+/// The program rolled back to before `hole_sketch`, then the hole dragged
+/// to the top of the step list: the marker stays before `hole_sketch`, as
+/// it does for every other edit that moves steps — the box still runs.
+#[test]
+#[ignore = "bug: Command::Move moves the step but leaves the marker at its index, unlike \
+            EditorContext::edit_program which keeps it at its step: with the marker at 2 \
+            (before `hole_sketch`), moving `hole` to the top leaves `box` past the marker, \
+            so the box the user saw disappears"]
+fn moving_a_step_keeps_where_the_program_runs_to() {
+    let (mut editor, _) = editor();
+    handled(&mut editor, Command::Seek { marker: Some(2) });
+    let moved = handled(
+        &mut editor,
+        Command::Move {
+            id: "hole".into(),
+            index: 0,
+        },
+    );
+    let state = moved.program.expect("the program is sent");
+    let runs: Vec<(&str, bool)> = (state.steps.iter())
+        .map(|step| (step.id.as_str(), step.runs))
+        .collect();
+    assert_eq!(
+        runs,
+        [
+            ("hole", true),
+            ("outline", true),
+            ("box", true),
+            ("hole_sketch", false)
+        ]
+    );
+}
+
+/// The box's extrusion opened and made 3 deep, then copied as the desktop
+/// app's Ctrl+C copies the step open: what is copied is the step as it is
+/// edited — 3 deep — not as it was before it was opened.
+#[test]
+#[ignore = "bug: Command::Copy copies the step from the program as committed (`self.file`), \
+            ignoring the step being edited: the desktop app enables Copy only while a step is \
+            open (Action::CopyStep), so Ctrl+C after typing 3 into the box's distance copies \
+            the extrusion 1 deep"]
+fn copying_the_step_being_edited_copies_it_as_edited() {
+    let (mut editor, _) = editor();
+    handled(&mut editor, open("box"));
+    handled(&mut editor, dialog("distance", Value::Number(3.0)));
+    let copied = handled(&mut editor, Command::Copy { id: "box".into() });
+    let text = match copied.export.expect("the step as text").content {
+        geop_core_editor::output::Content::Text(text) => text,
+        other => panic!("a step is copied as text: {other:?}"),
+    };
+    let excerpt = geop_core_program::program::Program::from_json(&text).unwrap();
+    let extrusion: ExtrudeArgs = args(&excerpt.steps[0]);
+    assert_eq!(extrusion.extent, crate::Extents::blind(3.0));
+}
