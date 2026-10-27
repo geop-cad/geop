@@ -160,3 +160,37 @@ fn project_curve_projects_along_the_face_normal() {
     let args: crate::ProjectCurveArgs = step.args();
     assert_eq!(args.along, crate::Along::FaceNormal);
 }
+
+/// Picking the box to delete: hovering its top lights what a click there
+/// picks — the whole solid, every face of it — not the top alone.
+#[test]
+#[ignore = "bug: a field that picks bodies (delete_body's, and the patterns' and mirror's) \
+            lights only the face under the pointer on hover — `block(body,end)` — while the \
+            click picks the solid `block(body)` and lights all six of its faces: the hover \
+            does not show what the click will pick"]
+fn picking_a_body_lights_the_whole_body_on_hover() {
+    let lit = |step: &Stepping| -> std::collections::BTreeSet<String> {
+        (step.presentation().highlights.iter())
+            .map(|h| format!("{}:{}", h.kind, h.name))
+            .collect()
+    };
+    let mut step = Stepping::new(on_a_box(), "delete_body");
+    let above = pointer([1.0, 1.0, 10.0], [0.0, 0.0, -1.0]);
+    step.send(StepEditEvent::Leave);
+    let before = lit(&step);
+    step.send(StepEditEvent::Hover {
+        pointer: above,
+        shift: false,
+    });
+    let hovered: Vec<String> = lit(&step).difference(&before).cloned().collect();
+    step.send(StepEditEvent::Click {
+        pointer: above,
+        button: Button::Primary,
+        double: false,
+        shift: false,
+    });
+    step.send(StepEditEvent::Leave);
+    let picked: Vec<String> = lit(&step).difference(&before).cloned().collect();
+    assert_eq!(picked.len(), 6, "the box's six faces: {picked:?}");
+    assert_eq!(hovered, picked, "the hover lights what the click picks");
+}
