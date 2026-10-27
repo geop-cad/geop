@@ -111,16 +111,16 @@ pub enum Command {
         payload: serde_json::Value,
     },
     /// Show the datum, sketch, solid or placed part `name` of the part
-    /// drawn, or hide it — whatever the editor would do by itself — for as
-    /// long as the same file is edited.
+    /// drawn, or hide it — whatever the editor would do by itself: a
+    /// display setting, saved with the program
+    /// ([`geop_core_program::program::Display`]), not a step.
     Visibility {
         name: String,
         visible: bool,
     },
     /// Draw the placed part `name` — `bolt`, `asm/bolt` — in the colour
-    /// `color`, `#rrggbb`, over its own, or — `None` — in its own again,
-    /// for as long as the same file is edited: a display setting, as the
-    /// camera is, not a step.
+    /// `color`, `#rrggbb`, over its own, or — `None` — in its own again:
+    /// a display setting, saved with the program, not a step.
     Appearance {
         name: String,
         #[serde(default)]
@@ -128,7 +128,7 @@ pub enum Command {
     },
     /// Show only the placed parts `names` — with the parts placed in them
     /// and those they are placed in — of the parts placed, or every one
-    /// again for none, for as long as the same file is edited.
+    /// again for none: a display setting, saved with the program.
     Isolate {
         names: Vec<String>,
     },

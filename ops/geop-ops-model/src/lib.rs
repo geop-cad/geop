@@ -113,7 +113,8 @@ use geop_core_math::geop_error::GeopResult;
 /// listed ([`datums::DatumsDrawer`]); its sketches drawn and listed
 /// ([`sketch::SketchDrawer`]); the steps defining its parameters,
 /// tables and properties, and the part drawn in its colour (see
-/// [`parameters`]).
+/// [`parameters`]), and the panel switching its configurations
+/// ([`parameters::ConfigurationsPanel`]).
 pub fn register(r: Registry) -> GeopResult<Registry> {
     r.drawer(ModelDrawer::default())?
         .drawer(datums::DatumsDrawer)?
@@ -121,5 +122,6 @@ pub fn register(r: Registry) -> GeopResult<Registry> {
         .operation(parameters::DefineParameters)?
         .operation(parameters::LookupTable)?
         .operation(parameters::PartProperties)?
-        .drawer(parameters::PartColor)
+        .drawer(parameters::PartColor)?
+        .panel(parameters::ConfigurationsPanel)
 }

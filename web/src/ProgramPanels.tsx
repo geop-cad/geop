@@ -1,7 +1,7 @@
 import { Fragment, type ReactNode } from "react";
 import type { Update } from "./geop";
 import { JointsPanel } from "./JointsPanel";
-import type { JointsCommand, JointsState } from "./panels";
+import { CONFIGURATIONS, type ConfigurationsCommand, type ConfigurationsState, type JointsCommand, type JointsState } from "./panels";
 
 /** What a panel is shown with: its state — none before the kernel sent it — and how it sends its commands. */
 interface PanelProps<State, Payload> {
@@ -30,6 +30,42 @@ function panel<State, Payload>(view: (props: PanelProps<State, Payload>) => Reac
  * A panel of a key not here is not shown.
  */
 const PANELS: Record<string, PanelView> = {
+  [CONFIGURATIONS]: panel(({ state, enabled, idle, send }: PanelProps<ConfigurationsState, ConfigurationsCommand>) => {
+    const tables = state?.tables ?? [];
+    const configurations = tables.find((t) => t.input === "configuration");
+    return (
+      <div className="configurations">
+        {tables.map((table) => (
+          <label key={table.step} className="configuration" title={`The ${table.input} the part is built in`}>
+            <span>{table.input === "configuration" ? "Configuration" : table.input}</span>
+            <select
+              value={table.selected}
+              disabled={!enabled}
+              onChange={(e) => void send({ command: "select", input: table.input, row: e.target.value })}
+            >
+              {table.rows.map((row) => (
+                <option key={row} value={row}>
+                  {row}
+                </option>
+              ))}
+            </select>
+          </label>
+        ))}
+        <button
+          className="configuration-add"
+          disabled={!enabled || !idle}
+          title={
+            configurations
+              ? "Add a configuration as this one is, and build it"
+              : "Add a configuration: the part as it is stays the Default one"
+          }
+          onClick={() => void send({ command: "add" })}
+        >
+          {configurations ? "+" : "+ Configuration"}
+        </button>
+      </div>
+    );
+  }),
   joints: panel(({ state, enabled, idle, send }: PanelProps<JointsState, JointsCommand>) => {
     const joints = state?.joints ?? [];
     const conflicting = state?.conflicting ?? [];

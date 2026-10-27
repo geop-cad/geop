@@ -194,4 +194,6 @@ impl PartOperation for AddPart {
 }
 
 #[cfg(test)]
+mod configurations;
+#[cfg(test)]
 mod tests;

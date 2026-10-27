@@ -17,6 +17,9 @@ pub enum Action {
     Undo,
     Redo,
     CopyStep,
+    /// Suppress the step edited in the configuration built, or run it
+    /// again.
+    SuppressStep,
     Paste,
     Fit,
     ResetView,
@@ -61,6 +64,7 @@ impl Action {
             Action::Commit => key(COMMAND, Key::Enter),
             Action::Cancel => key(COMMAND, Key::Backspace),
             Action::CopyStep => key(COMMAND, Key::C),
+            Action::SuppressStep => key(COMMAND, Key::E),
             Action::Paste => key(COMMAND, Key::V),
             Action::NewPart => key(COMMAND, Key::N),
             Action::OpenFolder => key(COMMAND, Key::O),
@@ -85,6 +89,7 @@ impl Action {
             Action::Undo,
             Action::Commit,
             Action::Cancel,
+            Action::SuppressStep,
             Action::NewPart,
             Action::OpenFolder,
             Action::ToggleProjection,
@@ -108,7 +113,9 @@ impl Action {
             Action::Cancel | Action::TogglePreview => app.step.is_some(),
             Action::Undo => app.can_undo(),
             Action::Redo => app.can_redo(),
-            Action::CopyStep => app.step.as_ref().is_some_and(|s| s.id.is_some()),
+            Action::CopyStep | Action::SuppressStep => {
+                app.step.as_ref().is_some_and(|s| s.id.is_some())
+            }
             Action::Inspect(_) | Action::Tool(_) | Action::Export(_) => app.ready() && idle,
             Action::OpenFile(_)
             | Action::OpenStep(_)
@@ -227,6 +234,7 @@ pub fn palette(app: &Controller) -> Vec<Entry> {
         ("Undo", Action::Undo),
         ("Redo", Action::Redo),
         ("Copy the step", Action::CopyStep),
+        ("Suppress the step, or run it again", Action::SuppressStep),
         ("Paste steps", Action::Paste),
         ("Fit the part in the view", Action::Fit),
         ("Reset the view", Action::ResetView),

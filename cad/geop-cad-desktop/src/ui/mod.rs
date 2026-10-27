@@ -107,6 +107,11 @@ impl GeopApp {
                     app.copy_step(&id);
                 }
             }
+            Action::SuppressStep => {
+                if let Some(id) = app.step.as_ref().and_then(|s| s.id.clone()) {
+                    app.command(panels::suppress_step(&id));
+                }
+            }
             Action::Paste => ctx.send_viewport_cmd(egui::ViewportCommand::RequestPaste),
             Action::Fit => app.fit(None),
             Action::ResetView => app.reset_view(),

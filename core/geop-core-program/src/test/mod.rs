@@ -125,6 +125,7 @@ impl Running {
         let program = Program {
             steps: program.steps.clone(),
             state: state.clone(),
+            ..Program::default()
         };
         let upto = program.steps.get(end).map(|step| step.id.clone());
         (self.runner).run_with(&mut self.part, &program, inputs, upto.as_deref())

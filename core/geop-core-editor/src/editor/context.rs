@@ -23,6 +23,9 @@ pub enum Changed {
     Run,
     /// The program.
     Program,
+    /// How the program is shown ([`geop_core_program::program::Display`]):
+    /// an edit to undo, and to save with it, that runs nothing.
+    Display,
 }
 
 /// A program, its runner and the part it last ran on: what a solve runs

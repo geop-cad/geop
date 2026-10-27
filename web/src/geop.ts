@@ -723,6 +723,8 @@ export interface StepInfo {
   error: string | null;
   /** Whether it runs: it is before where the program runs to. */
   runs: boolean;
+  /** Whether it is suppressed: it ran, and found it was not to, so it built nothing. */
+  suppressed: boolean;
   editing: boolean;
   /** The parts it placed, each with its program's steps, to edit where it is placed. */
   placed: PlacedSteps[];

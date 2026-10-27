@@ -48,7 +48,7 @@ use geop_core_program::{
 };
 use std::{
     cell::RefCell,
-    collections::{BTreeMap, BTreeSet, HashMap},
+    collections::{BTreeMap, HashMap},
     rc::Rc,
 };
 
@@ -244,15 +244,6 @@ pub struct Editor {
     /// drawn with other sketches than before — the part before a sketch
     /// opened — draws its sketches again, not its faces.
     drawings: Drawings,
-    /// What the user chose to show or hide, by name, over what the editor
-    /// would by itself (see [`Editor::hidden`]).
-    visibility: BTreeMap<String, bool>,
-    /// The colours the user chose to draw placed parts in, by name, over
-    /// their own ([`Command::Appearance`]).
-    colors: BTreeMap<String, String>,
-    /// The placed parts the user chose to show alone, if any
-    /// ([`Command::Isolate`]).
-    isolated: BTreeSet<String>,
 }
 
 impl Editor {
@@ -298,9 +289,6 @@ impl Editor {
             drawn: None,
             views: RefCell::default(),
             drawings: Drawings::default(),
-            visibility: BTreeMap::new(),
-            colors: BTreeMap::new(),
-            isolated: BTreeSet::new(),
         }
     }
 
@@ -443,7 +431,7 @@ impl Editor {
         let before = (!matches!(command, Command::Event { .. } | Command::Preview { .. }))
             .then(|| (self.file.clone(), self.path.clone()));
         let result = self.apply(command);
-        if matches!(result, Ok(Changed::Program))
+        if matches!(result, Ok(Changed::Program | Changed::Display))
             && let Some((before, path)) = before
             && path == self.path
             && self.file != before
@@ -451,7 +439,7 @@ impl Editor {
             self.undo.push(before);
             self.redo.clear();
         }
-        if !matches!(result, Ok(Changed::Nothing)) {
+        if !matches!(result, Ok(Changed::Nothing | Changed::Display)) {
             // Settling runs the whole program, so what is shown runs after.
             self.settle();
             self.rerun();
@@ -474,7 +462,7 @@ impl Editor {
             seen: self.shown_part(steps).seen(),
             steps,
             hidden,
-            colors: self.colors.clone(),
+            colors: self.file.display.colors.clone(),
             sheet: (step.as_ref())
                 .and_then(|s| s.presentation.sheet)
                 .map(|e| (e.center.to_array().map(|c| c.to_f64()), e.size.to_f64())),
@@ -488,7 +476,10 @@ impl Editor {
                 None
             }
         };
-        let program = match matches!(result, Ok(Changed::Program | Changed::Run)) {
+        let program = match matches!(
+            result,
+            Ok(Changed::Program | Changed::Run | Changed::Display)
+        ) {
             true => match self.program_state() {
                 Ok(program) => Some(program),
                 Err(e) => {
@@ -855,7 +846,12 @@ impl Editor {
                     self.open = None;
                     return Ok(Changed::Run);
                 }
-                self.file = committed;
+                // How the program is shown is the file's: it may have
+                // changed while the step was edited.
+                self.file = Program {
+                    display: std::mem::take(&mut self.file.display),
+                    ..committed
+                };
                 if open.new
                     && let Some(marker) = &mut self.marker
                 {
@@ -962,9 +958,6 @@ impl Editor {
                     }
                     self.undo.clear();
                     self.redo.clear();
-                    self.visibility.clear();
-                    self.colors.clear();
-                    self.isolated.clear();
                 }
                 self.file = program;
                 self.marker = None;
@@ -1030,8 +1023,8 @@ impl Editor {
                 Changed::Program
             }
             Command::Visibility { name, visible } => {
-                self.visibility.insert(name, visible);
-                Changed::Nothing
+                self.file.display.visibility.insert(name, visible);
+                Changed::Display
             }
             Command::Appearance { name, color } => {
                 match color {
@@ -1042,15 +1035,15 @@ impl Editor {
                                 "{color:?} is no colour: a colour is `#rrggbb`"
                             )));
                         }
-                        self.colors.insert(name, color)
+                        self.file.display.colors.insert(name, color)
                     }
-                    None => self.colors.remove(&name),
+                    None => self.file.display.colors.remove(&name),
                 };
-                Changed::Nothing
+                Changed::Display
             }
             Command::Isolate { names } => {
-                self.isolated = names.into_iter().collect();
-                Changed::Nothing
+                self.file.display.isolated = names.into_iter().collect();
+                Changed::Display
             }
             #[expect(
                 clippy::panic,
@@ -1379,7 +1372,8 @@ impl Editor {
         }
         // The placed parts not isolated, of those drawn, when some are: a
         // part is shown with the parts placed in it and those it is in.
-        if !self.isolated.is_empty() {
+        let display = &self.file.display;
+        if !display.isolated.is_empty() {
             let related = |name: &str, other: &str| {
                 let inside = |a: &str, b: &str| {
                     (a.strip_prefix(b)).is_some_and(|rest| rest.starts_with(INSTANCE_SEPARATOR))
@@ -1388,14 +1382,14 @@ impl Editor {
             };
             for instance in &self.view_of(steps).instances {
                 let name = &instance.name;
-                if !self.isolated.iter().any(|i| related(name, i)) && !hidden.contains(name) {
+                if !display.isolated.iter().any(|i| related(name, i)) && !hidden.contains(name) {
                     hidden.push(name.clone());
                 }
             }
         }
         // Then what the user chose — but what a click could pick now is
         // shown, to be picked.
-        for (name, &visible) in &self.visibility {
+        for (name, &visible) in &display.visibility {
             if visible || pickable(name) {
                 hidden.retain(|h| h != name);
             } else if !hidden.contains(name) {
@@ -1473,7 +1467,7 @@ impl Editor {
                     summary,
                     error: (i < runs_to).then(|| error(&step.id)).flatten(),
                     runs: i < runs_to,
-                    suppressed: i < runs_to && part.suppressed().contains(&step.id),
+                    suppressed: part.suppressed().contains(&step.id),
                     editing: editing == Some(step.id.as_str()),
                     placed,
                 }

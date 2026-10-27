@@ -1,13 +1,14 @@
 //! [`Program`]: what a program is, and what a program file holds — its
-//! steps, each an operation and its saved arguments, and its state: where
-//! its placed parts are and how its joints are turned, what solving it
-//! changes. Serialized as `{"steps": [...], "state": {...}}`.
+//! steps, each an operation and its saved arguments, its state: where its
+//! placed parts are and how its joints are turned, what solving it
+//! changes — and how it is shown ([`Display`]). Serialized as
+//! `{"steps": [...], "state": {...}, "display": {...}}`.
 //!
 //! A step's id names everything the step builds, so ids are unique in a
 //! program and spelled in an alphabet a name can be built from
 //! ([`validate_operation_id`]).
 
-use std::collections::HashSet;
+use std::collections::{BTreeMap, BTreeSet, HashSet};
 
 use geop_core_math::geop_error::{GeopError, GeopResult};
 use serde::{Deserialize, Serialize};
@@ -69,14 +70,43 @@ impl ProgramStep {
     }
 }
 
-/// A program: its steps, and the state it was saved with — what it is run
-/// with: what a solve moves (see [`Program::run`]).
+/// A program: its steps, the state it was saved with — what it is run
+/// with: what a solve moves (see [`Program::run`]) — and how what it
+/// builds is shown.
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub struct Program {
     #[serde(default)]
     pub steps: Vec<ProgramStep>,
     #[serde(default, skip_serializing_if = "StateValues::is_empty")]
     pub state: StateValues,
+    #[serde(default, skip_serializing_if = "Display::is_empty")]
+    pub display: Display,
+}
+
+/// How what a program builds is shown, as the user chose, over what an
+/// editor shows by itself: a display state, saved with the program as the
+/// camera is not. Nothing a run reads: it builds the same part however it
+/// is shown.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+pub struct Display {
+    /// What is shown or hidden — a datum, a sketch, a solid, a placed part
+    /// — by name.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub visibility: BTreeMap<String, bool>,
+    /// The colours placed parts are drawn in over their own, `#rrggbb`, by
+    /// the instance's path: `bolt`, `asm/bolt`.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub colors: BTreeMap<String, String>,
+    /// The placed parts shown alone, if any: with the parts placed in them
+    /// and those they are placed in.
+    #[serde(default, skip_serializing_if = "BTreeSet::is_empty")]
+    pub isolated: BTreeSet<String>,
+}
+
+impl Display {
+    pub fn is_empty(&self) -> bool {
+        self.visibility.is_empty() && self.colors.is_empty() && self.isolated.is_empty()
+    }
 }
 
 /// Checks that `id` can be an operation id: non-empty, and only ASCII
@@ -107,7 +137,7 @@ impl Program {
     pub fn from_steps(steps: Vec<ProgramStep>) -> Self {
         Self {
             steps,
-            state: StateValues::new(),
+            ..Self::default()
         }
     }
 
@@ -189,6 +219,7 @@ impl Program {
         Ok(Self {
             steps: vec![step],
             state,
+            display: Display::default(),
         })
     }
 

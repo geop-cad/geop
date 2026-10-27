@@ -134,6 +134,41 @@ fn name_where(part: &NamedModel, pick: impl Fn(RefId) -> bool) -> String {
     names.first().expect("an entity matches").1.to_string()
 }
 
+/// The plate of [`bracket`] in two configurations, `drilled` and `solid`,
+/// the hole's step suppressed in the solid one; `selected` built.
+fn configured_bracket(selected: &str) -> Program {
+    use geop_ops_model::parameters::{CONFIGURATION, LookupTableArgs, Row};
+    let mut program = bracket();
+    let row = |name: &str, hole: f64| Row {
+        name: name.into(),
+        values: vec![hole],
+    };
+    let table = LookupTableArgs {
+        input: CONFIGURATION.into(),
+        columns: vec!["hole".into()],
+        rows: vec![row("drilled", 1.0), row("solid", 0.0)],
+        selected: selected.into(),
+    };
+    let mut configurations = Program::new();
+    configurations.push("configurations", table);
+    program.steps.insert(0, configurations.steps.remove(0));
+    program.steps[2].active = Some("configuration.hole".into());
+    program
+}
+
+/// A drawing is of the configuration built: the drilled plate's front
+/// view shows the hole's walls hidden, the solid one's none.
+#[test]
+fn a_drawing_shows_the_configuration_built() {
+    let hidden = |selected: &str| {
+        let part = &model(&build(&configured_bracket(selected)));
+        let front = view(part, ViewKind::Front);
+        front.lines.iter().filter(|l| !l.visible).count()
+    };
+    assert_eq!(hidden("drilled"), 2);
+    assert_eq!(hidden("solid"), 0);
+}
+
 /// The plate's 6 mm hole runs through its 10 mm thickness: from the front
 /// its walls are two hidden lines, 6 apart, the plate's full height; from
 /// above it is a visible circle.

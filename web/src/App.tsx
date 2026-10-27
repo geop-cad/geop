@@ -40,6 +40,7 @@ import {
 import { InspectPanel } from "./InspectPanel";
 import { sectionPlane, type Section } from "./section";
 import { ProgramPanels } from "./ProgramPanels";
+import { suppressStep } from "./panels";
 import { SceneViewer } from "./SceneViewer";
 import { StructurePanel } from "./StructurePanel";
 import { OperationGrid, OperationRibbon, type Tool } from "./OperationRibbon";
@@ -432,6 +433,30 @@ function App() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [copyable]);
 
+  /** Suppress the step `id` in the configuration built, or run it again. */
+  function suppress(id: string) {
+    const { key, payload } = suppressStep(id);
+    return dispatch({ command: "panel", key, payload });
+  }
+
+  // Ctrl+E suppresses the step being edited — or, with none, the one under
+  // the pointer in the timeline — or runs it again, unless typed into a
+  // field.
+  const hoveredRef = useRef<string | null>(null);
+  const suppressible = step?.id ?? null;
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (typing(e) || !(e.ctrlKey || e.metaKey) || e.shiftKey || e.key.toLowerCase() !== "e") return;
+      const id = suppressible ?? hoveredRef.current;
+      if (id == null) return;
+      e.preventDefault();
+      void suppress(id);
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [suppressible]);
+
   // ── editing a step ─────────────────────────────────────────────────────
 
   async function open(command: Command) {
@@ -704,6 +729,7 @@ function App() {
     title: `${s.label}: ${s.summary}`,
     error: s.error,
     dim: !s.editing && !s.runs,
+    suppressed: s.suppressed,
     editing: s.editing,
     placed: s.placed.map((p) => ({
       instance: p.instance,
@@ -713,6 +739,7 @@ function App() {
         icon: iconOf(inner.kind),
         title: `${programName(p.file)}: ${inner.label}: ${inner.summary}`,
         error: inner.error,
+        suppressed: inner.suppressed,
         editing: inner.editing,
       })),
     })),
@@ -750,6 +777,8 @@ function App() {
         onEditPlaced={(placed, id) => void open({ command: "open", id, placed })}
         onRemove={(i) => dispatch({ command: "remove", id: steps[i].id })}
         onCopy={(i) => void copyStep(steps[i].id)}
+        onSuppress={(i) => void suppress(steps[i].id)}
+        onHover={(i) => (hoveredRef.current = i == null ? null : steps[i].id)}
         onMove={(i, to) => dispatch({ command: "move", id: steps[i].id, index: to })}
         onSeek={(slot) => dispatch({ command: "seek", marker: slot >= stepCount ? null : slot })}
       />

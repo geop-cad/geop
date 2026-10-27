@@ -25,3 +25,5 @@ testing = ["geop-core-topology/testing"]
 geop-core-topology = { workspace = true, features = ["testing"] }
 # The datums, parameters and sketches drawn and picked as a front end does.
 geop-core-editor = { workspace = true, features = ["testing"] }
+# Configurations built, saved and built again (`assert_round_trips`).
+geop-core-program = { workspace = true, features = ["testing"] }

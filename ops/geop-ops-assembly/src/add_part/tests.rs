@@ -470,6 +470,7 @@ fn with_pair(pair: Assembly) -> Shelf {
     let pair = Program {
         steps: pair.program.steps,
         state: pair.state,
+        ..Program::default()
     };
     shelf().with("pair.geop", pair)
 }

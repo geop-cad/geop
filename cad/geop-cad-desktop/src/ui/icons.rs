@@ -71,6 +71,7 @@ fn own(name: &str) -> Option<&'static str> {
             r#"<path d="M10 13 L10 4 M6.5 7.5 L10 4 L13.5 7.5"/><path d="M4 13.5 L4 16.5 L16 16.5 L16 13.5"/>"#
         }
         "rename" => r#"<path d="M4 16 L4 13 L13 4 L16 7 L7 16 Z"/>"#,
+        "suppress" => r#"<circle cx="10" cy="10" r="6"/><path d="M5.8 14.2 L14.2 5.8"/>"#,
         "trash" => {
             r#"<path d="M4 6 L16 6 M8 6 L8 4 L12 4 L12 6 M5.5 6 L6.5 17 L13.5 17 L14.5 6"/>"#
         }
