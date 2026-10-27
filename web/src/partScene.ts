@@ -42,6 +42,8 @@ export interface Scene {
   normals: [Vec3, Vec3, Vec3][];
   triangle_faces: number[];
   faces: { name: string; solid: string | null; feature?: string }[];
+  /** The triangles of each of `faces`, as the kernel sent them: the same for a face drawn alike again (see [[sameFaces]]). */
+  face_meshes: unknown[];
 }
 
 /** The point `(x, y)` of `plane`. */
@@ -80,6 +82,7 @@ export function flatten(part: PartView, hidden: string[] = []): Scene {
     normals: [],
     triangle_faces: [],
     faces: [],
+    face_meshes: [],
   };
   for (const v of part.vertices) {
     if (!shown(v.solid, v.faces)) continue;
@@ -103,6 +106,7 @@ export function flatten(part: PartView, hidden: string[] = []): Scene {
     if (!shown(f.solid) || (f.solid == null && hidden.includes(f.name))) return;
     const index = scene.faces.length;
     scene.faces.push({ name: f.name, solid: f.solid, feature: f.feature });
+    scene.face_meshes.push(f.triangles);
     f.triangles.forEach(([a, b, c], i) => {
       scene.triangles.push([a, b, c, faceColor]);
       scene.normals.push(f.normals[i]);
@@ -180,12 +184,39 @@ export interface TriangleTags {
   faces: Scene["faces"];
 }
 
-/** Build the meshes/lines/points of one [[Scene]] into a group. */
-export function buildSceneGroup(scene: Scene): THREE.Group {
+/**
+ * Whether `a` and `b` draw the same faces alike: the same meshes, in the
+ * same order, named alike, in one colour — as a part shown again with
+ * other sketches does.
+ */
+export function sameFaces(a: Scene, b: Scene): boolean {
+  const same = (x: Scene["faces"][number], y: Scene["faces"][number]) =>
+    x.name === y.name && x.solid === y.solid && x.feature === y.feature;
+  return (
+    a.faces.length === b.faces.length &&
+    a.faces.every((f, i) => same(f, b.faces[i]) && a.face_meshes[i] === b.face_meshes[i]) &&
+    (a.triangles.length === 0 || a.triangles[0][3] === b.triangles[0][3])
+  );
+}
+
+/**
+ * Build the meshes/lines/points of one [[Scene]] into a group — its faces
+ * taken out of `previous`, the group built of the scene before, if it drew
+ * the same faces alike (see [[sameFaces]]): they are not built again.
+ */
+export function buildSceneGroup(scene: Scene, previous?: { scene: Scene; group: THREE.Group }): THREE.Group {
   const group = new THREE.Group();
 
-  // Triangles: one mesh, vertex colors so per-triangle color still works.
-  if (scene.triangles.length > 0) {
+  const kept = previous && sameFaces(previous.scene, scene) ? previous.group.userData.triangles : undefined;
+  if (kept) {
+    // The faces, and the copies counting a section's cap, go over as they are.
+    const faces = previous!.group.children.filter((c) => c === kept.mesh || c.userData.stencil);
+    previous!.group.remove(...faces);
+    delete previous!.group.userData.triangles;
+    group.add(...faces);
+    group.userData.triangles = { ...kept, faces: scene.faces, triangleFaces: scene.triangle_faces } satisfies TriangleTags;
+  } else if (scene.triangles.length > 0) {
+    // Triangles: one mesh, vertex colors so per-triangle color still works.
     const positions = new Float32Array(scene.triangles.length * 9);
     const colors = new Float32Array(scene.triangles.length * 9);
     const normals = new Float32Array(scene.triangles.length * 9);
