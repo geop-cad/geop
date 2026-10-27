@@ -370,6 +370,16 @@ export interface Choice {
   label: string;
 }
 
+/**
+ * A file a `file` field shows: by its path as the program names it,
+ * `/`-separated — `../parts/bolt.geop`, a shared library's by its scheme,
+ * `std:hex_nut.geop` — and whether the field takes it.
+ */
+export interface FileEntry {
+  path: string;
+  accepted: boolean;
+}
+
 export interface ListItem {
   key: string;
   label: string;
@@ -473,12 +483,14 @@ export type Control =
   /** Found by typing, if `searchable`. */
   | { type: "select"; label: string; value: string; options: Choice[]; searchable: boolean }
   /**
-   * A file the program reads, by its path relative to the program: one of
-   * `options`, the files of the kinds `accept` (extensions without the dot)
-   * next to it, or one chosen from disk — stored next to the program, its
-   * path sent as `choice`.
+   * A file the program reads or places, by its path relative to the
+   * program, chosen in an explorer of `files` — every file of the workspace
+   * but the program's own, the field taking those `accepted` — and sent as
+   * `choice`. A file of the kinds `upload` (extensions without the dot;
+   * none, for a field taking only files there are) may be chosen from disk
+   * too: stored next to the program, its path sent.
    */
-  | { type: "file"; label: string; value: string; options: Choice[]; accept: string[] }
+  | { type: "file"; label: string; value: string; files: FileEntry[]; upload: string[] }
   /** A colour, `#rrggbb`, sent back as `text`. */
   | { type: "color"; label: string; value: string }
   /**

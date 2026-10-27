@@ -869,7 +869,7 @@ await check("a drawing is dimensioned on its sheet and downloaded from its dialo
 
 // ── a STEP file imported ────────────────────────────────────────────────
 
-await check("a STEP file is chosen from disk in Import STEP, and imported", async () => {
+await check("a STEP file is chosen from disk in Import STEP's file explorer, and imported", async () => {
   // A small STEP file of geop's own: the box with its drill hole, downloaded.
   await fresh();
   await fileMenu(page, "Box with drill hole");
@@ -879,14 +879,17 @@ await check("a STEP file is chosen from disk in Import STEP, and imported", asyn
   fs.mkdirSync(OUT, { recursive: true });
   await download.saveAs(step);
 
-  // A new part, with no STEP file next to it: the dialog's file button picks one from disk.
+  // A new part, with no STEP file next to it: the file field's explorer picks one from disk.
   await fresh();
   await clickOperation(page, "Import STEP");
   await settle(page);
   expect((await popup.count()) === 1, "Import STEP did not open");
+  await popup.locator(".file-field-browse").click();
+  const explorer = page.locator(".file-chooser");
+  expect((await explorer.count()) === 1, "the file explorer did not open");
   const [chooser] = await Promise.all([
     page.waitForEvent("filechooser", { timeout: 10000 }),
-    popup.getByRole("button", { name: /Choose a file/ }).click(),
+    explorer.getByRole("button", { name: /From disk/ }).click(),
   ]);
   const accepted = await chooser.element().getAttribute("accept");
   expect(/\.step/.test(accepted ?? "") && /\.stp/.test(accepted ?? ""), `the file chooser accepts ${accepted}, not STEP files`);
@@ -901,7 +904,45 @@ await check("a STEP file is chosen from disk in Import STEP, and imported", asyn
   expect((await page.locator(".explorer-tree").innerText()).includes("box with hole.step"), "the STEP file is not in the explorer");
   const upload = await page.locator(".explorer input[type=file]").getAttribute("accept");
   expect(/\.step/.test(upload ?? ""), `the explorer's upload accepts ${upload}, not STEP files`);
-  return stats;
+
+  // Imported again, the file is in the field's explorer: found by typing, chosen by Enter.
+  await clickOperation(page, "Import STEP");
+  await settle(page);
+  await popup.locator(".file-field-browse").click();
+  const rows = explorer.locator(".file-chooser-row");
+  const listed = await rows.allInnerTexts();
+  expect(listed.includes("box with hole.step"), `the explorer lists ${listed.join(", ")}`);
+  await explorer.locator(".file-chooser-search").fill("hole");
+  await explorer.locator(".file-chooser-search").press("Enter");
+  await settle(page);
+  expect((await explorer.count()) === 0, "the explorer stayed open after Enter");
+  const shown = await popup.locator(".file-field-path").innerText();
+  expect(shown === "box with hole.step", `the field shows ${shown}`);
+  await popup.locator(".button-row button.primary").click();
+  return await builtCleanly();
+});
+
+await check("a standard part is placed by choosing its file in the explorer", async () => {
+  await fresh();
+  await clickOperation(page, "Part");
+  await settle(page);
+  expect((await popup.count()) === 1, "Part did not open");
+  await popup.locator(".file-field-browse").click();
+  const explorer = page.locator(".file-chooser");
+  expect((await explorer.count()) === 1, "the file explorer did not open");
+  // No upload for a part: only files of the workspace, and the standard library, a folder of its own.
+  expect((await explorer.getByRole("button", { name: /From disk/ }).count()) === 0, "a part offers an upload");
+  const search = explorer.locator(".file-chooser-search");
+  await search.fill("hex nut");
+  const found = await explorer.locator(".file-chooser-row").allInnerTexts();
+  expect(found.some((r) => r.includes("iso4032_hex_nut.geop")), `the search found ${found.join(", ")}`);
+  await search.press("Enter");
+  await settle(page);
+  expect((await explorer.count()) === 0, "the explorer stayed open after Enter");
+  const shown = await popup.locator(".file-field-path").innerText();
+  expect(shown === "std:iso4032_hex_nut.geop", `the field shows ${shown}`);
+  await popup.locator(".button-row button.primary").click();
+  return await builtCleanly();
 });
 
 await check("the bill of materials is saved as CSV", async () => {

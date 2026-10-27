@@ -1232,17 +1232,21 @@ fn step_file(editor: &mut Editor) -> String {
     text
 }
 
-/// The part shown written as STEP, stored next to a new program in a
-/// folder — as the front end stores a file the user chooses in the file
-/// field — is offered by a new "Import STEP" step by its path relative to
-/// the program, and brings its solid back, named after the step.
+/// The part shown written as STEP, stored in a folder below a new
+/// program's, is offered by a new "Import STEP" step's file explorer by
+/// its path relative to the program — beside the other files, which it
+/// does not take — and, chosen, brings its solid back, named after the
+/// step.
 #[test]
 fn a_part_exported_as_step_is_imported_back() {
     let mut editor = loaded(editor(), drilled_box());
-    let files = std::collections::BTreeMap::from([(
-        "parts/box.step".to_string(),
-        Some(step_file(&mut editor)),
-    )]);
+    let files = std::collections::BTreeMap::from([
+        (
+            "parts/scans/box.step".to_string(),
+            Some(step_file(&mut editor)),
+        ),
+        ("notes.txt".to_string(), Some("notes".to_string())),
+    ]);
     assert!(editor.handle(Command::Files { files }).error.is_none());
     let update = editor.handle(Command::Load {
         program: Program::new(),
@@ -1254,16 +1258,22 @@ fn a_part_exported_as_step_is_imported_back() {
     });
     let step = update.step.expect("a step is edited");
     assert_eq!(step.label, "Import STEP");
-    let Some(Control::File {
-        options, accept, ..
-    }) = step.presentation.dialog.get("file")
-    else {
+    let Some(Control::File { files, upload, .. }) = step.presentation.dialog.get("file") else {
         panic!("the file is a file field");
     };
-    assert!(options.iter().any(|o| o.value == "box.step"), "{options:?}");
-    assert_eq!(accept, &["step", "stp"]);
-    let update = editor.handle(dialog("file", Value::Choice("box.step".into())));
-    assert!(update.step.unwrap().error.is_none());
+    let listed: Vec<(&str, bool)> = (files.iter())
+        .filter(|f| !f.path.starts_with("std:"))
+        .map(|f| (f.path.as_str(), f.accepted))
+        .collect();
+    assert_eq!(listed, [("../notes.txt", false), ("scans/box.step", true)]);
+    assert_eq!(upload, &["step", "stp"]);
+    let update = editor.handle(dialog("file", Value::Choice("scans/box.step".into())));
+    let step = update.step.unwrap();
+    assert!(step.error.is_none(), "{:?}", step.error);
+    let Some(Control::File { value, .. }) = step.presentation.dialog.get("file") else {
+        panic!("the file is a file field");
+    };
+    assert_eq!(value, "scans/box.step");
     let update = editor.handle(Command::Commit);
     assert!(update.error.is_none(), "{:?}", update.error);
     let id = editor.program().steps.last().unwrap().id.clone();

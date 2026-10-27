@@ -141,9 +141,10 @@ await check("a STEP file chosen from disk in Import STEP is stored next to the d
   await clickOperation(page, "Import STEP");
   await settle(page);
   const popup = page.locator(".desktop-only .popup");
+  await popup.locator(".file-field-browse").click();
   const [chooser] = await Promise.all([
     page.waitForEvent("filechooser", { timeout: 10000 }),
-    popup.getByRole("button", { name: /Choose a file/ }).click(),
+    page.locator(".file-chooser").getByRole("button", { name: /From disk/ }).click(),
   ]);
   await chooser.setFiles(step);
   await settle(page);

@@ -1403,6 +1403,184 @@ button.inline {
   background: var(--line-strong);
 }
 
+/* ── a file field, and the explorer it chooses a file in (FileChooser.tsx) ── */
+
+.file-field-browse {
+  display: flex;
+  align-items: center;
+  gap: 0.3rem;
+  min-width: 0;
+  padding: 0.3rem 0.45rem;
+  font-size: 0.8rem;
+  border-style: dashed;
+}
+.file-field-browse.holds {
+  border-style: solid;
+}
+.file-field-path {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  direction: rtl;
+  text-align: left;
+}
+.file-field-browse:not(.holds) .file-field-path {
+  color: var(--text-dim);
+  direction: ltr;
+}
+.file-field-dots {
+  flex-shrink: 0;
+  color: var(--text-dim);
+}
+
+.file-chooser-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 2000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 1.5rem 16px;
+  background: rgba(0, 0, 0, 0.45);
+  font-family: var(--font);
+  font-size: 13px;
+  color: var(--text);
+}
+.file-chooser {
+  width: min(480px, 100%);
+  height: min(560px, 100%);
+  display: flex;
+  flex-direction: column;
+  gap: 0.55rem;
+  padding: 0.85rem 0.9rem;
+  background: var(--surface);
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.5);
+}
+.file-chooser-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+}
+.file-chooser-head h2 {
+  margin: 0;
+  font-size: 0.95rem;
+  font-weight: 600;
+}
+.file-chooser-close {
+  background: none;
+  border: none;
+  padding: 0 0.3rem;
+  font-size: 1.1rem;
+  line-height: 1;
+  color: var(--text-dim);
+}
+.file-chooser-search {
+  width: 100%;
+  background: var(--bg-deep);
+  color: var(--text);
+  border: 1px solid var(--line-strong);
+  border-radius: 4px;
+  padding: 0.35rem 0.5rem;
+  font-size: 0.82rem;
+  font-family: inherit;
+}
+.file-chooser-search:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+.file-chooser-tree {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  list-style: none;
+  margin: 0;
+  padding: 2px 0;
+  background: var(--bg-deep);
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  user-select: none;
+  scrollbar-width: thin;
+  scrollbar-color: var(--line-strong) transparent;
+}
+.file-chooser-row {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  height: 24px;
+  padding-right: 0.5rem;
+  color: var(--text-2);
+  cursor: pointer;
+  border: 1px solid transparent;
+}
+.file-chooser-row .icon {
+  flex-shrink: 0;
+  display: block;
+}
+.file-chooser-row:hover {
+  background: #2a2d2e;
+}
+.file-chooser-row.selected {
+  background: #37373d;
+  border-color: var(--accent);
+  color: #fff;
+}
+.file-chooser-row.current .file-chooser-name {
+  font-weight: 600;
+}
+.file-chooser-row.unaccepted {
+  color: var(--text-faint);
+  cursor: default;
+}
+.file-chooser-row.unaccepted .icon {
+  opacity: 0.4;
+}
+.file-chooser-chevron-space {
+  width: 16px;
+  flex-shrink: 0;
+}
+.file-chooser-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+.file-chooser-empty {
+  padding: 0.6rem 0.75rem;
+  color: var(--text-dim);
+  font-size: 0.78rem;
+}
+.file-chooser-footer {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem;
+}
+.file-chooser-filter {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  font-size: 0.75rem;
+  color: var(--text-2);
+  margin-right: auto;
+}
+.file-chooser-upload {
+  display: flex;
+  align-items: center;
+  gap: 0.3rem;
+  font-size: 0.78rem;
+}
+.file-chooser-footer .button-row button {
+  min-width: 4.5rem;
+  padding: 0.35rem 0.8rem;
+  font-size: 0.8rem;
+}
+
 /* ── the part's structure ──────────────────────────────────────────────── */
 
 .structure-panel {
