@@ -23,7 +23,7 @@ import {
   type Visual,
   type GizmoView,
 } from "./geop";
-import { CAP_COLOR, applyHighlight, buildSceneGroup, disposeGroup, flatten, frameMatrix, localTo } from "./partScene";
+import { CAP_COLOR, applyHighlight, buildSceneGroup, disposeGroup, flatten, frameMatrix, localTo, type Scene } from "./partScene";
 import { PlacedLayer, type PlacedLook } from "./placed3d";
 import type { SectionPlane } from "./section";
 import { PlaneGrid } from "./planeGrid";
@@ -738,14 +738,21 @@ export function SceneViewer({
   const hiddenKey = JSON.stringify(hidden ?? []);
   // eslint-disable-next-line react-hooks/exhaustive-deps
   const scene = useMemo(() => flatten(part, hidden ?? []), [part, hiddenKey]);
+  /** The scene the group shown was built of: its faces are taken over by the next, if it draws them alike. */
+  const builtRef = useRef<Scene | null>(null);
   useEffect(() => {
     const threeScene = sceneRef.current;
     if (!threeScene) return;
-    if (groupRef.current) {
-      threeScene.remove(groupRef.current);
-      disposeGroup(groupRef.current);
+    const previous = groupRef.current;
+    const group = buildSceneGroup(
+      scene,
+      previous && builtRef.current ? { scene: builtRef.current, group: previous } : undefined,
+    );
+    if (previous) {
+      threeScene.remove(previous);
+      disposeGroup(previous);
     }
-    const group = buildSceneGroup(scene);
+    builtRef.current = scene;
     groupRef.current = group;
     threeScene.add(group);
     applyHighlight(group, scene, highlightsRef.current, hiddenRef.current);

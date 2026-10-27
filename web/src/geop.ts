@@ -129,6 +129,23 @@ export interface ViewInstance {
   frame: Frame;
 }
 
+/** A face of the part, as drawn. */
+export interface ViewFace {
+  name: string;
+  solid: string | null;
+  /** The step whose feature made it — a cut, a boss, a hole — if one did: what picking it as a feature picks. */
+  feature?: string;
+}
+
+/** A face triangulated, with the kernel's surface normal at each corner: sent once, by its key (see [[SceneState.meshes]]). */
+export interface FaceMesh {
+  triangles: [Vec3, Vec3, Vec3][];
+  normals: [Vec3, Vec3, Vec3][];
+}
+
+/** A part as the kernel sends it: each face with the key of its mesh (see `kept.ts`). */
+export type SentPartView = Omit<PartView, "faces"> & { faces: (ViewFace & { mesh: string })[] };
+
 /** A part as the viewport draws it, every entity by name. */
 export interface PartView {
   /** The target its vertices, edges and faces are of: what an element lit in them names (see [[PickedElement]]). */
@@ -141,15 +158,8 @@ export interface PartView {
    */
   vertices: { name: string; solid: string | null; faces: string[]; at: Vec3 }[];
   edges: { name: string; solid: string | null; faces: string[]; polyline: Vec3[] }[];
-  /** Triangulated, with the kernel's surface normal at each corner. */
-  faces: {
-    name: string;
-    solid: string | null;
-    /** The step whose feature made it — a cut, a boss, a hole — if one did: what picking it as a feature picks. */
-    feature?: string;
-    triangles: [Vec3, Vec3, Vec3][];
-    normals: [Vec3, Vec3, Vec3][];
-  }[];
+  /** Triangulated: each with its mesh. */
+  faces: (ViewFace & FaceMesh)[];
   /** Curves in their plane's `u`/`v` coordinates. */
   sketches: {
     name: string;
@@ -774,47 +784,31 @@ export interface StructureItem {
 
 /**
  * What is drawn. The parts placed in the part come as what changed since
- * the last scene ([[applyScene]] keeps them), and the views of their
- * components once each.
+ * the last scene (`kept.ts` keeps them), and the views of their
+ * components once each — and the meshes of the faces drawn once each, by
+ * key.
  */
 export interface SceneState {
   /** The part, without the parts placed in it. */
-  part: PartView;
+  part: SentPartView;
   /** What the part has beyond its faces, to list and show or hide. */
   structure: StructureItem[];
   /** Sketches and datums, by name, not to draw. */
   hidden: string[];
   /** The placed parts new, moved or drawn from another component since the last scene — every one, if `all`. */
   instances: ViewInstance[];
-  /** Whether `instances` are all there are: forget any others. */
+  /** Whether the scene is all there is: forget any other placed parts, and every component and mesh kept. */
   all: boolean;
   /** The names of the placed parts gone since the last scene. */
   removed: string[];
   /** The views of the components the viewer does not have, by key: kept until `forgotten`. */
-  components: Record<string, PartView>;
+  components: Record<string, SentPartView>;
   /** The components to forget: no placed part has used them for longest. */
   forgotten: string[];
-}
-
-/** The placed parts drawn, by name, and the views of the components they are drawn from, by key. */
-export interface Placed {
-  instances: Map<string, ViewInstance>;
-  components: Record<string, PartView>;
-}
-
-/**
- * `placed` with `scene`'s changes: its placed parts added, moved and
- * removed, and the components it sent kept — those of a part that left the
- * scene too, until the kernel says to forget them, so a part that shows
- * again is not sent again.
- */
-export function applyScene(placed: Placed, scene: SceneState): Placed {
-  const instances = scene.all ? new Map<string, ViewInstance>() : new Map(placed.instances);
-  for (const name of scene.removed) instances.delete(name);
-  for (const instance of scene.instances) instances.set(instance.name, instance);
-  const components = { ...(scene.all ? {} : placed.components), ...scene.components };
-  for (const key of scene.forgotten) delete components[key];
-  return { instances, components };
+  /** The meshes of the faces drawn — of the part, and of the components sent — the viewer does not have, by key: kept until `forgotten_meshes`. */
+  meshes: Record<string, FaceMesh>;
+  /** The meshes to forget: no face drawn has used them for longest. */
+  forgotten_meshes: string[];
 }
 
 export interface StepState {

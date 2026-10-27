@@ -24,6 +24,7 @@
 
 mod build;
 mod context;
+mod kept;
 mod protocol;
 #[cfg(test)]
 mod tests;
@@ -54,7 +55,7 @@ use std::{
 use crate::{
     editing::{Extent, Presentation, StepEditEvent},
     output::{Content, Export, Inspection, Output},
-    registry::Registry,
+    registry::{Drawings, Registry},
     step_editor::{Editing, StepEditor},
     tools::Tool,
     view::{EMPTY_EXTENT, PartView, Visible, drawn},
@@ -66,6 +67,7 @@ use geop_core_math::{
     scalars::Scalar,
     vector::Vector3,
 };
+use kept::Kept;
 
 /// How many files' builds an editor keeps (see `Editor::builds`): each
 /// holds every step's part, so a few large files are as many as fit.
@@ -74,14 +76,10 @@ const KEPT_BUILDS: usize = 6;
 /// A part drawn, by what it was made of (see [`Reader::seen`]).
 type Drawing = (Seen, Rc<PartView>);
 
-/// How many components no placed part uses a viewer keeps (see
-/// [`SceneState::forgotten`]).
-const KEPT_COMPONENTS: usize = 8;
-
-/// How many drawings an editor keeps (see `Editor::drawings`): the part
-/// before the step edited, the part with it, and those of the last steps
-/// opened.
-const KEPT_DRAWINGS: usize = 4;
+/// How many parts drawn an editor keeps whole (see `Editor::views`): the
+/// part before the step edited, the part with it, and those of the last
+/// steps opened.
+const KEPT_VIEWS: usize = 4;
 
 /// The files an editor reads the programs it places parts from, and
 /// writes the files it is sent to: whatever its front end keeps, with
@@ -216,11 +214,9 @@ pub struct Editor {
     /// component each is drawn from, and where it is, as sent — `None`
     /// when the viewer may have none (see [`SceneState`]).
     placed: Option<HashMap<String, (String, [f64; 12])>>,
-    /// The components the viewer has, by key: the scene each was last used
-    /// in (see [`SceneState::forgotten`]).
-    components: BTreeMap<String, u64>,
-    /// How many scenes were sent.
-    scenes: u64,
+    /// What the viewer keeps of the scenes it was sent: the components and
+    /// the meshes of faces, by key.
+    kept: Kept,
     /// The tool in hand, if one is.
     tool: Option<InHand>,
     /// The inspector the last command asked, and what it told it: to answer
@@ -229,11 +225,14 @@ pub struct Editor {
     /// The part as last drawn: what a tool picks from.
     drawn: Option<Rc<PartView>>,
     /// The last parts drawn, by what they were made of (see
-    /// [`Reader::seen`]): a part drawn again is drawn as it was, not
-    /// tessellated again — opening a sketch on an assembly, or closing it,
-    /// draws the same assembly. At most [`KEPT_DRAWINGS`], the last drawn
-    /// last.
-    drawings: RefCell<Vec<Drawing>>,
+    /// [`Reader::seen`]): a part shown again is the view it was — opening
+    /// a step and cancelling it shows the same part. At most
+    /// [`KEPT_VIEWS`], the last drawn last.
+    views: RefCell<Vec<Drawing>>,
+    /// What each drawer drew of the parts drawn, by what it read: a part
+    /// drawn with other sketches than before — the part before a sketch
+    /// opened — draws its sketches again, not its faces.
+    drawings: Drawings,
     /// What the user chose to show or hide, by name, over what the editor
     /// would by itself (see [`Editor::hidden`]).
     visibility: BTreeMap<String, bool>,
@@ -276,12 +275,12 @@ impl Editor {
             written: Vec::new(),
             exported: None,
             placed: None,
-            components: BTreeMap::new(),
-            scenes: 0,
+            kept: Kept::default(),
             tool: None,
             asked: None,
             drawn: None,
-            drawings: RefCell::default(),
+            views: RefCell::default(),
+            drawings: Drawings::default(),
             visibility: BTreeMap::new(),
         }
     }
@@ -507,12 +506,11 @@ impl Editor {
         let all = before.is_none();
         let before = before.unwrap_or_default();
         if all {
-            self.components.clear();
+            self.kept.clear();
         }
-        self.scenes += 1;
+        let sent = self.kept.send(&part);
         let mut placed = HashMap::new();
         let mut instances = Vec::new();
-        let mut components = BTreeMap::new();
         for instance in &part.instances {
             let f = &instance.frame;
             let frame = [f.origin(), f.u(), f.v(), f.w()].map(|p| p.to_array().map(|c| c.to_f64()));
@@ -524,24 +522,7 @@ impl Editor {
             if before.get(&instance.name) != Some(&drawn) {
                 instances.push(instance.clone());
             }
-            let used = (self.components).insert(instance.component.clone(), self.scenes);
-            if used.is_none() {
-                components.insert(instance.component.clone(), instance.view.clone());
-            }
             placed.insert(instance.name.clone(), drawn);
-        }
-        // Of those no placed part uses now, the viewer keeps the last used.
-        let mut unused: Vec<(u64, String)> = (self.components.iter())
-            .filter(|(_, used)| **used < self.scenes)
-            .map(|(key, used)| (*used, key.clone()))
-            .collect();
-        unused.sort();
-        let forget = unused.len().saturating_sub(KEPT_COMPONENTS);
-        let forgotten: Vec<String> = (unused.into_iter().take(forget))
-            .map(|(_, key)| key)
-            .collect();
-        for key in &forgotten {
-            self.components.remove(key);
         }
         let mut removed: Vec<String> = (before.keys())
             .filter(|name| !placed.contains_key(*name))
@@ -560,8 +541,10 @@ impl Editor {
             instances,
             all,
             removed,
-            components,
-            forgotten,
+            components: sent.components,
+            forgotten: sent.forgotten,
+            meshes: sent.meshes,
+            forgotten_meshes: sent.forgotten_meshes,
         }
     }
 
@@ -1390,17 +1373,18 @@ impl Editor {
     }
 
     /// The part `reader` reads, as the registry draws it: as it was drawn
-    /// last, if it is made of the same (see [`Self::drawings`]).
+    /// last, if it is made of the same (see [`Self::views`]), else of what
+    /// each drawer drew of what reads the same (see [`Self::drawings`]).
     fn draw(&self, reader: &Reader) -> GeopResult<Rc<PartView>> {
         let seen = reader.seen();
-        let mut drawings = self.drawings.borrow_mut();
-        let view = match drawings.iter().position(|(drawn, _)| *drawn == seen) {
-            Some(k) => drawings.remove(k).1,
-            None => Rc::new(self.registry.draw(reader)?),
+        let mut views = self.views.borrow_mut();
+        let view = match views.iter().position(|(drawn, _)| *drawn == seen) {
+            Some(k) => views.remove(k).1,
+            None => Rc::new(self.registry.draw(reader, &self.drawings)?),
         };
-        drawings.push((seen, view.clone()));
-        if drawings.len() > KEPT_DRAWINGS {
-            drawings.remove(0);
+        views.push((seen, view.clone()));
+        if views.len() > KEPT_VIEWS {
+            views.remove(0);
         }
         Ok(view)
     }

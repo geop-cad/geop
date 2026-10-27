@@ -420,7 +420,7 @@ fn top(editor: &mut Editor, instance: &str) -> f64 {
     scene.components[&placed.component]
         .faces
         .iter()
-        .flat_map(|f| f.triangles.iter().flatten())
+        .flat_map(|f| f.mesh.triangles.iter().flatten())
         .map(|p| placed.frame.to_xyz(p)[2].to_f64())
         .fold(f64::NEG_INFINITY, f64::max)
 }

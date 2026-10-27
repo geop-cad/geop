@@ -233,8 +233,15 @@ impl Part {
     }
 
     /// Whether `read`, made by a reader before `before` for the node `own`,
-    /// reads the same now.
-    fn holds(&self, read: &Read, before: usize, own: Option<&str>, runner: &Runner) -> bool {
+    /// reads the same now. A file is read through a runner: without one, it
+    /// is not known to read the same.
+    pub(crate) fn holds(
+        &self,
+        read: &Read,
+        before: usize,
+        own: Option<&str>,
+        runner: Option<&Runner>,
+    ) -> bool {
         match read {
             Read::Target {
                 name,
@@ -245,7 +252,7 @@ impl Part {
             Read::Absent(name) => self.visible(name, before, own).is_none(),
             Read::Input(name, value) => self.inputs.get(name) == value.as_ref(),
             Read::State(name, value) => self.state.get(name) == value.as_ref(),
-            Read::File(path, revision) => runner.revision(path) == *revision,
+            Read::File(path, revision) => runner.is_some_and(|r| r.revision(path) == *revision),
             Read::Listed { kind, targets } => {
                 let now = self.listed(*kind, before, own);
                 now.len() == targets.len()
@@ -504,7 +511,8 @@ impl<'a> StepContext<'a> {
         }
         let reusable = old.is_some_and(|node| {
             node.made_from::<T, Args>(args)
-                && (node.reads.iter()).all(|read| part.holds(read, at, Some(name), self.runner))
+                && (node.reads.iter())
+                    .all(|read| part.holds(read, at, Some(name), Some(self.runner)))
         });
         if reusable {
             let run = self.part.run;

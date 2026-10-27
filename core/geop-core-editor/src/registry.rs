@@ -9,12 +9,15 @@
 //! The [`crate::editor::Editor`] names none of them: what it shows and does
 //! beyond editing steps is what its registry holds.
 
-use std::rc::Rc;
+use std::{cell::RefCell, collections::BTreeMap, rc::Rc};
 
 use geop_core_math::geop_error::{GeopError, GeopResult};
 use geop_core_program::{
-    element::PickedElement, operation_registry::OperationRegistry, program::Program,
-    reader::Reader, values::StateValues,
+    element::PickedElement,
+    operation_registry::OperationRegistry,
+    program::Program,
+    reader::{Reader, Reads},
+    values::StateValues,
 };
 use serde::{Serialize, de::DeserializeOwned};
 
@@ -46,6 +49,46 @@ pub trait Drawer: 'static {
     /// otherwise.
     fn hidden(&self, _reader: &Reader) -> Vec<String> {
         Vec::new()
+    }
+}
+
+/// What each drawer of a registry drew last ([`Registry::draw`]), kept by
+/// what it read ([`Reads`]): a part shown again with other sketches — a
+/// sketch opened, or closed — draws its sketches again, not its faces.
+#[derive(Default)]
+pub struct Drawings(RefCell<BTreeMap<usize, Vec<Drawn>>>);
+
+/// What a drawer drew, and what it read to draw it.
+type Drawn = (Reads, Rc<PartView>);
+
+/// How many drawings of each drawer [`Drawings`] keeps: of the part before
+/// the step edited, the part with it, and those of the last steps opened.
+const KEPT_DRAWINGS: usize = 4;
+
+impl Drawings {
+    /// What the drawer `drawer` draws of the part `reader` reads, by
+    /// `draw`: as it drew it last of what reads the same.
+    fn drawn(
+        &self,
+        drawer: usize,
+        reader: &Reader,
+        draw: impl FnOnce(&Reader) -> GeopResult<PartView>,
+    ) -> GeopResult<Rc<PartView>> {
+        let mut kept = self.0.borrow_mut();
+        let kept = kept.entry(drawer).or_default();
+        let entry = match kept.iter().position(|(reads, _)| reader.reads_same(reads)) {
+            Some(k) => kept.remove(k),
+            None => {
+                let (drawn, reads) = reader.recorded(draw);
+                (reads, Rc::new(drawn?))
+            }
+        };
+        let drawn = entry.1.clone();
+        kept.push(entry);
+        if kept.len() > KEPT_DRAWINGS {
+            kept.remove(0);
+        }
+        Ok(drawn)
     }
 }
 
@@ -314,11 +357,17 @@ impl Registry {
     }
 
     /// The part `reader` reads, as every drawer draws it, with what its
-    /// steps annotate it with.
-    pub fn draw(&self, reader: &Reader) -> GeopResult<PartView> {
+    /// steps annotate it with: what a drawer drew before of what reads the
+    /// same, as `drawings` kept it.
+    pub fn draw(&self, reader: &Reader, drawings: &Drawings) -> GeopResult<PartView> {
         let mut view = PartView::new();
-        for drawer in &self.drawers {
-            drawer.draw(reader, &mut view)?;
+        for (k, drawer) in self.drawers.iter().enumerate() {
+            let drawn = drawings.drawn(k, reader, |reader| {
+                let mut drawn = PartView::new();
+                drawer.draw(reader, &mut drawn)?;
+                Ok(drawn)
+            })?;
+            view.add(&drawn);
         }
         view.annotations = annotations_of(reader);
         Ok(view.finish())

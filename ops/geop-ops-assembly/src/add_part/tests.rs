@@ -45,7 +45,11 @@ use crate::{
 /// placed in it — what a component is drawn as where it is placed.
 fn draw(reader: &Reader) -> GeopResult<PartView> {
     let mut view = PartView::new();
-    read_model(reader)?.draw("model", &mut view)?;
+    read_model(reader)?.draw(
+        "model",
+        &mut geop_core_rasterize::Rasterizer::default(),
+        &mut view,
+    )?;
     read_datums(reader)?.draw(&mut view)?;
     crate::placed::draw_instances(reader, &mut view)?;
     Ok(view.finish())
@@ -285,7 +289,7 @@ fn a_placed_part_is_where_its_pose_puts_it() {
     let component = &placed.view;
     assert!(!component.faces.is_empty());
     // Turned a quarter about z, the cube spans x in [1, 2] and y in [0, 1].
-    for p in (component.faces.iter()).flat_map(|f| f.triangles.iter().flatten()) {
+    for p in (component.faces.iter()).flat_map(|f| f.mesh.triangles.iter().flatten()) {
         let p = placed.frame.to_xyz(p);
         let [x, y] = [p[0].to_f64(), p[1].to_f64()];
         assert!((1.0 - 1e-9..=2.0 + 1e-9).contains(&x), "{x}");

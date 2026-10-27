@@ -59,6 +59,7 @@
 
 use std::collections::HashMap;
 
+use geop_core_geometry::nurb_surface::NurbSurface3D;
 use geop_core_math::{
     geop_error::GeopResult,
     plain::{bounds, distance, dot, sub},
@@ -131,18 +132,19 @@ impl Domain {
 /// A face's surface at the `(u, v)` its mesh samples, each evaluated once:
 /// a grid corner is shared by up to six triangles, and by every finer grid
 /// the refinement measures, whose cell edges' midpoints are the next grid's
-/// corners.
-pub(crate) struct Samples<'a> {
-    face: &'a Face,
+/// corners. It owns the surface, so that a face meshed again alike reads
+/// the samples it took before (see [`crate::Rasterizer`]).
+pub(crate) struct Samples {
+    surface: NurbSurface3D,
     domain: Domain,
     points: HashMap<[u64; 2], Vector3>,
     normals: HashMap<[u64; 2], Option<Vector3>>,
 }
 
-impl<'a> Samples<'a> {
-    pub(crate) fn new(face: &'a Face) -> Self {
+impl Samples {
+    pub(crate) fn new(face: &Face) -> Self {
         Self {
-            face,
+            surface: face.surface.clone(),
             domain: Domain::of(face),
             points: HashMap::new(),
             normals: HashMap::new(),
@@ -168,7 +170,6 @@ impl<'a> Samples<'a> {
             return Ok(*p);
         }
         let p = self
-            .face
             .surface
             .evaluate(Scalar::from_f64(uv[0]), Scalar::from_f64(uv[1]))?;
         self.points.insert(key, p);
@@ -184,7 +185,7 @@ impl<'a> Samples<'a> {
     /// the two derivatives are parallel).
     pub(crate) fn normal(&mut self, uv: Point) -> Option<Vector3> {
         let (uv, key) = self.at(uv);
-        let surface = &self.face.surface;
+        let surface = &self.surface;
         *self.normals.entry(key).or_insert_with(|| {
             surface
                 .normal(Scalar::from_f64(uv[0]), Scalar::from_f64(uv[1]))
