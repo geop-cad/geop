@@ -19,6 +19,8 @@ mod editor_tests;
 mod icons;
 #[cfg(test)]
 mod program_tests;
+#[cfg(test)]
+mod regression_tests;
 #[cfg(any(test, feature = "testing"))]
 pub mod testing;
 #[cfg(test)]
