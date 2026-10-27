@@ -1678,3 +1678,280 @@ fn a_hidden_part_is_not_picked_through() {
     let picked: Vec<PickedElement> = mate.entities.iter().map(Selectable::picked).collect();
     assert_eq!(picked, lit, "a click picks what the hover lit");
 }
+
+/// The arm's hand copied and pasted, as Ctrl+C, Ctrl+V do: the pasted step
+/// places a second hand under an id of its own, and its joint is between
+/// that new hand and the forearm — not a second joint on the hand copied.
+#[test]
+#[ignore = "bug: Program::paste gives the pasted add_part step a fresh id (`part1`) but leaves its \
+            mates naming the instance it was copied from: the pasted joint `add_part(part1,m1)` \
+            is between `/fore:model` and `/hand:model`, so the copy is held by nothing and the hand \
+            gets a duplicate joint"]
+fn a_placed_part_copied_and_pasted_is_mated_as_itself() {
+    let mut editor = editor();
+    handled(
+        &mut editor,
+        Command::LoadWorkspaceExample {
+            name: "arm".into(),
+            folder: None,
+        },
+    );
+    let copied = handled(&mut editor, Command::Copy { id: "hand".into() });
+    let Content::Text(text) = copied.export.expect("the step as text").content else {
+        panic!("a step is copied as text");
+    };
+    handled(&mut editor, Command::Paste { text });
+    let pasted = editor.program().steps.last().expect("a step is pasted");
+    assert_ne!(pasted.id, "hand", "pasted under an id of its own");
+    let args: AddPartArgs = step_args(pasted);
+    let parts: Vec<String> = (args.mates["m1"].entities.iter())
+        .map(|entity| entity.part().to_string())
+        .collect();
+    assert_eq!(parts, ["fore", pasted.id.as_str()], "{:?}", args.mates);
+}
+
+/// A box placed, then its extrusion made deeper where it is placed and
+/// committed, the file kept as the front end keeps what is written: undo
+/// takes back that last edit — the box as deep as it was — and leaves the
+/// box placed.
+#[test]
+#[ignore = "bug: committing a step of a placed part (Command::Open with `placed`) changes the \
+            placed file, not the program, so nothing is pushed on the undo stack; the next Undo \
+            pops the edit before it and removes the step `part1` placing the box, while box.geop \
+            keeps the new distance"]
+fn undo_after_editing_a_placed_part_takes_back_that_edit() {
+    let part = geop_ops_extrude_revolve::examples::box_with_drill_hole();
+    let mut editor = editor();
+    let files = BTreeMap::from([("box.geop".to_string(), Some(part.to_json().unwrap()))]);
+    handled(&mut editor, Command::Files { files });
+    let path = Some("assembly.geop".into());
+    handled(
+        &mut editor,
+        Command::Load {
+            program: Program::new(),
+            path,
+        },
+    );
+    handled(
+        &mut editor,
+        Command::New {
+            kind: "add_part".into(),
+        },
+    );
+    handled(
+        &mut editor,
+        dialog("file", Value::Choice("box.geop".into())),
+    );
+    handled(&mut editor, dialog("fixed", Value::Bool(true)));
+    handled(&mut editor, Command::Commit);
+    let placed = editor.program().steps[0].id.clone();
+
+    let open = Command::Open {
+        id: "box".into(),
+        placed: Some(placed),
+    };
+    handled(&mut editor, open.clone());
+    handled(&mut editor, dialog("distance", Value::Number(2.0)));
+    let committed = handled(&mut editor, Command::Commit);
+    let files = (committed
+        .written
+        .expect("the box's file is written")
+        .into_iter())
+    .map(|file| (file.path, Some(file.program.to_json().unwrap())))
+    .collect();
+    handled(&mut editor, Command::Files { files });
+
+    let undone = handled(&mut editor, Command::Undo);
+    assert_eq!(editor.program().steps.len(), 1, "the box is still placed");
+    let written = undone.written.unwrap_or_default();
+    let [box_file] = &written[..] else {
+        panic!("the box's file is written back: {written:?}");
+    };
+    let extrusion: geop_ops_extrude_revolve::ExtrudeArgs =
+        step_args(box_file.program.step("box").unwrap());
+    assert_eq!(
+        extrusion.extent,
+        geop_ops_extrude_revolve::Extents::blind(1.0)
+    );
+}
+
+/// The pin-in-plate placed as a sub-assembly `hinge`, and the step placing
+/// its plate opened where it is placed, as the step list offers it: typing
+/// 5 into the plate's `x` moves the plate there — in the hinge's file once
+/// committed, and on the screen.
+#[test]
+#[ignore = "bug: a step placing a part, opened in a placed sub-assembly (Command::Open with \
+            `placed: hinge`), takes its placement fields and does nothing with them: the editor \
+            ignores what a step of a placed part pulls (`pulls` only for the program's own \
+            steps), so `x` = 5 leaves `hinge/plate` at the origin, and the commit writes \
+            hinge.geop with the plate's pose unchanged"]
+fn a_part_of_a_sub_assembly_goes_where_its_placement_fields_say() {
+    let mut editor = editor();
+    let files = BTreeMap::from([
+        (
+            "plate.geop".to_string(),
+            Some(
+                geop_ops_extrude_revolve::examples::box_with_drill_hole()
+                    .to_json()
+                    .unwrap(),
+            ),
+        ),
+        (
+            "pin.geop".to_string(),
+            Some(crate::examples::pin().to_json().unwrap()),
+        ),
+        (
+            "hinge.geop".to_string(),
+            Some(crate::examples::pin_in_plate_assembly().to_json().unwrap()),
+        ),
+    ]);
+    handled(&mut editor, Command::Files { files });
+    let mut top = Program::new();
+    let hinge = AddPartArgs {
+        file: "hinge.geop".into(),
+        ..Default::default()
+    };
+    top.push("hinge", hinge.fixed());
+    let path = Some("top.geop".into());
+    handled(&mut editor, Command::Load { program: top, path });
+    handled(
+        &mut editor,
+        Command::Open {
+            id: "plate".into(),
+            placed: Some("hinge".into()),
+        },
+    );
+    handled(&mut editor, dialog("x", Value::Number(5.0)));
+    let committed = handled(&mut editor, Command::Commit);
+    let written = committed.written.unwrap_or_default();
+    let [hinge_file] = &written[..] else {
+        panic!("the hinge's file is written: {written:?}");
+    };
+    let plate = match hinge_file.program.state.get(&pose_state("plate")) {
+        Some(StateValue::Pose(pose)) => pose.position().to_f64_array(),
+        other => panic!("the plate has no pose: {other:?}"),
+    };
+    assert_close(plate, [5.0, 0.0, 0.0], 1e-9);
+}
+
+/// The step placing a plate, copied from `parts/asm.geop` — which names the
+/// plate beside it, `plate.geop` — and pasted into `top.geop` at the top of
+/// the workspace: it places the same plate, `parts/plate.geop`.
+#[test]
+#[ignore = "bug: Command::Copy keeps an add_part step's file as it is spelled relative to the \
+            program copied from, and Command::Paste inserts it unchanged: pasted into `top.geop`, \
+            the step copied from `parts/asm.geop` looks for `plate.geop` beside top.geop and \
+            fails with `there is no file \"plate.geop\"`"]
+fn a_placed_part_pasted_into_a_file_in_another_folder_places_the_same_file() {
+    let mut editor = editor();
+    let mut asm = Program::new();
+    let plate = AddPartArgs {
+        file: "plate.geop".into(),
+        ..Default::default()
+    };
+    asm.push("plate", plate.fixed());
+    let box_text = geop_ops_extrude_revolve::examples::box_with_drill_hole()
+        .to_json()
+        .unwrap();
+    let files = BTreeMap::from([
+        ("parts/plate.geop".to_string(), Some(box_text)),
+        ("parts/asm.geop".to_string(), Some(asm.to_json().unwrap())),
+    ]);
+    handled(&mut editor, Command::Files { files });
+    let path = Some("parts/asm.geop".into());
+    handled(&mut editor, Command::Load { program: asm, path });
+    let copied = handled(&mut editor, Command::Copy { id: "plate".into() });
+    let Content::Text(text) = copied.export.expect("the step as text").content else {
+        panic!("a step is copied as text");
+    };
+    let path = Some("top.geop".into());
+    handled(
+        &mut editor,
+        Command::Load {
+            program: Program::new(),
+            path,
+        },
+    );
+    let pasted = handled(&mut editor, Command::Paste { text });
+    let steps = pasted.program.expect("the program is sent").steps;
+    let errors: Vec<_> = steps.iter().filter_map(|s| s.error.as_ref()).collect();
+    assert!(errors.is_empty(), "{errors:?}");
+    let args: AddPartArgs = step_args(&editor.program().steps[0]);
+    assert_eq!(args.file, "parts/plate.geop");
+}
+
+/// The arm's upper link isolated, then another example opened from the
+/// examples menu: the pin in the plate shows whole — what was isolated,
+/// hidden or coloured is the arm's, for as long as the arm is edited.
+#[test]
+#[ignore = "bug: Command::LoadWorkspaceExample switches the file edited (its `path`) without \
+            clearing what Command::Load clears when the path changes — visibility, colours, \
+            isolation — so after isolating `upper` in the arm, the pin_in_plate example opens \
+            with `plate` and `pin` both hidden: an empty viewport"]
+fn an_example_opened_shows_whole_whatever_was_isolated_before() {
+    let mut editor = editor();
+    let example = |name: &str| Command::LoadWorkspaceExample {
+        name: name.into(),
+        folder: None,
+    };
+    handled(&mut editor, example("arm"));
+    let isolated = handled(
+        &mut editor,
+        Command::Isolate {
+            names: vec!["upper".into()],
+        },
+    );
+    let hidden = isolated.scene.expect("the scene changed").hidden;
+    assert!(hidden.contains(&"fore".to_string()), "{hidden:?}");
+    let opened = handled(&mut editor, example("pin_in_plate"));
+    let hidden = opened.scene.expect("the example is drawn").hidden;
+    let parts_hidden: Vec<&String> = (hidden.iter())
+        .filter(|name| ["plate", "pin"].contains(&name.as_str()))
+        .collect();
+    assert!(parts_hidden.is_empty(), "hidden: {hidden:?}");
+}
+
+/// A step placing a file that has since gone, opened and committed: the
+/// refusal says why the step does not build in its root message — the
+/// line every front end shows of an error, and the assistant's summary —
+/// naming the file.
+#[test]
+#[ignore = "bug: Command::Commit refuses a step that does not build with \
+            `GeopError::new(format!(\"the step does not build: {error}\"))`, where `error` is \
+            the step's whole error as displayed, so the refusal's root message reads `the step \
+            does not build: GeopError` — its first line — and the reason (`there is no file \
+            \"box.geop\"`) is buried in a backtrace and context dump inside the message"]
+fn a_step_that_does_not_build_says_why_in_its_refusal() {
+    let mut editor = editor();
+    let box_text = geop_ops_extrude_revolve::examples::box_with_drill_hole()
+        .to_json()
+        .unwrap();
+    let files = BTreeMap::from([("box.geop".to_string(), Some(box_text))]);
+    handled(&mut editor, Command::Files { files });
+    let mut program = Program::new();
+    let placed = AddPartArgs {
+        file: "box.geop".into(),
+        ..Default::default()
+    };
+    program.push("a", placed.fixed());
+    let path = Some("assembly.geop".into());
+    handled(&mut editor, Command::Load { program, path });
+    let gone = BTreeMap::from([("box.geop".to_string(), None)]);
+    handled(&mut editor, Command::Files { files: gone });
+    handled(
+        &mut editor,
+        Command::Open {
+            id: "a".into(),
+            placed: None,
+        },
+    );
+    let refused = editor.handle(Command::Commit);
+    let error = refused.error.expect("the step does not build");
+    let root = (error.lines())
+        .find_map(|line| line.strip_prefix("RootError: "))
+        .unwrap_or_default();
+    assert!(
+        root.contains("there is no file \"box.geop\""),
+        "the root message is {root:?}"
+    );
+}

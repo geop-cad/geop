@@ -875,3 +875,51 @@ fn the_arm_is_exported_with_the_options_given() {
     assert!(text.contains("robot.urdf") && text.contains("meshes/link.stl"));
     assert!(text.contains(r#"<robot name="arm">"#), "{text}");
 }
+
+/// The arm with a copy of its hand patterned 1 up the assembly's `z` axis:
+/// the copy moves with the hand — turning the wrist turns it, as the
+/// pattern places it relative to the hand — so in the robot it belongs to
+/// the hand's link, carried by the wrist, not to the fixed root.
+#[test]
+#[ignore = "bug: a part pattern's copies are always merged into the root link (urdf::tree treats \
+            them as held to the ground), so the copy `part_pattern(hands,1)` of the hand, which \
+            turns with the wrist joint `add_part(hand,m1)` in geop, is exported as a visual of \
+            the fixed link `upper` and stands still in a simulator"]
+fn a_pattern_of_a_jointed_part_moves_with_its_link() {
+    use crate::{Layout, PartPatternArgs, PatternAxis};
+    use geop_core_math::primitives::{DatumComponent, FrameAxis};
+    use geop_ops_model::{
+        datums::{ORIGIN, component_name, datum},
+        spacing::Spacing,
+    };
+    let (files, mut program) = workspace_example("arm");
+    program.push(
+        "hands",
+        PartPatternArgs {
+            part: "hand".into(),
+            axis: Some(PatternAxis::Datum(datum(component_name(
+                ORIGIN,
+                DatumComponent::Axis(FrameAxis::Z),
+            )))),
+            reversed: false,
+            layout: Layout::Linear {
+                spacing: Spacing::step(1.0),
+            },
+            count: 2.0.into(),
+        },
+    );
+    let mut part = build(files, "arm.geop", &program);
+    let exported = part.export("arm").unwrap();
+    let link_of = |visual: &str| {
+        (exported.robot.links.iter())
+            .find(|link| link.visuals.iter().any(|v| v.name == visual))
+            .map(|link| link.name.as_str())
+    };
+    assert_eq!(link_of("hand"), Some("hand"));
+    assert_eq!(
+        link_of("part_pattern(hands,1)"),
+        Some("hand"),
+        "the copy is carried by the wrist"
+    );
+    assert_links_where_drawn(&part, &exported.robot);
+}
