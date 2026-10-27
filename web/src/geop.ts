@@ -250,6 +250,8 @@ export interface Step {
   id: string;
   operation: string;
   args: unknown;
+  /** Whether it runs, a formula of the parameters: where it is 0 it is suppressed. Always, if none. */
+  active?: string;
 }
 
 /** A pose, as a file has it: a position and a rotation quaternion `[w, x, y, z]`. */
@@ -301,6 +303,15 @@ export type ParamValue = number | Pose | string;
 export interface Program {
   steps: Step[];
   state?: Record<string, ParamValue>;
+  /** How it is shown, saved with it — see `geop_core_program::program::Display`. */
+  display?: Display;
+}
+
+/** What is shown or hidden, the colours placed parts are drawn in, and the placed parts shown alone, by name. */
+export interface Display {
+  visibility?: Record<string, boolean>;
+  colors?: Record<string, string>;
+  isolated?: string[];
 }
 
 // ── editing ──────────────────────────────────────────────────────────────────
