@@ -57,6 +57,8 @@ pub struct GeopApp {
     pub note: Option<(String, f64)>,
     /// The window's title, as last set.
     title: String,
+    /// The theme egui was last set to.
+    applied: Option<Theme>,
     wake: Arc<dyn Fn() + Send + Sync>,
 }
 
@@ -77,6 +79,7 @@ impl GeopApp {
             notes: mpsc::channel(),
             note: None,
             title: String::new(),
+            applied: None,
             wake,
         }
     }
@@ -107,10 +110,7 @@ impl GeopApp {
                     Projection::Orthographic => Projection::Perspective,
                 }
             }
-            Action::ToggleTheme => {
-                self.theme = self.theme.other();
-                self.theme.apply(ctx);
-            }
+            Action::ToggleTheme => self.theme = self.theme.other(),
             Action::ToggleFiles => self.files_shown = !self.files_shown,
             Action::ToggleReduced => app.reduced = !app.reduced,
             Action::TogglePreview => {
@@ -413,6 +413,10 @@ impl eframe::App for GeopApp {
             self.note = None;
         }
         self.keys(ctx);
+        if self.applied != Some(self.theme) {
+            self.theme.apply(ctx);
+            self.applied = Some(self.theme);
+        }
         let title = match self.app.active() {
             Some(active) => format!("{active} — geop"),
             None => "geop".to_string(),
@@ -518,9 +522,7 @@ impl GeopApp {
         let wake: Arc<dyn Fn() + Send + Sync> = Arc::new(move || ctx.request_repaint());
         let app = Controller::open_folder(dir, active, wake.clone())
             .map_err(|e| e.root_message().to_string())?;
-        let window = GeopApp::new(app, wake);
-        window.theme.apply(&cc.egui_ctx);
-        Ok(window)
+        Ok(GeopApp::new(app, wake))
     }
 }
 

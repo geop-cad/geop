@@ -192,3 +192,41 @@ fn a_line_is_sketched_with_the_mouse_and_keys() {
     assert!(app.step.is_none(), "{:?}", app.error);
     assert_eq!(app.program.as_ref().unwrap().steps.len(), 1);
 }
+
+/// Placed parts are drawn from their components, a datum step's handle
+/// over the view, and the light theme as well as the dark.
+#[test]
+fn the_view_draws_placed_parts_and_the_light_theme() {
+    let mut harness = window("ui-placed", true);
+    let shot = |harness: &mut Harness<'_, GeopApp>, name: &str| {
+        let image = harness.render().expect("rendered");
+        if let Ok(dir) = std::env::var("GEOP_DESKTOP_SHOTS") {
+            let _ = image.save(std::path::Path::new(&dir).join(format!("{name}.png")));
+        }
+    };
+    let program = harness.state().app.program.clone().unwrap();
+    let name = program.workspace_examples[0].to_string();
+    let ctx = egui::Context::default();
+    harness
+        .state_mut()
+        .act(&ctx, Action::LoadWorkspaceExample(name.clone()));
+    idle(&mut harness);
+    assert_eq!(harness.state().app.error, None);
+    assert!(
+        !harness.state().app.scene.instances.is_empty(),
+        "{name} places parts"
+    );
+    shot(&mut harness, &format!("placed-{name}"));
+    harness.state_mut().theme = super::Theme::Light;
+    harness.run_steps(2);
+    if program.examples.contains(&"boss_on_reference_plane") {
+        harness
+            .state_mut()
+            .act(&ctx, Action::LoadExample("boss_on_reference_plane".into()));
+        idle(&mut harness);
+        harness.state_mut().app.open_step("lifted", None);
+        idle(&mut harness);
+        assert!(harness.state().app.step.is_some(), "the datum step is open");
+        shot(&mut harness, "light-datum");
+    }
+}
