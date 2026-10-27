@@ -45,7 +45,7 @@ fn drawn(sketches: &[(&str, PlacedSketch)]) -> PartView {
 /// What `pointer` picks of the kinds `accepts`.
 fn picked(view: &PartView, pointer: &Pointer, accepts: &[&str]) -> Option<PickedElement> {
     let accepts: Vec<String> = accepts.iter().map(|k| k.to_string()).collect();
-    view.pick(pointer, &accepts).map(|h| h.element)
+    view.pick(pointer, &accepts, &[]).map(|h| h.element)
 }
 
 /// A square sketch, its corners, and its right side.

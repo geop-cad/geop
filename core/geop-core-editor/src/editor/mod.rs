@@ -38,7 +38,7 @@ use geop_core_program::{
     element::PickedElement,
     operation_registry::OperationRegistry,
     part::Part,
-    placed::PlacedPart,
+    placed::{Located, PlacedPart},
     program::{Program, ProgramStep},
     reader::{Reader, Seen},
     runner::Runner,
@@ -57,7 +57,7 @@ use crate::{
     registry::Registry,
     step_editor::{Editing, StepEditor},
     tools::Tool,
-    view::{EMPTY_EXTENT, PartView, drawn},
+    view::{EMPTY_EXTENT, PartView, Visible, drawn},
 };
 use build::Build;
 use geop_core_math::{
@@ -446,12 +446,12 @@ impl Editor {
         let mut hidden = self.hidden(step.as_ref().map(|s| &s.presentation.pickable[..]), steps);
         // What the step being edited asks to hide of what it builds.
         if let Some(step) = &step {
-            for name in &step.presentation.hidden {
-                if !hidden.contains(name) {
-                    hidden.push(name.clone());
-                }
-            }
+            hidden.extend(step.presentation.hidden.iter().cloned());
         }
+        // Sorted: what a pick is made in looks names up in it (see
+        // [`Visible`]).
+        hidden.sort();
+        hidden.dedup();
         let shown = Shown {
             seen: self.shown_part(steps).seen(),
             steps,
@@ -760,12 +760,17 @@ impl Editor {
                     ),
                     None => (event, &self.build.runner, &self.build.part),
                 };
+                // Picked in what the viewer was last told to draw.
+                let scene = Visible {
+                    view: &open.view,
+                    hidden: (self.shown.as_ref()).map_or(&[], |shown| &shown.hidden),
+                };
                 let editing = Editing {
                     editors: self.registry.editors(),
                     runner,
                     part,
                     program: &mut open.program,
-                    scene: &*open.view,
+                    scene: &scene,
                 };
                 open.editor.handle(editing, &event)?;
                 let after = open.edited()?;
@@ -1217,8 +1222,12 @@ impl Editor {
     fn presentation(&self, open: &Open) -> GeopResult<Presentation> {
         let (runner, part) = self.edited_with(open);
         let editors = self.registry.editors();
+        let scene = Visible {
+            view: &open.view,
+            hidden: (self.shown.as_ref()).map_or(&[], |shown| &shown.hidden),
+        };
         let presentation =
-            (open.editor).presentation(editors, runner, part, &open.program, &*open.view)?;
+            (open.editor).presentation(editors, runner, part, &open.program, &scene)?;
         match &open.within {
             Some(within) => presentation.placed(&within.instance, &within.pose.motion()),
             None => Ok(presentation),
@@ -1300,18 +1309,39 @@ impl Editor {
     }
 
     /// What the shown steps built on — sketches, and datums as a whole —
-    /// but none that a field picking now, from what is drawn of the kinds
+    /// and what the drawers draw only to be picked from (the datums of the
+    /// parts placed, see [`crate::registry::Drawer::hidden`]), but none
+    /// that a field picking now, from what is drawn of the kinds
     /// `picking`, could pick something of.
     fn hidden(&self, picking: Option<&[String]>, steps: usize) -> Vec<String> {
         let picking = picking.unwrap_or_default();
         let picks = |kind: &str| picking.iter().any(|p| p == kind);
         let view = self.open.as_ref().map(|open| &open.view);
+        // Of the part itself, or of a part placed in it, behind its path.
+        let in_view = |key: &str, has: &dyn Fn(&PartView, &str) -> bool| {
+            let Some(view) = view else {
+                return false;
+            };
+            let Ok(located) = Located::of_key(key) else {
+                return false;
+            };
+            let part = match located.path() {
+                "" => Some(&**view),
+                path => (view.instances.iter())
+                    .find(|i| i.name == path)
+                    .map(|i| &*i.view),
+            };
+            part.is_some_and(|part| has(part, located.name()))
+        };
+        // A frame is put on a datum too.
+        let picks_datums = picks(drawn::DATUM) || picks(drawn::FRAME);
+        let picks_sketches =
+            picks(drawn::SKETCH) || picks(drawn::SKETCH_POINT) || picks(drawn::SKETCH_CURVE);
         let pickable = |name: &str| {
-            let sketch =
-                (picks(drawn::SKETCH) || picks(drawn::SKETCH_POINT) || picks(drawn::SKETCH_CURVE))
-                    && view.is_some_and(|v| v.sketches.iter().any(|s| s.name == name));
-            let datum = picks(drawn::DATUM)
-                && view.is_some_and(|v| v.datums.iter().any(|d| d.name == name));
+            let sketch = picks_sketches
+                && in_view(name, &|v, name| v.sketches.iter().any(|s| s.name == name));
+            let datum =
+                picks_datums && in_view(name, &|v, name| v.datums.iter().any(|d| d.name == name));
             sketch || datum
         };
         // A sketch built on is hidden by its name, as is a datum built on as
@@ -1331,12 +1361,12 @@ impl Editor {
         hidden.sort();
         hidden.dedup();
         // What is drawn only to be picked from — the datums of the parts
-        // placed — is shown only while a step picks from what it builds:
-        // a part being placed, for its mates to pick.
-        let placing = (self.open.as_ref()).is_some_and(|open| self.picks_built(open));
-        if !placing {
-            hidden.extend(self.registry.hidden(&self.shown_part(steps)));
-        }
+        // placed — is shown only while a field waits to pick it: a mate's,
+        // say, not the whole time a part is placed.
+        hidden.extend(
+            (self.registry.hidden(&self.shown_part(steps)).into_iter())
+                .filter(|name| !pickable(name)),
+        );
         // Then what the user chose — but what a click could pick now is
         // shown, to be picked.
         for (name, &visible) in &self.visibility {

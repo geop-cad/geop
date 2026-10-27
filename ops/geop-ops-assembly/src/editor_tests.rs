@@ -6,6 +6,7 @@
 
 use geop_core_program::{
     element::{ElementReference, PickedElement},
+    placed::Located,
     program::Program,
     testing::{args as step_args, edit_args},
     values::{Setting, StateValue, pose_state},
@@ -1192,4 +1193,68 @@ fn a_step_of_a_placed_part_is_edited_where_it_is_placed() {
         matches!(distance, Some(Control::Number(number)) if number.value == 2.0),
         "cancelled, the file is as committed"
     );
+}
+
+/// What the scene of `editor` hides, sent afresh.
+fn scene_hidden(editor: &mut Editor) -> Vec<String> {
+    let update = handled(editor, Command::Show);
+    update.scene.expect("a scene is sent on show").hidden
+}
+
+/// The placed parts' datums are drawn only to be picked: placing a part,
+/// they are not shown — until a mate waits for its entities, which a
+/// datum can be, and once it has them, they go again.
+#[test]
+fn placing_a_part_shows_the_datums_only_while_a_mate_picks() {
+    let mut step = placing(args(false, &[]));
+    let origins = ["a", "b"].map(|part| Located::in_instance(part, ORIGIN).key());
+    let hidden = scene_hidden(&mut step.editor);
+    for origin in &origins {
+        assert!(hidden.contains(origin), "{origin} shown: {hidden:?}");
+    }
+    step.dialog("add_mate", Value::Choice("coincident".into()));
+    let hidden = scene_hidden(&mut step.editor);
+    for origin in &origins {
+        assert!(!hidden.contains(origin), "{origin} hidden: {hidden:?}");
+    }
+    let picked = [origin("b"), origin("a")].map(|e| e.picked()).to_vec();
+    step.dialog("mate:m1:entities", Value::Elements(picked));
+    let hidden = scene_hidden(&mut step.editor);
+    for origin in &origins {
+        assert!(hidden.contains(origin), "{origin} shown: {hidden:?}");
+    }
+}
+
+/// A placed part hidden is not picked, and hides nothing behind it: the
+/// cube placed as `b` stood above `a`, and hidden, a mate's pick looking
+/// down through it lights `a`'s top, and a click picks what is lit.
+#[test]
+fn a_hidden_part_is_not_picked_through() {
+    let mut step = placing(args(true, &[]));
+    step.dialog("z", Value::Number(2.0));
+    handled(
+        &mut step.editor,
+        Command::Visibility {
+            name: "b".into(),
+            visible: false,
+        },
+    );
+    step.dialog("add_mate", Value::Choice("coincident".into()));
+    let at = down_at(0.5, 0.5, 4.0);
+    step.send(StepEditEvent::Hover {
+        pointer: at,
+        shift: false,
+    });
+    let lit = step.presentation().highlights.clone();
+    assert_eq!(lit.len(), 1, "{lit:?}");
+    assert_eq!(lit[0].target, Located::in_instance("a", "model"), "{lit:?}");
+    step.send(StepEditEvent::Click {
+        pointer: at,
+        button: Default::default(),
+        double: false,
+        shift: false,
+    });
+    let mate = &step.args::<AddPartArgs>().mates["m1"];
+    let picked: Vec<PickedElement> = mate.entities.iter().map(Selectable::picked).collect();
+    assert_eq!(picked, lit, "a click picks what the hover lit");
 }

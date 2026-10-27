@@ -40,8 +40,10 @@ pub trait Drawer: 'static {
     /// each one that is not drawn with `visible: None`.
     fn structure(&self, reader: &Reader) -> GeopResult<Vec<StructureItem>>;
 
-    /// The names of what it draws that is shown only while a step picks
-    /// from what it builds: none, unless it says otherwise.
+    /// The names of what it draws only to be picked: shown only while a
+    /// field waiting for a pick could pick it (see
+    /// [`crate::editing::Reference::accepts`]) — none, unless it says
+    /// otherwise.
     fn hidden(&self, _reader: &Reader) -> Vec<String> {
         Vec::new()
     }
@@ -350,8 +352,8 @@ impl Registry {
         Ok(items)
     }
 
-    /// What the drawers draw of the part `reader` reads to be shown only
-    /// while a step picks from what it builds (see [`Drawer::hidden`]).
+    /// What the drawers draw of the part `reader` reads only to be picked
+    /// (see [`Drawer::hidden`]).
     pub fn hidden(&self, reader: &Reader) -> Vec<String> {
         (self.drawers.iter())
             .flat_map(|drawer| drawer.hidden(reader))

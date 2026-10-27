@@ -10,7 +10,7 @@ use geop_core_program::element::PickedElement;
 
 use super::Tool;
 use crate::{
-    editing::{Dialog, Layout, Presentation, StepEditEvent},
+    editing::{Dialog, Layout, Presentation, StepEditEvent, hit::Scene},
     editor::{Changed, EditorContext},
     output::{Inspection, InspectorInfo, Picks},
 };

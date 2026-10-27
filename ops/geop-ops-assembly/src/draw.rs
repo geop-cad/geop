@@ -47,7 +47,7 @@ impl Drawer for AssemblyDrawer {
     }
 
     /// The datums of the parts placed: theirs, not the part's, shown only
-    /// while a part is being placed, for its mates to pick.
+    /// while a field waits to pick one — a mate's entities.
     fn hidden(&self, reader: &Reader) -> Vec<String> {
         let Ok(placed) = placed_parts(reader) else {
             return Vec::new();

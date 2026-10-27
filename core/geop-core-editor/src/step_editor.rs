@@ -754,10 +754,13 @@ impl StepEditor {
         let mut visuals = form.visuals;
         visuals.extend(handles(&form.dialog));
         // What the reference fields hold, and what a click would pick for
-        // the one waiting, drawn as they are — a frame as a triad — in the
-        // part as the step built it, where what the step places is.
-        let hover = self.armed.as_deref().zip(self.hover.as_ref());
-        let shown = form.dialog.shown(&part.after(&self.step), hover);
+        // the one waiting, drawn and lit as it would be held — a frame as a
+        // triad, on what it is put on — in the part as the step built it,
+        // where what the step places is.
+        let built = part.after(&self.step);
+        let previewed = (self.armed.as_deref().zip(self.hover.as_ref()))
+            .and_then(|(key, element)| form.dialog.previewed(&built, key, element));
+        let shown = form.dialog.shown(previewed.as_ref());
         let tool = form.tool;
         // While a field waits for a pick, only a handle is hovered: no pick
         // takes one, so a press on it can only mean dragging it. Anything
@@ -793,7 +796,7 @@ impl StepEditor {
         }
         visuals.extend(shown);
         let highlights = (form.dialog.picked().cloned())
-            .chain(self.hover.clone())
+            .chain(previewed.into_iter().flat_map(|p| p.drawn))
             .collect();
         Ok(Presentation {
             dialog: form.dialog,

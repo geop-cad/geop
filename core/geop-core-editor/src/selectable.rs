@@ -18,7 +18,7 @@ use geop_core_program::{
     reader::Reader,
 };
 
-use crate::editing::{Pointer, Visual, hit::Scene};
+use crate::editing::{Picked, Pointer, Visual, hit::Scene};
 
 /// A kind of element of the target `T` a reference field picks.
 pub trait SelectableElement<T: HasElements<Self>>: Kind + Sized {
@@ -134,13 +134,17 @@ pub fn selected<P: Selectable>(reader: &Reader, picks: &[PickedElement]) -> Vec<
     held
 }
 
-/// What an editor draws of what a click on `hit` would pick as a `P` in
-/// the part `reader` reads (see [`Selectable::visuals`]): nothing, for a
-/// hit that selects none.
-pub fn previewed<P: Selectable>(reader: &Reader, hit: &PickedElement) -> Vec<Visual> {
-    (P::from_picked(hit).or_else(|| P::select(reader, hit)))
-        .map(|value| value.visuals(reader))
-        .unwrap_or_default()
+/// What a click on `hit` would pick as a `P` in the part `reader` reads,
+/// lit and drawn as it is once held (see [`Selectable::drawn`],
+/// [`Selectable::visuals`]): so what the pointer lights is what a click
+/// holds. None, for a hit that selects none.
+pub fn previewed<P: Selectable>(reader: &Reader, hit: &PickedElement) -> Option<Picked> {
+    let value = P::from_picked(hit).or_else(|| P::select(reader, hit))?;
+    Some(Picked {
+        drawn: value.drawn(reader),
+        visuals: value.visuals(reader),
+        ..Picked::new(value.picked())
+    })
 }
 
 /// What a click with `pointer` on what the editor draws, `scene`, selects
