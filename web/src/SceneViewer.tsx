@@ -577,6 +577,8 @@ export function SceneViewer({
     container.addEventListener("pointerenter", sendView);
     container.addEventListener("contextmenu", onContextMenu);
 
+    /** What the datums were last drawn from (see the loop below), and which of them are lit. */
+    const datumsDrawn: { inputs: unknown[]; lit: string[] } = { inputs: [], lit: [] };
     let frame = requestAnimationFrame(function animate() {
       applyProjection();
       // A focus move drives the camera itself; the controls take over again
@@ -639,18 +641,33 @@ export function SceneViewer({
       }
       renderer.domElement.style.cursor = press?.grabbed ? "grabbing" : grabRef.current ? "grab" : "";
 
-      const highlighted = highlightsRef.current;
-      const lit = [
-        ...litDatums(partRef.current, "", highlighted),
-        ...instancesRef.current.flatMap((i) => {
-          const view = componentsRef.current[i.component];
-          return view ? litDatums(view, i.name, highlighted) : [];
-        }),
+      // Which datums are drawn, and lit, only when what decides it
+      // changed: not every frame — an assembly has a datum per part.
+      const datumInputs = [
+        highlightsRef.current,
+        instancesRef.current,
+        componentsRef.current,
+        partRef.current,
+        hiddenRef.current,
+        datumsRef.current,
       ];
-      const hidden = hiddenRef.current.filter((name) => !lit.includes(name));
-      const { extent } = partRef.current;
-      datumLayer.sync(datumsRef.current, hidden, extent.size, vec(extent.center));
-      datumLayer.update(camera, height, datumKinds(pickableRef.current), lit);
+      if (datumInputs.some((input, k) => input !== datumsDrawn.inputs[k])) {
+        const highlighted = highlightsRef.current;
+        const lit = [
+          ...litDatums(partRef.current, "", highlighted),
+          ...instancesRef.current.flatMap((i) => {
+            const view = componentsRef.current[i.component];
+            return view ? litDatums(view, i.name, highlighted) : [];
+          }),
+        ];
+        const shown = new Set(lit);
+        const hidden = new Set(hiddenRef.current.filter((name) => !shown.has(name)));
+        const { extent } = partRef.current;
+        datumLayer.sync(datumsRef.current, hidden, extent.size, vec(extent.center));
+        datumsDrawn.inputs = datumInputs;
+        datumsDrawn.lit = lit;
+      }
+      datumLayer.update(camera, height, datumKinds(pickableRef.current), datumsDrawn.lit);
       visualLayer.sync(visualsRef.current);
       visualLayer.update(camera, height, controls.target);
       gizmoLayer.sync(gizmoRef.current);

@@ -985,6 +985,66 @@ await check("a step is copied and pasted", async () => {
   return `${await boxes.last().locator(".step-name").innerText()} pasted; ${stats}`;
 });
 
+// ── keys ────────────────────────────────────────────────────────────────
+
+await check("an operation starts by its key, Escape cancels it untouched, and the keys say so", async () => {
+  await fresh();
+  await fileMenu(page, "Box with drill hole");
+  await builtCleanly();
+  const title = await page.locator(".op-button", { hasText: /^Extrude$/ }).first().getAttribute("title");
+  expect(/\(E\)$/.test(title ?? ""), `Extrude's tooltip does not say its key: ${title}`);
+  await page.keyboard.press("e");
+  await settle(page);
+  expect((await popup.count()) === 1, "E did not start an extrusion");
+  expect(/Extrude/.test(await popup.locator("h2").innerText()), "E started something else");
+  // The extrusion waits for its sketch: the first Escape stops picking,
+  // the second — nothing changed — cancels it.
+  await page.keyboard.press("Escape");
+  await settle(page);
+  await page.keyboard.press("Escape");
+  await settle(page);
+  expect((await popup.count()) === 0, "Escape did not cancel the untouched step");
+  // `?` lists the keys, Extrude's among them.
+  await page.keyboard.press("?");
+  const keys = await page.locator(".shortcuts").innerText();
+  expect(/Extrude/.test(keys) && /Command palette/.test(keys), `the key list: ${keys.slice(0, 120)}`);
+  await page.keyboard.press("Escape");
+  expect((await page.locator(".shortcuts").count()) === 0, "Escape did not close the key list");
+  return builtCleanly();
+});
+
+await check("the command palette finds and runs an operation, a step and an action", async () => {
+  await fresh();
+  await fileMenu(page, "Box with drill hole");
+  await builtCleanly();
+  const palette = page.locator(".palette");
+  const run = async (query) => {
+    await page.keyboard.press("Control+k");
+    await palette.waitFor();
+    await page.keyboard.type(query);
+    const first = await palette.locator(".palette-item.chosen .palette-label").innerText();
+    await page.keyboard.press("Enter");
+    await settle(page);
+    return first;
+  };
+  expect((await run("revol")) === "Revolve", "Revolve was not the first match");
+  expect((await popup.count()) === 1, "the palette did not open Revolve");
+  await page.keyboard.press("Control+k");
+  await page.keyboard.type("cancel");
+  await page.keyboard.press("Enter");
+  await settle(page);
+  expect((await popup.count()) === 0, "the palette's Cancel did not cancel the step");
+  const steps = await page.locator(".timeline .step-name").allInnerTexts();
+  const step = steps[0];
+  expect((await run(step)) === step, `the step ${step} was not found`);
+  expect((await popup.count()) === 1, `the palette did not open the step ${step}`);
+  await page.keyboard.press("Control+k");
+  await page.keyboard.press("Escape");
+  expect((await palette.count()) === 0, "Escape did not close the palette");
+  await popup.locator(".button-row button", { hasText: /^Cancel$/ }).click();
+  return builtCleanly();
+});
+
 checks.report();
 await browser.close();
 server.stop();

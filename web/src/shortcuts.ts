@@ -70,6 +70,7 @@ export function score(query: string, text: string): number | null {
   const q = query.trim().toLowerCase();
   const t = text.toLowerCase();
   if (q === "") return 0;
+  if (t === q) return 2000;
   if (t.startsWith(q)) return 1000 - t.length;
   const word = t.split(/[\s:_\-/·]+/).findIndex((w) => w.startsWith(q));
   if (word >= 0) return 800 - word * 10 - t.length;

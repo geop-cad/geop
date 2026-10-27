@@ -143,8 +143,12 @@ function build(visual: Visual): THREE.Object3D {
 export class VisualLayer {
   readonly group = new THREE.Group();
   private signature = "";
+  private synced: Visual[] | null = null;
 
+  /** Draw `visuals`: built again only when they changed — the same array, given every frame, is not even compared. */
   sync(visuals: Visual[]) {
+    if (visuals === this.synced) return;
+    this.synced = visuals;
     const signature = JSON.stringify(visuals);
     if (signature === this.signature) return;
     this.signature = signature;

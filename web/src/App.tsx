@@ -83,6 +83,11 @@ function download(name: string, data: string | Uint8Array<ArrayBuffer>, type = "
   URL.revokeObjectURL(url);
 }
 
+/** `next`, unless it is what `shown` is already: then `shown`, so that what draws it does not again. */
+function same<T>(shown: T, next: T): T {
+  return shown === next || JSON.stringify(shown) === JSON.stringify(next) ? shown : next;
+}
+
 /** The last segment of `path`. */
 function baseName(path: string): string {
   return path.slice(path.lastIndexOf("/") + 1);
@@ -212,8 +217,10 @@ function App() {
       if (drawnRef.current && wantsFraming(drawnRef.current, drawn, poseRef.current)) frameRef.current = true;
       drawnRef.current = drawn;
     }
-    setStep(update.step);
-    setTool(update.tool);
+    // The same step or tool shown as before — a hover over nothing — is
+    // kept as it was: nothing it is drawn by renders again.
+    setStep((shown) => same(shown, update.step));
+    setTool((shown) => same(shown, update.tool));
     if (kind === "agent") return;
     // An answer asked for is kept; the pick tool's comes with every update.
     const inspection = update.inspection;
@@ -452,7 +459,7 @@ function App() {
 
   // ── the program ────────────────────────────────────────────────────────
 
-  const steps = program?.steps ?? [];
+  const steps = useMemo(() => program?.steps ?? [], [program?.steps]);
   /** The extensions of the data files programs read beside them (see `OperationInfo.reads`). */
   const reads = useMemo(() => dataExtensions(program?.operations ?? []), [program?.operations]);
 
@@ -653,7 +660,7 @@ function App() {
     if (host && documentLoaded.current && programValue) host.programChanged(programValue);
   }, [programValue]);
 
-  const infos = program?.operations ?? [];
+  const infos = useMemo(() => program?.operations ?? [], [program?.operations]);
   /** Reduced mode, on unless turned off in the Help menu: only the
    *  operations that are robust today, the experimental ones left out.
    *  Remembered per browser. */
@@ -677,28 +684,34 @@ function App() {
   const triangleCount =
     triangles(scene?.part) +
     instances.reduce((n, i) => n + triangles(components[i.component]), 0);
-  const iconOf = (kind: string) => infos.find((info) => info.kind === kind)?.icon ?? null;
-  const timelineSteps: TimelineStep[] = steps.map((s) => ({
-    id: s.id,
-    name: s.id,
-    icon: iconOf(s.kind),
-    // A step placing one part says which file it places.
-    title: s.placed.length === 1 ? `${s.label} of ${programName(s.placed[0].file)}: ${s.summary}` : `${s.label}: ${s.summary}`,
-    error: s.error,
-    dim: !s.editing && !s.runs,
-    editing: s.editing,
-    placed: s.placed.map((p) => ({
-      instance: p.instance,
-      steps: p.steps.map((inner) => ({
-        id: inner.id,
-        name: inner.id,
-        icon: iconOf(inner.kind),
-        title: `${programName(p.file)}: ${inner.label}: ${inner.summary}`,
-        error: inner.error,
-        editing: inner.editing,
+  // Made again only when the program is, not at every hover.
+  const timelineSteps: TimelineStep[] = useMemo(() => {
+    const iconOf = (kind: string) => infos.find((info) => info.kind === kind)?.icon ?? null;
+    return steps.map((s) => ({
+      id: s.id,
+      name: s.id,
+      icon: iconOf(s.kind),
+      // A step placing one part says which file it places.
+      title:
+        s.placed.length === 1
+          ? `${s.label} of ${programName(s.placed[0].file)}: ${s.summary}`
+          : `${s.label}: ${s.summary}`,
+      error: s.error,
+      dim: !s.editing && !s.runs,
+      editing: s.editing,
+      placed: s.placed.map((p) => ({
+        instance: p.instance,
+        steps: p.steps.map((inner) => ({
+          id: inner.id,
+          name: inner.id,
+          icon: iconOf(inner.kind),
+          title: `${programName(p.file)}: ${inner.label}: ${inner.summary}`,
+          error: inner.error,
+          editing: inner.editing,
+        })),
       })),
-    })),
-  }));
+    }));
+  }, [steps, infos]);
 
   const inHand = program?.tool ?? null;
   // The ribbon offers the operations alone: the editor's tools — the drag
@@ -852,7 +865,15 @@ function App() {
         setPalette((open) => (open === "palette" ? null : "palette"));
         return;
       }
-      if (palette != null || typing(e) || e.defaultPrevented) return;
+      if (palette != null || e.defaultPrevented) return;
+      // Ctrl+Enter commits from a field too, after the field took its Enter.
+      const commit = entriesRef.current.find((entry) => entry.id === "edit:commit");
+      if (commit && !commit.disabled && matches(parseChord("Mod+Enter"), e)) {
+        e.preventDefault();
+        commit.run();
+        return;
+      }
+      if (typing(e)) return;
       // While a step is edited, its tools take the plain keys.
       const usable = entriesRef.current.filter(
         (entry) => !editing || entry.shortcut?.startsWith("Mod+") || entry.shortcut === "?",

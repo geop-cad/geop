@@ -2,6 +2,7 @@ import { useState, type ReactNode } from "react";
 import { ColorInput, Dropdown, SearchSelect } from "./controls";
 import { FileChooser } from "./FileChooser";
 import { Icon } from "./icons";
+import { formatShortcut } from "./shortcuts";
 import { TableField } from "./TableField";
 import { elementLabel, type Action, type Control, type StepState, type Tone, type Unit, type Value } from "./geop";
 
@@ -442,13 +443,17 @@ export function DialogView({ step, onDialog, onChooseFile, setPreview, error, on
         Preview
       </label>
       <div className="button-row">
-        <button className="small" onClick={onCancel} title="Leave the program as it was (Escape)">
+        <button className="small" onClick={onCancel} title="Leave the program as it was (Esc, before anything is changed)">
           Cancel
         </button>
         <button
           className="primary"
           disabled={blocked}
-          title={step.missing.length > 0 ? `Pick the ${step.missing.join(" and ")} first` : "Put the step into the program"}
+          title={
+            step.missing.length > 0
+              ? `Pick the ${step.missing.join(" and ")} first`
+              : `Put the step into the program (${formatShortcut("Mod+Enter")}, or Enter with nothing in progress)`
+          }
           onClick={onCommit}
         >
           OK
@@ -468,7 +473,7 @@ export function DialogView({ step, onDialog, onChooseFile, setPreview, error, on
         <div className="popup wide" role="dialog" aria-label={step.label}>
           <div className="dialog-head">
             {heading}
-            <button className="icon-only" onClick={onCancel} title="Cancel (Escape)" aria-label="Cancel">
+            <button className="icon-only" onClick={onCancel} title="Cancel" aria-label="Cancel">
               ✕
             </button>
           </div>

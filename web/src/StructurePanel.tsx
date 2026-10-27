@@ -39,7 +39,7 @@ function Eye({ open }: { open: boolean }) {
  */
 export function StructurePanel({ items, details, enabled, onVisibility, onLight }: Props) {
   const groups = grouped(items);
-  if (groups.length === 0) return <p className="hint">Nothing yet.</p>;
+  if (groups.length === 0) return <p className="hint">Nothing yet: what the steps build is listed here, to show or hide.</p>;
   return (
     <div className="structure">
       {groups.map(([title, list]) => (
