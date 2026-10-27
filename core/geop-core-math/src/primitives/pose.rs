@@ -646,12 +646,29 @@ impl Pose<Dual<6>> {
     /// derivatives by the twist's six numbers — a turn's three, then a
     /// move's: at a twist of zero, the step of a pose by its own six
     /// variables, in its own frame.
+    ///
+    /// At a twist of zero — what every constraint a solve makes is
+    /// differentiated by, many thousand times a drag — it is made once per
+    /// thread: the same value every time.
     pub fn exp_with_derivatives(omega: &Vector3, v: &Vector3) -> GeopResult<Self> {
+        thread_local! {
+            static AT_ZERO: std::cell::Cell<Option<Pose<Dual<6>>>> =
+                const { std::cell::Cell::new(None) };
+        }
+        let zero = |x: &Vector3| x.to_array().iter().all(|c| c.is_zero() && c.is_sharp());
+        let at_zero = zero(omega) && zero(v);
+        if at_zero && let Some(made) = AT_ZERO.get() {
+            return Ok(made);
+        }
         let var = |k: usize, x: Scalar| Dual::var(x, k);
-        Pose::exp(
+        let made = Pose::exp(
             &Vector3::from_array([var(0, omega[0]), var(1, omega[1]), var(2, omega[2])]),
             &Vector3::from_array([var(3, v[0]), var(4, v[1]), var(5, v[2])]),
-        )
+        )?;
+        if at_zero {
+            AT_ZERO.set(Some(made));
+        }
+        Ok(made)
     }
 }
 
