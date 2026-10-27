@@ -1254,3 +1254,62 @@ fn a_constraint_mate_hover_lights_what_the_click_picks() {
     let lit = step.presentation().highlights.clone();
     assert_eq!(hovered, lit, "the hover lights what the click picks");
 }
+
+/// A box placed, then its extrusion made deeper where it is placed and
+/// committed, the file kept as the front end keeps what is written: undo
+/// takes back that last edit — the box as deep as it was — and leaves the
+/// box placed.
+#[test]
+#[ignore = "bug: committing a step of a placed part (Command::Open with `placed`) changes the \
+            placed file, not the program, so nothing is pushed on the undo stack; the next Undo \
+            pops the edit before it and removes the step `part1` placing the box, while box.geop \
+            keeps the new distance"]
+fn undo_after_editing_a_placed_part_takes_back_that_edit() {
+    let part = geop_ops_extrude_revolve::examples::box_with_drill_hole();
+    let mut editor = editor();
+    let files = BTreeMap::from([("box.geop".to_string(), Some(part.to_json().unwrap()))]);
+    handled(&mut editor, Command::Files { files });
+    let path = Some("assembly.geop".into());
+    handled(
+        &mut editor,
+        Command::Load {
+            program: Program::new(),
+            path,
+        },
+    );
+    handled(
+        &mut editor,
+        Command::New {
+            kind: "add_part".into(),
+        },
+    );
+    handled(&mut editor, dialog("file", Value::Choice("box.geop".into())));
+    handled(&mut editor, dialog("fixed", Value::Bool(true)));
+    handled(&mut editor, Command::Commit);
+    let placed = editor.program().steps[0].id.clone();
+
+    let open = Command::Open {
+        id: "box".into(),
+        placed: Some(placed),
+    };
+    handled(&mut editor, open.clone());
+    handled(&mut editor, dialog("distance", Value::Number(2.0)));
+    let committed = handled(&mut editor, Command::Commit);
+    let files = (committed.written.expect("the box's file is written").into_iter())
+        .map(|file| (file.path, Some(file.program.to_json().unwrap())))
+        .collect();
+    handled(&mut editor, Command::Files { files });
+
+    let undone = handled(&mut editor, Command::Undo);
+    assert_eq!(editor.program().steps.len(), 1, "the box is still placed");
+    let written = undone.written.unwrap_or_default();
+    let [box_file] = &written[..] else {
+        panic!("the box's file is written back: {written:?}");
+    };
+    let extrusion: geop_ops_extrude_revolve::ExtrudeArgs =
+        step_args(box_file.program.step("box").unwrap());
+    assert_eq!(
+        extrusion.extent,
+        geop_ops_extrude_revolve::Extents::blind(1.0)
+    );
+}
