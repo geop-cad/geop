@@ -354,7 +354,7 @@ impl NurbSurface3D {
     /// row that does not head away from the face: the patch would fold back
     /// over the face it is to continue.
     pub fn tangent_to(&self, sides: &[Option<Neighbour<'_>>; SIDES]) -> GeopResult<Self> {
-        let curved = |k: usize| sides[k].as_ref().is_some_and(|s| !s.flat());
+        let curved = |k: usize| sides[k].as_ref().is_some_and(Neighbour::tilted);
         let mut base = self.clone();
         let mut strays = String::new();
         for _ in 0..=MOST_REFINEMENTS {
@@ -469,9 +469,9 @@ impl NurbSurface3D {
                     let Some(side) = &sides[k] else { continue };
                     let (normal, away) = planes[k][position];
                     let base = original[at(bi, bj)].dehomogenized()?;
-                    let leant = match side.flat() {
-                        true => normal,
-                        false => normal.sub(&away.normalize()?.prod_scalar(Scalar::from_f64(TILT))),
+                    let leant = match side.tilted() {
+                        false => normal,
+                        true => normal.sub(&away.normalize()?.prod_scalar(Scalar::from_f64(TILT))),
                     };
                     constraints.push((
                         k,
@@ -669,7 +669,7 @@ impl NurbSurface3D {
     pub(super) fn strays(&self, sides: &[Option<Neighbour<'_>>; SIDES]) -> GeopResult<Vec<Stray>> {
         let mut strays = Vec::new();
         for (k, side) in sides.iter().enumerate() {
-            let Some(side) = side.as_ref().filter(|s| !s.flat()) else {
+            let Some(side) = side.as_ref().filter(|s| s.tilted()) else {
                 continue;
             };
             let rows = SideRows::of(self, k);
@@ -714,7 +714,7 @@ impl NurbSurface3D {
         let tilt = Scalar::from_f64(2.0 * TILT);
         let mut seen = Vec::new();
         for (k, side) in sides.iter().enumerate() {
-            let Some(side) = side.as_ref().filter(|s| !s.flat()) else {
+            let Some(side) = side.as_ref().filter(|s| s.tilted()) else {
                 continue;
             };
             let rows = SideRows::of(self, k);
@@ -902,6 +902,9 @@ pub struct Neighbour<'a> {
     carried: Arc<NurbSurface3D>,
     along: bool,
     plane: Option<Plane>,
+    /// Whether the face is joined to the patch in one body (see
+    /// [`Neighbour::joined`]).
+    joined: bool,
 }
 
 impl<'a> Neighbour<'a> {
@@ -931,6 +934,21 @@ impl<'a> Neighbour<'a> {
             carried: Arc::new(carried),
             along,
             plane: surface.as_plane()?,
+            joined: false,
+        })
+    }
+
+    /// The face on `surface` along a side of a patch as [`Neighbour::new`]
+    /// says, joined to the patch along that side in one body that the
+    /// kernel builds: both are its own, and no boolean ever has to tell
+    /// which side of the face the patch leaves it on. So the patch is made
+    /// tangent to it untilted, at its abscissae along the side, and that is
+    /// not proven between them: no [`TILT`] is needed where no approximate
+    /// tangency can dip through anything.
+    pub fn joined(surface: &'a NurbSurface3D, along: bool) -> GeopResult<Self> {
+        Ok(Self {
+            joined: true,
+            ..Self::new(surface, along)?
         })
     }
 
@@ -938,6 +956,12 @@ impl<'a> Neighbour<'a> {
     /// side, which a patch can be tangent to exactly.
     pub(super) fn flat(&self) -> bool {
         self.plane.is_some()
+    }
+
+    /// Whether the patch leaves the face at [`TILT`], proven: a curved face
+    /// not joined to it (see [`Neighbour::joined`]).
+    pub(super) fn tilted(&self) -> bool {
+        !self.flat() && !self.joined
     }
 
     /// Where the side, running round the patch at `along`, is at `point`:

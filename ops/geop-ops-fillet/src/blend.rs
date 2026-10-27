@@ -1456,9 +1456,8 @@ impl Tools<'_> {
             let mut corner = corner.clone();
             for end in &mut corner.ends {
                 let t = index(end.tool)?;
-                let contact = |face: FaceId| corner_contact(&corner.faces, face);
                 let faces = touching[t][usize::from(end.at_end)];
-                end.contacts = [contact(faces[0])?, contact(faces[1])?];
+                end.contacts = section_contacts(&corner.faces, end.contacts, faces)?;
                 end.tool = t;
             }
             joined_corners.push(corner);
@@ -1468,14 +1467,25 @@ impl Tools<'_> {
     }
 }
 
-/// Which of a corner's contacts, the corner touching `faces`, lies on
-/// `face`.
-fn corner_contact(faces: &[FaceId], face: FaceId) -> GeopResult<usize> {
-    faces.iter().position(|&f| f == face).ok_or_else(|| {
-        GeopError::new(format!(
-            "a tool ending at a corner touches face {face}, which the corner's ball does not"
-        ))
-    })
+/// The contacts `planned` of a tool ending at a corner whose contacts lie
+/// on `faces`, in the order its section touches `touching`: its first and
+/// its second contact.
+fn section_contacts(
+    faces: &[FaceId],
+    planned: [usize; 2],
+    touching: [FaceId; 2],
+) -> GeopResult<[usize; 2]> {
+    let [a, b] = planned;
+    if [faces[a], faces[b]] == touching {
+        Ok([a, b])
+    } else if [faces[b], faces[a]] == touching {
+        Ok([b, a])
+    } else {
+        Err(GeopError::new(format!(
+            "a tool ending at a corner touches faces {touching:?}, where the corner has it touch {:?}",
+            [faces[a], faces[b]]
+        )))
+    }
 }
 
 /// Cuts `tool` away from `target`, or fills it in, as `bend` says — named

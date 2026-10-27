@@ -39,7 +39,10 @@ use crate::{
 /// set it at vertices along a chain, linearly in between. A corner every
 /// edge of which is rounded, with one radius, is rounded by the ball
 /// touching its three faces, `fillet(F,V,corner)` for its vertex `V` (see
-/// [`crate::corner`]).
+/// [`crate::corner`]); with `setback`, or where no one ball touches its
+/// faces, it is set back instead: each fillet ends that far from the vertex
+/// and a smooth patch closes the corner, `fillet(F,V,corner,k)` along each
+/// side of its loop and `fillet(F,V,corner)` inside.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub struct Fillet;
 
@@ -55,6 +58,11 @@ pub struct FilletArgs {
     /// Radii at vertices along the chains.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub vertex_radii: Vec<VertexRadius>,
+    /// How far from the vertex every fillet ending at a corner every edge
+    /// of which is rounded ends, the corner closed by a smooth patch
+    /// between them, if it is set back.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub setback: Option<NumericInput>,
 }
 
 /// The radius a fillet has at a vertex, by name.
@@ -73,6 +81,7 @@ impl FilletArgs {
             radius: radius.into(),
             end_radius: None,
             vertex_radii: Vec::new(),
+            setback: None,
         }
     }
 
@@ -94,6 +103,10 @@ impl FilletArgs {
                 .iter()
                 .map(|v| (v.vertex.name().to_string(), v.radius))
                 .collect(),
+            setback: match &self.setback {
+                Some(d) => Some(d.resolve(reader)?),
+                None => None,
+            },
         })
     }
 }
@@ -134,8 +147,9 @@ impl PartOperation for Fillet {
         build_model::<Self>(ctx, args)
     }
 
-    /// The edges, picked, and the radius — and, varying, the radius at the
-    /// end and at vertices picked, each a number of its own.
+    /// The edges, picked, and the radius; whether corners are set back,
+    /// and how far — and, varying, the radius at the end and at vertices
+    /// picked, each a number of its own.
     fn form<'a>(
         context: &'a Context<'a>,
         args: &FilletArgs,
@@ -156,6 +170,22 @@ impl PartOperation for Fillet {
             edit.args.radius = radius
         })
         .checkbox(
+            "set_back",
+            "set back corners",
+            args.setback.is_some(),
+            move |edit, on| {
+                // Set back twice the radius, to start with.
+                let radius = edit.args.radius.resolve(before).unwrap_or(0.1);
+                edit.args.setback = on.then(|| (2.0 * radius).into());
+            },
+        );
+        if let Some(setback) = &args.setback {
+            let setback = Number::numeric(setback, "setback", before, Unit::Length);
+            f.numeric("setback", setback.range(0.0, 1.0), |edit, d| {
+                edit.args.setback = Some(d)
+            });
+        }
+        f.checkbox(
             "variable",
             "variable radius",
             args.variable(),
