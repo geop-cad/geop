@@ -96,7 +96,7 @@ Taken from [ROADMAP.md](ROADMAP.md), which also says what is next.
 - Base and edge flanges, hems, corners, cuts across bends; exact flat patterns as DXF.
 
 **Assemblies**
-- Multi-file assemblies placed by mates; revolute, slider, cylindrical and fastened joints with limits; gear, rack-and-pinion and screw couplings.
+- Multi-file assemblies placed by mates; revolute, slider, cylindrical, planar, pin-in-slot, ball, universal and fastened joints with limits; tangent (cam and follower) and path mates; gear, belt, rack-and-pinion, screw and linear couplings; exploded views; motion studies played, checked for collisions and exported.
 - Standard parts: ISO fasteners, bearings, extrusions, steppers, gears, pulleys, rails, servos.
 - Wire harnesses with bend radii and cut lengths.
 - A drag in 2000 parts in about 0.25 s.

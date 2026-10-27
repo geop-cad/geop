@@ -99,17 +99,17 @@ Legend — vendors: F Fusion, C Creo, O Onshape, N NX, S SolidWorks, K SMLib
 | Multi-file assemblies, sub-assemblies (rigid/flexible), instancing | F C O N S | done (`geop-ops-assembly`, `core/geop-core-program/placed`) | H |
 | Constraint mates: coincident, concentric, parallel, perpendicular, distance, angle | F C O N S | done (`residuals.rs::Kind`) | H |
 | Joints: revolute, slider, cylindrical, fastened, limits | F C O N S | done (`joints.rs`) | H |
-| Ball, planar, pin-slot, universal, tangent/cam-follower, path mate, width/symmetric | F C O N S | **missing** | H (ball, planar, pin-slot, cam), M (others) |
+| Ball, planar, pin-slot, universal, tangent/cam-follower, path mate, width/symmetric | F C O N S | done but width/symmetric (WP-D: `joints.rs::Joint` table, `residuals.rs` `Tangent`/`Path`) | H (ball, planar, pin-slot, cam), M (others) |
 | Gear, rack & pinion, screw couplings | F C O N S | done | M |
-| Belt/chain/cable coupling, linear-linear coupling | C N S O | missing | M |
+| Belt/chain/cable coupling, linear-linear coupling | C N S O | done (WP-D: `Transmission::Belt`, `Linear`, offset) | M |
 | Part patterns (linear/circular, pattern-driven by a feature) | F C O N S | partial (`Part pattern`; feature-driven pattern of fasteners missing) | H |
 | Smart fasteners (populate holes with screws) | C S N(reuse) O(partial) | missing | H |
 | Mirror component, derived part (copy with mods) | C N S O | missing | M |
 | Top-down: in-context editing, skeleton models, external references | C N S O F | **missing** (a part cannot read a sibling's geometry) | H |
 | Interference / clearance check | F C O N S | done (`geop-ops-inspect/interference.rs`; O(n²) pairs, see §3) | H |
-| Collision while dragging, motion envelope | F C N S | missing | M |
-| Exploded views (steps, trails) | F C O N S | **missing** (roadmap Next) | M |
-| Motion study / animation by joint drivers, plots | F C O N S | missing (joint values set by hand, URDF export) | M |
+| Collision while dragging, motion envelope | F C N S | partial (WP-D: collisions per frame of a motion study, by the interference inspector; none while dragging, no envelope) | M |
+| Exploded views (steps, trails) | F C O N S | done (WP-D: `Explode`, `geop_ops_model::placed::explode`; drawing view in WP-F) | M |
+| Motion study / animation by joint drivers, plots | F C O N S | done but plots (WP-D: `motion` step, motion panel, `motion` exporter) | M |
 | Display states, hide/isolate, appearance per instance | F C O N S | partial (colour per part via input; no per-instance display states) | M |
 | BOM flat/indented, CSV, balloons | F C O N S | done (`geop-ops-bom`) | H |
 | Configurations (part families) chosen per instance | F C O N S | partial (`LookupTable` + `size` input; standard parts use it; no user-level configuration table with suppression, see §2 WP-C) | H |
@@ -239,6 +239,13 @@ Owns `core/geop-core-program/src/{program,reader,element}.rs` (step
 or land WP-C's runner change before WP-B #4).
 
 **WP-D Mechanisms and motion** — items 7, 8, 14, 15.
+*Done:* one table of joints (`Joint::frees`) held by one residual,
+couplings as linear relations with presets (#9 too), tangent and path
+mates with foot points in the state over the smooth wall or run of edges
+picked, exploded views as a move per step, motion studies played and
+scrubbed in a panel (web and desktop), checked for collisions per frame
+by the interference inspector, and exported as CSV or JSON. Open: width
+and symmetric mates, collisions while dragging, a motion envelope, plots.
 Owns `ops/geop-ops-assembly/src/{joints,residuals,mates}.rs` (WP-A does not
 touch these; #9 couplings is a few lines in `mates.rs` — give it to WP-D
 instead if WP-A is late), new `explode.rs`/`motion.rs` in assembly,

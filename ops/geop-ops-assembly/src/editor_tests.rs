@@ -1524,6 +1524,21 @@ fn a_slider_is_driven_played_checked_and_exported() {
     assert_eq!(panel["studies"][0]["name"], "motion1");
     assert_eq!(panel["studies"][0]["end"], 2.0);
     assert_eq!(panel["shown"], serde_json::json!(["motion1", 1.5]));
+    // Scrubbing moves the parts, and resolves no mate again: what a frame
+    // costs is a solve, whatever else the assembly holds.
+    let resolved = crate::mates_resolved();
+    for time in [1.6, 1.7, 1.8] {
+        let study = "motion1".into();
+        handled(&mut editor, motion(MotionCommand::Seek { study, time }));
+    }
+    assert_eq!(crate::mates_resolved(), resolved, "a seek resolves no mate");
+    handled(
+        &mut editor,
+        motion(MotionCommand::Seek {
+            study: "motion1".into(),
+            time: 1.5,
+        }),
+    );
 
     // Checked: the cubes overlap at the last two frames, and the slider is
     // shown where it was.

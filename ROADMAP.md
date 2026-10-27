@@ -68,9 +68,13 @@ below is what was missing then, and where each item stands now.
   converted to a valid NURBS solid.
 
 ### Assemblies
-- Joints: revolute, slider, cylindrical, fastened, with limits; gear, rack
-  and pinion and screw couplings; degrees of freedom and conflicting mates
-  reported; part patterns.
+- Joints from one table: revolute, slider, cylindrical, planar, pin in
+  slot, ball, universal, fastened, with limits; couplings as linear
+  relations (gear, belt, rack and pinion, screw, linear); tangent and path
+  mates (cams, followers, pins in slots); degrees of freedom and
+  conflicting mates reported; part patterns.
+- Exploded views, a move per step, with trails; motion studies driving
+  joints by a time table, played, checked for collisions and exported.
 - Caching for large assemblies: incremental workspace, instanced drawing,
   independent groups solved apart (a drag in 2000 parts takes about 0.25 s).
 - Standard parts: ISO screws, nuts, washers, dowel pins, standoffs, bearings,
@@ -124,7 +128,7 @@ below is what was missing then, and where each item stands now.
 - STEP: pcurves fitted wide on B-spline surfaces (most of the remaining
   corpus failures); assembly import as placed parts; the editor resends a
   committed import's whole mesh (114 MB for 886 faces).
-- Drawings: exploded views; parts that pass through each other; annotating
+- Drawings: views of the exploded view; parts that pass through each other; annotating
   the section view; ordinate dimensions and tolerances.
 - Assemblies: actuator effort and velocity for URDF; collision checks for
   harness routes.
