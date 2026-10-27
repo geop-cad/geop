@@ -1150,3 +1150,22 @@ fn entering_and_leaving_a_sketch_sends_each_face_mesh_once() {
         );
     }
 }
+
+/// Opening the sketch of the drilled box's hole shows the box before it:
+/// the hole changed only the faces it is drilled into, and only those are
+/// meshed again — the box's other faces are meshed as they were for the
+/// drilled box.
+#[test]
+fn opening_a_sketch_meshes_again_only_the_faces_changed_after_it() {
+    use geop_core_rasterize::faces_meshed;
+
+    let (mut editor, _) = editor();
+    let meshed = faces_meshed();
+    let opened = handled(&mut editor, open("hole_sketch"));
+    let faces = opened.scene.expect("the box is shown").part.faces.len();
+    let again = faces_meshed() - meshed;
+    assert!(
+        0 < again && again < faces,
+        "{again} of {faces} faces meshed again"
+    );
+}

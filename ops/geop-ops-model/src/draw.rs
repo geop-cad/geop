@@ -1,7 +1,7 @@
 //! The model as the viewport draws it: its vertices, edges and faces, each
 //! by name, drawn into a [`PartView`] from its rasterization.
 
-use std::collections::HashMap;
+use std::{cell::RefCell, collections::HashMap};
 
 use geop_core_editor::{
     registry::{Drawer, StructureItem},
@@ -9,7 +9,7 @@ use geop_core_editor::{
 };
 use geop_core_math::geop_error::GeopResult;
 use geop_core_program::reader::Reader;
-use geop_core_rasterize::rasterize;
+use geop_core_rasterize::Rasterizer;
 use geop_core_topology::{EdgeId, Model, SolidId};
 
 use crate::{NamedModel, RefId, read_model};
@@ -24,10 +24,16 @@ fn solid_of_edge(model: &Model, edge: EdgeId) -> Option<SolidId> {
 
 impl NamedModel {
     /// Draws its vertices, edges and faces, and lists its solids, into
-    /// `view`, as elements of the target `target`.
-    pub fn draw(&self, target: &str, view: &mut PartView) -> GeopResult<()> {
+    /// `view`, as elements of the target `target`: its faces meshed by
+    /// `rasterizer`, which meshes again only those it has not meshed alike.
+    pub fn draw(
+        &self,
+        target: &str,
+        rasterizer: &mut Rasterizer,
+        view: &mut PartView,
+    ) -> GeopResult<()> {
         let model = self.topology();
-        let raster = rasterize(model, RESOLUTION)?;
+        let raster = rasterizer.rasterize(model, RESOLUTION)?;
         let name = |id: RefId| self.name_of(id).unwrap_or_default().to_string();
 
         // A vertex is a corner of the solid an edge at it bounds, and of the
@@ -98,12 +104,17 @@ impl NamedModel {
 }
 
 /// Draws a part's model, as the target `model`, and lists its solids and
-/// the faces standing on their own, of no solid.
-pub struct ModelDrawer;
+/// the faces standing on their own, of no solid. Its faces are meshed by
+/// one [`Rasterizer`]: a part drawn with only some faces changed — the part
+/// before a step opened — meshes those again, not all.
+#[derive(Default)]
+pub struct ModelDrawer {
+    rasterizer: RefCell<Rasterizer>,
+}
 
 impl Drawer for ModelDrawer {
     fn draw(&self, reader: &Reader, view: &mut PartView) -> GeopResult<()> {
-        read_model(reader)?.draw("model", view)
+        read_model(reader)?.draw("model", &mut self.rasterizer.borrow_mut(), view)
     }
 
     fn structure(&self, reader: &Reader) -> GeopResult<Vec<StructureItem>> {
@@ -154,7 +165,9 @@ mod tests {
     #[test]
     fn a_pick_hits_the_smallest_element_under_the_pointer() {
         let mut view = PartView::new();
-        unit_cube().draw("model", &mut view).unwrap();
+        unit_cube()
+            .draw("model", &mut Rasterizer::default(), &mut view)
+            .unwrap();
         let view = view.finish();
         assert_eq!(
             (view.vertices.len(), view.edges.len(), view.faces.len()),
@@ -178,7 +191,9 @@ mod tests {
     #[test]
     fn a_pick_selects_what_a_field_asks_for() {
         let mut view = PartView::new();
-        unit_cube().draw("model", &mut view).unwrap();
+        unit_cube()
+            .draw("model", &mut Rasterizer::default(), &mut view)
+            .unwrap();
         let view = view.finish();
         let part: Part = given_part(&unit_cube()).unwrap();
         let reader = part.current();

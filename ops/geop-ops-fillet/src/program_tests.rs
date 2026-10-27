@@ -135,6 +135,7 @@ fn fillet_and_chamfer_round_trip_through_json() {
                 vertex: ElementReference::new(model(), "v"),
                 radius: 0.2,
             }],
+            setback: Some(0.6.into()),
             ..FilletArgs::constant(vec!["a".into(), "b".into()], 0.25)
         },
     );

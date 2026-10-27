@@ -80,6 +80,9 @@ export async function startBridge({ media, exe, folder }) {
     // The extension's own kernel process, restarted as it restarts it.
     const geop = new GeopServer(
       exe,
+      // What the folder's files are made into kept beside them, as the
+      // extension keeps them.
+      ["--cache-root", folder],
       (text) => process.stderr.write(`[geop ${doc}] ${text}`),
       async () => restoreCommands(otherFiles(folder, doc), fs.readFileSync(path.join(folder, doc), "utf8"), doc),
     );

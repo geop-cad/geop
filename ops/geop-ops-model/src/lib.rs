@@ -114,7 +114,7 @@ use geop_core_math::geop_error::GeopResult;
 /// tables and properties, and the part drawn in its colour (see
 /// [`parameters`]).
 pub fn register(r: Registry) -> GeopResult<Registry> {
-    r.drawer(ModelDrawer)?
+    r.drawer(ModelDrawer::default())?
         .drawer(datums::DatumsDrawer)?
         .drawer(sketch::SketchDrawer)?
         .operation(parameters::DefineParameters)?

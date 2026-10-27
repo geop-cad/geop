@@ -54,7 +54,10 @@ pub trait Drawer: 'static {
 /// what it read ([`Reads`]): a part shown again with other sketches — a
 /// sketch opened, or closed — draws its sketches again, not its faces.
 #[derive(Default)]
-pub struct Drawings(RefCell<Vec<Vec<(Reads, Rc<PartView>)>>>);
+pub struct Drawings(RefCell<BTreeMap<usize, Vec<Drawn>>>);
+
+/// What a drawer drew, and what it read to draw it.
+type Drawn = (Reads, Rc<PartView>);
 
 /// How many drawings of each drawer [`Drawings`] keeps: of the part before
 /// the step edited, the part with it, and those of the last steps opened.
@@ -70,10 +73,7 @@ impl Drawings {
         draw: impl FnOnce(&Reader) -> GeopResult<PartView>,
     ) -> GeopResult<Rc<PartView>> {
         let mut kept = self.0.borrow_mut();
-        if kept.len() <= drawer {
-            kept.resize_with(drawer + 1, Vec::new);
-        }
-        let kept = &mut kept[drawer];
+        let kept = kept.entry(drawer).or_default();
         let entry = match kept.iter().position(|(reads, _)| reader.reads_same(reads)) {
             Some(k) => kept.remove(k),
             None => {

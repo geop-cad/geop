@@ -24,6 +24,7 @@ use std::{
 
 use geop_core_editor::view::{PartView, annotations_of};
 use geop_core_math::geop_error::{GeopError, GeopResult};
+use geop_core_rasterize::Rasterizer;
 use geop_lib_constraints::{solve::Mobility, unknown::Unknowns};
 use geop_ops_model::{
     datums::read_datums,
@@ -38,7 +39,7 @@ use geop_ops_model::{
 /// it, in its colour.
 pub(crate) fn draw(reader: &Reader) -> GeopResult<PartView> {
     let mut view = PartView::new();
-    read_model(reader)?.draw("model", &mut view)?;
+    read_model(reader)?.draw("model", &mut Rasterizer::default(), &mut view)?;
     read_datums(reader)?.draw(&mut view)?;
     for target in reader.targets_of::<PlacedSketch>() {
         let name = target.name().to_string();
