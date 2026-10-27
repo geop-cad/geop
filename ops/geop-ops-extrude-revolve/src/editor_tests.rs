@@ -1161,3 +1161,26 @@ fn opening_a_sketch_meshes_again_only_the_faces_changed_after_it() {
         "{again} of {faces} faces meshed again"
     );
 }
+
+/// Seeking back, adding a step there, and taking it back by undo: the
+/// program runs to where it ran before the step was added — the marker
+/// back at 2, the hole not built — and redo puts the step back with the
+/// marker after it.
+#[test]
+#[ignore = "bug: Command::Undo and Command::Redo set the marker to None, so undoing a step added \
+            at the marker (2 of 4) runs the whole program — the marker jumps to the end (4) and \
+            the hole the user had rolled back reappears; redo leaves it at the end too (5)"]
+fn undo_keeps_where_the_program_runs_to() {
+    let (mut editor, _) = editor();
+    editor.handle(Command::Seek { marker: Some(2) });
+    editor.handle(Command::New {
+        kind: "extrude".into(),
+    });
+    handled(&mut editor, Command::Commit);
+    let undone = handled(&mut editor, Command::Undo);
+    let state = undone.program.expect("the program is sent");
+    assert_eq!(state.steps.len(), 4);
+    assert_eq!(state.marker, 2, "the program runs to where it ran");
+    let redone = handled(&mut editor, Command::Redo);
+    assert_eq!(redone.program.expect("the program is sent").marker, 3);
+}
