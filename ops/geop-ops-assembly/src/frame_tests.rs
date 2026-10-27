@@ -179,7 +179,13 @@ fn from_above(x: f64, y: f64) -> Pointer {
 /// The model of `part`, drawn: what a frame is picked in.
 fn drawn_model(part: &Part) -> PartView {
     let mut view = PartView::new();
-    model_of(part).draw("model", &mut view).unwrap();
+    model_of(part)
+        .draw(
+            "model",
+            &mut geop_core_rasterize::Rasterizer::default(),
+            &mut view,
+        )
+        .unwrap();
     view.finish()
 }
 

@@ -45,7 +45,11 @@ use crate::{
 /// placed in it — what a component is drawn as where it is placed.
 fn draw(reader: &Reader) -> GeopResult<PartView> {
     let mut view = PartView::new();
-    read_model(reader)?.draw("model", &mut view)?;
+    read_model(reader)?.draw(
+        "model",
+        &mut geop_core_rasterize::Rasterizer::default(),
+        &mut view,
+    )?;
     read_datums(reader)?.draw(&mut view)?;
     crate::placed::draw_instances(reader, &mut view)?;
     Ok(view.finish())

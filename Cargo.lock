@@ -661,6 +661,7 @@ dependencies = [
  "geop-core-geometry",
  "geop-core-math",
  "geop-core-program",
+ "geop-core-rasterize",
  "geop-core-sketch",
  "geop-core-topology",
  "geop-lib-booleans",
