@@ -2683,3 +2683,14 @@ button.danger:hover:not(:disabled) {
   font-size: 0.7rem;
   color: var(--text-faint);
 }
+
+/* The links beside the ribbon give it their room: icons, their words in
+   their tooltips, until the window is wide enough for both. */
+.link-label {
+  display: none;
+}
+@media (min-width: 2000px) {
+  .link-label {
+    display: inline;
+  }
+}

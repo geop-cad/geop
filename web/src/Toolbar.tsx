@@ -214,8 +214,10 @@ export function Toolbar({
           target="_blank"
           rel="noopener"
           title="geop is open source: star it on GitHub"
+          aria-label="Star on GitHub"
         >
-          <span aria-hidden="true">★</span> Star on GitHub
+          <span aria-hidden="true">★</span>
+          <span className="link-label"> Star on GitHub</span>
         </a>
       )}
       {!hosted && (
@@ -225,8 +227,10 @@ export function Toolbar({
           target="_blank"
           rel="noopener"
           title="Ask questions and show what you built on the geop Discord"
+          aria-label="Discord"
         >
-          <Icon name="chat" /> Discord
+          <Icon name="chat" />
+          <span className="link-label"> Discord</span>
         </a>
       )}
       {!hosted && (
@@ -234,8 +238,10 @@ export function Toolbar({
           className="star-link bug-link desktop-only"
           onClick={onBugReportOpen}
           title="Something went wrong? Send us the part and what happened"
+          aria-label="Report a bug"
         >
-          <Icon name="bug" /> Report a bug
+          <Icon name="bug" />
+          <span className="link-label"> Report a bug</span>
         </button>
       )}
       {assistantOpen != null && (
@@ -243,9 +249,11 @@ export function Toolbar({
           className={`assistant-toggle desktop-only${assistantOpen ? " active" : ""}`}
           onClick={onAssistant}
           title="Ask the assistant to model or change the part"
+          aria-label="Assistant"
           aria-pressed={assistantOpen}
         >
-          <Icon name="chat" /> Assistant
+          <Icon name="chat" />
+          <span className="link-label"> Assistant</span>
         </button>
       )}
       {help.length > 0 && (

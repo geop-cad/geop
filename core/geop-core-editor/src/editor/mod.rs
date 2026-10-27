@@ -289,6 +289,15 @@ impl Editor {
         &self.file
     }
 
+    /// Forgets what the viewer was sent: the next update sends all of the
+    /// scene, as to a viewer that has nothing — one starting afresh, or one
+    /// that never saw the updates someone else asked for (see
+    /// [`crate::agent::Session::new`]).
+    pub fn forget_viewer(&mut self) {
+        self.shown = None;
+        self.placed = None;
+    }
+
     /// What it offers.
     pub fn registry(&self) -> &Registry {
         &self.registry
@@ -693,8 +702,7 @@ impl Editor {
         Ok(match command {
             Command::Show => {
                 // All of it: the viewer may have started afresh.
-                self.shown = None;
-                self.placed = None;
+                self.forget_viewer();
                 Changed::Run
             }
             Command::New { kind } => {

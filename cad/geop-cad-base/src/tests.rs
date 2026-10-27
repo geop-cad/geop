@@ -986,6 +986,19 @@ mod agent {
         }
     }
 
+    /// A session knows the program from the start, but the viewer has
+    /// nothing yet: the page's first command, whatever it is, is answered
+    /// with the whole scene. The browser's first was answered with none,
+    /// and the view stayed empty until something changed it.
+    #[test]
+    fn a_sessions_first_command_sends_the_scene() {
+        let mut session = Session::new(crate::editor());
+        let update = session.handle(geop_core_editor::editor::Command::Files {
+            files: Default::default(),
+        });
+        assert!(update.scene.is_some_and(|scene| scene.all));
+    }
+
     /// Every tool the browser offers, on the drilled box: built step by
     /// step, run, listed, weighed, measured, edited and taken apart — each
     /// tool that changes the program sending the updates that show it.
