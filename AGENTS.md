@@ -1428,3 +1428,16 @@ differently from the same text. What is kept of a file is of every
 program it was built as since the cache was written: noting only the
 last one's steps dropped what the other had kept, and the reopened
 assembly made the mirror again.
+
+## A cache derived from a value is derived one way
+
+A curve or surface keeps the box of its control points (`aabb`), and
+compares it with the rest. `translate` moved the box by the offset
+instead of boxing the points as moved: cheaper, and not the same
+enclosure, since moving a point rounds it. The rounded box's corner
+patch, translated, then compared unequal to itself read back from the
+kept cache, whose reader boxes the points, and every reopened example
+built "otherwise". The box moved was also narrower than the points it
+claims to hold. A cached value computed from others is computed by the
+one function every constructor uses (`compute_aabb`), never patched
+along by a shortcut of its own.
