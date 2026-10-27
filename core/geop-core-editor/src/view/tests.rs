@@ -202,6 +202,10 @@ fn a_view_placed_three_times_is_picked_where_each_is() {
         place("c", v3(0.0, 0.0, 2.0)),
     ];
     let view = view.finish();
+    // Framed by the boxes of the cubes where they are: from the origin to
+    // (4, 1, 3), not by cubes as wide as their diagonals.
+    let size = view.extent.size.to_f64();
+    assert!((size - 26f64.sqrt()).abs() < 1e-9, "{size}");
     let hit = |x: f64, y: f64, accepts: &[&str]| picked(&view, &down(x, y), accepts).unwrap();
     let top_of_b = hit(3.5, 0.5, &[drawn::FACE]);
     assert_eq!(top_of_b.target, Located::in_instance("b", "model"));

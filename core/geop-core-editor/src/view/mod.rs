@@ -704,46 +704,43 @@ impl PartView {
         layer.near.then(|| layer.pick_face())?.map(|(t, _)| t)
     }
 
-    /// The box around everything drawn: the union of every point of it,
-    /// and of the corners of every placed part's own box, where it is.
-    fn measure(&self) -> Extent {
+    /// The box around what it draws itself — its vertices, edges, faces
+    /// and sketches, not the parts placed in it — if it draws anything.
+    fn own_box(&self) -> Option<Vector3> {
         let sketch_points = self.sketches.iter().flat_map(|sketch| {
-            sketch
-                .curves
-                .iter()
+            (sketch.curves.iter())
                 .flat_map(|c| &c.polyline)
                 .map(|p| sketch.plane.uv_to_xyz(p))
         });
-        let hull = self
-            .vertices
-            .iter()
+        (self.vertices.iter())
             .map(|v| v.at)
             .chain(self.edges.iter().flat_map(|e| e.polyline.iter().copied()))
-            .chain(
-                self.faces
-                    .iter()
-                    .flat_map(|f| f.mesh.triangles.iter().flatten().copied()),
-            )
+            .chain((self.faces.iter()).flat_map(|f| f.mesh.triangles.iter().flatten().copied()))
             .chain(sketch_points)
-            .collect::<Vec<_>>();
+            .reduce(|a, b| a.union(&b))
+    }
+
+    /// The box around everything drawn: the union of every point of it,
+    /// and of the corners of every placed part's own box, where it is.
+    fn measure(&self) -> Extent {
+        // Each placed part by the corners of its own box, where it is: the
+        // box around what it draws, not a cube as wide as that box's
+        // diagonal, which framed an assembly far too small.
         let mut corners = Vec::new();
         for instance in &self.instances {
-            let view = &instance.view;
-            // An empty part has no box of its own to place.
-            if view.vertices.is_empty() && view.faces.is_empty() && view.instances.is_empty() {
+            let Some(own) = instance.view.own_box() else {
                 continue;
-            }
-            let Extent { center, size } = view.extent;
-            let half = size.mul(Scalar::from_f64(0.5));
+            };
             let motion = instance.pose.motion();
             for i in 0..8 {
                 let corner = Vector3::from_array([0, 1, 2].map(|k| match i >> k & 1 {
-                    0 => center[k].sub(half),
-                    _ => center[k].add(half),
+                    0 => own[k].lower(),
+                    _ => own[k].upper(),
                 }));
                 corners.push(motion.apply(&corner));
             }
         }
+        let hull = self.own_box().into_iter();
         let hull = hull.into_iter().chain(corners).reduce(|a, b| a.union(&b));
         let Some(hull) = hull else {
             return Extent {
