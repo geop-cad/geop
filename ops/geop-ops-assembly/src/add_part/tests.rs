@@ -297,7 +297,7 @@ fn a_placed_part_is_where_its_pose_puts_it() {
     }
     // And picked where it is, named behind its instance's name.
     let hit = view
-        .pick(&down_at(v3(1.5, 0.5, 0.0)), &[drawn::FACE.to_string()])
+        .pick(&down_at(v3(1.5, 0.5, 0.0)), &[drawn::FACE.to_string()], &[])
         .unwrap();
     assert_eq!(hit.element.target.to_string(), "/p:model", "{hit:?}");
     assert!((hit.point[2].to_f64() - 1.0).abs() < 1e-9, "{hit:?}");

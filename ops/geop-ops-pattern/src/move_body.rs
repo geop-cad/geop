@@ -99,6 +99,7 @@ impl PartOperation for MoveBody {
         OperationGroup::Bodies,
         OperationTier::Menu,
     )
+    .shortcut("Shift+M")
     .icon(crate::icons::MOVE_BODY);
     type Args = MoveBodyArgs;
     type Session = ();

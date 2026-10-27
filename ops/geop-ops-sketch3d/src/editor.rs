@@ -193,13 +193,16 @@ enum Located {
 }
 
 impl Located {
-    fn at(&self, args: &AddSketch3dArgs) -> Vector3 {
+    /// Where it is in the sketch `args` holds: none for a point of the
+    /// sketch it no longer has — a hover kept from before an edit that took
+    /// the point out (an undo, a drag started again from where it began).
+    fn at(&self, args: &AddSketch3dArgs) -> Option<Vector3> {
         match self {
-            Located::Point(p) => args.sketch.points[p].at,
+            Located::Point(p) => args.sketch.points.get(p).map(|p| p.at),
             Located::Fixed(_, at)
             | Located::OnEdge(_, at)
             | Located::Along(_, at)
-            | Located::Free(at) => *at,
+            | Located::Free(at) => Some(*at),
         }
     }
 }
@@ -256,7 +259,7 @@ fn locate(
                 return Some(Located::OnEdge(curve, at));
             }
         }
-        let from = s.placed.last().map(|p| args.sketch.points[p].at);
+        let from = (s.placed.last()).and_then(|p| args.sketch.points.get(p).map(|p| p.at));
         if tool == Tool::Line
             && let Some(along) = from.and_then(|from| along_axis(&from, pointer))
         {
@@ -271,7 +274,7 @@ fn locate(
     // In the plane through the last point placed — or the origin — facing
     // the eye.
     let anchor = (s.placed.last())
-        .map(|p| args.sketch.points[p].at)
+        .and_then(|p| args.sketch.points.get(p).map(|p| p.at))
         .unwrap_or_else(Vector3::zero);
     let (_, at) = pointer.ray.intersect_plane(&anchor, pointer.ray.dir())?;
     Some(Located::Free(at))
@@ -829,11 +832,13 @@ fn visuals(
         let visual = Visual::new(id.to_string(), Shape::Point { at: p.at }, style).selectable();
         out.push(if p.fixed { visual } else { visual.draggable() });
     }
-    let last = s.placed.last().map(|p| sketch.points[p].at);
-    if let Some(located) = &s.hover {
-        let hover = located.at(args);
+    let at = |p: &PointId| sketch.points.get(p).map(|p| p.at);
+    let last = s.placed.last().and_then(at);
+    if let Some(located) = &s.hover
+        && let Some(hover) = located.at(args)
+    {
         let mut draft: Vec<Vector3> = match s.tool(args) {
-            Tool::Spline | Tool::Arc => s.placed.iter().map(|p| sketch.points[p].at).collect(),
+            Tool::Spline | Tool::Arc => s.placed.iter().filter_map(at).collect(),
             _ => last.into_iter().collect(),
         };
         draft.push(hover);
@@ -874,7 +879,7 @@ fn visuals(
     }
     // The directions a line snaps to, from where it starts — or, before
     // that, from where the next point goes.
-    let anchor = last.or_else(|| s.hover.as_ref().map(|l| l.at(args)));
+    let anchor = last.or_else(|| s.hover.as_ref().and_then(|l| l.at(args)));
     if let Some(at) = anchor.filter(|_| s.tool(args).draws()) {
         out.push(Visual::new(
             "triad",

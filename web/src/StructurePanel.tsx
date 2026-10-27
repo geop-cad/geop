@@ -39,7 +39,7 @@ function Eye({ open }: { open: boolean }) {
  */
 export function StructurePanel({ items, details, enabled, onVisibility, onLight }: Props) {
   const groups = grouped(items);
-  if (groups.length === 0) return <p className="hint">Nothing yet.</p>;
+  if (groups.length === 0) return <p className="hint">Nothing yet: what the steps build is listed here, to show or hide.</p>;
   return (
     <div className="structure">
       {groups.map(([title, list]) => (
@@ -56,7 +56,8 @@ export function StructurePanel({ items, details, enabled, onVisibility, onLight 
                 onMouseEnter={() => item.elements.length > 0 && onLight(item.elements)}
                 onMouseLeave={() => item.elements.length > 0 && onLight([])}
               >
-                <span className="structure-name">{item.label ?? item.name}</span>
+                <span className="structure-name">{item.name}</span>
+                {item.detail != null && <span className="structure-file">{item.detail}</span>}
                 {details[item.name] != null && <span className="structure-detail">{details[item.name]}</span>}
                 {item.visible != null && (
                   <button

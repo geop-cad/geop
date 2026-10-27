@@ -65,6 +65,7 @@ impl PartOperation for Shell {
         OperationGroup::Features,
         OperationTier::Small,
     )
+    .shortcut("Shift+H")
     .icon(crate::icons::SHELL);
     type Args = ShellArgs;
     type Session = ();

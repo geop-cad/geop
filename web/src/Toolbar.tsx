@@ -42,8 +42,6 @@ interface Props {
   /** Why the last command was refused, if it was. */
   error: string | null;
   program: Program;
-  stepCount: number;
-  triangleCount: number;
   /** Whether the bug-report form is open. */
   bugReportOpen: boolean;
   /** Where the bug-report form goes instead of floating over the viewport — the mobile "Bug" tab, when on mobile. */
@@ -85,8 +83,6 @@ export function Toolbar({
   badge,
   error,
   program,
-  stepCount,
-  triangleCount,
   bugReportOpen,
   bugReportHost,
   onBugReportOpen,
@@ -164,9 +160,9 @@ export function Toolbar({
 
   return (
     <header className="toolbar">
-      <span className="brand">
-        <img src={logo} alt="" width={20} height={20} />
-        geop
+      <span className="brand" title="geop">
+        <img src={logo} alt="geop" width={20} height={20} />
+        <span className="brand-name">geop</span>
       </span>
       <Menu label="File" entries={file} disabled={busy} className="file-menu" />
       <input
@@ -197,16 +193,6 @@ export function Toolbar({
       {operationRibbon}
       <div className="toolbar-spacer mobile-only" />
       {badge && <span className="mode-badge">{badge}</span>}
-      {!busy && (
-        <span className="stats" title="Steps in the program, and triangles drawn">
-          <span>
-            {stepCount} step{stepCount === 1 ? "" : "s"}
-          </span>
-          {/* Two lines in the bar; one in what is read of it. */}
-          <span className="stats-separator"> · </span>
-          <span>{triangleCount} tris</span>
-        </span>
-      )}
       {!hosted && (
         <a
           className="star-link desktop-only"
@@ -214,8 +200,10 @@ export function Toolbar({
           target="_blank"
           rel="noopener"
           title="geop is open source: star it on GitHub"
+          aria-label="Star on GitHub"
         >
-          <span aria-hidden="true">★</span> Star on GitHub
+          <span aria-hidden="true">★</span>
+          <span className="link-label"> Star on GitHub</span>
         </a>
       )}
       {!hosted && (
@@ -225,8 +213,10 @@ export function Toolbar({
           target="_blank"
           rel="noopener"
           title="Ask questions and show what you built on the geop Discord"
+          aria-label="Discord"
         >
-          <Icon name="chat" /> Discord
+          <Icon name="chat" />
+          <span className="link-label"> Discord</span>
         </a>
       )}
       {!hosted && (
@@ -234,8 +224,10 @@ export function Toolbar({
           className="star-link bug-link desktop-only"
           onClick={onBugReportOpen}
           title="Something went wrong? Send us the part and what happened"
+          aria-label="Report a bug"
         >
-          <Icon name="bug" /> Report a bug
+          <Icon name="bug" />
+          <span className="link-label"> Report a bug</span>
         </button>
       )}
       {assistantOpen != null && (
@@ -243,9 +235,11 @@ export function Toolbar({
           className={`assistant-toggle desktop-only${assistantOpen ? " active" : ""}`}
           onClick={onAssistant}
           title="Ask the assistant to model or change the part"
+          aria-label="Assistant"
           aria-pressed={assistantOpen}
         >
-          <Icon name="chat" /> Assistant
+          <Icon name="chat" />
+          <span className="link-label"> Assistant</span>
         </button>
       )}
       {help.length > 0 && (

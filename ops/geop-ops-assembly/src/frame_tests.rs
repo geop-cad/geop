@@ -192,7 +192,7 @@ fn drawn_model(part: &Part) -> PartView {
 /// What a pick for a frame finds, as the frame's element and where it sits.
 fn picked(view: &PartView, x: f64, y: f64) -> (Selected, Option<Selected>) {
     let hit = view
-        .pick(&from_above(x, y), &[drawn::FRAME.to_string()])
+        .pick(&from_above(x, y), &[drawn::FRAME.to_string()], &[])
         .unwrap_or_else(|| panic!("nothing to put a frame on at ({x}, {y})"));
     let entity = MateEntity::from_picked(&hit.element)
         .unwrap_or_else(|| panic!("{:?} is no frame", hit.element));

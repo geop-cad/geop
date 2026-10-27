@@ -399,7 +399,9 @@ mod tests {
                 radius: Scalar::from_f64(0.1),
             },
         };
-        let hit = view.pick(&pointer, &[drawn::DATUM.to_string()]).unwrap();
+        let hit = view
+            .pick(&pointer, &[drawn::DATUM.to_string()], &[])
+            .unwrap();
         assert_eq!(hit.element, self::hit("origin:xy"));
         let planes: Vec<ElementReference<Datums, Plane>> = selected(&reader, &[hit.element]);
         assert_eq!(planes, [origin_plane(FrameAxis::Z)]);
@@ -480,7 +482,7 @@ mod tests {
             .unwrap();
         let down = |x: f64, y: f64| pointer([x, y, 5.0], [0.0, 0.0, -1.0]);
         let frame = [drawn::DATUM, drawn::VERTEX, drawn::EDGE, drawn::FACE].map(String::from);
-        let name = |x: f64, y: f64| view.pick(&down(x, y), &frame).map(|h| h.element.name);
+        let name = |x: f64, y: f64| view.pick(&down(x, y), &frame, &[]).map(|h| h.element.name);
         // Ten reaches of 0.009 each: the axes reach 0.09 out.
         assert_eq!(name(0.0, 0.0), Some(ORIGIN.to_string()));
         assert_eq!(

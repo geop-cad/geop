@@ -45,8 +45,10 @@ pub trait Drawer: 'static {
     /// each one that is not drawn with `visible: None`.
     fn structure(&self, reader: &Reader) -> GeopResult<Vec<StructureItem>>;
 
-    /// The names of what it draws that is shown only while a step picks
-    /// from what it builds: none, unless it says otherwise.
+    /// The names of what it draws only to be picked: shown only while a
+    /// field waiting for a pick could pick it (see
+    /// [`crate::editing::Reference::accepts`]) — none, unless it says
+    /// otherwise.
     fn hidden(&self, _reader: &Reader) -> Vec<String> {
         Vec::new()
     }
@@ -127,9 +129,9 @@ pub struct StructureItem {
     pub kind_label: String,
     /// What it is shown by — and shown and hidden by, its key.
     pub name: String,
-    /// What it is called, if not its name: a placed part after its file
-    /// too, `base: part2`.
-    pub label: Option<String>,
+    /// What is said beside its name, quieter: the file a placed part is
+    /// from, `iso4762_socket_screw`. Its name is what it is called.
+    pub detail: Option<String>,
     /// Whether it is shown, if it is drawn at all: what an editor's
     /// visibility switches. None for what a step lists, which is not drawn.
     pub visible: Option<bool>,
@@ -146,16 +148,17 @@ impl StructureItem {
             kind: kind.to_string(),
             kind_label: kind_label.to_string(),
             name: name.to_string(),
-            label: None,
+            detail: None,
             visible: Some(true),
             elements: Vec::new(),
         }
     }
 
-    /// The same item, called `label` (see [`Self::label`]).
-    pub fn labelled(self, label: String) -> Self {
+    /// The same item, said `detail` of beside its name (see
+    /// [`Self::detail`]).
+    pub fn detailed(self, detail: String) -> Self {
         Self {
-            label: Some(label),
+            detail: Some(detail),
             ..self
         }
     }
@@ -446,7 +449,7 @@ impl Registry {
                     kind_label: plural(&listed.kind),
                     kind: listed.kind,
                     name: listed.name,
-                    label: None,
+                    detail: None,
                     visible: None,
                     elements: listed.elements,
                 }),
@@ -454,8 +457,8 @@ impl Registry {
         Ok(items)
     }
 
-    /// What the drawers draw of the part `reader` reads to be shown only
-    /// while a step picks from what it builds (see [`Drawer::hidden`]).
+    /// What the drawers draw of the part `reader` reads only to be picked
+    /// (see [`Drawer::hidden`]).
     pub fn hidden(&self, reader: &Reader) -> Vec<String> {
         (self.drawers.iter())
             .flat_map(|drawer| drawer.hidden(reader))

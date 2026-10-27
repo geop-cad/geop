@@ -179,7 +179,8 @@ mod tests {
             (8, 12, 6)
         );
         let all = accepts(&[drawn::VERTEX, drawn::EDGE, drawn::FACE]);
-        let hit = |x, y, accepts: &[String]| view.pick(&from_above(x, y), accepts).unwrap().element;
+        let hit =
+            |x, y, accepts: &[String]| view.pick(&from_above(x, y), accepts, &[]).unwrap().element;
         assert_eq!(hit(1.0, 1.0, &all).kind, drawn::VERTEX);
         assert_eq!(hit(0.5, 1.0, &all).kind, drawn::EDGE);
         let top = hit(0.5, 0.5, &all);
@@ -188,7 +189,7 @@ mod tests {
             (drawn::FACE, "/:model")
         );
         assert_eq!(hit(1.0, 1.0, &accepts(&[drawn::FACE])).kind, drawn::FACE);
-        assert!(view.pick(&from_above(5.0, 5.0), &all).is_none());
+        assert!(view.pick(&from_above(5.0, 5.0), &all, &[]).is_none());
     }
 
     /// What a field asks for is selected from the pick: a line from an
@@ -203,13 +204,13 @@ mod tests {
         let part: Part = given_part(&unit_cube()).unwrap();
         let reader = part.current();
         let edge = view
-            .pick(&from_above(0.5, 1.0), &accepts(&[drawn::EDGE]))
+            .pick(&from_above(0.5, 1.0), &accepts(&[drawn::EDGE]), &[])
             .unwrap();
         let lines: Vec<ElementReference<NamedModel, Line>> =
             selected(&reader, std::slice::from_ref(&edge.element));
         assert_eq!(lines[0].name(), edge.element.name);
         let face = view
-            .pick(&from_above(0.5, 0.5), &accepts(&[drawn::FACE]))
+            .pick(&from_above(0.5, 0.5), &accepts(&[drawn::FACE]), &[])
             .unwrap();
         let bodies: Vec<ElementReference<NamedModel, Body>> = selected(&reader, &[face.element]);
         assert_eq!(bodies, [ElementReference::new(model(), "s0")]);
@@ -227,7 +228,7 @@ mod tests {
         let registry = crate::register(Registry::default()).unwrap();
         let view = (registry.draw(&part.current(), &Default::default(), None)).unwrap();
         let faces = accepts(&[drawn::FACE]);
-        let hit = view.pick(&from_above(0.5, 0.5), &faces).unwrap();
+        let hit = view.pick(&from_above(0.5, 0.5), &faces, &[]).unwrap();
         assert_eq!(hit.element.kind, drawn::FACE);
         assert!(hit.point[2].could_be_equal(Scalar::ONE), "{hit:?}");
         let solid = selectable::pick::<ElementReference<NamedModel, Solid>>(
@@ -236,6 +237,6 @@ mod tests {
             &from_above(0.5, 0.5),
         );
         assert!(solid.is_some());
-        assert!(view.pick(&from_above(5.0, 5.0), &faces).is_none());
+        assert!(view.pick(&from_above(5.0, 5.0), &faces, &[]).is_none());
     }
 }

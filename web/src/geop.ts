@@ -213,6 +213,8 @@ export interface OperationInfo {
   reads: string[];
   /** What it is shown as: SVG markup on a 20 x 20 grid (see [[Icon]]); none to show its label. */
   icon: string | null;
+  /** The key that starts a step of it while none is edited: `E`, `Shift+F` (see shortcuts.ts). */
+  shortcut: string | null;
 }
 
 /** A kind of file the editor writes of the part — see `geop_ops::output::ExporterInfo`. */
@@ -794,8 +796,8 @@ export interface StructureItem {
   kind_label: string;
   /** What it is shown and hidden by. */
   name: string;
-  /** What it is called, if not its name: a placed part after its file too, `base: part2`. */
-  label: string | null;
+  /** What is said beside its name, quieter: the file a placed part is from, `iso4762_socket_screw`. */
+  detail: string | null;
   visible: boolean | null;
   /** The entities it is between: lit while it is pointed at. */
   elements: PickedElement[];

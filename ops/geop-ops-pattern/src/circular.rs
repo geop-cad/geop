@@ -109,6 +109,7 @@ impl PartOperation for CircularPattern {
         OperationGroup::Bodies,
         OperationTier::Small,
     )
+    .shortcut("Shift+P")
     .icon(geop_core_editor::view::icons::CIRCULAR_PATTERN);
     type Args = CircularPatternArgs;
     type Session = ();

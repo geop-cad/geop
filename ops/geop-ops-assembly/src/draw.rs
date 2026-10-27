@@ -26,7 +26,8 @@ impl Drawer for AssemblyDrawer {
         draw_instances(reader, view)
     }
 
-    /// Each part placed in it, called after its file too: `base: part2`.
+    /// Each part placed in it, by its name, said beside it which file it
+    /// is from — unless the name says so already.
     fn structure(&self, reader: &Reader) -> GeopResult<Vec<StructureItem>> {
         let placed = placed_parts(reader).unwrap_or_default();
         let files: BTreeMap<&str, &str> = (instances(reader).unwrap_or_default().into_iter())
@@ -39,15 +40,18 @@ impl Drawer for AssemblyDrawer {
                 let Some(file) = files.get(p.name.as_str()) else {
                     return item;
                 };
-                let file = file.rsplit('/').next().unwrap_or(file);
+                let file = file.rsplit(['/', ':']).next().unwrap_or(file);
                 let stem = file.strip_suffix(".geop").unwrap_or(file);
-                item.labelled(format!("{stem}: {}", p.name))
+                match stem == p.name {
+                    true => item,
+                    false => item.detailed(stem.to_string()),
+                }
             })
             .collect())
     }
 
     /// The datums of the parts placed: theirs, not the part's, shown only
-    /// while a part is being placed, for its mates to pick.
+    /// while a field waits to pick one — a mate's entities.
     fn hidden(&self, reader: &Reader) -> Vec<String> {
         let Ok(placed) = placed_parts(reader) else {
             return Vec::new();

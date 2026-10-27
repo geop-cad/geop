@@ -325,6 +325,7 @@ impl PartOperation for AddSketch3d {
         OperationGroup::Sketch,
         OperationTier::Small,
     )
+    .shortcut("Shift+S")
     .icon(crate::icons::ADD_SKETCH3D);
     type Args = AddSketch3dArgs;
     type Session = Sketch3dSession;

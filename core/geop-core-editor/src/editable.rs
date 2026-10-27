@@ -18,6 +18,18 @@ use serde::Serialize;
 
 use crate::editing::{Event, Form, hit::Scene};
 
+thread_local! {
+    static FORMS_BUILT: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
+/// How many forms of the step edited this thread has built
+/// ([`Editors::presentation`]) ever: what a test bounds the work of a
+/// pointer event by, as [`crate::view::parts_drawn`] does drawing — a form
+/// can ask the whole assembly about what it built.
+pub fn forms_built() -> usize {
+    FORMS_BUILT.get()
+}
+
 /// What an operation is to an editor: its short name and what it does —
 /// what an editor offers it by — and where and how prominently the editor
 /// offers it.
@@ -43,6 +55,11 @@ pub struct OperationInfo {
     /// that a front end puts in an `<svg>` of its own. None to show its
     /// label.
     pub icon: Option<&'static str>,
+    /// The key that starts a new step of it while none is edited — a
+    /// letter, `Shift+` one for the less used — as every front end offers
+    /// and shows it: `E`, `Shift+F`. Unique among the operations offered;
+    /// `F` and `Home` are the view's (framing it), `?` lists the keys.
+    pub shortcut: Option<&'static str>,
 }
 
 impl OperationInfo {
@@ -63,6 +80,7 @@ impl OperationInfo {
             picks_built: false,
             reads: &[],
             icon: None,
+            shortcut: None,
         }
     }
 
@@ -85,6 +103,15 @@ impl OperationInfo {
     /// The same, its steps reading files of the extensions `reads`.
     pub const fn reads(self, reads: &'static [&'static str]) -> Self {
         Self { reads, ..self }
+    }
+
+    /// The same, started by the key `shortcut` (see
+    /// [`OperationInfo::shortcut`]).
+    pub const fn shortcut(self, shortcut: &'static str) -> Self {
+        Self {
+            shortcut: Some(shortcut),
+            ..self
+        }
     }
 
     /// The same, shown as `icon` (see [`OperationInfo::icon`]).
@@ -440,6 +467,7 @@ impl Editors {
         step: &str,
         editing: &dyn Any,
     ) -> GeopResult<Form> {
+        FORMS_BUILT.set(FORMS_BUILT.get() + 1);
         let step = self.step(runner, part, program, step)?;
         (step.operation).presentation(&step.context, step.args, editing)
     }

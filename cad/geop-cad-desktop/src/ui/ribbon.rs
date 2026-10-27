@@ -252,13 +252,17 @@ fn operations(window: &GeopApp, ui: &mut Ui, ctx: &egui::Context, acted: &mut Op
                         None => egui::Button::new(l.info.label),
                     };
                     b = b.selected(open_new(l));
-                    let enabled = Action::NewStep(l.kind.to_string()).enabled(app);
+                    let action = Action::NewStep(l.kind.to_string(), l.info.shortcut);
+                    let enabled = action.enabled(app);
+                    if let Some(s) = action.shortcut() {
+                        b = b.shortcut_text(ctx.format_shortcut(&s));
+                    }
                     if ui
                         .add_enabled(enabled, b)
                         .on_hover_text(l.info.doc)
                         .clicked()
                     {
-                        *acted = Some(Action::NewStep(l.kind.to_string()));
+                        *acted = Some(action);
                         ui.close();
                     }
                 }
@@ -278,7 +282,7 @@ fn operation(
     theme: super::Theme,
     acted: &mut Option<Action>,
 ) {
-    let action = Action::NewStep(l.kind.to_string());
+    let action = Action::NewStep(l.kind.to_string(), l.info.shortcut);
     let enabled = action.enabled(app);
     let active = app
         .step
@@ -329,7 +333,15 @@ fn operation(
         };
         ui.add(b.frame(false).selected(active))
     };
-    let tip = format!("{}\n\n{}", l.info.label, l.info.doc);
+    let tip = match action.shortcut() {
+        Some(s) => format!(
+            "{} ({})\n\n{}",
+            l.info.label,
+            ui.ctx().format_shortcut(&s),
+            l.info.doc
+        ),
+        None => format!("{}\n\n{}", l.info.label, l.info.doc),
+    };
     let response = if enabled {
         response.on_hover_text(tip)
     } else {
