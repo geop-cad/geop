@@ -76,13 +76,48 @@ impl Structure {
 }
 
 /// A term as the structure is found from: what it is, the blocks it reads,
-/// its rows where the blocks are, and their slopes over a box around there
-/// (see [`System::structure`]) — none where it cannot be made over it.
+/// and its rows where the blocks are.
 struct Read {
     term: Term,
     blocks: Vec<usize>,
     made: Linearized,
-    over: Option<Linearized>,
+}
+
+/// The terms' rows over a box of steps around where the blocks are (see
+/// [`System::structure`]), made the first time one is asked: one more
+/// evaluation of every term, with every block moved — which a system
+/// whose blocks hang off nothing never needs.
+struct Over<'s, 'e, E: Equations> {
+    system: &'s System<'e, E>,
+    at: &'s [E::Value],
+    terms: Vec<Term>,
+    rows: std::cell::OnceCell<Vec<Option<Linearized>>>,
+}
+
+impl<E: Equations> Over<'_, '_, E> {
+    /// The rows of the term `k` over the box, as slopes by the steps from
+    /// where the blocks are; none where it cannot be made over it.
+    fn get(&self, k: usize) -> Option<&Linearized> {
+        let rows = self.rows.get_or_init(|| {
+            let Some((boxed, differentials)) = self.system.around(self.at) else {
+                return vec![None; self.terms.len()];
+            };
+            (self.system.equations.evaluate(&boxed, &self.terms).into_iter())
+                .map(|made| {
+                    let mut made = made?;
+                    for (block, rows) in &mut made.jacobian {
+                        if let Some(Some(d)) = differentials.get(*block) {
+                            for row in rows.iter_mut() {
+                                *row = super::compose(row, d);
+                            }
+                        }
+                    }
+                    Some(made)
+                })
+                .collect()
+        });
+        rows.get(k)?.as_ref()
+    }
 }
 
 impl<E: Equations> System<'_, E> {
@@ -101,24 +136,8 @@ impl<E: Equations> System<'_, E> {
         let n = self.mobility.len();
         let terms = every_term(self.equations.count());
         let made = self.equations.evaluate(at, &terms);
-        let over = match self.around(at) {
-            Some((boxed, differentials)) => (self.equations.evaluate(&boxed, &terms).into_iter())
-                .map(|made| {
-                    let mut made = made?;
-                    for (block, rows) in &mut made.jacobian {
-                        if let Some(Some(d)) = differentials.get(*block) {
-                            for row in rows.iter_mut() {
-                                *row = super::compose(row, d);
-                            }
-                        }
-                    }
-                    Some(made)
-                })
-                .collect(),
-            None => vec![None; terms.len()],
-        };
         let mut reads: Vec<Read> = Vec::new();
-        for ((&term, made), over) in terms.iter().zip(made).zip(over) {
+        for (&term, made) in terms.iter().zip(made) {
             let Some(made) = made else {
                 continue;
             };
@@ -129,12 +148,7 @@ impl<E: Equations> System<'_, E> {
             blocks.sort_unstable();
             blocks.dedup();
             if !blocks.is_empty() {
-                reads.push(Read {
-                    term,
-                    blocks,
-                    made,
-                    over,
-                });
+                reads.push(Read { term, blocks, made });
             }
         }
         let components = grouped(n, reads.iter().map(|r| (r.term, r.blocks.as_slice())));
@@ -151,6 +165,12 @@ impl<E: Equations> System<'_, E> {
                 on[b].push(k);
             }
         }
+        let over = Over {
+            system: self,
+            at,
+            terms: reads.iter().map(|r| r.term).collect(),
+            rows: Default::default(),
+        };
         let mut alive = vec![true; reads.len()];
         let mut peeled: Vec<Option<Pendant>> = vec![None; n];
         let mut order = Vec::new();
@@ -160,7 +180,7 @@ impl<E: Equations> System<'_, E> {
                 continue;
             }
             let own: Vec<usize> = on[b].iter().copied().filter(|&k| alive[k]).collect();
-            let Some(pendant) = self.hangs_off(at, b, own, &reads, &alive, &on, tolerance) else {
+            let Some(pendant) = self.hangs_off(at, b, own, &reads, &over, &alive, &on, tolerance) else {
                 continue;
             };
             for &k in &pendant.terms {
@@ -251,6 +271,7 @@ impl<E: Equations> System<'_, E> {
         b: usize,
         own: Vec<usize>,
         reads: &[Read],
+        over: &Over<E>,
         alive: &[bool],
         on: &[Vec<usize>],
         tolerance: Scalar,
@@ -287,7 +308,12 @@ impl<E: Equations> System<'_, E> {
         let own_width = at[b].dimension();
         let mut rows: Vec<Vec<Scalar>> = Vec::new();
         for &k in &own {
-            let made = reads[k].over.as_ref()?;
+            // Hanging off nothing, it constrains nothing else: its rows
+            // only count its own freedom, which they do where it is.
+            let made = match hangs.is_empty() {
+                true => &reads[k].made,
+                false => over.get(k)?,
+            };
             for r in 0..made.values.len() {
                 let mut row = vec![Scalar::ZERO; width];
                 for (block, derivatives) in &made.jacobian {
