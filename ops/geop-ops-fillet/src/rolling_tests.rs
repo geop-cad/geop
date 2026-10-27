@@ -515,46 +515,71 @@ fn cube_corner_rounded_with_a_varying_radius() {
     }
 }
 
-/// The same edges with a radius from 0.1 to 0.2 along each: they meet the
-/// corner with different radii, as they run to or from it. There is no one
-/// ball to round it with: the corner is bevelled, each fillet run out past
-/// it and the boolean meeting them.
-#[test]
-fn cube_corner_with_mixed_radii_is_bevelled() {
-    let model = unit_cube();
-    let edges: Vec<String> = ["cube(b,c0,start)", "cube(b,c3,start)", "cube(b,p0)"]
+/// The edges at the cube's corner `(0, 0, 1)`, as in
+/// [`cube_corner_rounded_with_a_varying_radius`].
+pub(crate) fn corner_edges() -> Vec<String> {
+    ["cube(b,c0,start)", "cube(b,c3,start)", "cube(b,p0)"]
         .map(String::from)
-        .to_vec();
-    let shape = BlendShape::Fillet {
-        radii: Radii {
-            radius: 0.1,
-            end_radius: Some(0.2),
-            at_vertices: Vec::new(),
-        },
-    };
-    let mut model = model;
-    blended(&mut model, &edges, &shape);
-    assert!(
-        !(model.topology().faces.keys()).any(|&f| model.name_of(f).unwrap().ends_with(",corner)"))
-    );
-    assert!(!has_vertex(&model, [0.0, 0.0, 1.0]));
+        .to_vec()
 }
 
-/// The same corner, rounded smoothly: a patch tangent to the three
-/// fillets, each ending at its section through where its contacts cross
-/// those of its neighbours on the faces they share (SMLib's
-/// `SmFilletCorner::CreateCornerPatch`), named `...,corner)` as the ball
-/// is. A setback corner (`SmFilletConvexNxNCorner` with `m_dSetBackDist`)
-/// is the same patch with six sides: each fillet ending a setback from the
-/// vertex along its edge, and the contacts of two neighbours joined on
-/// their face between their ends.
+/// Checks the corner patches of `model` — every face named `...,corner,k)`,
+/// the polygon inside them `...,corner)` — meet the faces beside them
+/// smoothly: where each leaves its side of the corner's loop, halfway
+/// along, its normal is that of the fillet or the face it meets there, to
+/// within `tolerance` radians. The number of patches.
+pub(crate) fn assert_corner_is_smooth(model: &NamedModel, tolerance: f64) -> usize {
+    let is_corner = |name: &str| name.ends_with(",corner)") || name.contains(",corner,");
+    let topology = model.topology();
+    let mut patches = 0;
+    for (&id, face) in &topology.faces {
+        let name = model.name_of(id).unwrap();
+        if !name.contains(",corner,") {
+            continue;
+        }
+        patches += 1;
+        let half = Scalar::from_f64(0.5);
+        let p = face.surface.evaluate(half, Scalar::ZERO).unwrap();
+        let n = face.surface.normal(half, Scalar::ZERO).unwrap();
+        let mut met = Vec::new();
+        for (&other, beside) in &topology.faces {
+            let other_name = model.name_of(other).unwrap();
+            if is_corner(other_name) {
+                continue;
+            }
+            let Ok(Some((u, v))) = beside.surface.locate(&p, 1000, Scalar::from_f64(1e-9)) else {
+                continue;
+            };
+            let m = beside.surface.normal(u, v).unwrap();
+            let sin = n.prod_cross(&m).norm().to_f64() / (n.norm().to_f64() * m.norm().to_f64());
+            met.push((other_name, sin));
+        }
+        assert!(!met.is_empty(), "{name} meets no face at {p:?}");
+        assert!(
+            met.iter().any(|&(_, sin)| sin <= tolerance),
+            "{name} meets the faces {met:?} at {p:?} with a crease"
+        );
+    }
+    patches
+}
+
+/// The same edges with a radius from 0.1 to 0.2 along each: they meet the
+/// corner with different radii, as they run to or from it, so no one ball
+/// rounds it. Each fillet ends set back from the corner, twice as far as
+/// the largest radius there (its neighbours' contacts on the faces they
+/// share), and a smooth patch closes the corner (SMLib's
+/// `SmFilletConvexNxNCorner` with `m_dSetBackDist`): six-sided, the three
+/// fillets' end arcs and the lines on the faces between them, tangent to
+/// all of them, `...,corner,k)` per side and `...,corner)` the polygon
+/// inside.
+///
+/// The cut is between two bounds: each fillet past the setback, each way
+/// its radius may run (`0.214602 = 1 - π/4` of the square of the radius,
+/// integrated), no less; and no more than that and the cube the setback
+/// spans at the corner.
 #[test]
-#[ignore = "needs a smooth N-sided fill, tangent along each side to a given surface (the fillets' and the faces'), as a function in `core/` or `lib/` the fillet can call: `geop-ops-surface`'s boundary surface is an operation, and is tangent only for four sides. Until then the corner is bevelled (`cube_corner_with_mixed_radii_is_bevelled`); setbacks wait on the same patch"]
 fn cube_corner_with_mixed_radii_is_rounded_smoothly() {
     let mut model = unit_cube();
-    let edges: Vec<String> = ["cube(b,c0,start)", "cube(b,c3,start)", "cube(b,p0)"]
-        .map(String::from)
-        .to_vec();
     let shape = BlendShape::Fillet {
         radii: Radii {
             radius: 0.1,
@@ -562,8 +587,34 @@ fn cube_corner_with_mixed_radii_is_rounded_smoothly() {
             at_vertices: Vec::new(),
         },
     };
-    blended(&mut model, &edges, &shape);
+    blended(&mut model, &corner_edges(), &shape);
+    assert_eq!(assert_corner_is_smooth(&model, 1e-5), 6);
+    assert!(!has_vertex(&model, [0.0, 0.0, 1.0]));
+    assert_cut_between(&model, 0.4, [0.1, 0.2]);
+}
+
+/// Checks the cube `model`, three edges of which at its corner `(0, 0, 1)`
+/// are filleted with a radius running linearly between `radii` along each
+/// and the corner set back `setback`, is cut by no less than the three
+/// fillets past the setback, each way its radius may run (`0.214602 = 1 -
+/// π/4` of the square of the radius, integrated), and by no more than that
+/// and the cube the setback spans at the corner.
+pub(crate) fn assert_cut_between(model: &NamedModel, setback: f64, [r0, r1]: [f64; 2]) {
+    let solid = model.solid_id("fillet(F)").unwrap();
+    let volume = model.topology().mass_properties(solid).unwrap().volume;
+    let cut = 1.0 - volume.midpoint().to_f64();
+    let past = |r: &dyn Fn(f64) -> f64| -> f64 {
+        // Simpson's rule, exact for the square of a linear radius.
+        let (a, b) = (setback, 1.0);
+        let m = 0.5 * (a + b);
+        (b - a) / 6.0 * (r(a).powi(2) + 4.0 * r(m).powi(2) + r(b).powi(2))
+    };
+    let rising = past(&|t| r0 + (r1 - r0) * t);
+    let falling = past(&|t| r1 + (r0 - r1) * t);
+    let least = 3.0 * 0.214602 * rising.min(falling);
+    let most = 3.0 * 0.214602 * rising.max(falling) + setback.powi(3);
     assert!(
-        (model.topology().faces.keys()).any(|&f| model.name_of(f).unwrap().ends_with(",corner)"))
+        least < cut && cut < most,
+        "cut {cut}, not between {least} and {most}"
     );
 }

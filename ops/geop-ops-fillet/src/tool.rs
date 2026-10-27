@@ -9,16 +9,17 @@
 
 use geop_core_geometry::{
     nurb_curve::{self, NurbCurve, NurbCurve2D, NurbCurve3D, bezier_knots, embed_point},
-    nurb_surface::{FlatPatch, NurbSurface, NurbSurface3D},
+    nurb_surface::{FlatPatch, Neighbour, NurbSurface, NurbSurface3D},
+    search::{MAX_NODES, min_subdivision_size},
 };
 use geop_core_math::{
     geop_error::{GeopError, GeopResult},
     scalars::Scalar,
-    vector::{Vector, Vector3, Vector4},
+    vector::{Vector, Vector2, Vector3, Vector4},
 };
 use geop_core_topology::{
     FaceId, Sense, SolidId,
-    build::{BodySpec, CoedgeOn, EdgeSpec},
+    build::{BodySpec, CoedgeOn, CoedgeSpec, EdgeSpec, FaceSpec},
 };
 use geop_lib_sweep::{Glue, Skinned, Strip, StripCap, StripGeometry, skin};
 use geop_ops_model::{BodyNames, NamedModel, Namer};
@@ -157,17 +158,16 @@ fn cap_face(cap: &Cap) -> GeopResult<(NurbSurface3D, [NurbCurve2D; 3])> {
 }
 
 /// A corner every edge of which is blended, where their tools meet (see
-/// [`crate::corner`]): the ball rounding it, centered at `center` with
-/// `radius`, touching its faces at `contacts`; the tools ending there; the
-/// apex `apex` their apexes are joined to, on the far side of the faces;
-/// and a point `inside` the tools there — the solid's own corner.
+/// [`crate::corner`]): how it is rounded; its contacts, each on one of the
+/// solid's faces; the tools ending there; the apex `apex` the corner's far
+/// side is closed off at, on the far side of the faces; and a point
+/// `inside` the tools there — the solid's own corner.
 #[derive(Clone, Debug)]
 pub(crate) struct Corner {
     /// What the corner's own entities are named by: the vertex's.
     pub(crate) namer: Namer,
-    pub(crate) center: Vector3,
-    pub(crate) radius: Scalar,
-    /// The faces the ball touches, one per contact.
+    pub(crate) rounding: Rounding,
+    /// Per contact, the face it lies on.
     pub(crate) faces: Vec<FaceId>,
     pub(crate) contacts: Vec<Vector3>,
     pub(crate) apex: Vector3,
@@ -175,9 +175,22 @@ pub(crate) struct Corner {
     pub(crate) ends: Vec<CornerEnd>,
 }
 
+/// How a [`Corner`] is rounded.
+#[derive(Clone, Debug)]
+pub(crate) enum Rounding {
+    /// By the ball centered at `center` with `radius`, touching each face
+    /// at one contact, which the tools ending there share.
+    Ball { center: Vector3, radius: Scalar },
+    /// Set back: by a smooth patch (see [`NurbSurface3D::fill`]) filling
+    /// the loop of the tools' end arcs, each tool with contacts of its own,
+    /// and the lines on the faces between them. `planes`: per contact, the
+    /// plane of the face it lies on.
+    Fill { planes: Vec<NurbSurface3D> },
+}
+
 /// A tool ending at a [`Corner`]: which, at its last station or its first,
 /// and which of the corner's contacts its section's first and second
-/// contact are.
+/// contact are — as planned, those on its edge's left and right face.
 #[derive(Clone, Copy, Debug)]
 pub(crate) struct CornerEnd {
     pub(crate) tool: usize,
@@ -386,6 +399,425 @@ fn corner_faces(
     corner: &Corner,
     built: &Built,
 ) -> GeopResult<()> {
+    match &corner.rounding {
+        Rounding::Ball { center, radius } => {
+            ball_faces(spec, names, corner, center, *radius, built)
+        }
+        Rounding::Fill { planes } => fill_faces(spec, names, corner, planes, built),
+    }
+}
+
+/// One side of a set-back corner's loop (see [`fill_faces`]), from contact
+/// `from` to contact `to`: the end arc of the tool ending at the corner
+/// as `end`, or the line on a face between two tools' contacts.
+#[derive(Clone, Copy, Debug)]
+enum LoopSide {
+    Arc { end: usize, from: usize, to: usize },
+    Line { from: usize, to: usize },
+}
+
+impl LoopSide {
+    fn ends(self) -> (usize, usize) {
+        match self {
+            LoopSide::Arc { from, to, .. } | LoopSide::Line { from, to } => (from, to),
+        }
+    }
+
+    fn reversed(self) -> Self {
+        match self {
+            LoopSide::Arc { end, from, to } => LoopSide::Arc {
+                end,
+                from: to,
+                to: from,
+            },
+            LoopSide::Line { from, to } => LoopSide::Line { from: to, to: from },
+        }
+    }
+}
+
+/// The loop round a set-back corner (see [`fill_faces`]): from the first
+/// tool's arc on, each arc followed by the line on the face its last
+/// contact lies on to the other tool's contact there — running round the
+/// corner so that, seen from the far side of the faces, from its apex, it
+/// runs counter-clockwise.
+fn corner_loop(corner: &Corner) -> GeopResult<Vec<LoopSide>> {
+    let n = corner.ends.len();
+    let mut sides = Vec::with_capacity(2 * n);
+    let mut end = 0;
+    let mut from = corner.ends[0].contacts[0];
+    for _ in 0..n {
+        let [a, b] = corner.ends[end].contacts;
+        let to = if a == from { b } else { a };
+        sides.push(LoopSide::Arc { end, from, to });
+        let next = (0..corner.contacts.len())
+            .find(|&c| c != to && corner.faces[c] == corner.faces[to])
+            .ok_or_else(|| {
+                GeopError::new(format!(
+                    "no other blend of the corner touches face {} beside the one ending at contact {to}",
+                    corner.faces[to]
+                ))
+            })?;
+        sides.push(LoopSide::Line { from: to, to: next });
+        end = (corner.ends.iter())
+            .position(|e| e.contacts.contains(&next))
+            .ok_or_else(|| {
+                GeopError::new(format!("no blend of the corner ends at contact {next}"))
+            })?;
+        from = next;
+        if end == 0 {
+            break;
+        }
+    }
+    if sides.len() != 2 * n || from != corner.ends[0].contacts[0] {
+        return Err(GeopError::new(format!(
+            "the blends ending at the corner do not run round it in one loop: {sides:?}"
+        )));
+    }
+    // Which way it runs round, by the (Newell) normal of its corners, in
+    // plain numbers: a free choice of the patch's sense, decided only where
+    // it is clear.
+    let points: Vec<[f64; 3]> = (sides.iter())
+        .map(|s| corner.contacts[s.ends().0].to_f64_array())
+        .collect();
+    let mut normal = [0.0f64; 3];
+    let mut middle = [0.0f64; 3];
+    for (k, a) in points.iter().enumerate() {
+        let b = points[(k + 1) % points.len()];
+        normal[0] += (a[1] - b[1]) * (a[2] + b[2]);
+        normal[1] += (a[2] - b[2]) * (a[0] + b[0]);
+        normal[2] += (a[0] - b[0]) * (a[1] + b[1]);
+        for i in 0..3 {
+            middle[i] += a[i] / points.len() as f64;
+        }
+    }
+    let inside = corner.inside.to_f64_array();
+    let away: f64 = (0..3).map(|i| normal[i] * (middle[i] - inside[i])).sum();
+    if away.is_nan() || away == 0.0 {
+        return Err(GeopError::new(format!(
+            "cannot tell which way the loop of the corner's contacts {points:?} runs round its vertex {inside:?}"
+        )));
+    }
+    if away < 0.0 {
+        sides.reverse();
+        for side in &mut sides {
+            *side = side.reversed();
+        }
+    }
+    Ok(sides)
+}
+
+/// Adds the faces of `corner`, set back, to `spec`, joined to the tools as
+/// `built` (see [`Rounding::Fill`]): the patches filling the loop of the
+/// tools' end arcs and the lines between them on the faces `planes` —
+/// tangent to the tools' blends along the arcs and to the faces along the
+/// lines, `N(corner,k)` per side and `N(corner)` the flat polygon inside
+/// (see [`NurbSurface3D::fill`]) — and on the far side, round each line,
+/// the bilinear patch from it along both tools' lines to their apexes,
+/// `N(side,k)`, and the triangle from those apexes to the corner's apex,
+/// `N(cap,k)`.
+fn fill_faces(
+    spec: &mut BodySpec,
+    names: &mut BodyNames,
+    corner: &Corner,
+    planes: &[NurbSurface3D],
+    built: &Built,
+) -> GeopResult<()> {
+    let sides = corner_loop(corner)?;
+    let n = sides.len();
+    let middle = (corner.contacts.iter())
+        .fold(Vector3::zero(), |sum, p| sum.add(p))
+        .prod_scalar(Scalar::ONE.div(Scalar::from_i64(corner.contacts.len() as i64))?);
+    // Per side, its curve, the tool's edge along it if it is an arc, and
+    // the surface along it.
+    let mut curves = Vec::with_capacity(n);
+    let mut walls = Vec::with_capacity(n);
+    for &side in &sides {
+        match side {
+            LoopSide::Arc { end, from, .. } => {
+                let e = &corner.ends[end];
+                let tool = built.tools[e.tool].1;
+                let station = &tool.stations[e.station(tool)];
+                let arc = section_curve(&station.points, 0)?;
+                curves.push(if from == e.contacts[0] {
+                    arc
+                } else {
+                    arc.reverse()
+                });
+                let span = if e.at_end { tool.spans.len() - 1 } else { 0 };
+                walls.push(wall_surface(&tool.spans[span], 0)?);
+            }
+            LoopSide::Line { from, to } => {
+                let plane = &planes[from];
+                if plane.as_plane()?.is_none() {
+                    return Err(GeopError::new(format!(
+                        "the corner is set back across face {}, which is not flat: a set-back corner is only closed along flat faces",
+                        corner.faces[from]
+                    )));
+                }
+                curves.push(NurbCurve3D::line(
+                    corner.contacts[from],
+                    corner.contacts[to],
+                )?);
+                walls.push(plane.clone());
+            }
+        }
+    }
+    // Each face along the loop, on the side away from the patch: a tool's
+    // blend joined to it in the tool, which no boolean tells apart from it,
+    // or a face of the solid, flat, which the patch is tangent to exactly.
+    let mut neighbours = Vec::with_capacity(n);
+    for (k, (curve, wall)) in curves.iter().zip(&walls).enumerate() {
+        let (t0, t1) = curve.domain();
+        let t = t0.add(t1).div(Scalar::TWO)?;
+        let at = curve.evaluate(t)?;
+        let normal = wall.normal_at(&at, MAX_NODES, min_subdivision_size())?;
+        let into = curve
+            .tangent(t)?
+            .prod_cross(&normal)
+            .prod_dot(&middle.sub(&at));
+        let along = if into.definitely_greater(Scalar::ZERO) {
+            true
+        } else if into.definitely_less(Scalar::ZERO) {
+            false
+        } else {
+            return Err(GeopError::new(format!(
+                "cannot tell which side of the corner's loop side {k} ({:?}) its face is on ({into:?})",
+                sides[k]
+            )));
+        };
+        neighbours.push(Some(match sides[k] {
+            LoopSide::Arc { .. } => Neighbour::joined(wall, along)?,
+            LoopSide::Line { .. } => Neighbour::new(wall, along)?,
+        }));
+    }
+    let fill = NurbSurface3D::fill(&curves, &neighbours)?;
+
+    // The loop's vertices, the inner polygon's, and their edges.
+    let loop_vertex: Vec<usize> = (sides.iter()).map(|s| built.contacts[s.ends().0]).collect();
+    let first = spec.vertices.len();
+    for (k, p) in fill.inner.iter().enumerate() {
+        spec.vertices.push(*p);
+        names
+            .vertices
+            .push(corner.namer.name(&["inner", &k.to_string()]));
+    }
+    let inner_vertex: Vec<usize> = (first..first + n).collect();
+    let mut side_edge = Vec::with_capacity(n);
+    for (k, &side) in sides.iter().enumerate() {
+        side_edge.push(match side {
+            LoopSide::Arc { end, .. } => built.curve(&corner.ends[end], 0),
+            LoopSide::Line { .. } => {
+                spec.edges.push(EdgeSpec {
+                    curve: curves[k].clone(),
+                    start: loop_vertex[k],
+                    end: loop_vertex[(k + 1) % n],
+                });
+                names
+                    .edges
+                    .push(corner.namer.name(&["line", &k.to_string()]));
+                spec.edges.len() - 1
+            }
+        });
+    }
+    let mut spoke_edge = Vec::with_capacity(n);
+    for (k, spoke) in fill.spokes.iter().enumerate() {
+        spec.edges.push(EdgeSpec {
+            curve: spoke.clone(),
+            start: loop_vertex[k],
+            end: inner_vertex[k],
+        });
+        names
+            .edges
+            .push(corner.namer.name(&["spoke", &k.to_string()]));
+        spoke_edge.push(spec.edges.len() - 1);
+    }
+    let mut inner_edge = Vec::with_capacity(n);
+    for k in 0..n {
+        spec.edges.push(EdgeSpec {
+            curve: NurbCurve3D::line(fill.inner[k], fill.inner[(k + 1) % n])?,
+            start: inner_vertex[k],
+            end: inner_vertex[(k + 1) % n],
+        });
+        names
+            .edges
+            .push(corner.namer.name(&["inner_side", &k.to_string()]));
+        inner_edge.push(spec.edges.len() - 1);
+    }
+    // The patches, facing away from the corner of the solid as the loop's
+    // sense makes them.
+    for (k, patch) in fill.patches.iter().enumerate() {
+        let half = Scalar::from_f64(0.5);
+        let towards = patch
+            .normal(half, half)?
+            .prod_dot(&corner.inside.sub(&patch.evaluate(half, half)?));
+        if !towards.definitely_less(Scalar::ZERO) {
+            return Err(GeopError::new(format!(
+                "the corner's patch along its loop side {k} does not face away from the corner of the solid ({towards:?})"
+            )));
+        }
+        let next = (k + 1) % n;
+        let face = spec.square_face(
+            patch.clone(),
+            [
+                loop_vertex[k],
+                loop_vertex[next],
+                inner_vertex[next],
+                inner_vertex[k],
+            ],
+            [
+                CoedgeOn::Edge(side_edge[k], Sense::Forward),
+                CoedgeOn::Edge(spoke_edge[next], Sense::Forward),
+                CoedgeOn::Edge(inner_edge[k], Sense::Forward),
+                CoedgeOn::Edge(spoke_edge[k], Sense::Forward),
+            ],
+        )?;
+        spec.faces.push(face);
+        names
+            .faces
+            .push(corner.namer.name(&["corner", &k.to_string()]));
+    }
+    // The flat polygon inside, in the fill's plane, facing as it does.
+    let normal = fill.plane.normal;
+    let e1 = fill.inner[1].sub(&fill.inner[0]);
+    let e1 = e1
+        .sub(&normal.prod_scalar(e1.prod_dot(&normal)))
+        .normalize()?
+        .sharpen();
+    let e2 = normal.prod_cross(&e1).sharpen();
+    let frame = [fill.plane.point, e1, e2];
+    let flat: Vec<Vector3> = fill
+        .inner
+        .iter()
+        .map(|p| flatten_point(p, &frame))
+        .collect();
+    let lines = (0..n)
+        .map(|k| {
+            let [a, b] = [&flat[k], &flat[(k + 1) % n]].map(|p| Vector2::from_array([p[0], p[1]]));
+            NurbCurve2D::line(a, b)
+        })
+        .collect::<GeopResult<Vec<_>>>()?;
+    let patch = FlatPatch::around(fill.plane.point, e1, e2, &lines, false)?;
+    let mut outer = Vec::with_capacity(n);
+    for (k, line) in lines.iter().enumerate() {
+        outer.push(CoedgeSpec {
+            on: CoedgeOn::Edge(inner_edge[k], Sense::Forward),
+            pcurve: patch.pcurve(line)?,
+        });
+    }
+    spec.faces.push(FaceSpec {
+        surface: patch.surface()?,
+        outer,
+        holes: Vec::new(),
+    });
+    names.faces.push(corner.namer.name(&["corner"]));
+
+    // The far side: round each line, from it along both tools' lines to
+    // their apexes, and from those to the corner's apex.
+    spec.vertices.push(corner.apex);
+    names.vertices.push(corner.namer.name(&["apex"]));
+    let apex = spec.vertices.len() - 1;
+    let mut to_apex: Vec<(usize, usize)> = Vec::new();
+    for (k, &side) in sides.iter().enumerate() {
+        let LoopSide::Line { from, to } = side else {
+            continue;
+        };
+        // The tool ending at contact `c`, its line from `c` to its apex,
+        // and that apex's vertex and point.
+        let reaching = |c: usize| -> GeopResult<(usize, usize, (usize, Vector3))> {
+            let i = (corner.ends.iter())
+                .position(|e| e.contacts.contains(&c))
+                .ok_or_else(|| {
+                    GeopError::new(format!("no blend of the corner ends at contact {c}"))
+                })?;
+            let end = &corner.ends[i];
+            let line = built.curve(end, if end.contacts[1] == c { 1 } else { 2 });
+            Ok((i, line, built.apex(end)))
+        };
+        let (i, line_i, (qi, at_i)) = reaching(from)?;
+        let (j, line_j, (qj, at_j)) = reaching(to)?;
+        let mut apex_edge = |i: usize, q: usize, at: Vector3| -> GeopResult<usize> {
+            if let Some(&(_, e)) = to_apex.iter().find(|(t, _)| *t == i) {
+                return Ok(e);
+            }
+            spec.edges.push(EdgeSpec {
+                curve: NurbCurve3D::line(at, corner.apex)?,
+                start: q,
+                end: apex,
+            });
+            names.edges.push(corner.namer.name(&[&format!("q{i}")]));
+            to_apex.push((i, spec.edges.len() - 1));
+            Ok(spec.edges.len() - 1)
+        };
+        let (ai, aj) = (apex_edge(i, qi, at_i)?, apex_edge(j, qj, at_j)?);
+        spec.edges.push(EdgeSpec {
+            curve: NurbCurve3D::line(at_j, at_i)?,
+            start: qj,
+            end: qi,
+        });
+        names
+            .edges
+            .push(corner.namer.name(&["ridge", &k.to_string()]));
+        let ridge = spec.edges.len() - 1;
+        let facing = |face: FaceSpec, what: &str| -> GeopResult<FaceSpec> {
+            let half = Scalar::from_f64(0.5);
+            let inward = face
+                .surface
+                .normal(half, half)?
+                .prod_dot(&corner.inside.sub(&face.surface.evaluate(half, half)?));
+            if inward.definitely_greater(Scalar::ZERO) {
+                Ok(face.reversed())
+            } else if inward.definitely_less(Scalar::ZERO) {
+                Ok(face)
+            } else {
+                Err(GeopError::new(format!(
+                    "cannot tell which way the corner's {what} at its loop side {k} faces ({inward:?})"
+                )))
+            }
+        };
+        let (a, b) = (corner.contacts[from], corner.contacts[to]);
+        let side_face = spec.square_face(
+            NurbSurface3D::bilinear(a, b, at_j, at_i)?,
+            [loop_vertex[k], loop_vertex[(k + 1) % n], qj, qi],
+            [
+                CoedgeOn::Edge(side_edge[k], Sense::Forward),
+                CoedgeOn::Edge(line_j, Sense::Forward),
+                CoedgeOn::Edge(ridge, Sense::Forward),
+                CoedgeOn::Edge(line_i, Sense::Forward),
+            ],
+        )?;
+        spec.faces.push(facing(side_face, "side")?);
+        names
+            .faces
+            .push(corner.namer.name(&["side", &k.to_string()]));
+        let cap = spec.square_face(
+            NurbSurface3D::bilinear(at_i, at_j, corner.apex, corner.apex)?,
+            [qi, qj, apex, apex],
+            [
+                CoedgeOn::Edge(ridge, Sense::Forward),
+                CoedgeOn::Edge(aj, Sense::Forward),
+                CoedgeOn::Vertex(apex),
+                CoedgeOn::Edge(ai, Sense::Forward),
+            ],
+        )?;
+        spec.faces.push(facing(cap, "cap")?);
+        names
+            .faces
+            .push(corner.namer.name(&["cap", &k.to_string()]));
+    }
+    Ok(())
+}
+
+/// Adds the faces of `corner`, rounded by the ball centered at `center`
+/// with `radius`, to `spec`, joined to the tools as `built` (see
+/// [`build_tools`]).
+fn ball_faces(
+    spec: &mut BodySpec,
+    names: &mut BodyNames,
+    corner: &Corner,
+    center: &Vector3,
+    radius: Scalar,
+    built: &Built,
+) -> GeopResult<()> {
     if corner.contacts.len() != 3 || corner.ends.len() != 3 {
         return Err(GeopError::new(format!(
             "a corner of {} faces and {} blended edges: only corners of three are rounded",
@@ -424,18 +856,14 @@ fn corner_faces(
             })
     };
     let triangle = |order: [usize; 3]| {
-        NurbSurface3D::spherical_triangle(
-            &corner.center,
-            corner.radius,
-            order.map(|k| corner.contacts[k]),
-        )
+        NurbSurface3D::spherical_triangle(center, radius, order.map(|k| corner.contacts[k]))
     };
     let mut order = [0, 1, 2];
     let mut surface = triangle(order)?;
     let (u, v) = (Scalar::from_f64(0.4), Scalar::from_f64(0.3));
     let towards = surface
         .normal(u, v)?
-        .prod_dot(&corner.center.sub(&surface.evaluate(u, v)?));
+        .prod_dot(&center.sub(&surface.evaluate(u, v)?));
     if towards.definitely_less(Scalar::ZERO) {
         order = [1, 0, 2];
         surface = triangle(order)?;

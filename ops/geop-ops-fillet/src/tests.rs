@@ -10,7 +10,10 @@ use geop_ops_model::{
     testing::{assert_valid, edges_where, edges_with_middle_where, has_vertex},
 };
 
-use crate::blend::{BlendShape, blend};
+use crate::{
+    blend::{BlendShape, blend},
+    rolling::Radii,
+};
 
 /// The unit cube `[0, 1]^3`, named `cube(b)`.
 pub(super) fn unit_cube() -> NamedModel {
@@ -373,6 +376,41 @@ fn pocket_floor_fillet() {
         }
     }
     assert_corner_balls(&model, r, &centers);
+}
+
+/// The three edges at a corner of the pocket's floor, concave, filled in
+/// with a radius from 0.1 to 0.15 along each: they meet the corner with
+/// different radii, so no one ball rounds it, and it is set back and
+/// filled smoothly as a convex corner is
+/// ([`crate::rolling_tests::cube_corner_with_mixed_radii_is_rounded_smoothly`]),
+/// the patch filling material in.
+#[test]
+fn pocket_floor_corner_with_mixed_radii_is_filled_smoothly() {
+    let model = pocketed();
+    let corner = v3(0.5, 0.5, 0.6);
+    let edges = edges_where(&model, |e| {
+        let at = |v| model.topology().get_vertex(v).unwrap().point;
+        at(e.start_vertex).could_be_equal(&corner) || at(e.end_vertex).could_be_equal(&corner)
+    });
+    assert_eq!(edges.len(), 3, "{edges:?}");
+    let shape = BlendShape::Fillet {
+        radii: Radii {
+            radius: 0.1,
+            end_radius: Some(0.15),
+            at_vertices: Vec::new(),
+        },
+    };
+    let model = blended(model, &edges, shape);
+    assert_eq!(
+        crate::rolling_tests::assert_corner_is_smooth(&model, 1e-5),
+        6
+    );
+    let at = |p: [f64; 3]| geop_ops_model::testing::classify(&model, "fillet(F)", p);
+    use geop_core_topology::contains::shell::PointClassification as P;
+    // Filled in right in the corner, open along its diagonal past the
+    // setback, twice the largest radius.
+    assert_eq!(at([0.505, 0.505, 0.605]), P::Inside);
+    assert_eq!(at([0.85, 0.85, 0.95]), P::Outside);
 }
 
 /// Every edge of the pocketed block rounded: at the rim's corners the rim

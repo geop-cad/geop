@@ -131,7 +131,7 @@ impl NurbSurface3D {
         let frames = (0..n)
             .map(|k| Frame::at(k, &curves, neighbours, &plane, &inner))
             .collect::<GeopResult<Vec<_>>>()?;
-        let curved = |k: usize| neighbours[k].as_ref().is_some_and(|s| !s.flat());
+        let curved = |k: usize| neighbours[k].as_ref().is_some_and(Neighbour::tilted);
         // Per patch, the knots along its side added where it strayed.
         let mut added: Vec<Vec<Scalar>> = vec![Vec::new(); n];
         let mut strays = String::new();
@@ -752,7 +752,7 @@ fn twist(
         let across = if into { acrosses[k].0 } else { acrosses[k].1 };
         // The slope wanted, rising from the corner into the side: up to
         // the tilt at the first abscissa in from the corner.
-        let slope = if neighbour.flat() {
+        let slope = if !neighbour.tilted() {
             Scalar::ZERO
         } else {
             tilt.mul(Scalar::from_i64(d as i64)).div(abscissa)?

@@ -2598,6 +2598,58 @@ pub(crate) struct ChainCorner {
     pub contacts: [Vector3; 2],
 }
 
+/// The ball of `radius` rolled along the open `chain` up to `setback` from
+/// its start (`k = 0`) or end vertex, as the crow flies: where its blend
+/// ends at a corner set back (see [`crate::corner`]). Where along the chain
+/// is a free choice — the first place from the vertex that far from it, in
+/// plain numbers — and the ball there is placed as every station's is.
+pub(crate) fn set_back(
+    model: &Model,
+    chain: &Chain,
+    k: usize,
+    radius: f64,
+    setback: f64,
+) -> GeopResult<ChainCorner> {
+    let vertices = chain.vertices(model)?;
+    let vertex = if k == 0 {
+        vertices[0]
+    } else {
+        *vertices.last().expect("vertices")
+    };
+    let at = model.get_vertex(vertex)?.point;
+    let links = chain.links.len() as f64;
+    let from_vertex = |c: f64| -> GeopResult<f64> {
+        let (link, f) = locate(chain, c);
+        let (p, _) = chain.links[link].at(model, Scalar::from_f64(f))?;
+        Ok(distance(&p, &at))
+    };
+    let (end, far) = if k == 0 { (0.0, links) } else { (links, 0.0) };
+    if from_vertex(far)? <= setback {
+        return Err(GeopError::new(format!(
+            "the corner at vertex {vertex} is set back {setback} along the fillet, past the other end of its edge's chain"
+        )));
+    }
+    let Bracket { lo, hi, .. } = bisect(end, far, 60, false, |mid| -> GeopResult<_> {
+        Ok(Some(from_vertex(mid)? < setback))
+    })?;
+    let (link, fraction) = locate(chain, 0.5 * (lo + hi));
+    let sr = chain_bend(model, chain)?
+        .side()
+        .mul(Scalar::from_f64(radius));
+    let station = place(model, chain, link, Scalar::from_f64(fraction), sr, None)?;
+    let faces = chain.links[link].faces;
+    if station.faces != faces {
+        return Err(GeopError::new(format!(
+            "set back {setback} from vertex {vertex}, the ball touches faces {:?}, not those of the edge there, {faces:?}: a corner is only set back as far as its edges' faces reach",
+            station.faces
+        )));
+    }
+    Ok(ChainCorner {
+        center: station.center,
+        contacts: station.contact,
+    })
+}
+
 /// Where the open `chain`'s blend runs into a wall at its start and its end
 /// (see [`End::Wall`]): the vertex, and the faces either side there — for
 /// the inward corners where two do at one vertex (see [`crate::blend`]).
