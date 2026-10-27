@@ -2149,7 +2149,18 @@ impl Builder<'_> {
                 return Ok(Refine::Done(()));
             }
             for ((edge, gap), total) in edges.iter_mut().zip(&gaps).zip(&mut total) {
-                edge.curve = widened(&edge.curve, *gap)?;
+                // After the first round what is left is rounding, and a
+                // widening by exactly it falls short by a rounding again:
+                // the gap is measured from the curve's bound rounded
+                // outwards, past the curve's true bound towards the point.
+                // An edge `4.4e-16` off a plane was widened four times and
+                // ended `6.7e-80` short of it. Twice the rounding reaches.
+                let gap = if round == 0 {
+                    *gap
+                } else {
+                    gap.map(|g| 2.0 * g)
+                };
+                edge.curve = widened(&edge.curve, gap)?;
                 *total += gap.iter().copied().fold(0.0, f64::max);
             }
             for (h, gap) in history.iter_mut().zip(&gaps) {

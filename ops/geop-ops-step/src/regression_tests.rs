@@ -205,24 +205,15 @@ fn finishing_registry() -> GeopResult<OperationRegistry> {
 /// (the first fillet of every tutorial), exported as STEP and imported
 /// again.
 ///
-/// The rounded block builds valid. Read back, it fails `assert_valid`
-/// twice, on the two planar sides the blend is tangent to:
-///
-/// > coedge 28's pcurve sample 0 (t=0.000) maps through its face's surface
-/// > to a point that is not on edge 11's curve at all (coedge on face 27,
-/// > (u, v) = (0, 0.15), point (0, 3, ..))
-///
-/// and the same at `(3, 0, ..)` on the side `y = 0`: the start of each
-/// side's pcurve along the edge where the blend leaves it. The edges are
-/// `import(.., e0)` and `import(.., e13)`, the blend's tangent lines, and
-/// validation finds every sample of them off the side they lie in: the
-/// line read back for the side `x = 0` runs at
-/// `x = [-8.9e-16, -6.7e-80]`, definitely off the plane by a hair, and the
-/// import did not widen it to reach the plane. A block with a rounded
-/// rectangle extruded as its outline, the same solid with arcs instead of
-/// a blend, round-trips cleanly.
+/// Read back, it failed validation on the two planar sides the blend is
+/// tangent to: every sample of the blend's tangent lines, `import(..,e0)`
+/// and `import(..,e13)`, lay off the side they lie in. The line was
+/// written at `x = -4.4e-16`, the midpoint of the kernel's enclosure, and
+/// the importer widened it to reach the plane, measuring the gap from the
+/// curve's bound rounded outwards, a rounding short each round: after four
+/// it ran at `x = [-8.9e-16, -6.7e-80]`, still definitely off `x = 0`.
+/// The rounds after the first now widen by twice the rounding they measure.
 #[test]
-#[ignore = "bug: a block with one upright edge rounded round-trips through STEP into an invalid body: the planar sides' pcurves start at the blend's tangent vertices (0,3,z)/(3,0,z), not on the imported tangent edges' curves; a rounded rectangle extruded round-trips"]
 fn block_with_one_rounded_edge_round_trips() {
     let mut program = Program::new();
     program.push(
