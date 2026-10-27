@@ -719,7 +719,7 @@ fn drag_wrist(editor: &mut Editor, arm: &RobotArm, by: &[[f64; 2]]) -> Vec<DragC
     let from = onto_wrist(editor, arm, [0.0, 0.0]);
     let update = editor.handle(Command::Event {
         event: StepEditEvent::Hover {
-            pointer: from.clone(),
+            pointer: from,
             shift: false,
         },
     });
@@ -729,16 +729,15 @@ fn drag_wrist(editor: &mut Editor, arm: &RobotArm, by: &[[f64; 2]]) -> Vec<DragC
     );
     let targets: Vec<Pointer> = by.iter().map(|&by| onto_wrist(editor, arm, by)).collect();
     let mut costs = Vec::new();
-    for k in 0..by.len() {
-        let to = targets[k].clone();
+    for (k, &to) in targets.iter().enumerate() {
         let before = (crate::mates_resolved(), geop_lib_constraints::solve::runs());
         handled(
             editor,
             Command::Event {
                 event: StepEditEvent::Drag {
-                    from: from.clone(),
+                    from,
                     to,
-                    done: k + 1 == by.len(),
+                    done: k + 1 == targets.len(),
                     shift: false,
                 },
             },

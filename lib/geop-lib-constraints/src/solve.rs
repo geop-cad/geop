@@ -331,7 +331,11 @@ pub fn solve(run: Run<'_>, state: &StateValues, problem: &Problem) -> GeopResult
         phases: solution.phases,
         evaluations: [solution.evaluations, solution.enclosure.evaluations],
         largest: (solution.solved.iter())
-            .map(|g| g.blocks.iter().map(|&b| start[b].dimension()).sum())
+            .map(|g| {
+                (g.blocks.iter())
+                    .map(|&b| start.get(b).map_or(0, Variable::dimension))
+                    .sum()
+            })
             .max()
             .unwrap_or(0),
         work,

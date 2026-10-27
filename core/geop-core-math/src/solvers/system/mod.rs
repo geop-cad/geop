@@ -409,7 +409,7 @@ impl<E: Equations> System<'_, E> {
         base: &[E::Value],
         groups: &[&Group],
         tolerance: Scalar,
-    ) -> GeopResult<(Vec<Option<Ended<E::Value>>>, usize)> {
+    ) -> GeopResult<Layer<E::Value>> {
         let batch = Batch::new(self, base);
         let ended = batch.run(groups.iter().map(|&group| {
             let batch = &batch;
@@ -572,6 +572,10 @@ impl<E: Equations> System<'_, E> {
             .collect())
     }
 }
+
+/// Per group of a layer where its solve ended, if it moved; and how many
+/// evaluations the layer took.
+type Layer<V> = (Vec<Option<Ended<V>>>, usize);
 
 /// Where a group's solve ended: its values, the phases that put them
 /// there, the limits held at their bounds, and whether its constraints
