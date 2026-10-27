@@ -1423,3 +1423,34 @@ fn a_placed_part_pasted_into_a_file_in_another_folder_places_the_same_file() {
     let args: AddPartArgs = step_args(&editor.program().steps[0]);
     assert_eq!(args.file, "parts/plate.geop");
 }
+
+/// The arm's upper link isolated, then another example opened from the
+/// examples menu: the pin in the plate shows whole — what was isolated,
+/// hidden or coloured is the arm's, for as long as the arm is edited.
+#[test]
+#[ignore = "bug: Command::LoadWorkspaceExample switches the file edited (its `path`) without \
+            clearing what Command::Load clears when the path changes — visibility, colours, \
+            isolation — so after isolating `upper` in the arm, the pin_in_plate example opens \
+            with `plate` and `pin` both hidden: an empty viewport"]
+fn an_example_opened_shows_whole_whatever_was_isolated_before() {
+    let mut editor = editor();
+    let example = |name: &str| Command::LoadWorkspaceExample {
+        name: name.into(),
+        folder: None,
+    };
+    handled(&mut editor, example("arm"));
+    let isolated = handled(
+        &mut editor,
+        Command::Isolate {
+            names: vec!["upper".into()],
+        },
+    );
+    let hidden = isolated.scene.expect("the scene changed").hidden;
+    assert!(hidden.contains(&"fore".to_string()), "{hidden:?}");
+    let opened = handled(&mut editor, example("pin_in_plate"));
+    let hidden = opened.scene.expect("the example is drawn").hidden;
+    let parts_hidden: Vec<&String> = (hidden.iter())
+        .filter(|name| ["plate", "pin"].contains(&name.as_str()))
+        .collect();
+    assert!(parts_hidden.is_empty(), "hidden: {hidden:?}");
+}
