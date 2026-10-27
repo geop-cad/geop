@@ -474,15 +474,20 @@ await check("a rectangle is sketched and extruded by clicks, and weighed", async
   // The first solid is framed: drawn off-centre, it is in the middle of the view now.
   await page.waitForTimeout(1000);
   const box = await page.locator("main.viewport canvas").first().boundingBox();
+  // The solid, lit, against the backdrop of the view's corner.
   const [r, g, b] = await pixelAt(page, box.x + box.width / 2, box.y + box.height / 2);
-  expect(b > r + 30 && b > g, `the middle of the view is rgb(${r}, ${g}, ${b}), not the blue solid: it was not framed`);
+  const [br, bg, bb] = await pixelAt(page, box.x + 12, box.y + 12);
+  expect(
+    r + g + b > br + bg + bb + 90,
+    `the middle of the view is rgb(${r}, ${g}, ${b}), the backdrop rgb(${br}, ${bg}, ${bb}): the solid was not framed`,
+  );
 
   await inspector(page, "Mass").click();
   await settle(page);
   const [volume] = await massRow("Volume");
   expect(volume > 0, `volume ${volume}`);
   // Extruded 2 up from the zx plane: the centre is 1 above it.
-  const centre = await massRow("Centre");
+  const centre = await massRow("Centroid");
   expect(Math.abs(centre[1] - 1) < 1e-3, `centre ${centre.join(", ")}, expected y = 1`);
   return `${stats}, volume ${volume} mm³`;
 });

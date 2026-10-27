@@ -1,4 +1,4 @@
-import { useRef, type ClipboardEvent, type KeyboardEvent } from "react";
+import { useId, useRef, type ClipboardEvent, type KeyboardEvent } from "react";
 import type { Cell, Column, Table, TableEdit, Tone } from "./geop";
 import { Icon } from "./icons";
 import { parseBlock } from "./tableClipboard";
@@ -93,6 +93,10 @@ function CellInput({
  */
 export function TableField({ table, send }: Props) {
   const root = useRef<HTMLTableElement>(null);
+  // The radio group of this table alone: the dialog is drawn twice (beside
+  // the view, and in the phone's tab), and one group name across both
+  // unchecked the row chosen in the one shown.
+  const group = useId();
   const columns = table.columns.length;
   const rows = table.rows.length;
 
@@ -210,7 +214,7 @@ export function TableField({ table, send }: Props) {
                 <td className="table-select">
                   <input
                     type="radio"
-                    name="table-selected"
+                    name={group}
                     title="Choose this row"
                     aria-label={`Choose row ${row + 1}`}
                     checked={r.selected}
