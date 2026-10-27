@@ -235,6 +235,11 @@ impl GeopApp {
         }
     }
 
+    /// Where the view is in the window, once drawn.
+    pub fn view_rect(&self) -> Option<egui::Rect> {
+        self.view.rect
+    }
+
     fn note(&mut self, text: &str, ctx: &egui::Context) {
         self.note = Some((text.to_string(), ctx.input(|i| i.time) + 4.0));
     }

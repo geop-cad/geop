@@ -52,6 +52,8 @@ pub struct ViewState {
     /// The prompt typed into, by its key, and what is typed.
     prompt: Option<(String, String)>,
     last_time: Option<f64>,
+    /// Where the view was last drawn, in the window.
+    pub rect: Option<Rect>,
 }
 
 pub fn viewport(window: &mut GeopApp, ui: &mut egui::Ui) {
@@ -59,6 +61,7 @@ pub fn viewport(window: &mut GeopApp, ui: &mut egui::Ui) {
     let response = ui.allocate_rect(rect, Sense::click_and_drag());
     let ctx = ui.ctx().clone();
     let layer = ui.layer_id();
+    window.view.rect = Some(rect);
     let app = &mut window.app;
     app.camera.size = [rect.width() as f64, rect.height() as f64];
     let local = |p: Pos2| p - rect.min.to_vec2();

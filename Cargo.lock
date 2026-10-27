@@ -1465,6 +1465,7 @@ version = "0.11.0"
 dependencies = [
  "clap",
  "geop-cad-base",
+ "geop-cad-desktop",
  "geop-core-editor",
  "geop-core-math",
  "geop-core-program",

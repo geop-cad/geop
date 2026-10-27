@@ -32,11 +32,7 @@
 use crate::session::Session;
 use geop_cad_base::disk::{Folder, MOST_BYTES, extensions, workspace_of};
 use geop_core_math::geop_error::{GeopError, GeopResult};
-use std::{
-    io::Read,
-    path::PathBuf,
-    sync::mpsc,
-};
+use std::{io::Read, path::PathBuf, sync::mpsc};
 
 #[derive(clap::Args)]
 pub struct OpenArgs {
@@ -52,7 +48,6 @@ pub struct OpenArgs {
     #[arg(long)]
     pub no_browser: bool,
 }
-
 
 /// The page, as `vite build --mode open` writes it (`web/dist-open`).
 #[cfg(feature = "frontend")]
@@ -463,10 +458,6 @@ mod tests {
         dir
     }
 
-
-
-
-
     fn access() -> Access {
         Access {
             port: 4321,
@@ -551,7 +542,6 @@ mod tests {
         assert_eq!(query_value("path=%ff", "path"), None);
         assert_eq!(percent_decoded("%2e%2E%2fx").as_deref(), Some("../x"));
     }
-
 
     #[test]
     fn the_page_is_served_as_what_it_is() {

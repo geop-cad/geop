@@ -143,3 +143,52 @@ fn the_view_draws_an_example() {
     assert!(harness.state().app.plane().is_some());
     shot(&mut harness, "sketch");
 }
+
+/// A primary click in the view where `p` is seen: the pointer moved
+/// there, pressed and let go, as a mouse does.
+fn click_in_view(harness: &mut Harness<'_, GeopApp>, p: [f64; 3]) {
+    let rect = harness.state().view_rect().expect("the view is drawn");
+    let [x, y] = harness.state().app.camera.project(p).expect("seen");
+    let pos = rect.min + egui::vec2(x as f32, y as f32);
+    harness.event(egui::Event::PointerMoved(pos));
+    idle(harness);
+    for pressed in [true, false] {
+        harness.event(egui::Event::PointerButton {
+            pos,
+            button: egui::PointerButton::Primary,
+            pressed,
+            modifiers: egui::Modifiers::NONE,
+        });
+        harness.step();
+    }
+    idle(harness);
+    assert_eq!(harness.state().app.error, None);
+}
+
+/// A sketch drawn in the window as a user draws it: the plane picked by a
+/// click where it is seen, the line tool taken by its key, two clicks,
+/// Escape, and OK by its hotkey.
+#[test]
+fn a_line_is_sketched_with_the_mouse_and_keys() {
+    let mut harness = window("ui-line", false);
+    harness.get_all_by_label("Sketch").next().unwrap().click();
+    idle(&mut harness);
+    let reach = harness.state().app.camera.reach_at([0.0; 3]);
+    click_in_view(&mut harness, [3.5 * reach, 3.5 * reach, 0.0]);
+    assert!(
+        harness.state().app.plane().is_some(),
+        "the xy plane is picked"
+    );
+    harness.key_press(egui::Key::L);
+    idle(&mut harness);
+    click_in_view(&mut harness, [10.0, 10.0, 0.0]);
+    click_in_view(&mut harness, [30.0, 15.0, 0.0]);
+    harness.key_press(egui::Key::Escape);
+    harness.key_press(egui::Key::Escape);
+    idle(&mut harness);
+    harness.key_press_modifiers(egui::Modifiers::COMMAND, egui::Key::Enter);
+    idle(&mut harness);
+    let app = &harness.state().app;
+    assert!(app.step.is_none(), "{:?}", app.error);
+    assert_eq!(app.program.as_ref().unwrap().steps.len(), 1);
+}

@@ -26,10 +26,7 @@ use geop_cad_base::{BuiltPart, disk::DiskCache, outputs, workspace_with};
 use geop_core_editor::editor::Rerun;
 use geop_core_editor::output::Output;
 use geop_core_math::geop_error::{GeopError, GeopResult};
-use geop_core_program::{
-    program::Program,
-    workspace::FileStore,
-};
+use geop_core_program::{program::Program, workspace::FileStore};
 use geop_ops_assembly::solving::{check as check_mates, solve};
 use session::Session;
 use std::{
@@ -71,6 +68,33 @@ enum Command {
     /// Install the VS Code extension of this version of geop into VS Code
     /// (or Cursor, or VSCodium), downloaded from its GitHub release.
     Vscode(vscode::VscodeArgs),
+    /// Edit the files of a folder in geop's desktop app: the same editor
+    /// as `open`, in a native window, its kernel in this process.
+    Desktop(DesktopArgs),
+}
+
+#[derive(clap::Args)]
+struct DesktopArgs {
+    /// The folder to edit the files of — or a program in it, to edit first.
+    #[arg(default_value = ".")]
+    path: PathBuf,
+}
+
+/// The desktop app on `args.path`, if this geop was built with it (the
+/// feature `desktop`).
+fn desktop(args: &DesktopArgs) -> GeopResult<()> {
+    #[cfg(feature = "desktop")]
+    return geop_cad_desktop::ui::run(args.path.clone())
+        .map_err(|e| GeopError::new(format!("the desktop app: {e}")));
+    #[cfg(not(feature = "desktop"))]
+    {
+        let _ = args;
+        Err(GeopError::new(
+            "this geop was built without the desktop app: \
+             `cargo build --release -p geop-cad-cli --features desktop`, \
+             or run `cargo run --release -p geop-cad-desktop`",
+        ))
+    }
 }
 
 #[derive(clap::Args)]
@@ -348,6 +372,7 @@ fn main() -> ExitCode {
         Command::Serve(args) => serve(&args),
         Command::Mcp(McpArgs {}) => mcp::serve(),
         Command::Open(args) => open::open(&args),
+        Command::Desktop(args) => desktop(&args),
         Command::Vscode(args) => vscode::install(&args),
         Command::Compile(args) => compile(&args).map(|c| {
             if !c.solved_for.is_empty() {
@@ -549,6 +574,11 @@ mod tests {
             panic!("not vscode")
         };
         assert_eq!(vscode.editor.as_deref(), Some("cursor"));
+        let Command::Desktop(desktop) = parse(&["desktop", "proj/part.geop"]).unwrap().command
+        else {
+            panic!("not desktop")
+        };
+        assert_eq!(desktop.path, PathBuf::from("proj/part.geop"));
     }
 
     #[test]
