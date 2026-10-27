@@ -196,12 +196,46 @@ pub struct ViewFace {
 /// Its corners and normals are sharp: a mesh is a polygon drawn near the
 /// face, and which point of a corner's enclosure it is drawn through is a
 /// free choice — the middle — which a viewer is sent and a pick tests.
-#[derive(Debug, Serialize)]
+///
+/// A viewer is sent it as a viewer draws it: each corner its triangles
+/// share once, and each triangle by its corners' indices — in base64, the
+/// corners' points and normals as 32-bit floats, `x y z` after one
+/// another, the indices as 32-bit integers, three a triangle, all little
+/// endian: `{"positions", "normals", "indices"}`. A tenth of a mesh's size
+/// written as numbers.
+#[derive(Debug)]
 pub struct FaceMesh {
-    #[serde(skip)]
     pub key: String,
     pub triangles: Vec<[Vector3; 3]>,
     pub normals: Vec<[Vector3; 3]>,
+}
+
+impl Serialize for FaceMesh {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        use serde::ser::SerializeStruct;
+        let mut index: std::collections::HashMap<[u32; 6], u32> = Default::default();
+        let (mut positions, mut normals, mut indices) = (Vec::new(), Vec::new(), Vec::new());
+        for (points, at) in self.triangles.iter().zip(&self.normals) {
+            for (p, n) in points.iter().zip(at) {
+                let p = p.to_array().map(|x| x.to_f64() as f32);
+                let n = n.to_array().map(|x| x.to_f64() as f32);
+                let bits = [p[0], p[1], p[2], n[0], n[1], n[2]].map(f32::to_bits);
+                let next = index.len() as u32;
+                let corner = *index.entry(bits).or_insert_with(|| {
+                    positions.extend(p.iter().flat_map(|x| x.to_le_bytes()));
+                    normals.extend(n.iter().flat_map(|x| x.to_le_bytes()));
+                    next
+                });
+                indices.extend(corner.to_le_bytes());
+            }
+        }
+        let base64 = geop_core_program::workspace::base64;
+        let mut s = serializer.serialize_struct("FaceMesh", 3)?;
+        s.serialize_field("positions", &base64(&positions))?;
+        s.serialize_field("normals", &base64(&normals))?;
+        s.serialize_field("indices", &base64(&indices))?;
+        s.end()
+    }
 }
 
 impl FaceMesh {

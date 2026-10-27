@@ -300,3 +300,20 @@ fn a_view_placed_three_times_is_picked_where_each_is() {
     );
     assert_eq!(picked(&view, &down(2.0, 0.5), ANY), None);
 }
+
+/// A mesh is sent as a viewer draws it: each corner once, in base64 — as
+/// `web/test/kept.test.ts` reads it.
+#[test]
+fn a_mesh_is_sent_as_its_corners_and_their_indices() {
+    let (a, b, c) = (v3(0.0, 0.0, 1.0), v3(1.0, 0.0, 1.0), v3(0.0, 1.0, 1.0));
+    let mesh = FaceMesh::new(vec![[a, b, c]], vec![[v3(0.0, 0.0, 1.0); 3]]);
+    let sent = serde_json::to_value(&*mesh).unwrap();
+    assert_eq!(
+        sent,
+        serde_json::json!({
+            "positions": "AAAAAAAAAAAAAIA/AACAPwAAAAAAAIA/AAAAAAAAgD8AAIA/",
+            "normals": "AAAAAAAAAAAAAIA/AAAAAAAAAAAAAIA/AAAAAAAAAAAAAIA/",
+            "indices": "AAAAAAEAAAACAAAA",
+        })
+    );
+}
