@@ -122,3 +122,35 @@ fn block_turned_a_quarter_round_its_edge_and_joined() {
     );
     assert_valid(&program.build_model(registry).unwrap());
 }
+
+/// A sphere of radius 1 drilled through, scaled up ten thousand times: a
+/// sphere of radius 10000 drilled through, as valid as the same sphere
+/// drilled at that size (which is).
+#[test]
+#[ignore = "bug: ScaleBody scales every control point's enclosure with it, width and all: \
+            curves of the drilled sphere 1.7e-6 wide come out 0.017 wide (e.g. EdgeId(169)'s \
+            control point 0, component 1 is [-1999.808, -1999.792]), far past the 1e-4 an \
+            entity may carry, and the scaled solid fails validation with 496 such errors, \
+            where the same sphere drilled at radius 10000 is valid. Scaling by 1e-4 fails the \
+            other way: the corner-cut block's edges come out 7e-5 long, shorter than the \
+            1e-4 the searches resolve, unrefused"]
+fn a_drilled_sphere_scaled_ten_thousand_times_is_valid() {
+    use crate::{ScaleBody, ScaleBodyArgs};
+    let mut program = Program::new();
+    program.push("ball", PrimitiveArgs::sphere([0.0; 3], 1.0));
+    program.push(
+        "hole",
+        PrimitiveArgs::cylinder_z([0.0, 0.0, -2.0], 0.3, 4.0).cut("sphere(ball)"),
+    );
+    program.push(
+        "big",
+        ScaleBodyArgs {
+            bodies: vec![body("cylinder(hole)")],
+            about: [0.3, 0.2, 0.1],
+            factors: [1e4; 3],
+        },
+    );
+    let registry = || registry()?.with(ScaleBody);
+    let part = program.build_model(registry).unwrap();
+    assert_valid(&part);
+}
