@@ -41,3 +41,24 @@ pub mod repeat;
 pub mod subdivide;
 pub mod system;
 pub mod walk;
+
+thread_local! {
+    static WORK: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
+}
+
+/// How much dense linear algebra this thread has done, ever: per
+/// factorisation of a matrix of `rows` rows over `columns` unknowns — a
+/// step of [`least_squares::minimize`], an elimination of
+/// [`linear::eliminate`] — `rows × columns²`, what it costs. A test bounds
+/// the work of a solve by it, rather than timing it: a dense system grows
+/// as the cube of its size.
+pub fn work() -> u64 {
+    WORK.get()
+}
+
+/// Counts a factorisation of `rows` rows over `columns` unknowns (see
+/// [`work`]).
+fn factorised(rows: usize, columns: usize) {
+    let cost = (rows as u64).saturating_mul((columns as u64).saturating_pow(2));
+    WORK.set(WORK.get().saturating_add(cost));
+}

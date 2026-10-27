@@ -121,18 +121,19 @@ fn edges_where(part: &Part, keep: impl Fn([f64; 3]) -> bool) -> Vec<String> {
 /// An enclosure's drawing (every enclosure tutorial: a box, an upright
 /// edge rounded, shelled open at the top, then drawn): a 40 x 20 x 10
 /// block, its upright edge at the origin rounded by 3, shelled 1 thick
-/// open at its top, and its front view. The part builds valid; the view
-/// fails:
+/// open at its top, and its front view.
 ///
-/// > curve_curve_crossings: exhausted max_nodes=20000 with 8213 pairs
-/// > pending; the result would be incomplete
-///
-/// at `face_silhouettes(face=.., d=(0, 1, 0))`. Seen from the front, the
-/// blend and its inner copy turn away from the view exactly along their
-/// edges with the side `x = 0` and its inner copy: their silhouettes lie
-/// on those edges. Shelled closed, or not shelled, the same block draws.
+/// Seen from the front, the blend and its inner copy turn away from the
+/// view exactly along their edges with the side `x = 0` and its inner
+/// copy: their silhouettes lie on those edges. The view failed, the search
+/// for where the inner copy's traced silhouette meets the face's trim
+/// exhausted (`curve_curve_crossings`): the silhouette came out `3.6e-12`
+/// off the edge, and sharp, because `correct` returned its last sharpened
+/// seed as the answer. The inner copy is a padded fit, and where its
+/// silhouette lies is known only as well as the padding says; returned
+/// as the step from that seed, unsharpened, the silhouette holds the edge,
+/// and the search finds the two running along each other.
 #[test]
-#[ignore = "bug: the front view of a block with a rounded upright edge, shelled open at the top, fails in face_silhouettes(d=(0,1,0)): curve_curve_crossings exhausted; closed or unshelled it draws"]
 fn front_view_of_a_shelled_box_with_a_rounded_edge() {
     let mut program = Program::new();
     program.push(
@@ -184,8 +185,21 @@ fn front_view_of_a_shelled_box_with_a_rounded_edge() {
 /// way. Built from given solids instead — a block and a cylinder joined,
 /// the same shape — the bevelled boss draws: the sketched and extruded
 /// circle is in four arcs, the given cylinder's not.
+///
+/// Measured: seen along `(-1, 1, -1)`, the bevel's cone turns away from
+/// the view where `sin θ − cos θ = 1`, at `θ = 90°` and `180°` exactly:
+/// on two of the seams between its quarters. Those seams are silhouette
+/// edges, and the ray from a point of one towards the eye is tangent to
+/// its own cone face where it starts, which the crossing search cannot
+/// isolate. Since the silhouette points are no longer sharpened (see
+/// [`front_view_of_a_shelled_box_with_a_rounded_edge`]) the view fails one
+/// step earlier, the cone's traced silhouette meeting the seam's pcurve
+/// within its width over part of its length (`curve_curve_crossings`
+/// exhausted in `face_silhouettes`). Both are a silhouette lying along an
+/// edge; what is missing is to recognise that from the edge (the face seen
+/// edge on along all of it), not from a search along it.
 #[test]
-#[ignore = "bug: the iso view of a plate with a boss whose root is bevelled (or rounded) fails: the hidden-line ray from the bevel's edge at (-9.5,0,5.5) exhausts curve_surface_crossings against a face"]
+#[ignore = "bug: the iso view of a plate with a boss whose root is bevelled fails: the cone's silhouettes lie exactly on two of its quarter seams, and the trim search (and, before it, the hidden-line ray tangent to the cone) exhausts along them"]
 fn iso_view_of_a_boss_with_a_bevelled_root() {
     let mut program = Program::new();
     program.push(

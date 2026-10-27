@@ -237,9 +237,11 @@ fn extended(
         });
         joints.push("end1".into());
     }
+    let n = pieces.len();
     Ok(Chain {
         pieces,
         joints,
+        smooth: vec![false; n],
         closed: false,
     })
 }

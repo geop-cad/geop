@@ -229,7 +229,8 @@ pub fn pcurves_contain(
                         return Ok(Probe::Found(PointClassification::OnCoedge));
                     }
                     last_rejection = format!(
-                        "ray {ray:?} meets pcurve {k} at t={t:?}, which cannot be told from the query point"
+                        "ray {ray:?} meets pcurve {k} at t={t:?}, which cannot be told from the query point {query:?}; the pcurve there is {:?}, the pcurve {pcurve:?}",
+                        pcurve.evaluate(mid)?
                     );
                     return Ok(Probe::Next);
                 }
@@ -660,6 +661,33 @@ mod tests {
     /// (.5,0) bottom, traversed CCW.
     fn diamond_face(model: &mut Model) -> FaceId {
         polygon_face(model, &[(1., 0.5), (0.5, 1.), (0., 0.5), (0.5, 0.)])
+    }
+
+    /// A block's cap is a patch whose corner is the box of its profile
+    /// rounded outwards: a side at `x = 0` lay at `u = MIN_POSITIVE / 20`
+    /// in it, not at the domain's edge. A point a trace's corrector clamped
+    /// onto the domain's edge, `u = 0`, is outside the face by that much:
+    /// every ray from it met the side at a parameter the search could not
+    /// tell from zero (a block turned a quarter round its edge and joined).
+    #[test]
+    fn a_point_a_subnormal_outside_a_side_is_classified() {
+        let side = f64::MIN_POSITIVE / 20.0;
+        let mut model = Model::new();
+        let face_id = polygon_face(
+            &mut model,
+            &[(side, side), (1., side), (1., 1.), (side, 1.)],
+        );
+        let found = face_contains(
+            &model,
+            face_id,
+            Scalar::ZERO,
+            Scalar::from_f64(0.0698771242968679),
+            MAX,
+            Scalar::from_f64(1e-4),
+            SEED,
+        )
+        .unwrap();
+        assert_ne!(found, PointClassification::Inside);
     }
 
     #[test]

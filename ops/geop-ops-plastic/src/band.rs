@@ -1,16 +1,18 @@
-//! Chains of straight and circular curves in a plane, offset sideways —
-//! and the band between two offsets of one chain, the profile a rib or a
-//! lip is swept from.
+//! Chains of curves in a plane, offset sideways — and the band between two
+//! offsets of one chain, the profile a rib or a lip is swept from.
 //!
 //! **Offsetting.** A line moves sideways, an arc grows or shrinks around
-//! its centre: both stay exactly what they were. Where two pieces meet
-//! smoothly their offsets meet at the joint moved along its normal; where
-//! two lines meet at a corner their offsets are cut back, or run on, to
-//! where they cross — a mitre. A corner involving an arc is not supported:
+//! its centre: both stay exactly what they were. The offset of any other
+//! curve is no NURBS: a cubic is fitted through points of it, as many as
+//! it takes to come within [`FIT_TOLERANCE`] of the distance everywhere,
+//! proven ([`NurbCurve2D::offset_miss`]). Where two pieces meet smoothly
+//! their offsets meet at the joint moved along its normal; where two lines
+//! meet at a corner their offsets are cut back, or run on, to where they
+//! cross — a mitre. A corner involving any other piece is not supported:
 //! its offsets would need a round of their own, or a cut at an angle no
 //! piece defines.
 
-use geop_core_geometry::nurb_curve::NurbCurve2D;
+use geop_core_geometry::nurb_curve::{NurbCurve2D, loop_signed_area};
 use geop_core_math::{
     geop_error::{GeopError, GeopResult},
     scalars::Scalar,
@@ -18,12 +20,20 @@ use geop_core_math::{
 };
 use geop_ops_model::Profile;
 
-/// A straight or circular curve of a chain, from where the previous one
-/// ends, named for what it was made from.
+/// How near a fitted offset comes to the true one, relative to the
+/// distance: the accuracy a band's side is made to, not a comparison.
+const FIT_TOLERANCE: f64 = 1e-6;
+
+/// The most points a fitted offset is fitted through.
+const MOST_FIT_POINTS: usize = 1024;
+
+/// A curve of a chain, from where the previous one ends, named for what it
+/// was made from.
 #[derive(Clone, Debug)]
 pub struct Piece {
     pub curve: NurbCurve2D,
-    /// The centre of the circle an arc lies on; none for a line.
+    /// The centre of the circle an arc lies on; none for a line or any
+    /// other curve.
     pub center: Option<Vector2>,
     pub name: String,
 }
@@ -36,6 +46,11 @@ pub struct Piece {
 pub struct Chain {
     pub pieces: Vec<Piece>,
     pub joints: Vec<String>,
+    /// Per piece, whether the chain is known to run on smoothly into it
+    /// from the piece before — as the faces of a solid say, where a
+    /// traced piece's tangent only encloses its direction. Where not, its
+    /// pieces' tangents decide.
+    pub smooth: Vec<bool>,
     pub closed: bool,
 }
 
@@ -63,6 +78,7 @@ impl Piece {
         let mut curve = self.curve.clone();
         let (start, _) = self.directions()?;
         match &self.center {
+            None if !self.is_straight() => return self.fitted_offset(distance),
             None => {
                 let shift = start.perp().prod_scalar(distance);
                 for cp in &mut curve.control_points {
@@ -102,6 +118,90 @@ impl Piece {
         }
         curve.recompute_aabb();
         Ok(curve)
+    }
+}
+
+impl Piece {
+    /// Whether it is a line.
+    pub(crate) fn is_straight(&self) -> bool {
+        self.curve.degree == 1 && self.curve.control_points.len() == 2
+    }
+
+    /// A cubic through points of its offset `distance` to its left, at
+    /// parameters spaced evenly over each of its spans, the fit's
+    /// parameters following its own: twice as many while the fit is
+    /// further than [`FIT_TOLERANCE`] of the distance from the offset.
+    fn fitted_offset(&self, distance: Scalar) -> GeopResult<NurbCurve2D> {
+        let ctx = |e: GeopError| {
+            e.with_context(format!(
+                "the offset of {} by {:?}",
+                self.name,
+                distance.to_f64()
+            ))
+        };
+        let curve = &self.curve;
+        let (t0, t1) = curve.domain();
+        let tolerance = distance.abs().mul(Scalar::from_f64(FIT_TOLERANCE));
+        let breaks = curve.breakpoints();
+        let spans = breaks.len() - 1;
+        let mut per_span = 4;
+        let mut last: Option<(Scalar, NurbCurve2D)> = None;
+        loop {
+            // The parameters are free choices: sharp ones.
+            let mut ts = vec![t0];
+            for w in breaks.windows(2) {
+                for k in 1..=per_span {
+                    let f = Scalar::from_ratio(k as i64, per_span as i64)?;
+                    ts.push(w[0].add(w[1].sub(w[0]).mul(f)).sharpen());
+                }
+            }
+            *ts.last_mut().expect("a parameter") = t1;
+            let span = t1.sub(t0);
+            let mut params = Vec::with_capacity(ts.len());
+            let mut values = Vec::with_capacity(ts.len());
+            for (k, &t) in ts.iter().enumerate() {
+                params.push(match k {
+                    0 => Scalar::ZERO,
+                    k if k + 1 == ts.len() => Scalar::ONE,
+                    _ => t.sub(t0).div(span).map_err(ctx)?.sharpen(),
+                });
+                let normal = curve
+                    .tangent(t)
+                    .map_err(ctx)?
+                    .perp()
+                    .normalize()
+                    .map_err(ctx)?;
+                // A point of the offset, any of its enclosure: the fit is a
+                // free choice near the offset, proven so below.
+                let p = curve
+                    .evaluate(t)?
+                    .add(&normal.prod_scalar(distance))
+                    .sharpen();
+                values.push(p.homogeneous(Scalar::ONE));
+            }
+            let fit = NurbCurve2D::interpolate_homogeneous(&values, &params, 3).map_err(ctx)?;
+            let miss = curve
+                .offset_miss(distance, (t0, t1), &fit, tolerance)
+                .map_err(ctx)?;
+            if !miss.definitely_greater(tolerance) {
+                return Ok(fit);
+            }
+            // Where twice the points no longer halve the miss, it is the
+            // curve's own width, and the coarser fit is as near.
+            if let Some((before, coarser)) = last
+                && !before.definitely_greater(miss.mul(Scalar::TWO))
+            {
+                return Ok(coarser);
+            }
+            if 2 * per_span * spans > MOST_FIT_POINTS {
+                return Err(ctx(GeopError::new(format!(
+                    "a cubic through {} points of it is still {miss:?} off",
+                    per_span * spans + 1
+                ))));
+            }
+            per_span *= 2;
+            last = Some((miss, fit));
+        }
     }
 }
 
@@ -149,7 +249,7 @@ impl Chain {
             .map(|i| {
                 let curve = with_ends(&raw[i], starts[i], starts[i + 1])?;
                 // A line cut back past its other end turns around.
-                if self.pieces[i].center.is_none() {
+                if self.pieces[i].is_straight() {
                     let (old, new) = (
                         self.pieces[i].end()?.sub(&self.pieces[i].start()?),
                         starts[i + 1].sub(&starts[i]),
@@ -174,12 +274,19 @@ impl Chain {
         let (_, arriving) = self.pieces[before].directions()?;
         let (leaving, _) = self.pieces[i].directions()?;
         let at = self.pieces[i].start()?;
-        if arriving.prod_cross(&leaving).could_be_equal(Scalar::ZERO)
-            && arriving.prod_dot(&leaving).definitely_greater(Scalar::ZERO)
+        if self.smooth[i]
+            || (arriving.prod_cross(&leaving).could_be_equal(Scalar::ZERO)
+                && arriving.prod_dot(&leaving).definitely_greater(Scalar::ZERO))
         {
-            return Ok(at.add(&leaving.perp().prod_scalar(distance)));
+            // Along the normal of a line there, if one meets it: exact.
+            let along = if self.pieces[before].is_straight() && !self.pieces[i].is_straight() {
+                arriving
+            } else {
+                leaving
+            };
+            return Ok(at.add(&along.perp().prod_scalar(distance)));
         }
-        if self.pieces[before].center.is_some() || self.pieces[i].center.is_some() {
+        if !(self.pieces[before].is_straight() && self.pieces[i].is_straight()) {
             return Err(GeopError::new(format!(
                 "{} and {} meet at a corner, at {}: an offset round a corner is only supported between straight pieces",
                 self.pieces[before].name, self.pieces[i].name, self.joints[i]
@@ -257,20 +364,9 @@ impl Chain {
     }
 
     /// Whether the closed chain winds counter-clockwise, from the signed
-    /// area of the polygon through its control points — exact for lines,
-    /// and for arcs of less than a half turn on the same side as the arc.
+    /// area it encloses, integrated along its curves.
     fn winds_counter_clockwise(&self) -> GeopResult<bool> {
-        let mut points = Vec::new();
-        for piece in &self.pieces {
-            let cps = &piece.curve.control_points;
-            for cp in &cps[..cps.len() - 1] {
-                points.push(cp.dehomogenized()?);
-            }
-        }
-        let mut area = Scalar::ZERO;
-        for i in 0..points.len() {
-            area = area.add(points[i].prod_cross(&points[(i + 1) % points.len()]));
-        }
+        let area = loop_signed_area(self.pieces.iter().map(|p| &p.curve))?;
         if area.definitely_greater(Scalar::ZERO) {
             Ok(true)
         } else if area.definitely_less(Scalar::ZERO) {

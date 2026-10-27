@@ -507,6 +507,10 @@ mod tests {
             );
         }
         assert!(cylinder.offset(Scalar::from_f64(-2.5)).unwrap().is_none());
+        // Offset by exactly its radius, a cylinder is its axis: a factor
+        // `1 − d κ` is zero all over, which no box tells from a fold, and
+        // nowhere is the offset a surface either.
+        assert!(cylinder.offset(Scalar::from_f64(-2.0)).unwrap().is_none());
     }
 
     /// A quarter of a cone around the z axis, from radius 2 at z = 0 to
