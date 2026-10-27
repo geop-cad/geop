@@ -26,8 +26,9 @@ pub mod icons;
 pub mod kept;
 #[cfg(test)]
 mod tests;
+mod tree;
 
-use std::rc::Rc;
+use std::{cell::RefCell, rc::Rc};
 
 use crate::editing::{
     Extent, Pointer,
@@ -47,6 +48,8 @@ use geop_core_program::{
     target::{Target, TargetReference},
 };
 use serde::Serialize;
+use tree::FaceTree;
+pub use tree::triangles_tested;
 
 /// The kinds of what a view draws, as a pick names them
 /// ([`PickedElement::kind`]).
@@ -453,6 +456,11 @@ pub struct PartView {
     pub extent: Extent,
     /// The part's colour, `#rrggbb`; none for the viewer's own.
     pub color: Option<String>,
+    /// The tree of its faces' triangles a pick tests the ray against (see
+    /// [`tree`]): built when it is first picked in, and again only for
+    /// other faces.
+    #[serde(skip)]
+    faces_tree: RefCell<Option<Rc<FaceTree>>>,
 }
 
 /// One part of what a pick tests: the part drawn itself, or a placed part,
@@ -526,6 +534,7 @@ impl PartView {
             instances: Vec::new(),
             extent,
             color: None,
+            faces_tree: RefCell::default(),
         }
     }
 
@@ -954,13 +963,35 @@ impl PartView {
         })
     }
 
-    /// The nearest face the ray enters.
+    /// The nearest face the ray enters, of the triangles its tree finds the
+    /// ray could meet (see [`tree`]) — the first of the nearest, in the
+    /// order of the faces and their triangles, as testing every one finds.
     fn pick_face(&self, pointer: &Pointer) -> Option<(Scalar, &ViewFace)> {
-        self.faces
-            .iter()
-            .flat_map(|f| f.mesh.triangles.iter().map(move |tri| (f, tri)))
-            .filter_map(|(f, [a, b, c])| pointer.ray.intersect_triangle(a, b, c).map(|t| (t, f)))
+        let mut hits = Vec::new();
+        self.faces_tree().near(&pointer.ray, |f, t| {
+            if let Some(face) = self.faces.get(f)
+                && let Some([a, b, c]) = face.mesh.triangles.get(t)
+                && let Some(hit) = pointer.ray.intersect_triangle(a, b, c)
+            {
+                hits.push(((f, t), hit, face));
+            }
+        });
+        hits.sort_by_key(|(at, ..)| *at);
+        (hits.into_iter())
+            .map(|(_, hit, face)| (hit, face))
             .min_by(|a, b| nearer(a.0, b.0))
+    }
+
+    /// The tree of its faces' triangles: built once, and again only once
+    /// its faces are others.
+    fn faces_tree(&self) -> Rc<FaceTree> {
+        let mut kept = self.faces_tree.borrow_mut();
+        if let Some(tree) = kept.as_ref().filter(|tree| tree.is_of(&self.faces)) {
+            return tree.clone();
+        }
+        let tree = Rc::new(FaceTree::of(&self.faces));
+        *kept = Some(tree.clone());
+        tree
     }
 
     /// The nearest sketch of `layer` hit inside one of its closed regions —

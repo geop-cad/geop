@@ -20,6 +20,85 @@ fn v3(x: f64, y: f64, z: f64) -> Vector3 {
     Vector3::from_array([x, y, z].map(Scalar::from_f64))
 }
 
+/// A square of `n` by `n` cells in the plane `z = 0`, from the origin, two
+/// triangles a cell: one face of `2 n²` triangles.
+fn grid(n: usize) -> PartView {
+    let mut triangles = Vec::new();
+    for i in 0..n {
+        for j in 0..n {
+            let (x, y) = (i as f64, j as f64);
+            let [a, b, c, d] = [
+                v3(x, y, 0.0),
+                v3(x + 1.0, y, 0.0),
+                v3(x + 1.0, y + 1.0, 0.0),
+                v3(x, y + 1.0, 0.0),
+            ];
+            triangles.extend([[a, b, c], [a, c, d]]);
+        }
+    }
+    let normals = vec![[v3(0.0, 0.0, 1.0); 3]; triangles.len()];
+    let mut view = PartView::new();
+    view.model = "model".into();
+    view.faces.push(ViewFace {
+        name: "grid".into(),
+        solid: None,
+        feature: None,
+        mesh: FaceMesh::new(triangles, normals),
+    });
+    view.finish()
+}
+
+/// A hover tests the triangles of the boxes its ray passes through, not
+/// every triangle of the parts under it: a face of 20 000 triangles, and a
+/// thousand parts placed from it, are a few dozen triangles to a hover —
+/// and the face it hits is the one testing every triangle hits.
+#[test]
+fn a_hover_tests_the_triangles_near_its_ray() {
+    let component = Rc::new(grid(100));
+    let tested = |view: &PartView, at: Pointer| {
+        let before = triangles_tested();
+        let hit = view.pick(&at, &[drawn::FACE.to_string()]);
+        (hit, triangles_tested() - before)
+    };
+    let (hit, alone) = tested(&component, down(37.3, 52.6));
+    let hit = hit.expect("the grid is under the pointer");
+    assert_eq!(hit.element.name, "grid");
+    assert_encloses_z(hit.point, 0.0);
+    assert!(alone <= 16, "{alone} triangles tested");
+    let (missed, outside) = tested(&component, down(-5.0, -5.0));
+    assert!(missed.is_none());
+    assert_eq!(outside, 0);
+
+    let mut placed = PartView::new();
+    for k in 0..1000 {
+        let at = v3((k % 40) as f64 * 120.0, (k / 40) as f64 * 120.0, 0.0);
+        placed.instances.push(ViewInstance {
+            name: format!("tile{k}"),
+            component: "grid".into(),
+            frame: CoordinateSystem::world_at(at),
+            pose: Pose::identity().with_position(at),
+            view: component.clone(),
+            state: None,
+            fixed: true,
+        });
+    }
+    let placed = placed.finish();
+    let (hit, many) = tested(&placed, down(37.3 + 5.0 * 120.0, 52.6 + 3.0 * 120.0));
+    assert_eq!(
+        hit.expect("a tile is under the pointer")
+            .element
+            .target
+            .path(),
+        "tile125"
+    );
+    assert!(many <= 16, "{many} triangles tested");
+}
+
+/// Asserts that `p` could lie in the plane `z = z`.
+fn assert_encloses_z(p: Vector3, z: f64) {
+    assert!(p[2].could_be_equal(Scalar::from_f64(z)), "{p:?}");
+}
+
 fn down(x: f64, y: f64) -> Pointer {
     pointer([x, y, 5.0], [0.0, 0.0, -1.0])
 }

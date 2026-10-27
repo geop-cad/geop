@@ -379,6 +379,7 @@ fn view_of(
             size: written.size,
         },
         color: written.color,
+        faces_tree: std::cell::RefCell::default(),
     })
 }
 
