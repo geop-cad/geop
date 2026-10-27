@@ -1,0 +1,25 @@
+[package]
+name = "geop-cad-desktop"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[[bin]]
+name = "geop-desktop"
+path = "src/main.rs"
+
+[dependencies]
+geop-core-editor.workspace = true
+geop-core-program.workspace = true
+geop-core-math.workspace = true
+geop-cad-base.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+eframe = { version = "=0.36.2", default-features = false, features = ["default_fonts", "wgpu", "wayland", "x11", "accesskit"] }
+egui_extras = { version = "=0.36.2", features = ["svg"] }
+bytemuck = { version = "1", features = ["derive"] }
+rfd = "=0.17.2"
+
+[dev-dependencies]
+geop-core-editor = { workspace = true, features = ["testing"] }
+egui_kittest = { version = "=0.36.2" }

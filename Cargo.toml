@@ -22,6 +22,7 @@ members = [
     "cad/geop-cad-base",
     "cad/geop-cad-web",
     "cad/geop-cad-cli",
+    "cad/geop-cad-desktop",
     "ops/geop-ops-drawing",
     "ops/geop-ops-inspect",
     "ops/geop-ops-subd",
