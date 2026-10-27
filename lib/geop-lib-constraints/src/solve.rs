@@ -31,7 +31,7 @@ use std::{
 
 use geop_core_math::{
     geop_error::GeopResult,
-    solvers::system::{self, Bound, Equations, Linearized, Phase, System, Term},
+    solvers::system::{self, Bound, Equations, Linearized, Phase, System, Term, Variable},
 };
 
 pub use geop_core_math::solvers::system::Mobility;
@@ -117,6 +117,12 @@ pub struct Report {
     /// How many times the constraints were made: by the solve, and to
     /// enclose its solution — the work, which a test can bound.
     pub evaluations: [usize; 2],
+    /// The most variables of a group the solve moved — what one step of
+    /// it costs the cube of.
+    pub largest: usize,
+    /// The dense linear algebra the solve and its enclosure did (see
+    /// [`geop_core_math::solvers::work`]).
+    pub work: u64,
 }
 
 /// An enclosure of a true solution of the constraints: every value it
@@ -304,7 +310,9 @@ fn named(program: &Solving, enclosure: system::Enclosure<StateValue>) -> Enclosu
 pub fn solve(run: Run<'_>, state: &StateValues, problem: &Problem) -> GeopResult<Solved> {
     let (program, start) = Solving::new(run, state, problem)?;
     let system = program.system(problem);
+    let work = geop_core_math::solvers::work();
     let solution = system.solve(&start)?;
+    let work = geop_core_math::solvers::work() - work;
     let held = system.held(&solution.values)?;
     let mut solved = state.clone();
     let mut moved = Vec::new();
@@ -322,6 +330,11 @@ pub fn solve(run: Run<'_>, state: &StateValues, problem: &Problem) -> GeopResult
         iterations: solution.iterations,
         phases: solution.phases,
         evaluations: [solution.evaluations, solution.enclosure.evaluations],
+        largest: (solution.solved.iter())
+            .map(|g| g.blocks.iter().map(|&b| start[b].dimension()).sum())
+            .max()
+            .unwrap_or(0),
+        work,
     };
     let enclosure = named(&program, solution.enclosure);
     program.finish(&solved);

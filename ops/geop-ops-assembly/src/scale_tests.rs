@@ -27,7 +27,12 @@ use std::{
     time::Instant,
 };
 
-use crate::{AddPartArgs, Kind, Mate, Resolved, solving::check as check_mates};
+use crate::{
+    AddPartArgs, DragTool, JointsCommand, JointsPanel, Kind, Mate, Motion, Resolved,
+    joint_parameter,
+    solving::{Report, check as check_mates},
+    testing::robot_arm::{ARM, RobotArm, robot_arm},
+};
 use geop_core_editor::editing::{Pointer, Reach, StepEditEvent};
 use geop_core_math::{
     geop_error::GeopResult,
@@ -630,4 +635,299 @@ fn dragging_one_of_many_placed_parts_sends_only_it() {
     assert_eq!(moved, ["screw10.pose"]);
     let sent: Vec<&str> = scene.instances.iter().map(|i| i.name.as_str()).collect();
     assert_eq!(sent, ["screw10"]);
+}
+
+/// The editor editing the robot arm `arm` (see
+/// [`crate::testing::robot_arm`]), with every file sent, its mates holding
+/// where its state has the parts.
+fn arm_editor(arm: &RobotArm) -> Editor {
+    let mut files = robot_arm(arm);
+    let top = Program::from_json(&files.remove(ARM).unwrap()).unwrap();
+    let mut editor = editor();
+    handled(
+        &mut editor,
+        Command::Files {
+            files: files.into_iter().map(|(p, t)| (p, Some(t))).collect(),
+        },
+    );
+    let update = handled(
+        &mut editor,
+        Command::Load {
+            program: top,
+            path: Some(ARM.into()),
+        },
+    );
+    let steps = update.program.unwrap().steps;
+    let failed: Vec<_> = (steps.iter())
+        .filter_map(|s| Some((&s.id, s.error.as_ref()?)))
+        .collect();
+    assert!(failed.is_empty(), "{failed:?}");
+    let report = check_mates(&editor.part()).unwrap();
+    assert!(
+        report.converged,
+        "the arm is loaded as its mates hold it: {report:?}"
+    );
+    editor
+}
+
+/// A pointer straight down onto the wrist — the last link of `arm` — near
+/// its far end, where nothing stands on it, moved `by` in the world.
+fn onto_wrist(editor: &Editor, arm: &RobotArm, by: [f64; 2]) -> Pointer {
+    let wrist = pose_of_state(editor, &pose_state(&RobotArm::link(arm.axes)));
+    let local = Vector3::from_array([212.0, 18.0, 20.0].map(Scalar::from_f64));
+    let at = wrist.apply(&local).to_array().map(|c| c.to_f64());
+    let v = |p: [f64; 3]| Vector3::from_array(p.map(Scalar::from_f64));
+    Pointer {
+        ray: Ray::try_new(
+            v([at[0] + by[0], at[1] + by[1], at[2] + 500.0]),
+            v([0.0, 0.0, -1.0]),
+        )
+        .unwrap(),
+        reach: Reach::Tube {
+            radius: Scalar::from_f64(0.01),
+        },
+    }
+}
+
+/// The pose the program's state gives `state`.
+fn pose_of_state(editor: &Editor, state: &str) -> Pose {
+    match editor.program().state.get(state) {
+        Some(StateValue::Pose(pose)) => *pose,
+        other => panic!("{state} is no pose: {other:?}"),
+    }
+}
+
+/// What an event of a drag of the arm cost: the program runs, the mates
+/// resolved, the dense linear algebra its solve did (see
+/// [`geop_core_math::solvers::work`]), and how the solve went.
+#[derive(Debug)]
+struct DragCost {
+    runs: usize,
+    resolved: usize,
+    work: u64,
+    report: Report,
+}
+
+/// Drags the wrist of `arm` — grabbed near its far end — through the
+/// points `by` it is moved by in the world, the way the front end drags:
+/// the drag tool grabs the wrist under the pointer, and each event of the
+/// drag is answered. What each event cost.
+fn drag_wrist(editor: &mut Editor, arm: &RobotArm, by: &[[f64; 2]]) -> Vec<DragCost> {
+    editor.handle(Command::Tool {
+        key: Some("drag".into()),
+    });
+    let from = onto_wrist(editor, arm, [0.0, 0.0]);
+    let update = editor.handle(Command::Event {
+        event: StepEditEvent::Hover {
+            pointer: from.clone(),
+            shift: false,
+        },
+    });
+    assert!(
+        update.tool.expect("the drag tool is in hand").grab,
+        "the wrist is under the pointer"
+    );
+    let targets: Vec<Pointer> = by.iter().map(|&by| onto_wrist(editor, arm, by)).collect();
+    let mut costs = Vec::new();
+    for k in 0..by.len() {
+        let to = targets[k].clone();
+        let before = (crate::mates_resolved(), geop_lib_constraints::solve::runs());
+        handled(
+            editor,
+            Command::Event {
+                event: StepEditEvent::Drag {
+                    from: from.clone(),
+                    to,
+                    done: k + 1 == by.len(),
+                    shift: false,
+                },
+            },
+        );
+        let report = (editor.tool::<DragTool>())
+            .and_then(DragTool::dragged)
+            .cloned()
+            .expect("the drag solved");
+        costs.push(DragCost {
+            runs: geop_lib_constraints::solve::runs() - before.1,
+            resolved: crate::mates_resolved() - before.0,
+            work: report.work,
+            report,
+        });
+    }
+    costs
+}
+
+/// A short drag of the wrist: three events, a few millimetres each.
+const DRAG: [[f64; 2]; 3] = [[2.0, 1.0], [4.0, 3.0], [6.0, 4.0]];
+
+/// The arm of `screws` screws on each of two brackets per link.
+fn small_arm(screws: usize) -> RobotArm {
+    RobotArm {
+        axes: 6,
+        brackets_per_link: 2,
+        screws_per_bracket: screws,
+    }
+}
+
+/// Dragging the wrist of the arm solves the links, their joints and the
+/// gripper's fingers as one system — not the brackets fastened to the
+/// links, nor the screws mated to the brackets: those each hang off what
+/// they are mated to, and are solved after it, alone (see
+/// [`geop_core_math::solvers::system::Structure`]). Before, every part
+/// mated to a moving part was one group with it: the whole arm one dense
+/// system, a drag of 101 parts — 600 variables — taking minutes.
+#[test]
+#[ignore = "slow: every part of the arm is one dense system, a drag of 101 parts takes minutes"]
+fn the_arm_solves_its_links_not_its_screws() {
+    let mut largest = Vec::new();
+    for screws in [5, 20] {
+        let arm = small_arm(screws);
+        let mut editor = arm_editor(&arm);
+        assert_eq!(placed_parts(&editor.part()).unwrap().len(), arm.parts());
+        let wrist = pose_state(&RobotArm::link(arm.axes));
+        let before = pose_of_state(&editor, &wrist);
+        let costs = drag_wrist(&mut editor, &arm, &DRAG);
+        for cost in &costs {
+            assert!(cost.report.converged, "{:?}", cost.report.failed);
+            assert!(
+                cost.report.unproven.is_empty(),
+                "{:?}",
+                cost.report.unproven
+            );
+        }
+        assert_ne!(before, pose_of_state(&editor, &wrist), "the wrist moved");
+        largest.push(costs.iter().map(|c| c.report.largest).max().unwrap());
+    }
+    // The links and their joints' angles, and the gripper and its fingers
+    // with their slides: what the solve moves as one.
+    let arm = small_arm(5);
+    let chain = 7 * arm.axes + 6 + 2 * 7;
+    assert_eq!(
+        largest[0], largest[1],
+        "the largest group grows with the screws"
+    );
+    assert!(
+        largest[0] <= chain,
+        "the largest group has {} variables, the chain {chain}",
+        largest[0]
+    );
+}
+
+/// A drag of the wrist costs as many program runs, and resolves as many
+/// mates — none — however many screws the brackets carry; its dense
+/// linear algebra grows with them no faster than they do: each screw is
+/// enclosed on its own, a system of six variables.
+#[test]
+#[ignore = "slow: every part of the arm is one dense system, a drag of 101 parts takes minutes"]
+fn drag_work_grows_with_the_moving_links_not_the_screws() {
+    let costs: Vec<Vec<DragCost>> = [5, 20]
+        .into_iter()
+        .map(|screws| {
+            let arm = small_arm(screws);
+            let mut editor = arm_editor(&arm);
+            drag_wrist(&mut editor, &arm, &DRAG)
+        })
+        .collect();
+    let [few, many] = &costs[..] else {
+        unreachable!()
+    };
+    println!("{few:?}\n{many:?}");
+    for (k, (few, many)) in few.iter().zip(many).enumerate() {
+        assert_eq!((few.resolved, many.resolved), (0, 0), "event {k}");
+        assert!(
+            many.runs <= few.runs,
+            "event {k}: {} program runs with 20 screws a bracket, {} with 5",
+            many.runs,
+            few.runs
+        );
+        // Four times the screws: the parts grow 2.8 times.
+        assert!(
+            many.work <= 4 * few.work,
+            "event {k}: work {} with 20 screws a bracket, {} with 5",
+            many.work,
+            few.work
+        );
+    }
+}
+
+/// The CPU time this thread has taken, in seconds: what a timing compares,
+/// not the wall clock, which other jobs on the machine slow.
+fn cpu_seconds() -> f64 {
+    let stat = std::fs::read_to_string("/proc/thread-self/schedstat").unwrap_or_default();
+    let nanos: f64 = (stat.split_whitespace().next())
+        .and_then(|n| n.parse().ok())
+        .unwrap_or(0.0);
+    nanos * 1e-9
+}
+
+/// CPU seconds `f` takes, and what it returns.
+fn cpu_timed<T>(f: impl FnOnce() -> T) -> (f64, T) {
+    let start = cpu_seconds();
+    let out = f();
+    (cpu_seconds() - start, out)
+}
+
+/// The robot arm of about 1000 and 2000 parts, timed in CPU seconds: its
+/// load, each event of a drag of its wrist, setting a joint's angle in the
+/// joints panel, and removing the last step — each with what it cost in
+/// program runs and the solve's dense linear algebra. Run under a memory
+/// cap, as every run is: the cap is the bound on the memory it takes.
+#[test]
+#[ignore = "slow: timings of a robot arm of 1000 and 2000 placed parts — run with `cargo test -- --ignored`"]
+fn robot_arm_timings() {
+    for screws in [40, 80] {
+        let arm = RobotArm {
+            screws_per_bracket: screws,
+            ..RobotArm::default()
+        };
+        let runs = geop_lib_constraints::solve::runs();
+        let (load, mut editor) = cpu_timed(|| arm_editor(&arm));
+        println!(
+            "robot arm of {} parts: load {load:.2} s, {} program runs",
+            arm.parts(),
+            geop_lib_constraints::solve::runs() - runs
+        );
+        let drags = [[2.0, 1.0], [4.0, 3.0], [6.0, 4.0], [9.0, 5.0], [12.0, 5.0]];
+        let start = cpu_seconds();
+        let costs = drag_wrist(&mut editor, &arm, &drags);
+        let drag = cpu_seconds() - start;
+        for (k, cost) in costs.iter().enumerate() {
+            assert!(cost.report.converged, "{:?}", cost.report.failed);
+            println!(
+                "  drag event {k}: {} program runs, {} mates resolved, work {}, largest group {} variables, {} solve and {} enclosure evaluations",
+                cost.runs,
+                cost.resolved,
+                cost.work,
+                cost.report.largest,
+                cost.report.evaluations[0],
+                cost.report.evaluations[1],
+            );
+        }
+        println!(
+            "  drag of {} events {drag:.2} s, {:.3} s an event",
+            drags.len(),
+            drag / drags.len() as f64
+        );
+
+        let elbow = joint_parameter(&RobotArm::joint(3), Motion::Turn);
+        let set = Command::panel::<JointsPanel>(&JointsCommand::Set {
+            parameter: elbow,
+            value: RobotArm::angle(3) + 10.0,
+        })
+        .unwrap();
+        let runs = geop_lib_constraints::solve::runs();
+        let (time, _) = cpu_timed(|| handled(&mut editor, set));
+        println!(
+            "  joint set {time:.2} s, {} program runs",
+            geop_lib_constraints::solve::runs() - runs
+        );
+
+        let last = editor.program().steps.last().unwrap().id.clone();
+        let runs = geop_lib_constraints::solve::runs();
+        let (time, _) = cpu_timed(|| handled(&mut editor, Command::Remove { id: last }));
+        println!(
+            "  top-level edit {time:.2} s, {} program runs",
+            geop_lib_constraints::solve::runs() - runs
+        );
+    }
 }
