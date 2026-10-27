@@ -264,3 +264,47 @@ fn shell_as_thick_as_a_rounded_edge() {
     let part = apply_to_model::<Shell>(rounded, "s", &args).unwrap();
     assert_valid(&part);
 }
+
+/// A plate with a round boss, the boss's root rounded (the SolidWorks
+/// "boss with fillet" tutorial), hollowed: a 60 x 40 x 5 plate with a boss
+/// of radius 8 standing 20 high from its middle, the circle where they
+/// meet rounded by 2, shelled 1 thick, closed all round. The plate and
+/// boss alone shell; rounded, the shell fails for every thickness tried
+/// (0.5, 1, 1.5, and open at the bottom or the boss's top alike):
+///
+/// > the bound on what the fit misses was not decided within 16384 boxes
+///
+/// at `fitted_offset(distance=-1)`, offsetting the blend
+/// `fillet(r,#..,fillet,s0)`, a cubic surface of 73 x 13 control points
+/// rolled round the boss.
+#[test]
+#[ignore = "bug: shelling a plate with a boss whose root is rounded fails in fitted_offset on the rolled blend (\"the bound on what the fit misses was not decided within 16384 boxes\"), for every thickness; unrounded it shells"]
+fn shell_of_a_plate_with_a_rounded_boss() {
+    let mut program = Program::new();
+    program.push(
+        "plate",
+        PrimitiveArgs::block([-30.0, -20.0, 0.0], [30.0, 20.0, 5.0]),
+    );
+    program.push(
+        "boss",
+        PrimitiveArgs::cylinder_z([0.0, 0.0, 0.0], 8.0, 20.0).join("block(plate)"),
+    );
+    let before = program.build_model(registry).unwrap();
+    let root = edges_with_middle_where(&before, |m| {
+        near(m[2], 5.0) && (m[0] * m[0] + m[1] * m[1]).sqrt() < 9.0
+    });
+    assert!(!root.is_empty(), "no root edges");
+    program.push("r", FilletArgs::constant(root, 2.0));
+    let rounded = program.build_model(registry).unwrap();
+    assert_valid(&rounded);
+    let args = ShellArgs {
+        solid: solid("fillet(r)"),
+        faces: Vec::new(),
+        thickness: 1.0.into(),
+        other_faces: Vec::new(),
+        other_thickness: 0.2.into(),
+        outward: false,
+    };
+    let part = apply_to_model::<Shell>(rounded, "s", &args).unwrap();
+    assert_valid(&part);
+}
