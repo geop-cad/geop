@@ -411,7 +411,7 @@ fn constraint_defined_twice_is_an_error() {
     );
 }
 
-/// The unknowns are one target by the state they are: of two declarations
+/// The unknowns are merged by the state they are: of two declarations
 /// of a state, one that holds it fixed wins, and otherwise the first.
 #[test]
 fn unknowns_merge_by_state() {

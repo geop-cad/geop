@@ -1,6 +1,14 @@
 //! Which values of the state a solve may move, as the steps declare them:
-//! [`Unknown`]s, and the part's one target holding them all ([`Unknowns`]),
-//! so that a solve of any program is set up from the part alone.
+//! [`Unknown`]s, each step's in a target of its own, and all of a part's
+//! together ([`Unknowns`]), so that a solve of any program is set up from
+//! the part alone.
+//!
+//! Each step's own, not one target every step adds to: a joint's
+//! coordinate is seeded where its parts are, so a step's unknowns are made
+//! again whenever its parts move, and a target revised by every step would
+//! make every later step's again with it — copying all the unknowns before
+//! it, at a cost growing with the square of the steps. A drag of a robot
+//! arm of a thousand parts spent a third of its time there.
 
 use std::collections::BTreeMap;
 
@@ -32,12 +40,11 @@ pub struct Unknown {
     pub unless: Option<String>,
 }
 
-/// The name of the part's [`Unknowns`] target.
+/// What the name of a step's unknowns target starts with.
 const UNKNOWNS: &str = "unknowns";
 
-/// Every unknown the steps so far declared, by the state it is. A part has
-/// one, the target [`unknowns`], read whole: it is a kind of element of its
-/// own (see [`HasElements`]).
+/// Every unknown the steps so far declared, by the state it is: gathered
+/// from their targets ([`Unknowns::of`]).
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct Unknowns(BTreeMap<String, Unknown>);
 
@@ -50,13 +57,16 @@ impl Unknowns {
     /// starting where the instance's part has it, if it has it at all. A
     /// state the part holds fixed stays fixed.
     pub fn of(reader: &Reader) -> GeopResult<Self> {
-        let reference = unknowns();
-        let mut all = match reader.defines(&reference) {
-            true => reader
-                .retrieve_element(&ElementReference::whole(reference))?
-                .clone(),
-            false => Self::default(),
-        };
+        if let Some(failed) = reader.failed_targets_of::<StepUnknowns>().pop() {
+            return Err(failed);
+        }
+        let mut all = Self::default();
+        for own in reader.targets_of::<StepUnknowns>() {
+            let own = reader.retrieve_element(&ElementReference::whole(own))?;
+            for declared in &own.0 {
+                all.declare(declared.clone());
+            }
+        }
         for name in reader.instances() {
             let inside = reader.placed_part(name)?;
             let declared = Self::of(&inside)
@@ -97,59 +107,55 @@ impl Unknowns {
     }
 }
 
-/// Every step that declares unknowns adds to them.
-impl Target for Unknowns {
-    const CHAIN: bool = true;
+/// The unknowns one step declared, in the order it made them: its target.
+#[derive(Clone, Debug, PartialEq)]
+struct StepUnknowns(Vec<Unknown>);
+
+/// Each step's own.
+impl Target for StepUnknowns {}
+
+/// One step's unknowns, read whole.
+impl Kind for StepUnknowns {
+    const NAME: &'static str = "step unknowns";
 }
 
-/// The part's unknowns, read whole.
-impl Kind for Unknowns {
-    const NAME: &'static str = UNKNOWNS;
-}
-
-impl HasElements<Unknowns> for Unknowns {
-    type Element<'a> = &'a Unknowns;
-    const SINGLETON: Option<&'static str> = Some(UNKNOWNS);
+impl HasElements<StepUnknowns> for StepUnknowns {
+    type Element<'a> = &'a StepUnknowns;
 
     fn element(&self, name: &str) -> GeopResult<&Self> {
         match name.is_empty() {
             true => Ok(self),
             false => Err(GeopError::new(format!(
-                "the unknowns have no element `{name}`: they are read whole"
+                "a step's unknowns have no element `{name}`: they are read whole"
             ))),
         }
     }
 }
 
-/// The target holding the part's unknowns.
-pub fn unknowns() -> TargetReference<Unknowns> {
-    TargetReference::new(UNKNOWNS)
-}
-
-/// Declares the unknowns `generator` makes of `args`, adding them to the
-/// part's [`Unknowns`]: of several declarations of one state, one that
-/// holds it fixed wins, and otherwise the first made. A plain function,
-/// like a make ([`Make`]).
+/// Declares the unknowns `generator` makes of `args` in the step being
+/// run, of the part's [`Unknowns`]: of several declarations of one state,
+/// one that holds it fixed wins, and otherwise the first made. A plain
+/// function, like a make ([`Make`]).
 pub fn declare_unknowns<Args: PartialEq + Clone + 'static>(
     ctx: &mut StepContext,
     args: &Args,
     generator: Make<Args, Vec<Unknown>>,
 ) -> GeopResult<()> {
+    let own = TargetReference::<StepUnknowns>::new(format!("{UNKNOWNS}:{}", ctx.step()));
     let generated = Generated {
         args: args.clone(),
         generator,
     };
-    ctx.produce(&unknowns(), &generated, declare)
+    ctx.produce(&own, &generated, declare)
 }
 
-/// `all` with the unknowns `generated` makes added.
+/// The unknowns `generated` makes.
 fn declare<Args>(
     reader: &Reader,
     generated: &Generated<Args, Vec<Unknown>>,
-) -> GeopResult<Unknowns> {
-    let mut all: Unknowns = reader.previous()?;
-    for declared in (generated.generator)(reader, &generated.args)? {
-        all.declare(declared);
-    }
-    Ok(all)
+) -> GeopResult<StepUnknowns> {
+    Ok(StepUnknowns((generated.generator)(
+        reader,
+        &generated.args,
+    )?))
 }
