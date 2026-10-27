@@ -99,53 +99,60 @@ fn tray_walls_meeting_at_a_corner_with_a_narrow_gap() {
 /// A plate with a closed hem along one edge and a flange up from the next
 /// edge round the corner (a hemmed tray): a 100 x 60 plate 1 thick, bend
 /// radius 1, gap 1 — wide enough for two flanges at a corner — its edge
-/// along `x` hemmed, folded back 10 over the plate with a gap of 1, then a
-/// flange 30 high up the edge at `x = 100`.
+/// along `x` hemmed, folded back 10 over the plate, then a flange 30 high
+/// up the edge at `x = 100`.
 ///
-/// Both steps build, the body invalid (44 errors): the flange runs the
-/// whole edge, up through the hem's fold lying over the plate there.
-///
-/// > edge hem(h,flange,side1,a) and edge edge_flange(f2,flange,side0,a)
-/// > intersect at a point that is not an existing vertex
-///
-/// > edge hem(h,flange,end,a) crosses face edge_flange(f2,flange,b)'s
-/// > trimmed region at (99, 10, 4)
-///
-/// The flange keeps the corner gap from the hem's bend, but not from its
-/// folded-back flat; it should stop short of it, or be refused by name.
+/// Both steps built, the body invalid (44 errors): the flange kept the
+/// corner gap from the hem's bend, but not from its folded-back flat, and
+/// ran up through it (`hem(h,flange,..)` and `edge_flange(f2,flange,..)`
+/// intersected). It is now refused by name, saying how far the hem's flat
+/// reaches along the edge, and the flange offset past it builds.
 #[test]
-#[ignore = "bug: a flange up the edge next to a hemmed edge passes through the hem's folded flat: the sheet body is invalid (hem(h,flange,..) and edge_flange(f2,flange,..) intersect), not refused"]
 fn flange_beside_a_hem() {
-    let mut program = Program::new();
-    let plate: Sketch = outline(&[[0.0, 0.0], [100.0, 0.0], [100.0, 60.0], [0.0, 60.0]]);
-    program.push("k", AddSketchArgs::on(on_origin(FrameAxis::Z), plate));
-    program.push(
-        "plate",
-        BaseFlangeArgs {
-            sketch: whole_sketch("k"),
-            rules: SheetMetalRules {
-                thickness: 1.0,
-                bend_radius: 1.0,
-                corner_gap: 1.0,
-                ..SheetMetalRules::default()
+    let hemmed = |offset_start: f64| {
+        let mut program = Program::new();
+        let plate: Sketch = outline(&[[0.0, 0.0], [100.0, 0.0], [100.0, 60.0], [0.0, 60.0]]);
+        program.push("k", AddSketchArgs::on(on_origin(FrameAxis::Z), plate));
+        program.push(
+            "plate",
+            BaseFlangeArgs {
+                sketch: whole_sketch("k"),
+                rules: SheetMetalRules {
+                    thickness: 1.0,
+                    bend_radius: 1.0,
+                    corner_gap: 1.0,
+                    ..SheetMetalRules::default()
+                },
+                depth: 1.0.into(),
+                flip: false,
             },
-            depth: 1.0.into(),
-            flip: false,
-        },
+        );
+        program.push(
+            "h",
+            HemArgs {
+                edge: Some(edge("base_flange(plate,k,c4,b)")),
+                kind: HemKind::Closed,
+                length: 10.0,
+                gap: 1.0,
+                offset_start: 0.0,
+                offset_end: 0.0,
+            },
+        );
+        program.push(
+            "f2",
+            EdgeFlangeArgs {
+                offset_start,
+                ..flange("base_flange(plate,k,c5,b)")
+            },
+        );
+        program.build_model(hem_registry)
+    };
+    let err = hemmed(0.0).unwrap_err().to_string();
+    assert!(
+        err.contains("hem(h,flange) bent from it folds back over the sheet"),
+        "{err}"
     );
-    program.push(
-        "h",
-        HemArgs {
-            edge: Some(edge("base_flange(plate,k,c4,b)")),
-            kind: HemKind::Closed,
-            length: 10.0,
-            gap: 1.0,
-            offset_start: 0.0,
-            offset_end: 0.0,
-        },
-    );
-    program.push("f2", flange("base_flange(plate,k,c5,b)"));
-    let part = program.build_model(hem_registry).unwrap();
+    let part = hemmed(7.5).unwrap();
     assert_valid(&part);
 }
 
