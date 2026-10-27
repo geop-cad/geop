@@ -3,9 +3,11 @@
 //! imports them again.
 
 use geop_core_math::{geop_error::GeopResult, primitives::FrameAxis};
+use geop_core_program::element::ElementReference;
 use geop_core_program::{operation_registry::OperationRegistry, program::Program};
 use geop_lib_fixtures::{Primitive, PrimitiveArgs};
 use geop_ops_extrude_revolve::{Extents, ExtrudeArgs, Output};
+use geop_ops_fillet::{Fillet, FilletArgs};
 use geop_ops_model::datums::{origin_axis, origin_plane};
 use geop_ops_model::sketch::{
     Sketch, SketchPlane,
@@ -14,12 +16,13 @@ use geop_ops_model::sketch::{
 };
 use geop_ops_model::spacing::Spacing;
 use geop_ops_model::{
-    Combine, NamedModel, Namer,
-    testing::{Built, assert_valid},
+    Combine, NamedModel, Namer, model,
+    testing::{Built, assert_valid, edges_with_middle_where, face_towards},
 };
 use geop_ops_pattern::{
     Direction, LinearPattern, LinearPatternArgs, Mirror, MirrorArgs, PatternDirection, Seeds, body,
 };
+use geop_ops_shell::{Shell, ShellArgs};
 use geop_ops_sketch::AddSketchArgs;
 
 use crate::{add_bodies, read_step, write_step};
@@ -191,6 +194,120 @@ fn mirrored_l_bracket_with_a_slot_round_trips() {
 #[test]
 fn mirrored_l_bracket_merged_round_trips() {
     round_trip(&merged(&mirrored_l_bracket()));
+}
+
+/// The operations of [`registry`], and the fillet and shell.
+fn finishing_registry() -> GeopResult<OperationRegistry> {
+    registry()?.with(Fillet)?.with(Shell)
+}
+
+/// A 40 x 20 x 10 block with its upright edge at the origin rounded by 3
+/// (the first fillet of every tutorial), exported as STEP and imported
+/// again.
+///
+/// The rounded block builds valid. Read back, it fails `assert_valid`
+/// twice, on the two planar sides the blend is tangent to:
+///
+/// > coedge 28's pcurve sample 0 (t=0.000) maps through its face's surface
+/// > to a point that is not on edge 11's curve at all (coedge on face 27,
+/// > (u, v) = (0, 0.15), point (0, 3, ..))
+///
+/// and the same at `(3, 0, ..)` on the side `y = 0`: the start of each
+/// side's pcurve along the edge where the blend leaves it. The edges are
+/// `import(.., e0)` and `import(.., e13)`, the blend's tangent lines, and
+/// validation finds every sample of them off the side they lie in: the
+/// line read back for the side `x = 0` runs at
+/// `x = [-8.9e-16, -6.7e-80]`, definitely off the plane by a hair, and the
+/// import did not widen it to reach the plane. A block with a rounded
+/// rectangle extruded as its outline, the same solid with arcs instead of
+/// a blend, round-trips cleanly.
+#[test]
+#[ignore = "bug: a block with one upright edge rounded round-trips through STEP into an invalid body: the planar sides' pcurves start at the blend's tangent vertices (0,3,z)/(3,0,z), not on the imported tangent edges' curves; a rounded rectangle extruded round-trips"]
+fn block_with_one_rounded_edge_round_trips() {
+    let mut program = Program::new();
+    program.push(
+        "box",
+        PrimitiveArgs::block([0.0, 0.0, 0.0], [40.0, 20.0, 10.0]),
+    );
+    let before = program.build_model(finishing_registry).unwrap();
+    let edge = edges_with_middle_where(&before, |m| {
+        m[0].abs() < 1e-9 && m[1].abs() < 1e-9 && (m[2] - 5.0).abs() < 1e-9
+    });
+    assert_eq!(edge.len(), 1, "{edge:?}");
+    program.push("round", FilletArgs::constant(edge, 3.0));
+    round_trip(&program.build_model(finishing_registry).unwrap());
+}
+
+/// A cup: a cylinder of radius 5 and height 10 shelled 1 thick, open at
+/// its top (the Onshape "cup" tutorial), exported as STEP and imported
+/// again.
+///
+/// The cup builds valid. Reading it back fails at once:
+///
+/// > #77: its knots decrease
+/// > reading the edge #78 / reading the face #125 / reading the body
+/// > (shell(sh))
+///
+/// `#77` is the curve of `shell(sh,extrude(..,end))`, a quarter of the
+/// inner rim, a rational quadratic clamped at its start by three knots
+/// near zero. They are written as `(2,1,3)` multiplicities of the knots
+/// `(7.216449660063519E-16, 7.216449660062508E-16, 1.0)`: the first three
+/// knots are three enclosures of one value, two of them equal and the
+/// third not, so `knots_and_multiplicities` writes them as two distinct
+/// knots whose midpoints decrease. The block shelled the same way
+/// round-trips cleanly, and so does the cylinder itself
+/// ([`crate::tests`]).
+#[test]
+#[ignore = "bug: a cylinder shelled open at the top is written to STEP with an edge curve whose knots decrease (#77), so reading it back fails; a shelled block and the cylinder itself round-trip"]
+fn cup_round_trips() {
+    let mut program = Program::new();
+    program.push("rod", PrimitiveArgs::cylinder_z([0.0, 0.0, 0.0], 5.0, 10.0));
+    let before = program.build_model(finishing_registry).unwrap();
+    let solid = before.solid_names()[0].clone();
+    let top = face_towards(&before, before.solid_id(&solid).unwrap(), [0.0, 0.0, 1.0]);
+    program.push(
+        "sh",
+        ShellArgs {
+            solid: geop_ops_model::solid(&solid),
+            faces: vec![ElementReference::new(
+                model(),
+                before.name_of(top).unwrap().to_string(),
+            )],
+            thickness: 1.0.into(),
+            other_faces: Vec::new(),
+            other_thickness: 0.2.into(),
+            outward: false,
+        },
+    );
+    round_trip(&program.build_model(finishing_registry).unwrap());
+}
+
+/// A 40 x 20 x 10 block with a round pocket of radius 10 milled 5 deep
+/// from its top, the cutter as wide as the block: the pocket's wall
+/// touches the block's two long sides along a line each (a "cylinder
+/// tangent to a wall"). It builds valid, and exported as STEP it cannot be
+/// read back:
+///
+/// > the edge e6 (#69) it runs along twice is used by another face too
+///
+/// (`e5 (#63)` for the same pocket sketched and extruded.) The pocket's
+/// wall meets each side in a line; as written, one face's loop runs along
+/// that edge twice and another face uses it too, which the reader refuses,
+/// though the kernel built and validated the part. A pocket of radius 5
+/// in the block's corner, touching two sides, fails alike.
+#[test]
+#[ignore = "bug: a block with a round pocket tangent to its sides round-trips through STEP into \"the edge e6 (#69) it runs along twice is used by another face too\"; the kernel's own model is valid"]
+fn round_pocket_tangent_to_the_sides_round_trips() {
+    let mut program = Program::new();
+    program.push(
+        "box",
+        PrimitiveArgs::block([0.0, 0.0, 0.0], [40.0, 20.0, 10.0]),
+    );
+    program.push(
+        "pocket",
+        PrimitiveArgs::cylinder_z([20.0, 10.0, 5.0], 10.0, 10.0).cut("block(box)"),
+    );
+    round_trip(&program.build_model(registry).unwrap());
 }
 
 /// A bar cut in two by a slab across its middle is one solid of two lumps,

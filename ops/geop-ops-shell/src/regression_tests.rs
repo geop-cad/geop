@@ -223,3 +223,130 @@ fn shell_opened_at_a_top_its_blends_are_tangent_to() {
     assert_valid(&part);
     assert!(part.face_id(&format!("shell(s,{top})")).is_err());
 }
+
+/// A 10 x 6 x 3 block with its upright edge at the origin rounded by 1,
+/// shelled exactly 1 thick, open at the top: the walls as thick as the
+/// blend's radius (an enclosure tutorial with 2 mm walls and 2 mm
+/// rounds). Thinner walls ([`shell_of_a_block_with_a_rounded_upright_edge`])
+/// and thicker ones ([`shell_thicker_than_a_rounded_edge`]) both build;
+/// at exactly the radius the blend's inner copy is a line, its two sides
+/// meeting in a sharp inner corner as they do for thicker walls. The shell
+/// fails offsetting the blend instead:
+///
+/// > the offset by -1 could fold over itself over u=(1.95, 2), v=(-0.016,
+/// > 0): a factor 1 − d κ could be zero there
+///
+/// at `fitted_offset`, offsetting face `fillet(corner,..,fillet)`.
+#[test]
+#[ignore = "bug: shelling a block whose upright edge is rounded by r with walls exactly r thick fails in fitted_offset (\"the offset by -1 could fold over itself ... a factor 1 − d κ could be zero\") on the blend; thinner and thicker walls build"]
+fn shell_as_thick_as_a_rounded_edge() {
+    let mut program = Program::new();
+    program.push(
+        "box",
+        PrimitiveArgs::block([0.0, 0.0, 0.0], [10.0, 6.0, 3.0]),
+    );
+    let before = program.build_model(registry).unwrap();
+    let edge = edges_with_middle_where(&before, |m| {
+        near(m[0], 0.0) && near(m[1], 0.0) && near(m[2], 1.5)
+    });
+    assert_eq!(edge.len(), 1, "{edge:?}");
+    program.push("corner", FilletArgs::constant(edge, 1.0));
+    let rounded = program.build_model(registry).unwrap();
+    let top = face_name(&rounded, "fillet(corner)", [0.0, 0.0, 1.0]);
+    let args = ShellArgs {
+        solid: solid("fillet(corner)"),
+        faces: vec![ElementReference::new(model(), top)],
+        thickness: 1.0.into(),
+        other_faces: Vec::new(),
+        other_thickness: 0.2.into(),
+        outward: false,
+    };
+    let part = apply_to_model::<Shell>(rounded, "s", &args).unwrap();
+    assert_valid(&part);
+}
+
+/// A plate with a round boss, the boss's root rounded (the SolidWorks
+/// "boss with fillet" tutorial), hollowed: a 60 x 40 x 5 plate with a boss
+/// of radius 8 standing 20 high from its middle, the circle where they
+/// meet rounded by 2, shelled 1 thick, closed all round. The plate and
+/// boss alone shell; rounded, the shell fails for every thickness tried
+/// (0.5, 1, 1.5, and open at the bottom or the boss's top alike):
+///
+/// > the bound on what the fit misses was not decided within 16384 boxes
+///
+/// at `fitted_offset(distance=-1)`, offsetting the blend
+/// `fillet(r,#..,fillet,s0)`, a cubic surface of 73 x 13 control points
+/// rolled round the boss.
+#[test]
+#[ignore = "bug: shelling a plate with a boss whose root is rounded fails in fitted_offset on the rolled blend (\"the bound on what the fit misses was not decided within 16384 boxes\"), for every thickness; unrounded it shells"]
+fn shell_of_a_plate_with_a_rounded_boss() {
+    let mut program = Program::new();
+    program.push(
+        "plate",
+        PrimitiveArgs::block([-30.0, -20.0, 0.0], [30.0, 20.0, 5.0]),
+    );
+    program.push(
+        "boss",
+        PrimitiveArgs::cylinder_z([0.0, 0.0, 0.0], 8.0, 20.0).join("block(plate)"),
+    );
+    let before = program.build_model(registry).unwrap();
+    let root = edges_with_middle_where(&before, |m| {
+        near(m[2], 5.0) && (m[0] * m[0] + m[1] * m[1]).sqrt() < 9.0
+    });
+    assert!(!root.is_empty(), "no root edges");
+    program.push("r", FilletArgs::constant(root, 2.0));
+    let rounded = program.build_model(registry).unwrap();
+    assert_valid(&rounded);
+    let args = ShellArgs {
+        solid: solid("fillet(r)"),
+        faces: Vec::new(),
+        thickness: 1.0.into(),
+        other_faces: Vec::new(),
+        other_thickness: 0.2.into(),
+        outward: false,
+    };
+    let part = apply_to_model::<Shell>(rounded, "s", &args).unwrap();
+    assert_valid(&part);
+}
+
+/// The enclosure of [`shell_of_a_block_with_a_rounded_upright_edge`] in a
+/// large assembly's coordinates: a 40 x 20 x 10 block with its corner at
+/// `(100000, -100000, 0)`, the upright edge there rounded by 5, shelled 2
+/// thick open at its top. The rounded block is valid there, and so is the
+/// block shelled without the round, and both at the origin. Shelled, it
+/// is invalid, 1180 errors, vertices too wide:
+///
+/// > vertex VertexId(177)'s coordinate 1 is [-99995.000165, -99994.999835],
+/// > 0.00033 wide — wider than the 1e-4 every search downstream assumes
+///
+/// at `y = -99995`, 5 from the corner: where the blend and its inner copy
+/// meet the side `x = 100000` and its copy.
+#[test]
+#[ignore = "bug: a block with a rounded upright edge at (1e5,-1e5,0), shelled open at the top, builds invalid — vertices where the blend meets the side are 3.3e-4 wide; at the origin, or unrounded, it is valid"]
+fn shell_of_a_rounded_block_far_from_the_origin() {
+    let corner = [1e5, -1e5, 0.0];
+    let mut program = Program::new();
+    program.push(
+        "box",
+        PrimitiveArgs::block(corner, [corner[0] + 40.0, corner[1] + 20.0, 10.0]),
+    );
+    let before = program.build_model(registry).unwrap();
+    let edge = edges_with_middle_where(&before, |m| {
+        near(m[0], corner[0]) && near(m[1], corner[1]) && near(m[2], 5.0)
+    });
+    assert_eq!(edge.len(), 1, "{edge:?}");
+    program.push("corner", FilletArgs::constant(edge, 5.0));
+    let rounded = program.build_model(registry).unwrap();
+    assert_valid(&rounded);
+    let top = face_name(&rounded, "fillet(corner)", [0.0, 0.0, 1.0]);
+    let args = ShellArgs {
+        solid: solid("fillet(corner)"),
+        faces: vec![ElementReference::new(model(), top)],
+        thickness: 2.0.into(),
+        other_faces: Vec::new(),
+        other_thickness: 0.2.into(),
+        outward: false,
+    };
+    let part = apply_to_model::<Shell>(rounded, "s", &args).unwrap();
+    assert_valid(&part);
+}
