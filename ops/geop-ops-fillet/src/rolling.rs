@@ -1231,6 +1231,47 @@ fn chamfer_station(
 ) -> GeopResult<Station> {
     let own = &chain.links[link];
     let (p, tangent, feet) = chamfer_frame(model, chain, link, fraction, previous)?;
+    // Each side runs its distance from the edge, along the face: where the
+    // edge bends towards the face with a radius no more than that, the
+    // side closes to a point there, or folds over itself.
+    let curve = &model.get_edge(own.edge)?.curve;
+    let (t0, t1) = curve.domain();
+    let t = Scalar::interpolate(
+        t0,
+        t1,
+        if own.forward {
+            fraction
+        } else {
+            Scalar::ONE.sub(fraction)
+        },
+    );
+    let (first, second) = (curve.tangent(t)?, curve.second_derivative(t)?);
+    let speed_sq = first.prod_dot(&first);
+    let bend = second
+        .sub(&first.prod_scalar(second.prod_dot(&first).div(speed_sq)?))
+        .prod_scalar(Scalar::ONE.div(speed_sq)?);
+    for k in 0..2 {
+        let face = own.faces[k];
+        let surface = &model.get_face(face)?.surface;
+        let n = surface.normal(feet[k].0, feet[k].1)?.normalize()?;
+        let into = if k == 0 {
+            n.prod_cross(&tangent)
+        } else {
+            tangent.prod_cross(&n)
+        };
+        let d = Scalar::from_f64(distances[k]);
+        if !Scalar::ONE
+            .sub(d.mul(bend.prod_dot(&into)))
+            .definitely_greater(Scalar::ZERO)
+        {
+            return Err(GeopError::new(format!(
+                "the chamfer's distance {} into face {face} reaches the radius edge {} bends with towards that face at {p:?} ({:?}): the chamfer's side there would close to a point or fold — chamfer it by less than that radius",
+                distances[k],
+                own.edge,
+                Scalar::ONE.div(bend.prod_dot(&into)).ok()
+            )));
+        }
+    }
     let mut contact = [Vector3::zero(); 2];
     let mut normals = [Vector3::zero(); 2];
     let mut uv = feet;
@@ -1283,6 +1324,17 @@ fn chamfer_crossing(
             chamfer_frame(model, chain, link, Scalar::from_f64(x), Some(before)).with_context(
                 with_context!("the chamfer's section {x} of the way along link {link}"),
             )?;
+        // Where the sphere does not reach the edge — the section still
+        // further from it than the chamfer's distance, as next to a chain's
+        // vertex the edge starts at — the edge's point nearest the chain's
+        // stands for it: it lies on the same side of the section, and
+        // there the distance has no root to find.
+        let near = curve.closest_parameter_from(&p, seed)?;
+        let off = curve.evaluate(near)?.sub(&p);
+        if !off.prod_dot(&off).definitely_less(d2) {
+            let ahead = off.prod_dot(&tangent);
+            return Ok((ahead.midpoint().to_f64(), seed, (p, tangent, feet)));
+        }
         let t = newton_1d(
             seed,
             (lo, hi),
@@ -3010,17 +3062,26 @@ fn run_ons(
             let (length, _) = topology.get_edge(link.edge)?.curve.length()?;
             chain_length += length.lower().to_f64();
         }
-        if length > chain_length {
-            return Err(GeopError::new(format!(
-                "the edge crosses face {face} at vertex {vertex} so nearly along it (the way it runs on, dotted with the face's normal, is {squareness:?}) that the blend would run on {length} past it, farther than the edges blended along with it are long: only an edge crossing the third face more squarely is blended there"
-            )))
-            .with_context(ctx);
+        // How far is a free choice, checked below. Where the usual margin
+        // would reach past the chain, the chain's length is tried instead,
+        // and no farther: an upright of a block 8 long, rounded by 2, ends
+        // on a bevel at 45°, and twice the tool's width over that
+        // squareness is 8.000008, though half of it clears the bevel.
+        let capped = length > chain_length;
+        if capped {
+            length = chain_length;
         }
         let mut found = None;
         // How far past the face's tangent plane each try's section got,
         // its least control point: what to say if none got clear.
         let mut tried: Vec<(f64, Scalar)> = Vec::new();
         for _ in 0..MOST_RUN_OUT_DOUBLINGS {
+            if capped && length > chain_length {
+                return Err(GeopError::new(format!(
+                    "the edge crosses face {face} at vertex {vertex} so nearly along it (the way it runs on, dotted with the face's normal, is {squareness:?}) that the blend, rolled on {chain_length} past it, is not clear of it (past its tangent plane by {tried:?}), and would run on farther than the edges blended along with it are long: only an edge crossing the third face more squarely is blended there"
+                )))
+                .with_context(ctx);
+            }
             let ctx = with_context!(
                 "{ctx_name}, rolled on {length} (past the face's tangent plane by {tried:?} before)",
                 ctx_name = format!("the blend's end through face {face} at vertex {vertex}")
