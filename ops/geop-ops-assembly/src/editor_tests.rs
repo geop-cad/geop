@@ -1193,3 +1193,34 @@ fn a_step_of_a_placed_part_is_edited_where_it_is_placed() {
         "cancelled, the file is as committed"
     );
 }
+
+/// The arm's hand copied and pasted, as Ctrl+C, Ctrl+V do: the pasted step
+/// places a second hand under an id of its own, and its joint is between
+/// that new hand and the forearm — not a second joint on the hand copied.
+#[test]
+#[ignore = "bug: Program::paste gives the pasted add_part step a fresh id (`part1`) but leaves its \
+            mates naming the instance it was copied from: the pasted joint `add_part(part1,m1)` \
+            is between `/fore:model` and `/hand:model`, so the copy is held by nothing and the hand \
+            gets a duplicate joint"]
+fn a_placed_part_copied_and_pasted_is_mated_as_itself() {
+    let mut editor = editor();
+    handled(
+        &mut editor,
+        Command::LoadWorkspaceExample {
+            name: "arm".into(),
+            folder: None,
+        },
+    );
+    let copied = handled(&mut editor, Command::Copy { id: "hand".into() });
+    let Content::Text(text) = copied.export.expect("the step as text").content else {
+        panic!("a step is copied as text");
+    };
+    handled(&mut editor, Command::Paste { text });
+    let pasted = editor.program().steps.last().expect("a step is pasted");
+    assert_ne!(pasted.id, "hand", "pasted under an id of its own");
+    let args: AddPartArgs = step_args(pasted);
+    let parts: Vec<String> = (args.mates["m1"].entities.iter())
+        .map(|entity| entity.part().to_string())
+        .collect();
+    assert_eq!(parts, ["fore", pasted.id.as_str()], "{:?}", args.mates);
+}
