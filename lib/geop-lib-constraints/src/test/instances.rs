@@ -175,7 +175,7 @@ fn an_instance_is_solved_in_the_part_it_is_placed_in() {
         scale: Scalar::ONE,
     };
     let x = inputs(&[]);
-    let run = runner.rerun(&program, &x);
+    let run = runner.rerun(&program, &x, &given);
     let solved = solve(run, &given, &problem, true).unwrap();
     assert!(solved.report.converged, "{:?}", solved.report);
     let at = pose_of(&solved.state["/p:body"])

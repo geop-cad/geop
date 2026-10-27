@@ -49,8 +49,10 @@ use geop_core_program::{
 
 use crate::constraint::{Constraint, Constraints, DefinedAt, Remade};
 
-/// A program to run again at every state a solve tries, with its inputs:
-/// its state is the state tried.
+/// A program, with its inputs, and the part it builds: run once, at its
+/// own state, for a solve to make its constraints again of at every state
+/// it tries. A solve leaves the part so; a caller keeping the state found
+/// runs the program there.
 pub struct Run<'r> {
     pub runner: &'r Runner,
     pub part: &'r mut Part,
@@ -71,10 +73,12 @@ pub fn runs() -> usize {
 }
 
 impl Run<'_> {
-    /// The part the program builds at `state`.
-    fn at(&mut self, state: &StateValues) -> &Part {
+    /// The part the program builds, at its own state: what a solve makes
+    /// its constraints again of, at every state it tries. Run again only if
+    /// the part was last run otherwise (see
+    /// [`geop_core_program::runner::Runner::run_with`]).
+    fn built(&mut self) -> &Part {
         RUNS.set(RUNS.get() + 1);
-        self.program.state.clone_from(state);
         (self.runner).run_with(self.part, &self.program, &self.inputs, None);
         self.part
     }
@@ -187,7 +191,7 @@ impl<'r, 'p> Solving<'r, 'p> {
         state: &StateValues,
         problem: &'p Problem<'p>,
     ) -> GeopResult<(Self, Vec<StateValue>)> {
-        let all = Constraints::of(&run.at(state).current())?;
+        let all = Constraints::of(&run.built().current())?;
         let constraints = (all.iter().zip(all.defining()))
             .map(|((name, constraint), (_, at))| (name.to_string(), constraint.bound, at.clone()))
             .collect();
@@ -229,11 +233,6 @@ impl<'r, 'p> Solving<'r, 'p> {
         (which.iter())
             .filter_map(|&c| self.constraints.get(c).map(|(name, ..)| name.clone()))
             .collect()
-    }
-
-    /// The part, left as the program builds it at `state`.
-    fn finish(self, state: &StateValues) {
-        self.run.into_inner().at(state);
     }
 
     /// `constraint` as a term of the system: its derivatives by the
@@ -317,8 +316,7 @@ fn named(program: &Solving, enclosure: system::Enclosure<StateValue>) -> Enclosu
 /// them — for every constraint the program `run` runs defines to hold, as
 /// near where they are as the constraints allow, pulled as its preferences
 /// ask (see [`System::solve`]), and an enclosure of a true solution near
-/// there. The program is run at each state tried, and the part is left as
-/// it builds at the one found.
+/// there. The part is left as the program builds it at its own state.
 ///
 /// The state is moved even where the constraints cannot all hold, to where
 /// they come closest; the report says which do not.
@@ -369,7 +367,6 @@ pub fn solve(
         work,
     };
     let enclosure = prove.then(|| named(&program, solution.enclosure));
-    program.finish(&solved);
     Ok(Solved {
         state: solved,
         report,
@@ -385,7 +382,6 @@ pub fn enclose(run: Run<'_>, state: &StateValues, problem: &Problem) -> GeopResu
     let (program, start) = Solving::new(run, state, problem)?;
     let enclosure = program.system(problem).enclose(&start)?;
     let enclosure = named(&program, enclosure);
-    program.finish(state);
     Ok(enclosure)
 }
 
@@ -400,7 +396,6 @@ pub fn freedom(run: Run<'_>, state: &StateValues, problem: &Problem) -> GeopResu
     let states = (program.blocks.iter().cloned())
         .zip(freedom.blocks)
         .collect();
-    program.finish(state);
     Ok(Freedom {
         states,
         total: freedom.total,
@@ -419,6 +414,5 @@ pub fn conflicting(
     let (program, start) = Solving::new(run, state, problem)?;
     let conflicting = program.system(problem).conflicting(&start)?;
     let names: BTreeSet<String> = program.names(&conflicting).into_iter().collect();
-    program.finish(state);
     Ok(names.into_iter().collect())
 }

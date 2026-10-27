@@ -261,12 +261,21 @@ impl Running {
         (self.runner).run_with(&mut self.part, &program, inputs, None)
     }
 
-    /// The program `program` with `inputs`, for a solve to run.
-    fn rerun<'r>(&'r mut self, program: &'r Program, inputs: &'r Settings) -> Run<'r> {
+    /// The program `program` with `inputs`, at `state`, for a solve to
+    /// run.
+    fn rerun<'r>(
+        &'r mut self,
+        program: &'r Program,
+        inputs: &'r Settings,
+        state: &StateValues,
+    ) -> Run<'r> {
         Run {
             runner: &self.runner,
             part: &mut self.part,
-            program: program.clone(),
+            program: Program {
+                steps: program.steps.clone(),
+                state: state.clone(),
+            },
             inputs: inputs.clone(),
         }
     }

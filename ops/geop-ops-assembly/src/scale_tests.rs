@@ -707,6 +707,8 @@ struct DragCost {
     made: usize,
     /// The forms made for the list of steps.
     forms: usize,
+    /// The steps run, of every program run.
+    steps: usize,
     resolved: usize,
     work: u64,
     report: Report,
@@ -739,6 +741,7 @@ fn drag_wrist(editor: &mut Editor, arm: &RobotArm, by: &[[f64; 2]]) -> Vec<DragC
             geop_lib_constraints::solve::runs(),
             geop_lib_constraints::constraint::made_again(),
             geop_core_editor::editable::forms_listed(),
+            geop_core_program::runner::steps_run(),
         );
         handled(
             editor,
@@ -759,6 +762,7 @@ fn drag_wrist(editor: &mut Editor, arm: &RobotArm, by: &[[f64; 2]]) -> Vec<DragC
             runs: geop_lib_constraints::solve::runs() - before.1,
             made: geop_lib_constraints::constraint::made_again() - before.2,
             forms: geop_core_editor::editable::forms_listed() - before.3,
+            steps: geop_core_program::runner::steps_run() - before.4,
             resolved: crate::mates_resolved() - before.0,
             work: report.work,
             report,
@@ -825,8 +829,8 @@ fn the_arm_solves_its_links_not_its_screws() {
     );
 }
 
-/// A drag of the wrist costs as many program runs — two: where the solve
-/// starts and where it ends; at every state it tries, it makes only the
+/// A drag of the wrist costs as many program runs — one, which finds the
+/// part built already; at every state it tries, it makes only the
 /// constraints it asks again — and resolves as many mates — none —
 /// however many screws the brackets carry; its dense linear algebra grows
 /// with them no faster than they do: each screw is enclosed on its own, a
@@ -841,13 +845,20 @@ fn drag_work_grows_with_the_moving_links_not_the_screws() {
             let mut editor = arm_editor(&arm);
             let costs = drag_wrist(&mut editor, &arm, &DRAG);
             // The steps of the parts placed are listed as they were kept:
-            // a drag builds none of them again.
+            // a drag builds none of them again. And the program is run
+            // once, at the state found: no run of one that did not change
+            // walks its steps.
             let steps = editor.program().steps.len();
             for (k, cost) in costs.iter().enumerate() {
                 assert!(
                     cost.forms <= steps,
                     "event {k}: {} forms listed, of {steps} steps",
                     cost.forms
+                );
+                assert!(
+                    cost.steps <= steps,
+                    "event {k}: {} steps run, of {steps} steps",
+                    cost.steps
                 );
             }
             costs
@@ -859,7 +870,7 @@ fn drag_work_grows_with_the_moving_links_not_the_screws() {
     println!("{few:?}\n{many:?}");
     for (k, (few, many)) in few.iter().zip(many).enumerate() {
         assert_eq!((few.resolved, many.resolved), (0, 0), "event {k}");
-        assert!(few.runs <= 2, "event {k}: {} program runs", few.runs);
+        assert!(few.runs <= 1, "event {k}: {} program runs", few.runs);
         assert!(
             many.runs <= few.runs,
             "event {k}: {} program runs with 20 screws a bracket, {} with 5",
@@ -920,10 +931,11 @@ fn robot_arm_timings() {
         for (k, cost) in costs.iter().enumerate() {
             assert!(cost.report.converged, "{:?}", cost.report.failed);
             println!(
-                "  drag event {k}: {} program runs, {} constraint steps made again, {} forms listed, {} mates resolved, work {}, largest group {} variables, {} solve and {} enclosure evaluations",
+                "  drag event {k}: {} program runs, {} constraint steps made again, {} forms listed, {} steps run, {} mates resolved, work {}, largest group {} variables, {} solve and {} enclosure evaluations",
                 cost.runs,
                 cost.made,
                 cost.forms,
+                cost.steps,
                 cost.resolved,
                 cost.work,
                 cost.report.largest,
