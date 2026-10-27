@@ -162,6 +162,46 @@ fn fillet_rounds_a_corner_picked_edge_by_edge() {
     assert!(check_valid(&part).is_ok());
 }
 
+/// The same corner set back, as the front end sets it up: the three edges
+/// picked, "set back corners" ticked — which brings up the setback,
+/// starting at twice the radius — and the setback set. The step builds the
+/// box with that corner closed by a smooth patch, a side of it along each
+/// fillet's end and each face between them, and a polygon inside.
+#[test]
+fn fillet_sets_a_corner_back_in_the_dialog() {
+    let mut editor = editor();
+    editor.handle(Command::New {
+        kind: "fillet".into(),
+    });
+    for (origin, dir) in [
+        ([-5.0, -5.0, 0.5], [1.0, 1.0, 0.0]),
+        ([0.5, -5.0, 6.0], [0.0, 1.0, -1.0]),
+        ([-5.0, 0.5, 6.0], [1.0, 0.0, -1.0]),
+    ] {
+        handled(&mut editor, click_at(pointer(origin, dir)));
+    }
+    handled(&mut editor, dialog("radius", Value::Number(0.2)));
+    let update = handled(&mut editor, dialog("set_back", Value::Bool(true)));
+    let step = update.step.expect("the fillet is edited");
+    match step.presentation.dialog.get("setback") {
+        Some(Control::Number(n)) => assert_eq!(n.value, 0.4),
+        other => panic!("setback: {other:?}"),
+    }
+    handled(&mut editor, dialog("setback", Value::Number(0.5)));
+    handled(&mut editor, Command::Commit);
+    let program = editor.program();
+    let args: crate::FilletArgs = args(program.steps.last().unwrap());
+    assert_eq!(args.setback, Some(0.5.into()), "{args:?}");
+    let part = model_of(&built(&editor).unwrap());
+    assert!(check_valid(&part).is_ok());
+    let names: Vec<&str> = (part.topology().faces.keys())
+        .filter_map(|&f| part.name_of(f))
+        .collect();
+    let sides = names.iter().filter(|n| n.contains(",corner,")).count();
+    let inside = names.iter().filter(|n| n.ends_with(",corner)")).count();
+    assert_eq!((sides, inside), (6, 1), "{names:?}");
+}
+
 /// A new fillet waits for its edges to be picked, as edges.
 #[test]
 fn new_fillet_picks_edges() {

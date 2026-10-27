@@ -398,6 +398,7 @@ fn pocket_floor_corner_with_mixed_radii_is_filled_smoothly() {
             radius: 0.1,
             end_radius: Some(0.15),
             at_vertices: Vec::new(),
+            setback: None,
         },
     };
     let model = blended(model, &edges, shape);

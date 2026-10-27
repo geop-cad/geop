@@ -170,7 +170,10 @@ pub(crate) fn plan_corners(
                     .at_end(usize::from(at_end)),
             );
         }
-        let corner = if incident.len() == 3 && at_corner.iter().all(|&r| r == at_corner[0]) {
+        let corner = if radii.setback.is_none()
+            && incident.len() == 3
+            && at_corner.iter().all(|&r| r == at_corner[0])
+        {
             plan_corner(
                 model,
                 namer,
@@ -185,10 +188,17 @@ pub(crate) fn plan_corners(
         } else {
             // More than three faces, or fillets meeting with different
             // radii, have no one ball touching them all: the corner is set
-            // back and filled. The fill runs along the faces
-            // in straight lines, so only between flat faces; elsewhere the
-            // corner is bevelled, each fillet ending on its own.
-            if !set_back_fits(topology, chains, &reaching)? {
+            // back and filled, as it is wherever a setback is asked for.
+            // The fill runs along the faces in straight lines, so only
+            // between flat faces; elsewhere the corner is bevelled, each
+            // fillet ending on its own, unless a setback was asked for.
+            if let Some(face) = curved_face(topology, chains, &reaching)? {
+                if let Some(d) = radii.setback {
+                    return Err(GeopError::new(format!(
+                        "the corner is set back {d}, but its face {face} is curved: a set-back corner is closed along its faces in straight lines, so only where they are flat"
+                    )))
+                    .with_context(ctx);
+                }
                 continue;
             }
             plan_set_back(
@@ -199,7 +209,7 @@ pub(crate) fn plan_corners(
                 chains,
                 &reaching,
                 &at_corner,
-                None,
+                radii.setback,
                 &mut planned.chains,
             )
         }
@@ -420,22 +430,22 @@ fn plan_set_back(
     })
 }
 
-/// Whether the faces at the corner the tools `reaching` meet at are all
-/// flat, so that a set-back corner's fill can run along them in straight
-/// lines between the fillets (see [`plan_set_back`]).
-fn set_back_fits(
+/// A face at the corner the tools `reaching` meet at that is curved, if
+/// any: a set-back corner's fill runs along its faces in straight lines
+/// between the fillets (see [`plan_set_back`]), so only along flat ones.
+fn curved_face(
     topology: &Model,
     chains: &[(String, Chain)],
     reaching: &[Reaching],
-) -> GeopResult<bool> {
+) -> GeopResult<Option<FaceId>> {
     for &reach in reaching {
         for face in faces_of(chains, reach) {
             if topology.get_face(face)?.surface.as_plane()?.is_none() {
-                return Ok(false);
+                return Ok(Some(face));
             }
         }
     }
-    Ok(true)
+    Ok(None)
 }
 
 /// The center of the ball `sr` from each of `faces` along its outward

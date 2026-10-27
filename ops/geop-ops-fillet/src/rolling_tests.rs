@@ -221,6 +221,7 @@ fn variable_radius_on_a_straight_edge() {
             radius: 0.1,
             end_radius: Some(0.3),
             at_vertices: Vec::new(),
+            setback: None,
         },
     };
     blended(&mut model, &[edge.to_string()], &shape);
@@ -498,6 +499,7 @@ fn cube_corner_rounded_with_a_varying_radius() {
             radius: 0.1,
             end_radius: None,
             at_vertices: vec![(corner, 0.2)],
+            setback: None,
         },
     };
     blended(&mut model, &edges, &shape);
@@ -585,12 +587,49 @@ fn cube_corner_with_mixed_radii_is_rounded_smoothly() {
             radius: 0.1,
             end_radius: Some(0.2),
             at_vertices: Vec::new(),
+            setback: None,
         },
     };
     blended(&mut model, &corner_edges(), &shape);
     assert_eq!(assert_corner_is_smooth(&model, 1e-5), 6);
     assert!(!has_vertex(&model, [0.0, 0.0, 1.0]));
     assert_cut_between(&model, 0.4, [0.1, 0.2]);
+}
+
+/// The same corner with one radius, set back as asked: where the ball
+/// would have rounded it, each fillet ends 0.3 from the vertex and the
+/// patch closes the corner between them.
+#[test]
+fn cube_corner_set_back() {
+    let mut model = unit_cube();
+    let shape = BlendShape::Fillet {
+        radii: Radii {
+            setback: Some(0.3),
+            ..Radii::constant(0.1)
+        },
+    };
+    blended(&mut model, &corner_edges(), &shape);
+    assert_eq!(assert_corner_is_smooth(&model, 1e-5), 6);
+    assert!(!has_vertex(&model, [0.0, 0.0, 1.0]));
+    assert_cut_between(&model, 0.3, [0.1, 0.1]);
+}
+
+/// A setback shorter than the radius: each fillet's contact on a face
+/// would end inside its neighbour's fillet there. Refused, naming the
+/// edges and the face.
+#[test]
+fn cube_corner_set_back_too_little_is_refused() {
+    let mut model = unit_cube();
+    let shape = BlendShape::Fillet {
+        radii: Radii {
+            setback: Some(0.05),
+            ..Radii::constant(0.1)
+        },
+    };
+    let namer = Namer::new("fillet", "F").unwrap();
+    let error = blend(&mut model, &namer, &corner_edges(), &shape).unwrap_err();
+    let text = format!("{error:?}");
+    assert!(text.contains("setback 0.05 is too short"), "{text}");
 }
 
 /// Checks the cube `model`, three edges of which at its corner `(0, 0, 1)`

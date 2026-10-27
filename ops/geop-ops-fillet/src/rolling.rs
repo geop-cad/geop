@@ -208,11 +208,16 @@ pub(crate) fn sharp_in(surface: &NurbSurface3D, (u, v): (Scalar, Scalar)) -> (Sc
 /// `end_radius`, if given, at the end of an open one, changing linearly
 /// with the length along the chain in between; or, at the vertices named
 /// in `at_vertices`, the radius given there, linearly between those.
+///
+/// With `setback`, every corner every edge of which is filleted is set
+/// back: each fillet ends that far from the vertex, and a smooth patch
+/// closes the corner between them (see [`crate::corner`]).
 #[derive(Clone, Debug, PartialEq)]
 pub struct Radii {
     pub radius: f64,
     pub end_radius: Option<f64>,
     pub at_vertices: Vec<(String, f64)>,
+    pub setback: Option<f64>,
 }
 
 impl Radii {
@@ -223,10 +228,11 @@ impl Radii {
             radius,
             end_radius: None,
             at_vertices: Vec::new(),
+            setback: None,
         }
     }
 
-    /// Checks every radius is positive.
+    /// Checks every radius, and the setback, is positive.
     pub fn check(&self) -> GeopResult<()> {
         let all = std::iter::once(self.radius)
             .chain(self.end_radius)
@@ -237,6 +243,13 @@ impl Radii {
                     "a fillet's radius has to be positive, not {r}"
                 )));
             }
+        }
+        if let Some(d) = self.setback
+            && (d.is_nan() || d <= 0.0)
+        {
+            return Err(GeopError::new(format!(
+                "a fillet's corner setback has to be positive, not {d}"
+            )));
         }
         Ok(())
     }
