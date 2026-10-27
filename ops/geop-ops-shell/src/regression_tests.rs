@@ -230,15 +230,19 @@ fn shell_opened_at_a_top_its_blends_are_tangent_to() {
 /// rounds). Thinner walls ([`shell_of_a_block_with_a_rounded_upright_edge`])
 /// and thicker ones ([`shell_thicker_than_a_rounded_edge`]) both build;
 /// at exactly the radius the blend's inner copy is a line, its two sides
-/// meeting in a sharp inner corner as they do for thicker walls. The shell
-/// fails offsetting the blend instead:
+/// meeting in a sharp inner corner as they do for thicker walls.
 ///
-/// > the offset by -1 could fold over itself over u=(1.95, 2), v=(-0.016,
-/// > 0): a factor 1 − d κ could be zero there
-///
-/// at `fitted_offset`, offsetting face `fillet(corner,..,fillet)`.
+/// The shell failed offsetting the blend: "the offset by -1 could fold
+/// over itself ... a factor 1 − d κ could be zero there". So it is, all
+/// over: no box tells that factor from zero, and none is regular, so the
+/// offset is no surface, as for thicker walls (`fitted_offset` now says
+/// so, and refuses a fold only where some box is regular). The fast test
+/// of that is `cylinders_change_radius` in `geop-core-geometry`; here the
+/// rolled blend only approximates its cylinder, the factor wanders round
+/// zero by its approximation, and every box is split to the last before
+/// it is decided: 96 s.
 #[test]
-#[ignore = "bug: shelling a block whose upright edge is rounded by r with walls exactly r thick fails in fitted_offset (\"the offset by -1 could fold over itself ... a factor 1 − d κ could be zero\") on the blend; thinner and thicker walls build"]
+#[ignore = "slow: 96 s, every box of the blend's offset split to the last — run with `cargo test -- --ignored`"]
 fn shell_as_thick_as_a_rounded_edge() {
     let mut program = Program::new();
     program.push(
@@ -277,8 +281,18 @@ fn shell_as_thick_as_a_rounded_edge() {
 /// at `fitted_offset(distance=-1)`, offsetting the blend
 /// `fillet(r,#..,fillet,s0)`, a cubic surface of 73 x 13 control points
 /// rolled round the boss.
+///
+/// Measured: the 16384 boxes are for all the surface's spans together,
+/// and the blend has 70 x 10 of them, each needing several boxes before
+/// its bound is under the drift. With no cap the bound is found, after
+/// 17.5 minutes, and the shell then fails further on: "the seam, carried
+/// on, does not pass through its moved end", between `block(plate,end)`
+/// and the blend, pieces of one smooth surface, the moved end `5e-6`
+/// wide. What is missing is a cheaper bound per box over a surface of
+/// that many spans (each box costs milliseconds of polynomial products),
+/// and then the seam's end between the plate and its tangent blend.
 #[test]
-#[ignore = "bug: shelling a plate with a boss whose root is rounded fails in fitted_offset on the rolled blend (\"the bound on what the fit misses was not decided within 16384 boxes\"), for every thickness; unrounded it shells"]
+#[ignore = "bug: shelling a plate with a boss whose root is rounded: the fit's bound over the rolled blend's 700 spans exceeds the 16384-box budget (17.5 min without it), and the seam between the plate's top and the blend then misses its moved end, 5e-6 wide"]
 fn shell_of_a_plate_with_a_rounded_boss() {
     let mut program = Program::new();
     program.push(

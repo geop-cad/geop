@@ -39,8 +39,10 @@
 //! **Where the offset is regular.** Along a principal direction the offset
 //! scales the surface by `1 − d κ`: regular where both factors are
 //! positive, collapsed where one of them is not, anywhere, and folded where
-//! that changes. In the tangent basis `S_u, S_v` the factors are the
-//! eigenvalues of `I⁻¹ (I − d II)`, so regular means `I − d II` positive
+//! that changes. Where it is nowhere regular — collapsed, or a factor as
+//! near zero as the boxes resolve, as offsetting a cylinder by its radius
+//! makes it a line — the offset is no surface either way. In the tangent
+//! basis `S_u, S_v` the factors are the eigenvalues of `I⁻¹ (I − d II)`, so regular means `I − d II` positive
 //! definite, and so `G = w⁴ (I − d II)`, `G_ab = P_a·P_b − d (w² / |m|)
 //! J_ab`, with the polynomials `P_a = w A_a − w_a A = w² S_a` and
 //! `J_ab = (w A_ab − w_ab A)·m`: its first entry and its determinant
@@ -377,7 +379,8 @@ impl Shape {
 
     /// Whether the offset by `distance` is regular over the box `u` × `v`
     /// (see the module docs): `Some(true)` everywhere, `Some(false)`
-    /// nowhere, `None` undecided. `closes` is the side of the span where
+    /// nowhere, `None` undecided — and how far from zero the entries it
+    /// decides by could be there, the larger of their hulls' magnitudes. `closes` is the side of the span where
     /// the offset closes to a point, if it does there; `flipped`, whether
     /// the span lies past an apex the surface was carried on through (see
     /// `offset`).
@@ -388,13 +391,13 @@ impl Shape {
         v: (Scalar, Scalar),
         closes: Option<Side>,
         flipped: bool,
-    ) -> GeopResult<Option<bool>> {
+    ) -> GeopResult<(Option<bool>, f64)> {
         let w = self.w.restricted(u, v)?;
         let m = self.m.restricted(u, v)?;
         // The entries with `1 / |m|` as a polynomial `g / √r` fitted over
         // the box (see [`inverse_length`]).
         let Some((fitted, r)) = inverse_length(&m)? else {
-            return Ok(None);
+            return Ok((None, f64::INFINITY));
         };
         let factor = distance.div(r.sqrt()?)?;
         let c = w.product(&w, product)?.product(&fitted, product)?;
@@ -419,13 +422,21 @@ impl Shape {
         // turns over: one factor `1 − d κ` changes sign with it there.
         let verdict = |diagonal: Scalar, det: Scalar| {
             let det = if flipped { det.neg() } else { det };
-            if diagonal.definitely_greater(Scalar::ZERO) && det.definitely_greater(Scalar::ZERO) {
+            let size = diagonal
+                .abs()
+                .upper()
+                .to_f64()
+                .max(det.abs().upper().to_f64());
+            let said = if diagonal.definitely_greater(Scalar::ZERO)
+                && det.definitely_greater(Scalar::ZERO)
+            {
                 Some(true)
             } else if diagonal.definitely_less(Scalar::ZERO) || det.definitely_less(Scalar::ZERO) {
                 Some(false)
             } else {
                 None
-            }
+            };
+            (said, size)
         };
         let squared = g[1].product(&g[1], product)?;
         let squared = match &twist {
@@ -434,7 +445,7 @@ impl Shape {
         };
         let det = g[0].product(&g[2], product)?.minus(&squared)?.hull()[0];
         let said = verdict(g[s].hull()[0], det);
-        let Some(side) = closes.filter(|_| said.is_none()) else {
+        let Some(side) = closes.filter(|_| said.0.is_none()) else {
             return Ok(said);
         };
         // The offset's row along `side` is a point: `G e_t = 0` there, `t`
@@ -456,7 +467,7 @@ impl Shape {
         // `G_ab = P_a·P_b − d ρ K_ab`, `K_ab = w² g J_ab`, `ρ = 1 / √r`
         // and `r = g² (m·m)` near one, so `∂ρ = −ρ³ ∂r / 2` is small.
         let Some((fitted, _)) = inverse_length(&m)? else {
-            return Ok(None);
+            return Ok((None, f64::INFINITY));
         };
         let r = fitted
             .product(&fitted, product)?
@@ -497,16 +508,30 @@ impl Shape {
     }
 }
 
+/// What [`over_boxes`]' `decide` says of a box: something to take, or to
+/// split it, telling its quarters what it found there.
+enum Said<T, W> {
+    Is(T),
+    Split(W),
+}
+
 /// The boxes of `surface`'s spans, each split in four until `decide` says
 /// something of it — told, after `splits` splits, that it is the last
-/// chance; what it said of each, in turn, to `take`. Refused where it says
-/// nothing then, or past [`MAX_OFFSET_BOXES`] boxes, naming the box.
-fn over_boxes<T, S>(
+/// chance, and what it found of the box it was split from; what it said of
+/// each, in turn, to `take`. Refused where it says nothing then, or past
+/// [`MAX_OFFSET_BOXES`] boxes, naming the box.
+fn over_boxes<T, S, W: Clone>(
     surface: &NurbSurface3D,
     what: &str,
     splits: usize,
     mut prepare: impl FnMut(((Scalar, Scalar), (Scalar, Scalar))) -> GeopResult<S>,
-    mut decide: impl FnMut(&S, (Scalar, Scalar), (Scalar, Scalar), bool) -> GeopResult<Option<T>>,
+    mut decide: impl FnMut(
+        &S,
+        (Scalar, Scalar),
+        (Scalar, Scalar),
+        bool,
+        Option<&W>,
+    ) -> GeopResult<Said<T, W>>,
     mut take: impl FnMut(T, (Scalar, Scalar), (Scalar, Scalar)),
 ) -> GeopResult<()> {
     let bu = breakpoints(&surface.knot_vector_u, surface.degree_u, surface.num_u);
@@ -518,8 +543,8 @@ fn over_boxes<T, S>(
             let span = ((su[0], su[1]), (sv[0], sv[1]));
             let piece = prepare(span)
                 .map_err(|e| e.with_context(format!("the span u={:?}, v={:?}", span.0, span.1)))?;
-            let mut stack = vec![(span.0, span.1, 0usize)];
-            while let Some((u, v, depth)) = stack.pop() {
+            let mut stack: Vec<(_, _, usize, Option<W>)> = vec![(span.0, span.1, 0usize, None)];
+            while let Some((u, v, depth, parent)) = stack.pop() {
                 boxes += 1;
                 if boxes > MAX_OFFSET_BOXES {
                     return Err(GeopError::new(format!(
@@ -527,12 +552,15 @@ fn over_boxes<T, S>(
                     )));
                 }
                 let last = depth >= splits;
-                if let Some(said) = decide(&piece, u, v, last)
+                let found = match decide(&piece, u, v, last, parent.as_ref())
                     .map_err(|e| e.with_context(format!("{what} over u={u:?}, v={v:?}")))?
                 {
-                    take(said, u, v);
-                    continue;
-                }
+                    Said::Is(said) => {
+                        take(said, u, v);
+                        continue;
+                    }
+                    Said::Split(found) => found,
+                };
                 if last {
                     return Err(GeopError::new(format!(
                         "{what} could not be decided over u={u:?}, v={v:?}, split {splits} times"
@@ -544,7 +572,7 @@ fn over_boxes<T, S>(
                 );
                 for a in [(u.0, cu), (cu, u.1)] {
                     for b in [(v.0, cv), (cv, v.1)] {
-                        stack.push((a, b, depth + 1));
+                        stack.push((a, b, depth + 1, Some(found.clone())));
                     }
                 }
             }
@@ -661,13 +689,15 @@ impl NurbSurface3D {
             "whether the surface has a normal",
             REGULAR_SPLITS,
             |(u, v)| Ok(parts(&self.sub_surface(u, v)?)?.2),
-            |m, u, v, last| {
+            |m, u, v, last, _: Option<&()>| {
                 let m = m.restricted(u, v)?;
                 let squared = m.product(&m, dot)?.hull()[0];
                 Ok(if squared.definitely_greater(Scalar::ZERO) {
-                    Some(true)
+                    Said::Is(true)
+                } else if last {
+                    Said::Is(false)
                 } else {
-                    last.then_some(false)
+                    Said::Split(())
                 })
             },
             |has, _, _| everywhere &= has,
@@ -694,7 +724,7 @@ impl NurbSurface3D {
         };
         // Regular, collapsed or folded is the surface's and the distance's
         // to say, over its own spans, before anything is fitted.
-        let (mut regular, mut collapsed) = (None, None);
+        let (mut regular, mut collapsed, mut undecided) = (None, None, None);
         over_boxes(
             self,
             "whether the offset is regular",
@@ -707,32 +737,41 @@ impl NurbSurface3D {
                     offsetting.closes_over(u, v),
                 ))
             },
-            |(shape, distance, flipped, closes), u, v, last| {
-                let said = shape.regular(*distance, u, v, *closes, *flipped)?;
-                if said.is_none() && last {
-                    return Err(GeopError::new(format!(
-                        "the offset by {distance:?} could fold over itself over u={u:?}, v={v:?}: a factor 1 − d κ could be zero there"
-                    )));
-                }
-                Ok(said)
+            |(shape, distance, flipped, closes), u, v, last, parent: Option<&f64>| {
+                let (said, size) = shape.regular(*distance, u, v, *closes, *flipped)?;
+                Ok(match said {
+                    Some(said) => Said::Is(Some(said)),
+                    // Undecided at the last split, or where splitting the
+                    // box no longer halves how far from zero its entries
+                    // could be: a factor `1 − d κ` as near zero as the
+                    // arithmetic resolves, as a cylinder's offset by its
+                    // radius has all over, which no split decides.
+                    None if last || parent.is_some_and(|&p| p <= 2.0 * size) => Said::Is(None),
+                    None => Said::Split(size),
+                })
             },
-            |said, u, v| {
-                if said {
-                    regular = Some((u, v));
-                } else {
-                    collapsed = Some((u, v));
-                }
+            |said, u, v| match said {
+                Some(true) => regular = Some((u, v)),
+                Some(false) => collapsed = Some((u, v)),
+                None => undecided = Some((u, v)),
             },
         )
         .map_err(ctx)?;
-        match (regular, collapsed) {
-            (Some(at), Some(not)) => {
+        match (regular, collapsed, undecided) {
+            (Some(at), Some(not), _) => {
                 return Err(ctx(GeopError::new(format!(
                     "the offset by {distance:?} folds over itself: it is regular over u={:?}, v={:?}, but passes a centre of curvature over u={:?}, v={:?}",
                     at.0, at.1, not.0, not.1
                 ))));
             }
-            (None, Some(_)) => return Ok(None),
+            (Some(at), None, Some((u, v))) => {
+                return Err(ctx(GeopError::new(format!(
+                    "the offset by {distance:?} could fold over itself over u={u:?}, v={v:?}: a factor 1 − d κ could be zero there, and it is regular over u={:?}, v={:?}",
+                    at.0, at.1
+                ))));
+            }
+            // Nowhere regular: collapsed, or as near a curve as can be told.
+            (None, ..) => return Ok(None),
             _ => {}
         }
         // How finely to fit is a matter of effort, so it is chosen from a
@@ -777,10 +816,16 @@ impl NurbSurface3D {
             // Split while the bound is wider than the drift, and take it
             // as it is once splitting no longer pays: it is honest either
             // way, only wider.
-            |(fit, distance), u, v, last| {
-                Ok(fit
-                    .missed(*distance, u, v)?
-                    .filter(|p| last || !p.definitely_greater(drift)))
+            |(fit, distance), u, v, last, _: Option<&()>| {
+                Ok(
+                    match fit
+                        .missed(*distance, u, v)?
+                        .filter(|p| last || !p.definitely_greater(drift))
+                    {
+                        Some(missed) => Said::Is(missed),
+                        None => Said::Split(()),
+                    },
+                )
             },
             |missed, u, v| bounds.push((u, v, missed)),
         )
