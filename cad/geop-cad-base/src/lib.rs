@@ -5,6 +5,7 @@
 //! [`geop_core_editor::editor`]'s; the operations and their examples are
 //! their crates'.
 
+pub mod disk;
 pub mod registry;
 #[cfg(test)]
 mod tests;

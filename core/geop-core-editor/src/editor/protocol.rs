@@ -237,6 +237,10 @@ pub struct ProgramState {
     /// What each panel shows of the program, by its key (see
     /// [`crate::registry::Panel`]).
     pub panels: BTreeMap<String, serde_json::Value>,
+    /// What the part's structure says beside its items, by their names,
+    /// from what the panels show (see [`crate::registry::Panel::details`]):
+    /// how free a placed part is.
+    pub details: BTreeMap<String, String>,
 }
 
 /// What is drawn: a part, and which of its sketches and datums not to.
