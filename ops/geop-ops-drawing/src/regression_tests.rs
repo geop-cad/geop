@@ -167,3 +167,67 @@ fn front_view_of_a_shelled_box_with_a_rounded_edge() {
     };
     compose(&built.current(), &args, "", &[]).unwrap_or_else(|e| panic!("{e}"));
 }
+
+/// A plate with a round boss, its root bevelled (the SolidWorks "boss
+/// with chamfer" tutorial), drawn: a 60 x 40 x 5 plate, a boss of radius 8
+/// standing 20 high from its middle, the circle where they meet bevelled
+/// 2, and its isometric view. The part builds valid; the view fails
+/// deciding what hides a piece of the bevel's edge:
+///
+/// > curve_surface_crossings: exhausted max_nodes=20000 with 8028 pairs
+/// > pending; the result would be incomplete
+///
+/// for "the ray from (-9.5, 0, 5.5) against face ..", the middle of the
+/// bevel's straight edge at `y = 0`, from `(-8, 0, 7)` to `(-10, 0, 5)`:
+/// a ray leaving the bevel's cone along it, towards the viewer; the ray's
+/// start is 1e-7 wide. Rounded instead of bevelled, the view fails the same
+/// way. Built from given solids instead — a block and a cylinder joined,
+/// the same shape — the bevelled boss draws: the sketched and extruded
+/// circle is in four arcs, the given cylinder's not.
+#[test]
+#[ignore = "bug: the iso view of a plate with a boss whose root is bevelled (or rounded) fails: the hidden-line ray from the bevel's edge at (-9.5,0,5.5) exhausts curve_surface_crossings against a face"]
+fn iso_view_of_a_boss_with_a_bevelled_root() {
+    let mut program = Program::new();
+    program.push(
+        "s1",
+        AddSketchArgs::on(
+            on_origin(FrameAxis::Z),
+            rectangle_outline(-30.0, -20.0, 30.0, 20.0),
+        ),
+    );
+    program.push(
+        "plate",
+        ExtrudeArgs {
+            sketch: whole_sketch("s1"),
+            extent: Extents::blind(5.0),
+            output: Output::Solid(Combine::NewBody),
+            draft: 0.0,
+        },
+    );
+    program.push(
+        "s2",
+        AddSketchArgs::on(on_origin(FrameAxis::Z), disc([0.0, 0.0], 8.0)),
+    );
+    program.push(
+        "boss",
+        ExtrudeArgs {
+            sketch: whole_sketch("s2"),
+            extent: Extents::blind(20.0),
+            output: Output::Solid(Combine::join("extrude(plate)")),
+            draft: 0.0,
+        },
+    );
+    let before = build(&program);
+    let root = edges_where(&before, |m| {
+        (m[2] - 5.0).abs() < 1e-9 && (m[0] * m[0] + m[1] * m[1]).sqrt() < 9.0
+    });
+    assert!(!root.is_empty(), "no root edges");
+    program.push("bevel", geop_ops_fillet::ChamferArgs::even(root, 2.0));
+    let built = build(&program);
+    geop_ops_model::testing::assert_valid(&model_of(&built));
+    let args = DrawingArgs {
+        views: vec![ViewKind::Iso],
+        ..Default::default()
+    };
+    compose(&built.current(), &args, "", &[]).unwrap_or_else(|e| panic!("{e}"));
+}
