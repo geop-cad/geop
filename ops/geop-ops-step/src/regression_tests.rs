@@ -205,24 +205,15 @@ fn finishing_registry() -> GeopResult<OperationRegistry> {
 /// (the first fillet of every tutorial), exported as STEP and imported
 /// again.
 ///
-/// The rounded block builds valid. Read back, it fails `assert_valid`
-/// twice, on the two planar sides the blend is tangent to:
-///
-/// > coedge 28's pcurve sample 0 (t=0.000) maps through its face's surface
-/// > to a point that is not on edge 11's curve at all (coedge on face 27,
-/// > (u, v) = (0, 0.15), point (0, 3, ..))
-///
-/// and the same at `(3, 0, ..)` on the side `y = 0`: the start of each
-/// side's pcurve along the edge where the blend leaves it. The edges are
-/// `import(.., e0)` and `import(.., e13)`, the blend's tangent lines, and
-/// validation finds every sample of them off the side they lie in: the
-/// line read back for the side `x = 0` runs at
-/// `x = [-8.9e-16, -6.7e-80]`, definitely off the plane by a hair, and the
-/// import did not widen it to reach the plane. A block with a rounded
-/// rectangle extruded as its outline, the same solid with arcs instead of
-/// a blend, round-trips cleanly.
+/// Read back, it failed validation on the two planar sides the blend is
+/// tangent to: every sample of the blend's tangent lines, `import(..,e0)`
+/// and `import(..,e13)`, lay off the side they lie in. The line was
+/// written at `x = -4.4e-16`, the midpoint of the kernel's enclosure, and
+/// the importer widened it to reach the plane, measuring the gap from the
+/// curve's bound rounded outwards, a rounding short each round: after four
+/// it ran at `x = [-8.9e-16, -6.7e-80]`, still definitely off `x = 0`.
+/// The rounds after the first now widen by twice the rounding they measure.
 #[test]
-#[ignore = "bug: a block with one upright edge rounded round-trips through STEP into an invalid body: the planar sides' pcurves start at the blend's tangent vertices (0,3,z)/(3,0,z), not on the imported tangent edges' curves; a rounded rectangle extruded round-trips"]
 fn block_with_one_rounded_edge_round_trips() {
     let mut program = Program::new();
     program.push(
@@ -242,23 +233,17 @@ fn block_with_one_rounded_edge_round_trips() {
 /// its top (the Onshape "cup" tutorial), exported as STEP and imported
 /// again.
 ///
-/// The cup builds valid. Reading it back fails at once:
-///
-/// > #77: its knots decrease
-/// > reading the edge #78 / reading the face #125 / reading the body
-/// > (shell(sh))
-///
-/// `#77` is the curve of `shell(sh,extrude(..,end))`, a quarter of the
-/// inner rim, a rational quadratic clamped at its start by three knots
-/// near zero. They are written as `(2,1,3)` multiplicities of the knots
-/// `(7.216449660063519E-16, 7.216449660062508E-16, 1.0)`: the first three
-/// knots are three enclosures of one value, two of them equal and the
-/// third not, so `knots_and_multiplicities` writes them as two distinct
-/// knots whose midpoints decrease. The block shelled the same way
-/// round-trips cleanly, and so does the cylinder itself
-/// ([`crate::tests`]).
+/// Reading it back failed at once with "#77: its knots decrease". `#77`
+/// is the curve of `shell(sh,cylinder(rod,c0,end))`, a quarter of the
+/// inner rim. The shell carries the rim on past its ends (`carried_on`),
+/// which joins the continuation at a knot of multiplicity two, an
+/// enclosure `[-3.4e-15, 4.9e-15]`, and cuts it back at the sharp
+/// `7.2e-16` where the rim's end moved to. The cut counted the joint's
+/// knots towards its multiplicity but inserted itself beside them: the
+/// rim started at the knots `(joint, joint, 7.2e-16)`, written as two
+/// knots whose midpoints decrease. The cut is now at the knot it could
+/// be, repeated (`knot_insertion::insert_to_full_multiplicity`).
 #[test]
-#[ignore = "bug: a cylinder shelled open at the top is written to STEP with an edge curve whose knots decrease (#77), so reading it back fails; a shelled block and the cylinder itself round-trip"]
 fn cup_round_trips() {
     let mut program = Program::new();
     program.push("rod", PrimitiveArgs::cylinder_z([0.0, 0.0, 0.0], 5.0, 10.0));
@@ -285,18 +270,15 @@ fn cup_round_trips() {
 /// A 40 x 20 x 10 block with a round pocket of radius 10 milled 5 deep
 /// from its top, the cutter as wide as the block: the pocket's wall
 /// touches the block's two long sides along a line each (a "cylinder
-/// tangent to a wall"). It builds valid, and exported as STEP it cannot be
-/// read back:
-///
-/// > the edge e6 (#69) it runs along twice is used by another face too
-///
-/// (`e5 (#63)` for the same pocket sketched and extruded.) The pocket's
-/// wall meets each side in a line; as written, one face's loop runs along
-/// that edge twice and another face uses it too, which the reader refuses,
-/// though the kernel built and validated the part. A pocket of radius 5
-/// in the block's corner, touching two sides, fails alike.
+/// tangent to a wall"). It builds valid; exported as STEP it could not be
+/// read back: "the edge e6 (#69) it runs along twice is used by another
+/// face too". `#69` is the line where the wall touches the side `y = 20`,
+/// and the solid touches itself there: the side runs along it twice, a
+/// slit from its top edge down to the pocket's floor, and the wall's two
+/// quarters meet on it. The reader took every edge a face runs along twice
+/// for a seam or a bridge to take out, and refused one another face uses;
+/// such an edge now stays.
 #[test]
-#[ignore = "bug: a block with a round pocket tangent to its sides round-trips through STEP into \"the edge e6 (#69) it runs along twice is used by another face too\"; the kernel's own model is valid"]
 fn round_pocket_tangent_to_the_sides_round_trips() {
     let mut program = Program::new();
     program.push(

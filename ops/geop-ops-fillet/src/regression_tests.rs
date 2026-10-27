@@ -1185,16 +1185,19 @@ fn assert_builds_valid_with(program: &Program, registry: fn() -> GeopResult<Oper
 /// A 40 x 20 x 10 block, the front edge of its top (along `x` at `y = 0`)
 /// bevelled 2, then the two front upright edges, which now end on the
 /// bevel, rounded by 2 (a part finished edge by edge, as a user does).
-/// The fillet fails with no hint of why:
 ///
-/// > Cannot normalize zero-length vector
-///
-/// at `Link::at(edge=.., fraction=0, t=0.1875)` on the curve of an edge at
-/// `x = 40`, `y = 0`, `z = 8`: where the upright edge at `x = 40` meets the
-/// bevel. Rounding the uprights first and bevelling after fails too, in
-/// another way ([`chamfer_after_rounding_the_edges_it_runs_into`]).
+/// The fillet failed with "Cannot normalize zero-length vector" at
+/// `Link::at`, on the bevel's lower edge along the front at `z = 8`: its
+/// curve began with a span `2e-16` long, four control points at one
+/// point. The bevel's contact curve has a triple knot where its run-out
+/// span begins, at the block's corner, and the boolean cut it there at
+/// the sharp middle of where it reaches the corner's vertex, a hair
+/// beside that knot (`split_parameter_at_point` now cuts at a knot in the
+/// enclosure). Then the upright, 8 long, met the bevel at 45°, and the
+/// blend's usual run-out past it, twice its width over that squareness,
+/// was 8.000008: refused as farther than the chain is long, though half
+/// of it clears the bevel (the chain's length is now tried first).
 #[test]
-#[ignore = "bug: rounding the two upright edges of a block that end on a bevelled top edge fails with \"Cannot normalize zero-length vector\" at Link::at, where an upright meets the bevel"]
 fn fillet_of_upright_edges_ending_on_a_chamfer() {
     let mut program = Program::new();
     program.push(
@@ -1216,15 +1219,21 @@ fn fillet_of_upright_edges_ending_on_a_chamfer() {
 
 /// The block of [`fillet_of_upright_edges_ending_on_a_chamfer`] the other
 /// way round: its two front upright edges rounded by 2 first, then the
-/// front edge of its top bevelled 2. That edge now ends where the two
-/// blends leave the top, tangent to them. The chamfer fails:
+/// front edge of its top bevelled. That edge now runs on tangentially
+/// into the blends' top edges, quarter circles of radius 2 round the
+/// rounded edges' axes.
 ///
-/// > Scalar::div: divisor interval contains zero
+/// The chamfer failed, "Scalar::div: divisor interval contains zero"
+/// moving from the front face onto a blend: the place where its side
+/// crosses the edge between them is found by Newton on the sphere of the
+/// chamfer's distance about the chain's point, and from the station before
+/// the sphere did not reach that edge, which starts at the chain's vertex.
+/// The edge's nearest point now stands in for it there.
 ///
-/// "moving from face FaceId(206) onto face FaceId(164)", at the ends of
-/// edge `block(box,c0,end)` along the top's front.
+/// Bevelled 2, the chamfer's side on the top runs 2 inside the quarter
+/// circles, round their centres: it closes to a point there, and is
+/// refused by name. Bevelled 1.5, it builds.
 #[test]
-#[ignore = "bug: bevelling a block's top front edge after its two front uprights are rounded fails with \"Scalar::div: divisor interval contains zero\" moving from face onto face at the edge's ends, where it runs tangentially into the blends"]
 fn chamfer_after_rounding_the_edges_it_runs_into() {
     let mut program = Program::new();
     program.push(
@@ -1240,41 +1249,67 @@ fn chamfer_after_rounding_the_edges_it_runs_into() {
     let rounded = program.build_model(chamfer_registry).unwrap();
     let front = edges_at(&rounded, [20.0, 0.0, 10.0]);
     assert_eq!(front.len(), 1, "{front:?}");
-    program.push("bevel", crate::ChamferArgs::even(front, 2.0));
+    let mut too_far = program.clone();
+    too_far.push("bevel", crate::ChamferArgs::even(front.clone(), 2.0));
+    let err = too_far
+        .build_model(chamfer_registry)
+        .unwrap_err()
+        .to_string();
+    assert!(err.contains("chamfer it by less than that radius"), "{err}");
+    program.push("bevel", crate::ChamferArgs::even(front, 1.5));
     assert_builds_valid_with(&program, chamfer_registry);
 }
 
+/// A 40 x 20 x 10 block at `corner` with every edge rounded by 2, built
+/// and checked valid.
+fn every_edge_rounded_at(corner: [f64; 3]) {
+    let mut program = Program::new();
+    program.push(
+        "box",
+        PrimitiveArgs::block(corner, [corner[0] + 40.0, corner[1] + 20.0, 10.0]),
+    );
+    let before = program.build_model(registry).unwrap();
+    let all = edges_with_middle_where(&before, |_| true);
+    assert_eq!(all.len(), 12, "{all:?}");
+    program.push("round", FilletArgs::constant(all, 2.0));
+    let part = program
+        .build_model(registry)
+        .unwrap_or_else(|e| panic!("at {corner:?}: {e}"));
+    assert_valid(&part);
+}
+
 /// A 40 x 20 x 10 block with every edge rounded by 2, placed in a large
-/// assembly's coordinates: its corner at `(10000, 10000, 0)`. At the
-/// origin it builds valid. There it builds invalid, 96 errors, every one
-/// a control point of a corner's patch too wide:
-///
-/// > face FaceId(422)'s surface control point 4, component 0 is
-/// > [6058.96855, 6058.96932], 0.00077 wide — wider than the 1e-4 every
-/// > search downstream assumes
-///
-/// (the patch's control points are homogeneous, weighted: the corner it
-/// stands for is at `x` about 10000). At `(100000, -100000, 0)` the fillet
-/// fails outright, building the tool of `block(..,c0,start)`: "Cannot
-/// normalize zero-length vector" at `NurbSurface::normal(0.4, 0.3)`, its
-/// `S_u` `[-1.26, 6.07]` in `x`. Rounding only the four upright edges
-/// builds valid at either place.
+/// assembly's coordinates: its corner at `(10000, 10000, 0)`. It built
+/// invalid, 96 errors, every one a control point of a corner's ball patch
+/// `8e-4` wide: `NurbSurface3D::spherical_triangle` multiplied the ball's
+/// centre and contacts, at `x` about 10000, by weights and by each other.
+/// It now builds the patch about the centre and moves it there.
 #[test]
-#[ignore = "bug: a block with every edge rounded, far from the origin, builds invalid at (1e4,1e4,0) — corner patches' weighted control points ~8e-4 wide — and fails at (1e5,-1e5,0) with \"Cannot normalize zero-length vector\" in an edge's tool; at the origin, or with only the uprights rounded, it builds"]
 fn every_edge_of_a_block_far_from_the_origin_rounded() {
-    for corner in [[1e4, 1e4, 0.0], [1e5, -1e5, 0.0]] {
-        let mut program = Program::new();
-        program.push(
-            "box",
-            PrimitiveArgs::block(corner, [corner[0] + 40.0, corner[1] + 20.0, 10.0]),
-        );
-        let before = program.build_model(registry).unwrap();
-        let all = edges_with_middle_where(&before, |_| true);
-        assert_eq!(all.len(), 12, "{all:?}");
-        program.push("round", FilletArgs::constant(all, 2.0));
-        let part = program
-            .build_model(registry)
-            .unwrap_or_else(|e| panic!("at {corner:?}: {e}"));
-        assert_valid(&part);
-    }
+    every_edge_rounded_at([1e4, 1e4, 0.0]);
+}
+
+/// The same block ten times further out, at `(100000, -100000, 0)`. It
+/// failed outright ("Cannot normalize zero-length vector" at the corner
+/// patch's `normal(0.4, 0.3)`); built about the ball's centre, the patch
+/// has a normal, but four corner patches' weighted control points are
+/// still `1.1e-4`-`1.3e-4` wide, past the 1e-4 validation allows.
+///
+/// Measured at one corner: the block's faces are planes whose control
+/// points are `8e-11` wide (a few roundings at 1e5), so their unit
+/// normals are `1.7e-11` wide, and the three-plane solve for the ball's
+/// centre gives it `1.3e-10` (in `z` at height 2). The contacts carry
+/// that; the patch's weights, which depend on the directions from the
+/// centre to the contacts (`tau`, `gamma`), come out `1e-9` wide, and a
+/// weighted control point at `x = 1e5` is `1e5` times that. Not
+/// normalizing the planes' already unit normals again took it only from
+/// `1.25e-4` to `1.13e-4`. What is left is the homogeneous form itself:
+/// a weight uncertain by `1e-9` is a position uncertain by `1e-9 |x|`.
+/// Ruled out: the evaluation (the patch is built about the centre) and the
+/// normals' second normalization. Not tried: building the patch from the
+/// contacts' directions with weights that do not take in their width.
+#[test]
+#[ignore = "bug: at (1e5,-1e5,0) the corner balls' weighted control points are 1.1e-4..1.3e-4 wide: weights ~1e-9 wide (from the ball's centre, 1.3e-10 wide out of a three-plane solve) times x = 1e5"]
+fn every_edge_of_a_block_further_from_the_origin_rounded() {
+    every_edge_rounded_at([1e5, -1e5, 0.0]);
 }

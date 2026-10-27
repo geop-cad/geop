@@ -13,11 +13,15 @@
 //! rim and past the wall into the air, `width` both ways, so that none of
 //! its faces lies on a face of the solid.
 //!
-//! The edges are straight or circular, as a fillet's are; corners between
-//! straight edges are mitred, corners at an arc refused. The rim has to be
-//! planar, and every edge of the chain convex: the wall falls away from the
-//! rim along it, so the space beside the edge, over the wall, is air.
+//! A groove runs along any edges, a lip along straight and circular ones
+//! (see [`lip`]); corners between straight edges are mitred, other
+//! corners refused, and where the chain runs on smoothly is told by its
+//! walls. The rim has to be planar, and every edge of the chain convex:
+//! the wall falls away from the rim along it, so the space beside the
+//! edge, over the wall, is air.
 
+use geop_core_geometry::contains::surface::surface_could_contain;
+use geop_core_geometry::intersection::curve_curve_overlaps_and_crossings;
 use geop_core_geometry::nurb_curve::{NurbCurve2D, flatten_point};
 use geop_core_geometry::search::{MAX_NODES, min_subdivision_size};
 use geop_core_math::{
@@ -30,6 +34,7 @@ use geop_core_math::{
 use geop_core_topology::{
     EdgeId, FaceId,
     build::{BodySpec, CoedgeOn, CoedgeSpec},
+    contains::face::{PointClassification, face_contains},
 };
 use geop_lib_booleans::{Reach, combine_tools};
 use geop_lib_sweep::{SweepLoop, extrude};
@@ -130,7 +135,36 @@ pub fn rim_chain(
         )));
     }
 
+    // The wall along coedge `k`: the face across its edge from the rim.
+    let uses = spec.edge_uses();
+    let wall = |k: usize| -> GeopResult<FaceId> {
+        let CoedgeOn::Edge(e, _) = lp[k].on else {
+            return Err(GeopError::new(format!(
+                "face {} has a loop that is a single point",
+                name(face.into())
+            )));
+        };
+        let g = uses[e]
+            .iter()
+            .map(|&(g, ..)| g)
+            .find(|&g| g != f)
+            .ok_or_else(|| GeopError::new("the edge bounds the rim alone"))?;
+        Ok(sources.faces[g])
+    };
+    // Whether the loop runs on smoothly from coedge `a` into coedge `b`:
+    // their walls tangent at the vertex between them. Asked of the faces,
+    // whose normals the surfaces state there (see
+    // `geop_ops_model::tangent`), not of the edges' tangents, which a
+    // traced edge only encloses.
+    let smooth = |a: usize, b: usize| -> GeopResult<bool> {
+        let (vertex, _) = spec.ends(lp[b].on)?;
+        let vertex = sources.vertices[vertex];
+        let p = model.normal_at_vertex(wall(a)?, vertex)?;
+        let q = model.normal_at_vertex(wall(b)?, vertex)?;
+        Ok(p.could_be_parallel(&q) && p.prod_dot(&q).definitely_greater(Scalar::ZERO))
+    };
     let to_plane = |p: &Vector3| frame.to_uv(p);
+    let mut smooths = Vec::with_capacity(run.len());
     let mut pieces = Vec::with_capacity(run.len());
     let mut joints = Vec::with_capacity(run.len() + 1);
     for &k in &run {
@@ -142,15 +176,7 @@ pub fn rim_chain(
         };
         let edge_name = name(sources.edges[e].into());
         let curve = sense.orient(&spec.edges[e].curve);
-        let center = if curve.as_line()?.is_some() {
-            None
-        } else if let Some(arc) = curve.as_arc()? {
-            Some(to_plane(&arc.circle.center))
-        } else {
-            return Err(GeopError::new(format!(
-                "edge {edge_name} is neither straight nor circular: a lip or groove runs along straight and circular edges"
-            )));
-        };
+        let center = curve.as_arc()?.map(|arc| to_plane(&arc.circle.center));
         convex_along(&spec, e, f, &curve, &plane.normal)
             .map_err(|err| err.with_context(format!("edge {edge_name} of the rim")))?;
         // Into the plane's `(u, v)`, homogeneous: an affine map.
@@ -159,9 +185,15 @@ pub fn rim_chain(
             .iter()
             .map(|cp| flatten_point(cp, frame.origin(), frame.u(), frame.v()))
             .collect();
-        let curve2 = NurbCurve2D::try_new(curve.degree, flat, curve.knot_vector.clone())?;
+        let mut curve2 = NurbCurve2D::try_new(curve.degree, flat, curve.knot_vector.clone())?;
+        if curve.as_line()?.is_some() {
+            // A line, however it was given: the band offsets and mitres it
+            // as one.
+            curve2 = NurbCurve2D::line(curve2.start()?, curve2.end()?)?;
+        }
         let (start, _) = spec.ends(lp[k].on)?;
         joints.push(name(sources.vertices[start].into()));
+        smooths.push((closed || k != first) && smooth((k + n - 1) % n, k)?);
         pieces.push(Piece {
             curve: curve2,
             center,
@@ -175,25 +207,12 @@ pub fn rim_chain(
         // loop that end lies in the plane of the next edge's wall, along
         // that edge: a face on an edge that already exists. Only where the
         // loop runs on smoothly does it cross the rim cleanly.
-        let tangent = |k: usize, at_end: bool| -> GeopResult<Vector3> {
-            let CoedgeOn::Edge(e, sense) = lp[k].on else {
-                unreachable!("checked above")
-            };
-            let curve = sense.orient(&spec.edges[e].curve);
-            let (t0, t1) = curve.domain();
-            curve.tangent(if at_end { t1 } else { t0 })
-        };
         let last = *run.last().unwrap();
-        for (inside, outside, at_end, joint) in [
-            (first, (first + n - 1) % n, false, &joints[0]),
-            (last, (last + 1) % n, true, joints.last().unwrap()),
+        for (before, after, joint) in [
+            ((first + n - 1) % n, first, &joints[0]),
+            (last, (last + 1) % n, joints.last().unwrap()),
         ] {
-            let (a, b) = if at_end {
-                (tangent(inside, true)?, tangent(outside, false)?)
-            } else {
-                (tangent(outside, true)?, tangent(inside, false)?)
-            };
-            if !a.prod_cross(&b).norm_sq().could_be_equal(Scalar::ZERO) {
+            if !smooth(before, after)? {
                 return Err(GeopError::new(format!(
                     "the edges picked end at vertex {joint}, a corner of face {}: a lip or groove along part of a loop has to end where the loop runs on smoothly — pick the whole loop, or end the chain at a round",
                     name(face.into())
@@ -206,6 +225,7 @@ pub fn rim_chain(
     let mut chain = Chain {
         pieces,
         joints,
+        smooth: smooths,
         closed,
     };
     stitch(&mut chain)?;
@@ -266,6 +286,77 @@ fn convex_along(
     Ok(())
 }
 
+/// Fails unless the band along `chain` reaches no further than `far` into
+/// the rim face `face`, the plane `frame` holds it in, without meeting
+/// another of its edges: a lip or groove `what` that wide has to stand on
+/// the rim. Its far side crossing none of the rim's edges lies inside the
+/// rim or out of it all along, and one point of it says which.
+fn fits_on_rim(
+    part: &NamedModel,
+    face: FaceId,
+    frame: &CoordinateSystem,
+    chain: &Chain,
+    far: Scalar,
+    what: &str,
+) -> GeopResult<()> {
+    let model = part.topology();
+    let name = |id: geop_ops_model::RefId| part.name_of(id).unwrap_or("?").to_string();
+    let refuse = |why: String| {
+        GeopError::new(format!(
+            "a {what} {:?} wide does not fit on the rim, face {}: {why} — make it narrower than the rim",
+            far.to_f64(),
+            name(face.into())
+        ))
+    };
+    let far_side = chain.offset(far)?;
+    for coedge in model.iterate_face_coedges(face) {
+        let edge = model.get_coedge(coedge)?.edge()?;
+        let curve = &model.get_edge(edge)?.curve;
+        let flat = curve
+            .control_points
+            .iter()
+            .map(|cp| flatten_point(cp, frame.origin(), frame.u(), frame.v()))
+            .collect();
+        let flat = NurbCurve2D::try_new(curve.degree, flat, curve.knot_vector.clone())?;
+        for side in &far_side {
+            let (overlaps, crossings) =
+                curve_curve_overlaps_and_crossings(side, &flat, MAX_NODES, min_subdivision_size())?;
+            if !(overlaps.is_empty() && crossings.is_empty()) {
+                return Err(refuse(format!(
+                    "its far side meets the rim's edge {}",
+                    name(edge.into())
+                )));
+            }
+        }
+    }
+    let side = &far_side[0];
+    let at = side.evaluate(side.mid_parameter()?)?;
+    let point = frame
+        .origin()
+        .add(&frame.u().prod_scalar(at[0]))
+        .add(&frame.v().prod_scalar(at[1]));
+    let surface = &model.get_face(face)?.surface;
+    let inside = match surface_could_contain(surface, &point, MAX_NODES, min_subdivision_size())? {
+        Some((u, v)) => face_contains(
+            model,
+            face,
+            u,
+            v,
+            MAX_NODES,
+            min_subdivision_size(),
+            RIM_SEED,
+        )?,
+        None => PointClassification::Outside,
+    };
+    if inside != PointClassification::Inside {
+        return Err(refuse("its far side lies past the rim's other edge".into()));
+    }
+    Ok(())
+}
+
+/// Seeds the ray directions [`fits_on_rim`] asks the rim with.
+const RIM_SEED: u64 = 0x5249_4D00_0000_0001;
+
 /// The sizes of a lip, or of the lip a groove takes.
 #[derive(Clone, Copy, Debug)]
 pub struct LipSize {
@@ -306,6 +397,23 @@ pub fn lip(
         .solid_name_of_face(face, "a rim is a face of a solid")
         .with_context(ctx)?;
     let (frame, chain) = rim_chain(part, face, edges).with_context(ctx)?;
+    // The lip's face along an edge stands flush with the wall, the edge
+    // swept up. Along a line or an arc that is the wall's own surface
+    // carried on; along any other curve, a traced edge only enclosing
+    // where the wall meets the rim, it is a surface a hair off the wall's,
+    // which the union cannot join to it.
+    if let Some(piece) = chain
+        .pieces
+        .iter()
+        .find(|p| !p.is_straight() && p.center.is_none())
+    {
+        return Err(GeopError::new(format!(
+            "edge {} is neither straight nor circular: a lip stands flush with the wall along it, and its face there would only approximate the wall's surface — a lip runs along straight and circular edges, a groove along any",
+            piece.name
+        )))
+        .with_context(ctx);
+    }
+    fits_on_rim(part, face, &frame, &chain, size.width, "lip").with_context(ctx)?;
     let loops: Vec<SweepLoop> = chain
         .band(Scalar::ZERO, size.width)
         .with_context(ctx)?
@@ -357,6 +465,15 @@ pub fn groove(
         .solid_name_of_face(face, "a rim is a face of a solid")
         .with_context(ctx)?;
     let (frame, chain) = rim_chain(part, face, edges).with_context(ctx)?;
+    fits_on_rim(
+        part,
+        face,
+        &frame,
+        &chain,
+        size.width.add(clearance),
+        "groove",
+    )
+    .with_context(ctx)?;
     // Past the wall into the air, and above the rim, by the lip's width: a
     // free choice, only so no face of the cut lies on one of the solid.
     let air = size.width;
