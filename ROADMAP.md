@@ -27,15 +27,18 @@ below is what was missing then, and where each item stands now.
 
 ### Part features
 - Holes: simple, counterbore, countersink, tapped; ISO 273/261/2306 tables;
+  NPT pipe threads 1/16 to 2 inch (ASME B1.20.1), reamed to the 1:16 taper;
   blind with drill point, up to next, through all.
-- Threads: cosmetic (drawn in the view and in drawings) and modelled.
+- Threads: cosmetic (drawn in the view and in drawings, following a
+  taper) and modelled, ISO metric on straight walls and NPT on tapered ones.
 - Linear and circular patterns and mirrors of bodies and of features (cuts,
   bosses, holes with their threads, picked by a face they made), move/copy
   body, scale body (evenly or along each axis, exact on the NURBS: a circle
-  scaled unevenly is an exact ellipse), deform body (taper, twist or bend
-  about an axis over a zone along it, the rest carried on rigidly: composed
-  with the NURBS on its control points, exactly for a taper, within a proven
-  bound for a twist or a bend, every pcurve kept).
+  scaled unevenly is an exact ellipse), deform body (taper, pinch, shear,
+  twist or bend about an axis over a zone along it, the rest carried on
+  rigidly: composed with the NURBS on its control points, exactly for a
+  taper, a pinch or a shear, within a proven bound for a twist or a bend,
+  every pcurve kept).
 - Rib, lip and groove, draft on planar faces.
 - Direct edits of any solid, imported ones too: faces moved, pushed or
   pulled along their normals (taking along the faces they run smoothly
@@ -92,8 +95,10 @@ below is what was missing then, and where each item stands now.
   the dialog; 322 of 361 public corpus files import valid, 299 fully
   (`scripts/fetch_corpus.sh`); an 886-face SolidWorks part in 15 s.
 - URDF export of jointed assemblies for robot simulators.
-- STL download in the web app; STL (ASCII) import as a B-rep, the
-  triangles in one plane one face.
+- STL download in the web app; STL import (ASCII or binary) as a B-rep,
+  the triangles in one plane one face. Files that are not text are held
+  as `data:` URLs of their bytes, so the workspace and the protocol stay
+  text.
 
 ### Editor and front ends
 - Web app and VS Code extension: every operation, inspect and BOM panels,

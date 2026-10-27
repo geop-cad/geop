@@ -127,17 +127,5 @@ pub enum Content {
 
 /// `bytes` as base64 text (RFC 4648, padded).
 fn base64<Ser: serde::Serializer>(bytes: &[u8], serializer: Ser) -> Result<Ser::Ok, Ser::Error> {
-    const ALPHABET: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
-    let mut text = String::with_capacity(bytes.len().div_ceil(3) * 4);
-    for chunk in bytes.chunks(3) {
-        let b = [0, 1, 2].map(|k| chunk.get(k).copied().unwrap_or(0) as u32);
-        let n = (b[0] << 16) | (b[1] << 8) | b[2];
-        for k in 0..4 {
-            text.push(match ALPHABET.get((n >> (18 - 6 * k) & 63) as usize) {
-                Some(&digit) if k <= chunk.len() => digit as char,
-                _ => '=',
-            });
-        }
-    }
-    serializer.serialize_str(&text)
+    serializer.serialize_str(&geop_core_program::workspace::base64(bytes))
 }

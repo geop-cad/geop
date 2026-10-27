@@ -430,6 +430,15 @@ impl<'a> Reader<'a> {
         Ok((path, text))
     }
 
+    /// The bytes of the file the program of the step being run names
+    /// `name`, and its path. The read is recorded.
+    pub fn read_bytes(&self, name: &str) -> GeopResult<(String, Rc<[u8]>)> {
+        let runner = self.runner()?;
+        let (path, bytes) = runner.read_bytes(name)?;
+        self.record(Read::File(path.clone(), runner.revision(&path)));
+        Ok((path, bytes))
+    }
+
     /// What the file the program of the step being run names `name` reads
     /// as, as `kind` — a STEP file's bodies — made of its text by `make`,
     /// and its path: made once for every build its workspace's cache keeps

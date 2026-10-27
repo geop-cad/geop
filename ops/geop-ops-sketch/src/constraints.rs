@@ -699,6 +699,9 @@ pub fn glyph(sketch: &Sketch, c: &Constraint, formula: bool, turned: bool) -> Op
         Moved { .. } => return None,
         EqualSweep { b, .. } => ("⌒=".into(), mid(b)),
         Offset { b, value, .. } => (shown("⇥ ", value), mid(b)),
+        // A spline's offset is held at many points: its distance shows on
+        // the circle that gives it.
+        OffsetAt { .. } => return None,
     })
 }
 
@@ -836,6 +839,13 @@ pub fn name(c: &Constraint, turned: bool) -> String {
         Moved { a, b, by } => format!("{b} is {a} moved by {by}"),
         EqualSweep { a, b } => format!("Equal sweep {a}, {b}"),
         Offset { a, b, .. } => format!("Offset {a}–{b}"),
+        OffsetAt { a, at, b, on, .. } => {
+            format!(
+                "{b} at {:.3} offset from {a} at {:.3}",
+                on.to_f64(),
+                at.to_f64()
+            )
+        }
     }
 }
 

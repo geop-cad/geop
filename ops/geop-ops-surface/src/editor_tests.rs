@@ -227,3 +227,51 @@ fn a_uv_surface_picks_its_curves_by_clicks() {
     let p = part.topology().get_vertex(corner).unwrap().point;
     assert!(p.could_be_equal(&Vector3::from_array([2.0, 1.5, 1.0].map(Scalar::from_f64))));
 }
+
+/// A boundary surface picks the five lines of a 3-D sketch's pentagon,
+/// its corners up and down, clicked from above: the hole is filled
+/// smoothly, a quadrilateral along each line about a flat pentagon, the
+/// faces either side of every spoke tangent to each other.
+#[test]
+fn a_boundary_surface_fills_a_pentagon_smoothly() {
+    let mut s = geop_ops_model::sketch3d::Sketch3d::new();
+    let corner = |k: usize| {
+        let a = std::f64::consts::TAU * k as f64 / 5.0;
+        let z = [0.0, 0.6, 0.1, 0.7, 0.3][k];
+        [2.0 * a.cos(), 2.0 * a.sin(), z]
+    };
+    let at = |p: [f64; 3]| Vector3::from_array(p.map(geop_ops_model::sketch::figures::n));
+    let points: Vec<_> = (0..5).map(|k| s.add_point(at(corner(k)))).collect();
+    for k in 0..5 {
+        s.add_line(points[k], points[(k + 1) % 5]);
+    }
+    let mut program = Program::new();
+    program.push(
+        "pentagon",
+        geop_ops_sketch3d::AddSketch3dArgs {
+            sketch: s,
+            references: Vec::new(),
+        },
+    );
+    let mut editor = editor_with(registry(), program);
+    editor.handle(Command::New {
+        kind: "boundary_surface".into(),
+    });
+    for k in 0..5 {
+        let (a, b) = (corner(k), corner((k + 1) % 5));
+        let update = editor.handle(click_at(from_above(
+            (a[0] + b[0]) / 2.0 + 0.004,
+            (a[1] + b[1]) / 2.0 + 0.004,
+        )));
+        assert!(update.error.is_none(), "{:?}", update.error);
+    }
+    let update = editor.handle(Command::Commit);
+    assert!(update.error.is_none(), "{:?}", update.error);
+    let args: crate::BoundarySurfaceArgs = args(editor.program().steps.last().unwrap());
+    assert_eq!(args.edges.len(), 5, "{args:?}");
+    let part = model_of(&built(&editor).unwrap());
+    let params = geop_core_topology::validation::ValidationParameters::default();
+    geop_core_topology::validation::validate(&params, part.topology()).unwrap();
+    assert_eq!(part.sheet_face_names().len(), 5 + 1);
+    crate::boundary::tests::assert_smooth_inside(&part);
+}

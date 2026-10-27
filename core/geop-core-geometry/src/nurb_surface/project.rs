@@ -11,6 +11,22 @@ use geop_core_math::{
 use super::NurbSurface;
 use crate::{contains::surface::surface_could_contain, search::PROJECT_ITERATIONS};
 
+/// How often [`NurbSurface::enclose_foot`] grows its box before it gives
+/// up: how hard it tries, not what a box it proves means.
+const TRIES: usize = 6;
+
+/// The foot point of a moving point (see [`NurbSurface::foot_moving`]):
+/// its `(u, v)`, the point, its velocity, the surface's unit normal there
+/// and how fast that turns — each over the box the foot was proven in.
+#[derive(Clone, Debug)]
+pub struct MovingFoot {
+    pub at: (Scalar, Scalar),
+    pub point: Vector3,
+    pub velocity: Vector3,
+    pub normal: Vector3,
+    pub turning: Vector3,
+}
+
 impl NurbSurface<4> {
     /// Fixed-iteration-count Newton foot-point projection of `target` onto
     /// this surface, starting from `(u0, v0)`.
@@ -151,6 +167,12 @@ impl NurbSurface<4> {
     /// allows. Both enclose the same foot point, so the answer is their
     /// intersection. The refinement only tightens: where Newton fails or
     /// leaves the box, the box is the answer.
+    ///
+    /// A point that could be a pole lies on the row collapsing to it (see
+    /// AGENTS.md, "A pole is one vertex at many `(u, v)`"), whatever Newton
+    /// settled on beside it — where the Jacobian is singular, it stops
+    /// where it can step no further, a hair off the row: the row's
+    /// parameter is kept as one of the point's too.
     pub fn locate(
         &self,
         point: &Vector3,
@@ -161,14 +183,201 @@ impl NurbSurface<4> {
         else {
             return Ok(None);
         };
-        Ok(Some(
+        let (mut lu, mut lv) =
             match self.project(*point, u.sharpen(), v.sharpen(), PROJECT_ITERATIONS) {
                 Ok((ru, rv)) if ru.could_be_equal(u) && rv.could_be_equal(v) => {
                     (u.intersect(ru), v.intersect(rv))
                 }
                 _ => (u, v),
-            },
-        ))
+            };
+        let ((u0, u1), (v0, v1)) = (self.domain_u(), self.domain_v());
+        for (u_fixed, first) in self.rows_touching(u, v) {
+            let Some((pole, _)) = self.pole(u_fixed, first) else {
+                continue;
+            };
+            if !point.could_be_equal(&pole) {
+                continue;
+            }
+            match (u_fixed, first) {
+                (true, true) => lu = lu.union(u0),
+                (true, false) => lu = lu.union(u1),
+                (false, true) => lv = lv.union(v0),
+                (false, false) => lv = lv.union(v1),
+            }
+        }
+        Ok(Some((lu, lv)))
+    }
+
+    /// The `(u, v)` of the foot point of every point of the box `target`
+    /// near `near`, proven: a box in which each of those points has one
+    /// foot point and no other, `None` where that cannot be shown.
+    ///
+    /// A foot point is where the gradient of half the squared distance,
+    /// `g = (Su·(S − P), Sv·(S − P))`, vanishes. Krawczyk's operator
+    /// `K(X) = c − Y g(c) + (I − Y J(X)) (X − c)`, with `J` the Hessian of
+    /// the distance over the box `X` (and every `P` of `target`), `c` its
+    /// middle and `Y` the inverse of the Hessian at `c` — a preconditioner,
+    /// a free choice — holds every zero of `g` in `X`; where it lies within
+    /// `X`, there is exactly one, and it is in `K(X)` too. `X` starts as
+    /// twice the Newton step from `near` and grows where `K` reaches past
+    /// it, a few times: how hard the search tries. It must keep within the
+    /// domain, so a target whose foot is on the domain's edge needs the
+    /// surface carried on past it ([`Self::extended`]).
+    ///
+    /// Over a box of targets along a curve on the surface, the box found
+    /// holds the curve's `(u, v)` over that stretch: what the normal and
+    /// its turn are enclosed over (see [`Self::normal_turning`]).
+    pub fn enclose_foot(
+        &self,
+        target: &Vector3,
+        near: (Scalar, Scalar),
+    ) -> GeopResult<Option<(Scalar, Scalar)>> {
+        // The gradient over `(u, v)` and its Hessian, both over the target.
+        let at = |u: Scalar, v: Scalar| -> GeopResult<([Scalar; 2], [Scalar; 3])> {
+            let s = self.partials(u, v, 2)?;
+            let r = s[0][0].sub(target);
+            let (su, sv) = (s[1][0], s[0][1]);
+            Ok((
+                [su.prod_dot(&r), sv.prod_dot(&r)],
+                [
+                    su.prod_dot(&su).add(s[2][0].prod_dot(&r)),
+                    su.prod_dot(&sv).add(s[1][1].prod_dot(&r)),
+                    sv.prod_dot(&sv).add(s[0][2].prod_dot(&r)),
+                ],
+            ))
+        };
+        // About `near` first, and where that is too far for the Hessian to
+        // stay near its value there, about the foot of the target's middle,
+        // Newton's from `near`: a free choice of where the box is, which
+        // the operator then proves or not.
+        if let Some(feet) = self.krawczyk_foot(near, &at)? {
+            return Ok(Some(feet));
+        }
+        let middle = Vector3::from_array(target.to_array().map(Scalar::midpoint));
+        let (u, v) = self.project(
+            middle,
+            near.0.midpoint(),
+            near.1.midpoint(),
+            PROJECT_ITERATIONS,
+        )?;
+        self.krawczyk_foot((u, v), &at)
+    }
+
+    /// The foot point of a point moving through the box `target` at
+    /// `velocity`, near `near`, proven as [`Self::enclose_foot`] proves it,
+    /// and how it moves: `None` where that cannot be shown.
+    ///
+    /// The foot keeps the gradient `g` of half the squared distance zero,
+    /// so `H (u', v') = (Su·P', Sv·P')` for the Hessian `H` of that
+    /// distance: the foot moves at `Su u' + Sv v'`, and the normal there
+    /// turns as [`Self::normal_turning`] says for that motion. Over the box
+    /// of feet, every one an enclosure over the whole box of targets.
+    pub fn foot_moving(
+        &self,
+        target: &Vector3,
+        velocity: &Vector3,
+        near: (Scalar, Scalar),
+    ) -> GeopResult<Option<MovingFoot>> {
+        let Some((u, v)) = self.enclose_foot(target, near)? else {
+            return Ok(None);
+        };
+        let s = self.partials(u, v, 2)?;
+        let r = s[0][0].sub(target);
+        let (su, sv) = (s[1][0], s[0][1]);
+        let hessian = (
+            su.prod_dot(&su).add(s[2][0].prod_dot(&r)),
+            su.prod_dot(&sv).add(s[1][1].prod_dot(&r)),
+            sv.prod_dot(&sv).add(s[0][2].prod_dot(&r)),
+        );
+        let Ok((du, dv)) =
+            solve_symmetric2(hessian, (su.prod_dot(velocity), sv.prod_dot(velocity)))
+        else {
+            return Ok(None);
+        };
+        let moving = su.prod_scalar(du).add(&sv.prod_scalar(dv));
+        let (normal, turning) = self.normal_turning(u, v, &moving)?;
+        Ok(Some(MovingFoot {
+            at: (u, v),
+            point: s[0][0],
+            velocity: moving,
+            normal,
+            turning,
+        }))
+    }
+
+    /// [`Self::enclose_foot`]'s operator, about `near`, the gradient and its
+    /// Hessian over a box `at` gives.
+    #[allow(clippy::type_complexity)]
+    fn krawczyk_foot(
+        &self,
+        near: (Scalar, Scalar),
+        at: &dyn Fn(Scalar, Scalar) -> GeopResult<([Scalar; 2], [Scalar; 3])>,
+    ) -> GeopResult<Option<(Scalar, Scalar)>> {
+        let ((u_lo, u_hi), (v_lo, v_hi)) = (self.domain_u(), self.domain_v());
+        let mut c = (near.0.midpoint(), near.1.midpoint());
+        let (mut gc, h) = at(c.0, c.1)?;
+        let [a, b, d] = h.map(|x| x.to_f64());
+        let det = a * d - b * b;
+        if !det.is_finite() || det == 0.0 {
+            return Ok(None);
+        }
+        // The preconditioner, sharp: `Y = H(c)⁻¹`.
+        let y = [[d / det, -b / det], [-b / det, a / det]].map(|row| row.map(Scalar::from_f64));
+        let times = |y: &[[Scalar; 2]; 2], g: [Scalar; 2]| {
+            [
+                y[0][0].mul(g[0]).add(y[0][1].mul(g[1])),
+                y[1][0].mul(g[0]).add(y[1][1].mul(g[1])),
+            ]
+        };
+        let step = times(&y, gc);
+        let mut radius = step.map(|s| 2.0 * s.abs().upper().to_f64());
+        for r in &mut radius {
+            *r = r.max(f64::EPSILON);
+        }
+        for _ in 0..TRIES {
+            let x = (
+                Scalar::new(c.0.to_f64() - radius[0], c.0.to_f64() + radius[0]),
+                Scalar::new(c.1.to_f64() - radius[1], c.1.to_f64() + radius[1]),
+            );
+            if x.0.could_be_less(u_lo) || x.0.could_be_greater(u_hi) {
+                return Ok(None);
+            }
+            if x.1.could_be_less(v_lo) || x.1.could_be_greater(v_hi) {
+                return Ok(None);
+            }
+            let newton = times(&y, gc);
+            let (_, [h11, h12, h22]) = at(x.0, x.1)?;
+            // `I − Y J(X)`.
+            let m = [
+                [
+                    Scalar::ONE.sub(y[0][0].mul(h11).add(y[0][1].mul(h12))),
+                    y[0][0].mul(h12).add(y[0][1].mul(h22)).neg(),
+                ],
+                [
+                    y[1][0].mul(h11).add(y[1][1].mul(h12)).neg(),
+                    Scalar::ONE.sub(y[1][0].mul(h12).add(y[1][1].mul(h22))),
+                ],
+            ];
+            let off = times(&m, [x.0.sub(c.0), x.1.sub(c.1)]);
+            let k = (
+                c.0.sub(newton[0]).add(off[0]),
+                c.1.sub(newton[1]).add(off[1]),
+            );
+            let inside = |k: Scalar, x: Scalar| {
+                k.lower().definitely_greater(x.lower()) && k.upper().definitely_less(x.upper())
+            };
+            if inside(k.0, x.0) && inside(k.1, x.1) {
+                return Ok(Some((k.0.intersect(x.0), k.1.intersect(x.1))));
+            }
+            // Wider about the middle of what the operator gave.
+            c = (k.0.midpoint(), k.1.midpoint());
+            gc = at(c.0, c.1)?.0;
+            radius = [
+                4.0 * radius[0].max(k.0.width().to_f64()),
+                4.0 * radius[1].max(k.1.width().to_f64()),
+            ];
+        }
+        Ok(None)
     }
 
     /// The foot point of `target` as [`Self::project`] finds it, within the
@@ -333,5 +542,39 @@ mod tests {
         assert!(result[0].could_be_equal(on_surface[0]));
         assert!(result[1].could_be_equal(on_surface[1]));
         assert!(result[2].could_be_equal(on_surface[2]));
+    }
+
+    /// The feet of a stretch of points on a cone, proven to lie in one box
+    /// that holds their `(u, v)`; of one point, a box as narrow as the
+    /// rounding; and of a point past the domain's edge, none.
+    #[test]
+    fn enclose_foot_holds_the_feet_of_a_box() {
+        let cone = revolved(1., 0.);
+        let v = Scalar::from_f64(0.5);
+        let stretch = Scalar::new(0.30, 0.32);
+        let points = cone.evaluate(stretch, v).unwrap();
+        let (u_box, v_box) = cone
+            .enclose_foot(&points, (Scalar::from_f64(0.31), v))
+            .unwrap()
+            .expect("proven");
+        assert!(
+            stretch.is_subset_of(u_box) && v.is_subset_of(v_box),
+            "{u_box:?} {v_box:?}"
+        );
+        assert!(u_box.width().to_f64() < 0.1 && v_box.width().to_f64() < 0.1);
+        let u = Scalar::from_f64(0.31);
+        let point = cone.evaluate(u, v).unwrap();
+        let (u_box, v_box) = cone
+            .enclose_foot(&point, (Scalar::from_f64(0.3), Scalar::from_f64(0.45)))
+            .unwrap()
+            .expect("proven");
+        assert!(
+            u.is_subset_of(u_box) && v.is_subset_of(v_box),
+            "{u_box:?} {v_box:?}"
+        );
+        assert!(u_box.width().to_f64() < 1e-12 && v_box.width().to_f64() < 1e-12);
+        // On the rim, the box round its foot would leave the domain.
+        let rim = cone.evaluate(u, Scalar::ONE).unwrap();
+        assert!(cone.enclose_foot(&rim, (u, Scalar::ONE)).unwrap().is_none());
     }
 }

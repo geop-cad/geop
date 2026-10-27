@@ -10,7 +10,8 @@ use crate::{
     knot_insertion::is_clamped_at,
     nurb_curve::dehomogenize,
     spline::{
-        centered, de_boor, find_span, hodograph, homogeneous_derivatives, rational_derivatives,
+        centered, de_boor, find_span, find_spans, hodograph, homogeneous_derivatives,
+        rational_derivatives,
     },
 };
 
@@ -82,12 +83,42 @@ impl NurbSurface<4> {
     /// values over the box are independent intervals, and their third
     /// differences, divided by the span's width cubed, came out a hundred
     /// times wider than the partial itself.
+    ///
+    /// A box reaching over a knot is taken span by span, and the partials
+    /// over the pieces united (see [`find_spans`]): one span's polynomial
+    /// carried on over the next encloses nothing of the surface there, and
+    /// a proof over the box (`NurbSurface3D::enclose_foot`) would prove
+    /// nothing.
     pub fn partials(&self, u: Scalar, v: Scalar, order: usize) -> GeopResult<Vec<Vec<Vector3>>> {
+        let (p, q) = (self.degree_u, self.degree_v);
+        let us = find_spans(p, &self.knot_vector_u, self.num_u - 1, u)?;
+        let vs = find_spans(q, &self.knot_vector_v, self.num_v - 1, v)?;
+        let mut out: Option<Vec<Vec<Vector3>>> = None;
+        for &u in &us {
+            for &v in &vs {
+                let piece = self.partials_in(u, v, order)?;
+                out = Some(match out {
+                    None => piece,
+                    Some(all) => (all.iter().zip(&piece))
+                        .map(|(a, b)| a.iter().zip(b).map(|(a, b)| a.union(b)).collect())
+                        .collect(),
+                });
+            }
+        }
+        Ok(out.expect("a span at least"))
+    }
+
+    /// [`Self::partials`] over the part `u` of span `span_u` along `u` and
+    /// `v` of `span_v` along `v`.
+    fn partials_in(
+        &self,
+        (span_u, u): (usize, Scalar),
+        (span_v, v): (usize, Scalar),
+        order: usize,
+    ) -> GeopResult<Vec<Vec<Vector3>>> {
         let (p, q) = (self.degree_u, self.degree_v);
         let (ku, kv) = (&self.knot_vector_u, &self.knot_vector_v);
         let nv = self.num_v;
-        let span_u = find_span(p, ku, self.num_u - 1, u)?;
-        let span_v = find_span(q, kv, nv - 1, v)?;
         let local: Vec<Vector<4>> = (span_u - p..=span_u)
             .flat_map(|i| (span_v - q..=span_v).map(move |j| i * nv + j))
             .map(|k| self.control_points[k])
@@ -217,7 +248,7 @@ impl NurbSurface<4> {
     /// `u` (`u_fixed`) or `v` domain collapses to, and the row next to it.
     /// `None` if that row is no pole. Every point of the row encloses the
     /// pole, so the pole is what they share: no wider than the narrowest.
-    fn pole(&self, u_fixed: bool, first: bool) -> Option<(Vector3, Vec<Vector<4>>)> {
+    pub(crate) fn pole(&self, u_fixed: bool, first: bool) -> Option<(Vector3, Vec<Vector<4>>)> {
         let [edge, next] = self.boundary_rows(u_fixed, first)?;
         let edge = dehomogenize::<4, 3>(&edge);
         let shared = edge.iter().fold(edge[0], |shared, p| {
@@ -229,7 +260,7 @@ impl NurbSurface<4> {
     }
 
     /// The boundary rows `(u, v)` touches, as `(u_fixed, first)`.
-    fn rows_touching(&self, u: Scalar, v: Scalar) -> Vec<(bool, bool)> {
+    pub(crate) fn rows_touching(&self, u: Scalar, v: Scalar) -> Vec<(bool, bool)> {
         let ((u0, u1), (v0, v1)) = (self.domain_u(), self.domain_v());
         [
             (false, v, v0, true),
@@ -319,8 +350,9 @@ impl NurbSurface<4> {
     /// **At a pole** — `(u, v)` touching a boundary row that collapses to a
     /// point — `S_u × S_v` vanishes, and the normal is that of the pole
     /// itself ([`Self::pole_normal`]), the same for every `u` (`v`) along
-    /// the row. Anything else where the cross product vanishes has no
-    /// normal and is an error.
+    /// the row. **At a corner** whose boundary curves leave it along one
+    /// line, it is the corner's ([`Self::corner_normal`]). Anything else
+    /// where the cross product vanishes has no normal and is an error.
     pub fn normal(&self, u: Scalar, v: Scalar) -> GeopResult<Vector3> {
         let (du, dv) = self.derivatives(u, v)?;
         let regular = du
@@ -335,12 +367,79 @@ impl NurbSurface<4> {
         if regular.is_ok() {
             return regular;
         }
-        for (u_fixed, first) in self.rows_touching(u, v) {
+        let rows = self.rows_touching(u, v);
+        for &(u_fixed, first) in &rows {
             if let Some(normal) = self.pole_normal(u_fixed, first) {
                 return normal;
             }
         }
+        // A corner of the domain both `(u, v)` touches.
+        for &(u_fixed, u_first) in rows.iter().filter(|(u_fixed, _)| *u_fixed) {
+            for &(_, v_first) in rows.iter().filter(|(v_fixed, _)| !*v_fixed) {
+                debug_assert!(u_fixed);
+                if let Some(normal) = self.corner_normal(u_first, v_first) {
+                    return normal;
+                }
+            }
+        }
         regular
+    }
+
+    /// The normal at a corner of the domain — at the start (`u_first`) or
+    /// end of `u`, and of `v` — where `S_u` and `S_v` could be parallel:
+    /// where the two boundary curves leave the corner along one line, its
+    /// angle opened out flat (a SubD patch at a crease vertex, where the
+    /// crease runs on smoothly). `None` where they are not, and the regular
+    /// normal holds.
+    ///
+    /// The surface may well be smooth there; its coordinates are not. With
+    /// `S_v = μ S_u` at the corner, next to it `S_u × S_v` is to first order
+    /// `du S_u × (S_uv − μ S_uu) + dv S_u × (S_vv − μ S_uv)`, `du` and `dv`
+    /// the steps into the domain, signed by which end the corner is at. The
+    /// corner has a normal exactly when those two agree in direction, and
+    /// it is theirs; where they do not, no single one — an error, not an
+    /// arbitrary pick between them.
+    fn corner_normal(&self, u_first: bool, v_first: bool) -> Option<GeopResult<Vector3>> {
+        let ((u0, u1), (v0, v1)) = (self.domain_u(), self.domain_v());
+        let (u, v) = (if u_first { u0 } else { u1 }, if v_first { v0 } else { v1 });
+        let (su, sv) = self.derivatives(u, v).ok()?;
+        if !su.could_be_parallel(&sv) {
+            return None;
+        }
+        let corner = || -> GeopResult<Vector3> {
+            let mu = su.prod_dot(&sv).div(su.prod_dot(&su))?;
+            let [suu, suv, svv] = self.second_derivatives(u, v)?;
+            let into = |first: bool| {
+                if first {
+                    Scalar::ONE
+                } else {
+                    Scalar::ONE.neg()
+                }
+            };
+            let along_u = su
+                .prod_cross(&suv.sub(&suu.prod_scalar(mu)))
+                .prod_scalar(into(u_first));
+            let along_v = su
+                .prod_cross(&svv.sub(&suv.prod_scalar(mu)))
+                .prod_scalar(into(v_first));
+            let normal = along_u.add(&along_v).normalize()?;
+            for w in [along_u, along_v] {
+                if !w.could_be_parallel(&normal)
+                    || w.prod_dot(&normal).definitely_less(Scalar::ZERO)
+                {
+                    return Err(GeopError::new(format!(
+                        "the surface's normals next to the corner turn from {along_u:?} to {along_v:?}: a corner with no single normal"
+                    )));
+                }
+            }
+            Ok(normal)
+        };
+        Some(corner().with_context(&|e: GeopError| {
+            e.with_context(format!(
+                "NurbSurface::corner_normal(corner at {:?}, S_u = {su:?}, S_v = {sv:?})",
+                (u, v)
+            ))
+        }))
     }
 
     /// The unit normal of this surface at `point`, which lies on it: at
@@ -414,6 +513,46 @@ mod tests {
         // evaluating rows first, the third partials were a hundred times
         // wider.
         assert!(worst < 50., "{table}");
+    }
+
+    /// Over a box reaching over a knot, every partial encloses its values
+    /// on both sides of it: a surface's span is not carried on over the
+    /// next one. A net joined at a knot only by its position there, bent
+    /// at that joint, so that its derivatives jump, which one span's
+    /// polynomial carried on misses.
+    #[test]
+    fn partials_over_a_knot_enclose_both_spans() {
+        let surface = revolved(1., 0.).refined([4, 1]).unwrap();
+        // Raised, its knots are joints of position only; bent at one.
+        let mut surface = surface.elevate_degree(true).unwrap();
+        let nv = surface.num_v;
+        let mid = surface.degree_u;
+        for j in 0..nv {
+            let cp = &mut surface.control_points[mid * nv + j];
+            cp[2] = cp[2].add(cp[3].mul(Scalar::from_f64(0.3)));
+        }
+        let knot = surface.knot_vector_u[surface.degree_u + 1];
+        let box_u = knot
+            .sub(Scalar::from_f64(0.05))
+            .union(knot.add(Scalar::from_f64(0.05)));
+        let v = Scalar::from_f64(0.4);
+        let over = surface.partials(box_u, v, 2).unwrap();
+        for i in 0..=10 {
+            let u = Scalar::interpolate(
+                box_u.lower(),
+                box_u.upper(),
+                Scalar::from_ratio(i, 10).unwrap(),
+            );
+            let at = surface.partials(u, v, 2).unwrap();
+            for (k, l) in [(0, 0), (1, 0), (0, 1), (2, 0), (1, 1), (0, 2)] {
+                assert!(
+                    at[k][l].could_be_equal(&over[k][l]),
+                    "S[{k}][{l}] at {u:?}: {:?}, over the box {:?}",
+                    at[k][l],
+                    over[k][l]
+                );
+            }
+        }
     }
 
     /// Flat unit patch in the xy-plane: normal should be constant +z everywhere.

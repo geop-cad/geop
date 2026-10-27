@@ -238,15 +238,37 @@ impl Runner {
             .collect()
     }
 
-    /// The text of the file the program it runs names `name`, and its path.
-    /// A make reads it through its reader, which records the read
-    /// ([`crate::reader::Reader::read_file`]).
+    /// The text of the file the program it runs names `name`, and its path:
+    /// a file of bytes read as UTF-8, what is not replaced (see
+    /// [`crate::workspace::text`]). A make reads it through its reader,
+    /// which records the read ([`crate::reader::Reader::read_file`]).
     pub fn read(&self, name: &str) -> GeopResult<(String, Rc<str>)> {
+        let (path, content) = self.content(name)?;
+        let text = match crate::workspace::text(&content) {
+            std::borrow::Cow::Borrowed(_) => content,
+            std::borrow::Cow::Owned(text) => text.into(),
+        };
+        Ok((path, text))
+    }
+
+    /// The bytes of the file the program it runs names `name`, and its
+    /// path (see [`crate::workspace::bytes`]): what a reader of a binary
+    /// format reads ([`crate::reader::Reader::read_bytes`]).
+    pub fn read_bytes(&self, name: &str) -> GeopResult<(String, Rc<[u8]>)> {
+        let (path, content) = self.content(name)?;
+        let bytes = crate::workspace::bytes(&content)
+            .map_err(|e| e.with_context(format!("reading the bytes of {path}")))?;
+        Ok((path, bytes.into()))
+    }
+
+    /// The content of the file the program it runs names `name`, as its
+    /// workspace holds it, and its path.
+    fn content(&self, name: &str) -> GeopResult<(String, Rc<str>)> {
         let workspace = self.workspace()?;
         let path = workspace.resolve(&self.location.file, name);
-        let text =
+        let content =
             (workspace.read(&path)).map_err(|e| e.with_context(format!("reading {path}")))?;
-        Ok((path, text))
+        Ok((path, content))
     }
 
     /// The program in the file the program it runs names `name`, and where

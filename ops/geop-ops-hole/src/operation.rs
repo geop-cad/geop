@@ -1,7 +1,7 @@
 //! [`Hole`]: drill holes into a planar face at points on it, the way a hole
 //! wizard does — simple, counterbored, countersunk or tapped, sized by ISO
-//! tables or by hand. [`Thread`]: put a thread on a cylindrical face,
-//! recorded or modelled.
+//! tables or by hand, or tapped for an NPT pipe thread. [`Thread`]: put a
+//! thread on a round face, straight or tapered, recorded or modelled.
 
 use geop_core_editor::{
     edit_form::{EditForm, FormState, choices, chosen},
@@ -18,6 +18,7 @@ use geop_core_program::{
 };
 use std::collections::BTreeSet;
 
+use geop_core_geometry::shape::RoundWall;
 use geop_core_math::{
     geop_error::{GeopError, GeopResult, WithContext},
     primitives::CoordinateSystem,
@@ -39,8 +40,9 @@ use serde::{Deserialize, Serialize};
 
 use crate::{
     hole::{Head, HoleDepth, HoleShape, hole_tool},
-    iso::{Fit, MetricSize, SIZES, metric},
-    thread::{ThreadPlacement, Wall, thread_tool},
+    iso::{self, Fit, metric},
+    pipe::{self, npt},
+    thread::{ThreadPlacement, ThreadSize, Wall, thread_tool},
 };
 
 one_of! {
@@ -73,7 +75,7 @@ pub enum HoleKind {
     /// Sunk 90° for a countersunk screw's head.
     Countersink,
     /// Drilled to the tap drill and threaded: a cosmetic thread recorded on
-    /// its wall.
+    /// its wall. Sized by a pipe thread, reamed to its taper.
     Tapped,
 }
 
@@ -87,7 +89,8 @@ impl HoleKind {
 }
 
 /// How a hole is sized: by an ISO metric screw — `size` `M6`, and for a
-/// clearance hole how loose a `fit` — or by hand.
+/// clearance hole how loose a `fit` — by an NPT pipe thread, `size` `1/2`,
+/// for a tapped hole, or by hand.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Standard {
@@ -95,6 +98,9 @@ pub enum Standard {
         size: String,
         #[serde(default)]
         fit: Fit,
+    },
+    Npt {
+        size: String,
     },
     /// The drill's `diameter`; for a counterbore or countersink the head's
     /// diameter on the face, and for a counterbore its depth.
@@ -160,11 +166,13 @@ impl HoleArgs {
                 Ok(match self.kind {
                     HoleKind::Simple => HoleShape {
                         diameter: clearance,
+                        taper: 0.0,
                         head: Head::None,
                         thread: None,
                     },
                     HoleKind::Counterbore => HoleShape {
                         diameter: clearance,
+                        taper: 0.0,
                         head: Head::Counterbore {
                             diameter: size.counterbore,
                             depth: size.diameter,
@@ -173,6 +181,7 @@ impl HoleArgs {
                     },
                     HoleKind::Countersink => HoleShape {
                         diameter: clearance,
+                        taper: 0.0,
                         head: Head::Countersink {
                             diameter: size.countersink.ok_or_else(|| {
                                 GeopError::new(format!(
@@ -185,9 +194,28 @@ impl HoleArgs {
                     },
                     HoleKind::Tapped => HoleShape {
                         diameter: size.tap_drill,
+                        taper: 0.0,
                         head: Head::None,
-                        thread: Some(size),
+                        thread: Some(ThreadSize::Metric(size)),
                     },
+                })
+            }
+            Standard::Npt { size } => {
+                let size = npt(size)?;
+                if self.kind != HoleKind::Tapped {
+                    return Err(GeopError::new(format!(
+                        "an NPT size sizes a tapped hole for a pipe thread: make the hole tapped, or pick an ISO size for {}",
+                        size.designation()
+                    )));
+                }
+                // Reamed to the taper, the thread's minor diameter at the
+                // face and below it.
+                let (_, minor) = size.diameters(true);
+                Ok(HoleShape {
+                    diameter: minor,
+                    taper: pipe::TAPER,
+                    head: Head::None,
+                    thread: Some(ThreadSize::Pipe(size)),
                 })
             }
             Standard::Custom {
@@ -206,12 +234,13 @@ impl HoleArgs {
                     },
                     HoleKind::Tapped => {
                         return Err(GeopError::new(
-                            "a tapped hole is sized by its ISO thread: pick an ISO size",
+                            "a tapped hole is sized by its thread: pick an ISO or an NPT size",
                         ));
                     }
                 };
                 Ok(HoleShape {
                     diameter: *diameter,
+                    taper: 0.0,
                     head,
                     thread: None,
                 })
@@ -223,6 +252,12 @@ impl HoleArgs {
     fn describe(&self) -> GeopResult<String> {
         let shape = self.shape()?;
         let mut text = match shape.thread {
+            Some(size) if shape.taper > 0.0 => format!(
+                "reamed 1:{} from Ø{:.3}, thread {}",
+                1.0 / (2.0 * shape.taper),
+                shape.diameter,
+                size.designation()
+            ),
             Some(size) => format!(
                 "tap drill Ø{}, thread {}",
                 shape.diameter,
@@ -318,7 +353,25 @@ fn circle(centre: Vector3, normal: &Vector3, diameter: f64) -> Option<Shape> {
 
 /// The choices of the ISO sizes.
 fn size_choices() -> Vec<Choice> {
-    SIZES.iter().map(|s| Choice::new(s.name, s.name)).collect()
+    iso::SIZES
+        .iter()
+        .map(|s| Choice::new(s.name, s.name))
+        .collect()
+}
+
+/// The choices of the NPT sizes.
+fn npt_choices() -> Vec<Choice> {
+    (pipe::SIZES.iter())
+        .map(|s| Choice::new(s.name, format!("{}\"", s.name)))
+        .collect()
+}
+
+/// The choices of every thread size, ISO and NPT, by the name
+/// [`ThreadSize::named`] reads.
+fn thread_choices() -> Vec<Choice> {
+    (ThreadSize::all())
+        .map(|s| Choice::new(s.name(), s.name()))
+        .collect()
 }
 
 /// Where the holes go: the solid they are drilled into, by name, and each
@@ -407,8 +460,8 @@ fn tap(reader: &Reader, (step, args): &(String, HoleArgs)) -> GeopResult<Threads
     let model = read_model(reader).with_context(ctx)?;
     let result = model.solid_id(&namer.root()).with_context(ctx)?;
     for hole in holes {
-        let thread = tapped_thread(&model, result, hole, shape.diameter / 2.0, size, *length)
-            .with_context(ctx)?;
+        let thread =
+            tapped_thread(&model, result, hole, &shape, &size, *length).with_context(ctx)?;
         threads.add(namer.scoped(&hole.0).name(&["thread"]), thread)?;
     }
     Ok(threads)
@@ -491,10 +544,12 @@ impl PartOperation for Hole {
         });
         let standard = match args.standard {
             Standard::Iso { .. } => "iso",
+            Standard::Npt { .. } => "npt",
             Standard::Custom { .. } => "custom",
         };
         let standards = vec![
             Choice::new("iso", "ISO metric"),
+            Choice::new("npt", "NPT pipe thread"),
             Choice::new("custom", "Custom"),
         ];
         f.select(
@@ -507,7 +562,7 @@ impl PartOperation for Hole {
                 let args = edit.args;
                 let shape = args.shape().ok();
                 match (value, &args.standard) {
-                    ("custom", Standard::Iso { .. }) => {
+                    ("custom", Standard::Iso { .. } | Standard::Npt { .. }) => {
                         // Starting from what the ISO size made.
                         let (head_diameter, head_depth) = match shape.map(|s| s.head) {
                             Some(Head::Counterbore { diameter, depth }) => (diameter, depth),
@@ -520,11 +575,16 @@ impl PartOperation for Hole {
                             head_depth,
                         };
                     }
-                    ("iso", Standard::Custom { .. }) => {
+                    ("iso", Standard::Custom { .. } | Standard::Npt { .. }) => {
                         args.standard = Standard::Iso {
                             size: "M6".into(),
                             fit: Fit::Normal,
                         }
+                    }
+                    // A pipe thread is tapped.
+                    ("npt", Standard::Iso { .. } | Standard::Custom { .. }) => {
+                        args.kind = HoleKind::Tapped;
+                        args.standard = Standard::Npt { size: "1/2".into() };
                     }
                     _ => {}
                 }
@@ -561,6 +621,20 @@ impl PartOperation for Hole {
                         },
                     );
                 }
+            }
+            Standard::Npt { size } => {
+                f.select(
+                    "size",
+                    "size",
+                    size.clone(),
+                    npt_choices(),
+                    true,
+                    |edit, value| {
+                        if let Standard::Npt { size } = &mut edit.args.standard {
+                            *size = value.to_string();
+                        }
+                    },
+                );
             }
             Standard::Custom {
                 diameter,
@@ -665,41 +739,41 @@ impl PartOperation for Hole {
     }
 }
 
-/// The cosmetic thread of the tapped hole `(X, axes)` drilled at `axes`,
-/// of `radius` — on its wall in `solid` of `model` — the thread of `size`
-/// for the hole's scope `X`: from the face down, `length` far — a blind
-/// hole as deep as it was drilled, unless told otherwise — or, if none, all
-/// the way.
+/// The cosmetic thread of the tapped hole `(X, axes)` drilled at `axes`
+/// as `shape` says — on its wall in `solid` of `model` — the thread of
+/// `size` for the hole's scope `X`: from the face down, `length` far — a
+/// blind hole as deep as it was drilled, unless told otherwise — or, if
+/// none, all the way. The wall is where the hole's own axis, diameter and
+/// taper put it.
 fn tapped_thread(
     model: &NamedModel,
     solid: SolidId,
     (scope, axes): &(String, CoordinateSystem),
-    radius: f64,
-    size: &MetricSize,
+    shape: &HoleShape,
+    size: &ThreadSize,
     length: Option<f64>,
 ) -> GeopResult<CosmeticThread> {
     let ctx = with_context!("the thread of the hole at {scope}");
     let into = axes.w().neg();
-    let radius = Scalar::from_f64(radius);
-    let cylinder = geop_core_geometry::shape::Cylinder {
+    let drilled = RoundWall {
         axis: geop_core_geometry::shape::Axis::try_new(*axes.origin(), into)?,
-        radius,
+        radius: Scalar::from_f64(shape.diameter / 2.0),
+        taper: Scalar::from_f64(-shape.taper),
     };
-    let wall = Wall::at(model, solid, &cylinder, axes.origin())
+    let wall = Wall::at(model, solid, &drilled, axes.origin())
         .with_context(ctx)?
         .ok_or_else(|| GeopError::new(format!("the hole at {scope} left no wall to thread")))?;
     // Measured into the solid from the face.
-    let entry =
-        (axes.origin().sub(&wall.cylinder.axis.point)).prod_dot(&wall.cylinder.axis.direction);
-    let placement = wall
-        .placement((entry, into), radius, length)
-        .with_context(ctx)?;
+    let entry = wall.round.along(axes.origin());
+    let placement = wall.placement((entry, into), length).with_context(ctx)?;
     placement.check_fits(size, &wall.face_name(model))?;
     placement.cosmetic(size, wall.face_name(model))
 }
 
-/// Puts an ISO metric thread on the cylindrical face `face` — a shaft's or
-/// a hole's, the whole wall it is part of — for the operation `T`. From one
+/// Puts an ISO metric or an NPT pipe thread on the round face `face` — a
+/// shaft's or a hole's, the whole wall it is part of, straight for a metric
+/// thread and tapered 1:16 for a pipe thread — for the operation `T`. From
+/// one
 /// end of the wall, `length` far or all of it: from its open end — where a
 /// shaft ends, where a hole was drilled from — or, if both or neither are
 /// open, from one of them; from the other if `reversed`.
@@ -715,11 +789,11 @@ pub struct Thread;
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct ThreadArgs {
-    /// A cylindrical face of the wall to thread; none, for a step that has
-    /// not picked it.
+    /// A round face of the wall to thread; none, for a step that has not
+    /// picked it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub face: Option<FaceRef>,
-    /// The ISO metric size: `M6`.
+    /// The ISO metric size, `M6`, or the NPT size, `1/2 NPT`.
     pub size: String,
     /// How far it runs: the whole wall, if none.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -737,7 +811,7 @@ impl ThreadArgs {
     fn placement(&self, model: &NamedModel) -> GeopResult<(Wall, ThreadPlacement)> {
         let wall = Wall::of(model, model.face_id(self.face_name()?)?)?;
         let start = wall.start(self.reversed);
-        let placement = wall.placement(start, wall.cylinder.radius, self.length)?;
+        let placement = wall.placement(start, self.length)?;
         Ok((wall, placement))
     }
 
@@ -745,7 +819,7 @@ impl ThreadArgs {
     fn face_name(&self) -> GeopResult<&str> {
         (self.face.as_ref())
             .map(|face| face.name())
-            .ok_or_else(|| GeopError::new("pick the cylindrical face to thread"))
+            .ok_or_else(|| GeopError::new("pick the round face to thread"))
     }
 }
 
@@ -755,12 +829,12 @@ fn record(reader: &Reader, (step, args): &(String, ThreadArgs)) -> GeopResult<Th
     let mut threads: Threads = reader.previous()?;
     let ctx = with_context!("thread({step}, {args:?})");
     let namer = Namer::new("thread", step)?;
-    let size = metric(&args.size).with_context(ctx)?;
+    let size = ThreadSize::named(&args.size).with_context(ctx)?;
     let model = read_model(reader).with_context(ctx)?;
     let (_, placement) = args.placement(&model).with_context(ctx)?;
     let face = args.face_name()?;
-    placement.check_fits(size, face).with_context(ctx)?;
-    let thread = placement.cosmetic(size, face.to_string())?;
+    placement.check_fits(&size, face).with_context(ctx)?;
+    let thread = placement.cosmetic(&size, face.to_string())?;
     threads.add(namer.root(), thread).with_context(ctx)?;
     Ok(threads)
 }
@@ -769,7 +843,7 @@ impl PartOperation for Thread {
     const KIND: &'static str = "thread";
     const INFO: OperationInfo = OperationInfo::new(
         "Thread",
-        "Put an ISO metric thread on a cylindrical face: recorded as a cosmetic thread, or modelled.",
+        "Put an ISO metric or an NPT pipe thread on a round face: recorded as a cosmetic thread, or modelled.",
         OperationGroup::Features,
         OperationTier::Small,
     )
@@ -817,23 +891,26 @@ impl PartOperation for Thread {
             "size",
             "size",
             args.size.clone(),
-            size_choices(),
+            thread_choices(),
             true,
             |edit, size| edit.args.size = size.to_string(),
         );
         let placed = args.placement(&model);
-        if let Ok(size) = metric(&args.size) {
-            let text = format!(
-                "{}: Ø{} major, Ø{:.3} minor",
+        let internal = placed.as_ref().is_ok_and(|(wall, _)| wall.internal);
+        if let Ok(size) = ThreadSize::named(&args.size) {
+            let (major, minor) = size.diameters(internal);
+            let mut text = format!(
+                "{}: Ø{major:.3} major, Ø{minor:.3} minor",
                 size.designation(),
-                size.diameter,
-                size.minor_diameter()
             );
+            if size.taper() > 0.0 {
+                text += &format!(" at its start, tapering 1:{}", 1.0 / (2.0 * size.taper()));
+            }
             f.form.dialog.text("dimensions", text, Tone::Hint);
         }
         let problem = match &placed {
-            Ok((wall, p)) => (metric(&args.size))
-                .and_then(|size| p.check_fits(size, &wall.face_name(&model)))
+            Ok((wall, p)) => (ThreadSize::named(&args.size))
+                .and_then(|size| p.check_fits(&size, &wall.face_name(&model)))
                 .err()
                 .map(|e| e.root_message().to_string()),
             Err(e) => Some(e.root_message().to_string()),
@@ -860,9 +937,9 @@ impl PartOperation for Thread {
         f.checkbox("modelled", "modelled", args.modelled, |edit, b| {
             edit.args.modelled = b
         });
-        if let (Ok((_, placement)), Ok(size)) = (&placed, metric(&args.size))
+        if let (Ok((_, placement)), Ok(size)) = (&placed, ThreadSize::named(&args.size))
             && let Ok(face) = args.face_name()
-            && let Ok(thread) = placement.cosmetic(size, face.to_string())
+            && let Ok(thread) = placement.cosmetic(&size, face.to_string())
             && let Ok(points) = thread.polyline()
         {
             let visual = Visual::new("helix", Shape::Polyline { points }, Style::Draft);
@@ -929,9 +1006,9 @@ impl ModelOperation for Thread {
     /// Cuts the thread's profile into the solid: a modelled thread.
     fn build(model: &mut NamedModel, _: &Reader, step: &str, args: &ThreadArgs) -> GeopResult<()> {
         let namer = Namer::new("thread", step)?;
-        let size = metric(&args.size)?;
+        let size = ThreadSize::named(&args.size)?;
         let (wall, placement) = args.placement(model)?;
-        placement.check_fits(size, args.face_name()?)?;
+        placement.check_fits(&size, args.face_name()?)?;
         let face = *(wall.faces.first()).ok_or_else(|| GeopError::new("the wall has no faces"))?;
         let why = "a modelled thread is cut into a solid";
         let target = model.solid_name_of_face(face, why)?;
@@ -939,7 +1016,7 @@ impl ModelOperation for Thread {
             model,
             &namer,
             &namer.name(&["tool"]),
-            size,
+            &size,
             &placement,
             &wall,
         )?;

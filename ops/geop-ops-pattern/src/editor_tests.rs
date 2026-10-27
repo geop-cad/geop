@@ -253,3 +253,32 @@ fn new_deformation_twists_the_drilled_box() {
     assert_eq!(args.amount, 90.0);
     assert!(args.end > args.start, "{args:?}");
 }
+
+/// A shear chosen in the dialog asks which way across the axis, and the
+/// drilled box is built sheared along `y` by the offset given.
+#[test]
+fn new_deformation_shears_the_drilled_box() {
+    let mut editor = editor_with(registry(), drilled_box());
+    editor.handle(Command::New {
+        kind: "deform_body".into(),
+    });
+    let update = handled(&mut editor, dialog("deform", Value::Choice("shear".into())));
+    let dialog_shown = update.step.expect("the step is edited").presentation.dialog;
+    assert!(
+        dialog_shown.get("toward_y").is_some(),
+        "a shear has a direction"
+    );
+    handled(&mut editor, dialog("toward_x", Value::Number(0.0)));
+    handled(&mut editor, dialog("toward_y", Value::Number(1.0)));
+    handled(&mut editor, dialog("amount", Value::Number(2.0)));
+    let update = handled(&mut editor, Command::Commit);
+    let program = update.program.expect("the program changed");
+    assert!(
+        program.steps.iter().all(|s| s.error.is_none()),
+        "{:?}",
+        program.steps
+    );
+    let args: crate::DeformBodyArgs = args(editor.program().steps.last().unwrap());
+    assert_eq!(args.deform, crate::Deform::Shear);
+    assert_eq!((args.toward, args.amount), ([0.0, 1.0, 0.0], 2.0));
+}

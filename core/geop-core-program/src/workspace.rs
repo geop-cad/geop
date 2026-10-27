@@ -84,6 +84,84 @@ pub fn is_program(path: &str) -> bool {
     path.ends_with(".geop")
 }
 
+/// What the content of a file of bytes that are not text starts with: a
+/// `data:` URL of them, in base64 (see [`content`]).
+pub const BYTES_PREFIX: &str = "data:application/octet-stream;base64,";
+
+/// The content of a file of `bytes`, as a workspace holds it: a file holds
+/// text, so the text they spell where they are UTF-8 throughout, and
+/// otherwise — a binary STL, a STEP file with a Latin-1 name in it — a
+/// `data:` URL of them in base64. A front end reading a file a user chose
+/// holds it the same way, so files travel as text everywhere and only
+/// what reads bytes ([`bytes`]) or text ([`text`]) decodes them.
+pub fn content(bytes: Vec<u8>) -> String {
+    match String::from_utf8(bytes) {
+        Ok(text) => text,
+        Err(e) => format!("{BYTES_PREFIX}{}", base64(e.as_bytes())),
+    }
+}
+
+/// The bytes of a file whose content is `content` (see [`content`]).
+pub fn bytes(content: &str) -> GeopResult<std::borrow::Cow<'_, [u8]>> {
+    match content.strip_prefix(BYTES_PREFIX) {
+        Some(encoded) => Ok(std::borrow::Cow::Owned(from_base64(encoded)?)),
+        None => Ok(std::borrow::Cow::Borrowed(content.as_bytes())),
+    }
+}
+
+/// The text of a file whose content is `content` (see [`content`]): its
+/// bytes read as UTF-8, what is not replaced.
+pub fn text(content: &str) -> std::borrow::Cow<'_, str> {
+    match bytes(content) {
+        Ok(std::borrow::Cow::Owned(bytes)) => {
+            std::borrow::Cow::Owned(String::from_utf8_lossy(&bytes).into_owned())
+        }
+        _ => std::borrow::Cow::Borrowed(content),
+    }
+}
+
+/// The base64 alphabet of RFC 4648.
+const BASE64: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+
+/// `bytes` as base64 text (RFC 4648, padded).
+pub fn base64(bytes: &[u8]) -> String {
+    let mut text = String::with_capacity(bytes.len().div_ceil(3) * 4);
+    for chunk in bytes.chunks(3) {
+        let b = [0, 1, 2].map(|k| chunk.get(k).copied().unwrap_or(0) as u32);
+        let n = (b[0] << 16) | (b[1] << 8) | b[2];
+        for k in 0..4 {
+            text.push(match BASE64.get((n >> (18 - 6 * k) & 63) as usize) {
+                Some(&digit) if k <= chunk.len() => digit as char,
+                _ => '=',
+            });
+        }
+    }
+    text
+}
+
+/// The bytes of the base64 text `text` (RFC 4648, padded or not).
+fn from_base64(text: &str) -> GeopResult<Vec<u8>> {
+    let digits = text.trim_end_matches('=').as_bytes();
+    let mut bytes = Vec::with_capacity(digits.len() * 3 / 4);
+    let (mut n, mut bits) = (0u32, 0);
+    for &c in digits {
+        let Some(value) = BASE64.iter().position(|&d| d == c) else {
+            return Err(GeopError::new(format!(
+                "{:?} is no base64 digit",
+                c as char
+            )));
+        };
+        n = (n << 6) | value as u32;
+        bits += 6;
+        if bits >= 8 {
+            bits -= 8;
+            bytes.push((n >> bits) as u8);
+            n &= (1 << bits) - 1;
+        }
+    }
+    Ok(bytes)
+}
+
 /// Where [`Files`] reads files from.
 pub trait FileStore {
     /// The text of the file `path`.
@@ -329,6 +407,33 @@ pub fn relative(from: &str, to: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Text is held as it is; bytes that are not text as a `data:` URL,
+    /// which gives them back whole, and as text with what is not UTF-8
+    /// replaced. Base64 as RFC 4648 spells it.
+    #[test]
+    fn files_hold_bytes_as_text() {
+        assert_eq!(content(b"solid cube".to_vec()), "solid cube");
+        assert_eq!(&*bytes("solid cube").unwrap(), b"solid cube");
+        assert_eq!(base64(b"foobar"), "Zm9vYmFy");
+        assert_eq!(base64(b"fo"), "Zm8=");
+        // As the front end holds them (`web/test/files.test.ts`).
+        assert_eq!(
+            content(vec![0xff, 0xf8, 0xf1]),
+            format!("{BYTES_PREFIX}//jx")
+        );
+        for n in 0..7 {
+            let binary: Vec<u8> = (0..n).map(|k| 0xff - 7 * k as u8).collect();
+            let held = content(binary.clone());
+            if n > 0 {
+                assert!(held.starts_with(BYTES_PREFIX), "{held}");
+            }
+            assert_eq!(&*bytes(&held).unwrap(), &binary[..]);
+        }
+        let latin1 = content(b"caf\xe9".to_vec());
+        assert_eq!(text(&latin1), "caf\u{fffd}");
+        assert!(bytes(&format!("{BYTES_PREFIX}!!")).is_err());
+    }
 
     #[test]
     fn references_resolve_relative_to_their_file() {

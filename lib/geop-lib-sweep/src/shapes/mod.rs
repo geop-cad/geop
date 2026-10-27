@@ -70,6 +70,37 @@ pub fn cylinder(
     revolved_cylinder(model, name, v3(x, y, z), radius, height).unwrap()
 }
 
+/// A prism over the triangle `(0, 0)`, `(2, 0)`, `(2, 2)`, `1` high, whose
+/// two legs are one curve of degree one, kinked at its knot where they
+/// meet, `x = 2, y = 0`, as a curve a STEP file gives in one piece often
+/// is; named `prism(name)`. The extrusion cuts the curve at the kink
+/// (see [`crate::SweepLoop::at_corners`]): its walls along the legs are
+/// `prism(name,c0)` and `prism(name,c0#k1)`, an edge between them.
+pub fn creased_prism(model: &mut NamedModel, name: &str) -> SolidId {
+    let p = |x: f64, y: f64| Vector3::from_array([x, y, 1.0].map(Scalar::from_f64));
+    let k = Scalar::from_f64;
+    let legs = NurbCurve2D::try_new(
+        1,
+        vec![p(0.0, 0.0), p(2.0, 0.0), p(2.0, 2.0)],
+        vec![k(0.0), k(0.0), k(0.5), k(1.0), k(1.0)],
+    )
+    .unwrap();
+    let back = NurbCurve2D::line(v2(2.0, 2.0), v2(0.0, 0.0)).unwrap();
+    let namer = geop_ops_model::Namer::new("prism", name).unwrap();
+    let built = crate::extrude(
+        model,
+        &namer,
+        Some(&namer.root()),
+        &CoordinateSystem::world_at(v3(0.0, 0.0, 0.0)),
+        &[Scalar::ZERO, Scalar::ONE],
+        &[crate::SweepLoop::plain(geop_ops_model::Profile::closed(
+            vec![legs, back],
+        ))],
+    )
+    .unwrap();
+    built.solid.unwrap()
+}
+
 /// A circle of radius `r` around `(cx, cy)` as four quarter arcs,
 /// counter-clockwise (reversed: clockwise, for a hole).
 pub fn circle_at(cx: f64, cy: f64, r: f64, clockwise: bool) -> Vec<NurbCurve2D> {

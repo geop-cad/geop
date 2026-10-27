@@ -16,20 +16,19 @@
 //!   it is made tangent to the face each of those edges bounds, continuing
 //!   it smoothly (see [`NurbSurface3D::tangent_to`]): exactly to a flat
 //!   face, and to a curved one leaving it at a millionth of a radian
-//!   outwards, checked all along, so that it never dips through it.
-//! - **three, or five and more**: a flat inner polygon — each corner of the
-//!   loop's halfway to their average, on the plane through it square to
-//!   the loop — and a quadrilateral along every edge, between the edge, the
-//!   straight spokes from its ends to the inner polygon and the polygon's
-//!   side. Each is a Coons patch, so the fill runs exactly along the loop,
-//!   every edge whole — the fill knits to the faces around the hole; across
-//!   the spokes the patches meet at an angle, not smoothly: an honest
-//!   patchwork, not a fair surface.
+//!   outwards, proven so all along, so that it never dips through it.
+//! - **three, or five and more**: a flat inner polygon and a quadrilateral
+//!   along every edge, between the edge, the spokes from its ends to the
+//!   inner polygon and the polygon's side (see [`NurbSurface3D::fill`]).
+//!   The fill runs exactly along the loop, every edge whole — it knits to
+//!   the faces around the hole — and is smooth inside: the quadrilaterals
+//!   meet each other across the spokes, and the polygon, tangentially.
+//!   Along edges picked as `tangent` it is tangent to their faces, as a
+//!   patch of four is.
 //!
 //! A Coons patch needs a corner wherever two of its sides meet: a loop of
 //! four that runs on smoothly through a vertex leaves a patch with no
-//! normal there, and is refused, naming the vertex. So is tangency
-//! anywhere but along a loop of four. Two
+//! normal there, and is refused, naming the vertex. Two
 //! edges sharing an end are ruled into a face that comes to a point there,
 //! as a cone into its apex: that side of the patch collapses to the
 //! shared vertex.
@@ -43,7 +42,6 @@ use geop_core_editor::{
 use geop_core_geometry::{
     nurb_curve::{NurbCurve, NurbCurve2D, NurbCurve3D, flatten_point, loop_signed_area},
     nurb_surface::{FlatPatch, Neighbour, NurbSurface3D},
-    search::{MAX_NODES, min_subdivision_size},
     shape::Plane,
 };
 use geop_core_math::{
@@ -439,29 +437,10 @@ impl Tangency {
         })
     }
 
-    /// At the fraction `t` of the way along `side`, as it runs: the face's
-    /// unit normal, and the way in its tangent plane away from it — the
-    /// face lies to the left of its boundary, seen from where its normal
-    /// points, so away from it is the way the face runs the edge crossed
-    /// with the normal.
-    fn at(&self, side: &Side, t: Scalar) -> GeopResult<(Vector3, Vector3)> {
-        let curve = side.oriented();
-        let (t0, t1) = curve.domain();
-        let s = Scalar::interpolate(t0, t1, t);
-        let point = curve.evaluate(s)?;
-        let normal = match &self.plane {
-            Some(plane) => plane.normal,
-            None => self
-                .surface
-                .normal_at(&point, MAX_NODES, min_subdivision_size())?,
-        };
-        let along = curve.tangent(s)?;
-        let along = if side.forward == self.forward {
-            along
-        } else {
-            along.neg()
-        };
-        Ok((normal, along.prod_cross(&normal)))
+    /// The face as what a patch along `side` is tangent to: it runs the
+    /// side as the loop does where it runs the edge as the side does.
+    fn neighbour(&self, side: &Side) -> GeopResult<Neighbour<'_>> {
+        Neighbour::new(&self.surface, side.forward == self.forward)
     }
 }
 
@@ -531,62 +510,55 @@ fn fill(
     }
 
     let curves: Vec<Curve3> = sides.iter().map(Side::oriented).collect();
-    if n == 4 {
-        for k in 0..n {
-            if !has_corner(&curves[(k + n - 1) % n], &curves[k])? {
-                return Err(GeopError::new(format!(
-                    "the loop runs on smoothly through vertex {}, between edges {} and {}: a Coons patch filling it needs a corner there",
-                    sides[k].start_name,
-                    sides[(k + n - 1) % n].name,
-                    sides[k].name
-                )));
-            }
-        }
-        for (k, s) in sides.iter().enumerate() {
-            spec.edges.push(EdgeSpec {
-                curve: s.curve.clone(),
-                start: if s.forward { k } else { (k + 1) % 4 },
-                end: if s.forward { (k + 1) % 4 } else { k },
-            });
-            names.edges.push(namer.name(&[&s.name]));
-        }
-        let mut surface = NurbSurface3D::coons([&curves[0], &curves[1], &curves[2], &curves[3]])?;
-        if !faces.is_empty() {
-            let along: [Option<(&Side, &Tangency)>; 4] = std::array::from_fn(|k| {
-                let (_, face) = faces.iter().find(|(e, _)| sides[k].entity == *e)?;
-                Some((&sides[k], face))
-            });
-            let at = along.map(|along| along.map(|(side, face)| move |t: Scalar| face.at(side, t)));
-            let neighbours: [Option<Neighbour<'_>>; 4] = std::array::from_fn(|k| {
-                Some(Neighbour {
-                    at: at[k].as_ref()?,
-                    flat: along[k]?.1.plane.is_some(),
-                })
-            });
-            surface = surface.tangent_to(&neighbours)?;
-        }
-        spec.faces.push(FaceSpec::on_unit_square(
-            surface,
-            [0, 1, 2, 3].map(|k| CoedgeOn::Edge(k, sides[k].sense())),
-        )?);
-        spec.shells.push(vec![0]);
-        names.faces.push(namer.root());
-        return Ok((spec, names));
-    }
-
-    if let Some((e, _)) = faces.first() {
-        let side = sides.iter().find(|s| s.entity == *e).expect("a side");
-        return Err(GeopError::new(format!(
-            "a loop of {n} edges is filled with a patch of quadrilaterals, which cannot be made tangent along edge {}: tangency is supported along a loop of four edges",
-            side.name
-        )));
-    }
     if n < 3 {
         return Err(GeopError::new(format!(
             "a loop of {n} edges that is not flat is not supported: it needs three corners at least"
         )));
     }
-    quads(namer, sides, &curves, spec, names)
+    // Per side, the face it is to be tangent to, if any.
+    let neighbours = sides
+        .iter()
+        .map(|side| {
+            faces
+                .iter()
+                .find(|(e, _)| side.entity == *e)
+                .map(|(_, face)| face.neighbour(side))
+                .transpose()
+        })
+        .collect::<GeopResult<Vec<_>>>()?;
+    if n != 4 {
+        return quads(namer, sides, &curves, &neighbours, spec, names);
+    }
+    for k in 0..n {
+        if !has_corner(&curves[(k + n - 1) % n], &curves[k])? {
+            return Err(GeopError::new(format!(
+                "the loop runs on smoothly through vertex {}, between edges {} and {}: a Coons patch filling it needs a corner there",
+                sides[k].start_name,
+                sides[(k + n - 1) % n].name,
+                sides[k].name
+            )));
+        }
+    }
+    for (k, s) in sides.iter().enumerate() {
+        spec.edges.push(EdgeSpec {
+            curve: s.curve.clone(),
+            start: if s.forward { k } else { (k + 1) % 4 },
+            end: if s.forward { (k + 1) % 4 } else { k },
+        });
+        names.edges.push(namer.name(&[&s.name]));
+    }
+    let mut surface = NurbSurface3D::coons([&curves[0], &curves[1], &curves[2], &curves[3]])?;
+    if !faces.is_empty() {
+        let neighbours: [Option<Neighbour<'_>>; 4] = std::array::from_fn(|k| neighbours[k].clone());
+        surface = surface.tangent_to(&neighbours)?;
+    }
+    spec.faces.push(FaceSpec::on_unit_square(
+        surface,
+        [0, 1, 2, 3].map(|k| CoedgeOn::Edge(k, sides[k].sense())),
+    )?);
+    spec.shells.push(vec![0]);
+    names.faces.push(namer.root());
+    Ok((spec, names))
 }
 
 /// The plane `sides` all lie in, if they do: through three of their
@@ -693,51 +665,23 @@ fn flat_face(sides: &[Side], plane: &Plane) -> GeopResult<FaceSpec> {
     })
 }
 
-/// The loop `sides` filled with a quadrilateral along each side around a
-/// flat inner polygon (see the module docs), added to `spec`, which has
-/// the loop's corners.
+/// The loop `sides` filled smoothly with a quadrilateral along each side
+/// around a flat inner polygon, tangent along the sides with `neighbours`
+/// to their faces (see [`NurbSurface3D::fill`]), added to `spec`, which
+/// has the loop's corners.
 fn quads(
     namer: &Namer,
     sides: &[Side],
     curves: &[Curve3],
+    neighbours: &[Option<Neighbour<'_>>],
     mut spec: BodySpec,
     mut names: BodyNames,
 ) -> GeopResult<(BodySpec, BodyNames)> {
     let n = sides.len();
-    // The inner polygon: each corner halfway to the corners' average,
-    // moved onto the plane through that average square to the loop's
-    // (Newell) normal — all free choices, sharpened, so long as the
-    // polygon is flat and inside the loop.
-    let center = sides
-        .iter()
-        .fold(Vector3::zero(), |sum, s| sum.add(&s.start))
-        .prod_scalar(Scalar::ONE.div(Scalar::from_i64(n as i64))?)
-        .sharpen();
-    let mut normal = [0.0f64; 3];
-    for k in 0..n {
-        let (a, b) = (&sides[k].start, &sides[(k + 1) % n].start);
-        let (a, b) = (
-            a.to_array().map(|x| x.to_f64()),
-            b.to_array().map(|x| x.to_f64()),
-        );
-        normal[0] += (a[1] - b[1]) * (a[2] + b[2]);
-        normal[1] += (a[2] - b[2]) * (a[0] + b[0]);
-        normal[2] += (a[0] - b[0]) * (a[1] + b[1]);
-    }
-    let plane = Plane::try_new(center, Vector3::from_array(normal.map(Scalar::from_f64)))?;
-    let inner: Vec<Vector3> = sides
-        .iter()
-        .map(|s| {
-            let halfway = center.add(
-                &s.start
-                    .sub(&center)
-                    .prod_scalar(Scalar::ONE.div(Scalar::TWO)?),
-            );
-            Ok(plane.project(&halfway).sharpen())
-        })
-        .collect::<GeopResult<_>>()?;
+    let fill = NurbSurface3D::fill(curves, neighbours)?;
+    let inner = &fill.inner;
     // Vertices: the corners `0..n`, the inner corners `n..2n`.
-    for (s, p) in sides.iter().zip(&inner) {
+    for (s, p) in sides.iter().zip(inner) {
         spec.vertices.push(*p);
         names.vertices.push(namer.name(&[&s.start_name, "inner"]));
     }
@@ -755,7 +699,7 @@ fn quads(
         });
         names.edges.push(namer.name(&[&s.name]));
         spec.edges.push(EdgeSpec {
-            curve: NurbCurve3D::line(s.start, inner[k])?,
+            curve: fill.spokes[k].clone(),
             start: k,
             end: inner_at(k),
         });
@@ -779,23 +723,9 @@ fn quads(
         });
     }
     let mut faces = Vec::with_capacity(n + 1);
-    for k in 0..n {
+    for (k, surface) in fill.patches.iter().enumerate() {
         let next = (k + 1) % n;
-        let spoke_out = spec.edges[3 * next + 1].curve.clone();
-        let back = spec.edges[3 * k + 2].curve.reverse();
-        let spoke_in = spec.edges[3 * k + 1].curve.reverse();
-        for (a, b, what) in [
-            (&curves[k], &spoke_out, &sides[next].start_name),
-            (&back, &spoke_in, &sides[k].start_name),
-        ] {
-            if !has_corner(a, b)? {
-                return Err(GeopError::new(format!(
-                    "the spoke at vertex {what} runs along edge {}: the patch along it would have no corner there",
-                    sides[k].name
-                )));
-            }
-        }
-        let surface = NurbSurface3D::coons([&curves[k], &spoke_out, &back, &spoke_in])?;
+        let surface = surface.clone();
         faces.push(spec.faces.len());
         spec.faces.push(FaceSpec::on_unit_square(
             surface,
@@ -809,7 +739,7 @@ fn quads(
         names.faces.push(namer.name(&[&sides[k].name, "patch"]));
     }
     // The inner polygon, flat, its sides run as the loop runs.
-    let mut middle = flat_face(&inner_sides, &plane)?;
+    let mut middle = flat_face(&inner_sides, &fill.plane)?;
     for (k, c) in middle.outer.iter_mut().enumerate() {
         c.on = CoedgeOn::Edge(3 * k + 2, Sense::Forward);
     }

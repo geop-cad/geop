@@ -1593,6 +1593,95 @@ fn offsets_to_both_sides_and_refusals() {
     assert!(tone == Tone::Error && why.contains("smaller"), "{why:?}");
 }
 
+/// Offset of an outline and a hole in it at once: both chains selected,
+/// a click in the material between them offsets both into it, the outline
+/// in and the hole out, by one distance.
+#[test]
+fn an_outline_and_a_hole_offset_at_once() {
+    let mut e = drawing();
+    e.key("r");
+    e.click(0.0, 0.0);
+    e.click(2.0, 1.0);
+    e.click(0.5, 0.3);
+    e.click(1.0, 0.7);
+    e.key("Escape");
+    let drawn = e.drawn_curves().len();
+    e.key("o");
+    e.click(1.0, 0.0);
+    e.click(0.75, 0.3);
+    assert_eq!(e.selection().len(), 8, "both rectangles");
+    // In the material, 0.1 right of the hole's right side.
+    e.click(1.1, 0.5);
+    assert_eq!(e.count(|c| matches!(c, Constraint::Offset { .. })), 1);
+    assert_eq!(e.curves_of("line").len(), 8 + 8, "{:?}", e.drawn_curves());
+    assert!(e.drawn_curves().len() > drawn + 8);
+    e.dialog("prompt", Value::Text("0.1".into()));
+    let report = e.report();
+    assert!(report.converged, "{report:?}");
+    let s = e.sketch();
+    let new_lines: Vec<CurveId> = e
+        .curves_of("line")
+        .into_iter()
+        .filter(|c| !s.curves[c].construction)
+        .collect();
+    let all = bounds(s, &new_lines);
+    assert!(
+        near(all, [0.0, 0.0, 2.0, 1.0]),
+        "the outline and its offset inside it: {all:?}"
+    );
+    // The hole grown by 0.1 all round: its offset's corners rounded.
+    assert_eq!(e.curves_of("arc").len(), 4);
+}
+
+/// Offset of a spline: its offset is no spline, so a spline is fitted to
+/// it, held to it point by point at the distance — the radius of a
+/// construction circle, which is asked for — and it follows that distance
+/// and the spline it is the offset of.
+#[test]
+fn a_spline_offsets_into_a_fitted_spline() {
+    let mut e = drawing();
+    e.key("s");
+    for [x, y] in [[0.2, 0.2], [0.7, 0.6], [1.2, 0.2]] {
+        e.click(x, y);
+    }
+    e.key("Enter");
+    let spline: Vec<CurveId> = e.drawn_curves().iter().map(|(id, _)| *id).collect();
+    assert_eq!(spline.len(), 1, "{:?}", e.drawn_curves());
+    let free = e.report().dof;
+    e.key("o");
+    // Its middle, `(P0 + 2 P1 + P2) / 4`.
+    e.click(0.7, 0.4);
+    assert_eq!(e.selection().len(), 1);
+    e.click(0.7, 0.55);
+    let fits: Vec<CurveId> = e
+        .drawn_curves()
+        .into_iter()
+        .filter(|(id, k)| matches!(k, CurveKind::Spline { .. }) && !spline.contains(id))
+        .map(|(id, _)| id)
+        .collect();
+    assert_eq!(fits.len(), 1, "{:?}", e.drawn_curves());
+    assert!(e.count(|c| matches!(c, Constraint::OffsetAt { .. })) >= 4);
+    assert!(e.presentation.prompt.is_some(), "the distance is asked for");
+    e.dialog("prompt", Value::Text("0.1".into()));
+    let report = e.report();
+    assert!(report.converged && report.dof == free, "{report:?}");
+    // Its points 0.1 from the spline: the middle of the fit straight
+    // above the spline's, where the spline runs level.
+    let s = e.sketch();
+    let middle = |c: CurveId| {
+        let CurveKind::Spline { control_points, .. } = &s.curves[&c].kind else {
+            unreachable!()
+        };
+        let q: Vec<P2> = control_points.iter().map(|&p| xy(s, p)).collect();
+        q
+    };
+    let source = middle(spline[0]);
+    let top = 0.25 * source[0][1] + 0.5 * source[1][1] + 0.25 * source[2][1];
+    let fit = middle(fits[0]);
+    let fit_top = fit.iter().map(|q| q[1]).fold(f64::MIN, f64::max);
+    assert!(fit_top > top + 0.09, "{fit:?} over {source:?}");
+}
+
 /// Mirror: what is selected is mirrored across the line clicked, a half
 /// outline ending on the sketch's `y` axis closing into a whole one; with
 /// nothing selected, the line comes first and each curve clicked after is

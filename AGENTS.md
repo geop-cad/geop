@@ -670,6 +670,19 @@ points, Newton seeds, which meridian to leave a pole along, where to split a
 curve at a matched point. Validity is the minimum. When a choice is free,
 choose the well-conditioned one.
 
+## Normal equations square what is ill-conditioned
+
+The minimizer's step met its linearized constraints through the rows'
+coefficients `R` in an orthonormal basis, solved as `RᵀR y = −Rᵀc`. Two
+arcs of a trimmed sketch offset held to one crossing by a tangency each
+made `R` ill-conditioned, `RᵀR` squared it, and the sharpened `y` met none
+of the rows: the solve stopped flat at its first step with the dimension's
+residual untouched, though the configuration was proven. Solved by
+Householder reflections of the rows themselves, it moves. Where a step
+must meet rows, check that it does (`c + J δ`) before blaming the model;
+and solve least squares by orthogonal transformations, not by forming
+`AᵀA`.
+
 ## Decide a rank over the box you prove, not at a point
 
 `system::enclose` chose its independent constraint rows by eliminating the
@@ -858,8 +871,9 @@ not in slow arithmetic:
   evaluated over a parameter interval reaching past one knot span used
   that span's polynomial for all of it: 25 times too wide over a fitted
   curve, which a search then subdivided away at great cost. Curves now
-  unite their spans' parts (`find_spans`); surfaces still extrapolate, and
-  the tangent-branch search on blends pays for it.
+  unite their spans' parts (`find_spans`), and so do a surface's
+  `partials`, which a proof over a box (`enclose_foot`) reads; `evaluate`
+  still extrapolates, and the tangent-branch search on blends pays for it.
 
 ## An operation is a `PartOperation`, edited through one form
 
@@ -1096,6 +1110,28 @@ makes a cubic follow it to that accuracy. Put a station exactly there and
 break the spline: the ball's contact on the edge between the two faces
 (found on that edge, not near it), a station at the vertex where the radius
 law kinks.
+
+### Prove the tilt, and where both sides are yours, need none
+
+The boundary fill's patches checked their tilt off a curved face at the
+Greville abscissae and halfway between. `NurbSurface3D::strays` proves it
+over the whole side instead: `f = into·n` over a stretch by the mean value
+form, the face's normal and its turn over the box of `(u, v)` Krawczyk
+proves the side's feet in. Its width goes as the stretch squared, so a
+millionth of a radian is shown over stretches of `1e-4`: thousands per
+side. A cheap look at the abscissae says where to refine while the patch
+is far off; only the proof says it is done.
+
+Two patches that are both the kernel's need no tilt between them: the
+N-sided fill makes the cross derivatives either side of a spoke `α V + β
+T` in one polynomial plane field, so they are tangent exactly. What would
+not converge before was no numerics: where two quads and a flat polygon
+meet, each tangent to the other two, the corner must be a flat point (the
+vertex enclosure problem). And where a tilt rises from nothing at a corner
+of a curved face, the corner's twist has to take in how the face's normal
+turns along the side (`Neighbour::turning`): collocation alone left a bump
+just off the corner that refinement shrank only as `h²`; halving the spans
+where the patch strays, not all of them, then converges in a few rounds.
 
 ## A tool's own curves must not lie in the solid's faces
 

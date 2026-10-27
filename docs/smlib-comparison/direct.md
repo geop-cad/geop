@@ -60,16 +60,16 @@ geop is missing almost the whole *direct-edit* toolbox:
 | Non-uniform scale (to B-splines) | `Transform` non-isotropic branch (28800+): everything to NURBS | missing | **Missing** (exact for NURBS: an affine map of control points) |
 | General 4x4 transform | `SmBrep.cpp:28975 Transform(matrix)` | missing | low priority |
 | Bend about an axis (neutral radius, K-factor) | `SmBendVolume.cpp` (math `h:40-75`), `SmSpaceBend.cpp:161 DoSpaceBend` | `ops/geop-ops-pattern/src/deform_body.rs DeformBody` (bend), `core/geop-core-geometry/src/deform.rs AxialMap::bend` | **Done**: zone imprinted, rest carried on rigidly, proven bound, pcurves kept |
-| Unbend (flatten about an axis) | `SmUnbendVolume.cpp`, `SmSpaceUnbend.cpp:183` | `FlatPattern` for sheet-metal bodies only (`ops/geop-ops-sheetmetal/src/flat_pattern.rs`) | Partial (sheet metal only) |
+| Unbend (flatten about an axis) | `SmUnbendVolume.cpp`, `SmSpaceUnbend.cpp:183` | `FlatPattern` for sheet-metal bodies only (`ops/geop-ops-sheetmetal/src/flat_pattern.rs`) | Partial (sheet metal only). Not an `AxialMap`: its map takes a point by its angle about the bend's centre, `atan2` of two coordinates, which no map affine across the axis composes on the control points; it would need a fit of the composition with a proven bound |
 | Twist about an axis | `SmTwistVolume.cpp` (no B-rep driver!) | `DeformBody` (twist), `AxialMap::twist` | **Done**, either hand |
-| Taper, pinch, shear (axial shape function) | `NL_Geom.cpp:4740 N_TransformPtWithShapeFuncAndScale` (points only; curve and surface versions compiled out) | `DeformBody` (taper), `AxialMap::taper` | **Done** (taper, exact); pinch and shear not |
+| Taper, pinch, shear (axial shape function) | `NL_Geom.cpp:4740 N_TransformPtWithShapeFuncAndScale` (points only; curve and surface versions compiled out) | `DeformBody` (taper, pinch, shear), `AxialMap::taper` (a pinch is a taper one way across), `AxialMap::shear` (affine: `AxialMap::as_motion`, no zone division) | **Done**, all exact |
 | Set deform points (free-form: move control points) | `SmBrep.cpp:9324 GetDeformPoints` / 9382 `SetDeformPoints` | missing (subd has a cage editor) | low priority |
-| Mesh (triangles) to B-rep | `SmBrep.cpp:3128 CreateFromTriangleBag` (one planar face per triangle, then stitch), 3073 `CreateFromPolyBrep` (`MakeFaceFromPolyFace`) | missing (STL export only, `core/geop-core-rasterize`) | **Missing** |
-| Split a face at C0/C1 discontinuities of its surface | `SmBrep.cpp:18366 SubdivideFaceAtDiscontinuities`, 17702 `FixAllFaceDiscontinuities` | missing (fillet puts stations at kinks; no generic split) | Missing (medium) |
+| Mesh (triangles) to B-rep | `SmBrep.cpp:3128 CreateFromTriangleBag` (one planar face per triangle, then stitch), 3073 `CreateFromPolyBrep` (`MakeFaceFromPolyFace`) | `ImportStl` (`ops/geop-ops-step/src/stl.rs`), ASCII or binary: `BodySpec::of_triangles`, coplanar triangles merged. Binary files travel as `data:` URLs of their bytes (`geop_core_program::workspace::content`) | **Done** |
+| Split a face at C0/C1 discontinuities of its surface | `SmBrep.cpp:18366 SubdivideFaceAtDiscontinuities`, 17702 `FixAllFaceDiscontinuities` | a sweep cuts each profile curve at its corners, C0 knots where it turns (`SweepLoop::at_corners`), so no swept face is creased; a creased wall had the shell fail to offset it. Not yet for a surface a STEP file gives creased; fillet puts stations at kinks | Partial |
 | Simplify (knot removal, refit) | `SmBrep.cpp:3946 Simplify` → `Refine3DCurves` (the comment says it "causes bad problems"), `RemoveKnots` | missing | Low priority; SMLib's is unreliable |
 | Recognise analytic surfaces in B-splines | `SmBrep.cpp:2303 ConvertCurvesToAnalytics`, `CopyAndAddAnalytics`, `RefitSurfOfRevolutionSurfaces` | `NurbSurface3D::as_plane` / `as_cylinder` (used by draft); STEP import keeps analytic kinds | Partial |
 | Topology change tracking | `SmTrackTopologyChanges.cpp:189` (Notify callback: removed, added, changed lists) | stable names (`Namer`, `lib/geop-lib-booleans/src/naming.rs` edge_split / face_split / trace / piercing) | **geop better** for its purpose (persistent naming); see §2.16 for what to borrow |
-| Attributes propagated through split, merge, copy | `inc/SmAttribute.h:226-520` (`SM_AB_COPY`/`REFERENCE`/`TEMP`; Split, Merge, Coincident, Copy callbacks) | names only; colour is a part property (`ops/geop-ops-model/src/parameters/steps.rs:617`); no per-face attributes | Missing: per-entity user attributes (colour, material, tags) |
+| Attributes propagated through split, merge, copy | `inc/SmAttribute.h:226-520` (`SM_AB_COPY`/`REFERENCE`/`TEMP`; Split, Merge, Coincident, Copy callbacks) | names only; colour is a part property (`ops/geop-ops-model/src/parameters/steps.rs:617`); no per-face attributes | Missing: per-entity user attributes (colour, material, tags). Round 3 judged it not small: a face's colour needs a field in the scene protocol and the web renderer, a step to set it, and its inheritance read from a name's arguments, which a long name spells by its digest (`LONGEST_ARGUMENT`) and so loses (see §2.15) |
 | Copy a B-rep with an original↔copy map | `SmCopyBrepMap.cpp` | `extract.rs`, pattern copies named `move(M,X)` / `mirror(M,X)` | parity via names |
 | Validate a patch before applying | `SmFeatureExecutive.cpp:1735 ValidatePatch` | `validate` / `validate_fast` (`core/geop-core-topology/src/validation/mod.rs`) after every build | geop better |
 
@@ -679,6 +679,15 @@ colour is a part-level property.
 STEP `STYLED_ITEM` colours), resolved through the same name origins (`face_origin`,
 `edge_origin`), so a split face's halves inherit their parent's attributes. No
 callback zoo is needed: inheritance falls out of naming. Read colours on STEP import.
+
+**Round 3: skipped, not small.** `face_origin` and `edge_origin` live only for the
+length of one boolean (`BooleanNaming`); afterwards a face's ancestry is only in the
+arguments of its name, and a name's argument longer than `LONGEST_ARGUMENT` is spelled
+by its digest, so a face cut often enough loses it. Doing it properly means: a target of
+attributes by name, a step to set them (a picker and a colour field), ancestry recorded
+at the split rather than parsed back out of names, a colour per face in the scene
+protocol (`ViewFace`) and the web renderer's materials, and STEP `STYLED_ITEM` read on
+import. Each is modest; together they are a feature of their own.
 
 ### 2.16 Topology change tracking — borrow one idea
 
