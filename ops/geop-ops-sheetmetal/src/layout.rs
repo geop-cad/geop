@@ -236,10 +236,10 @@ impl Layout {
     /// Takes the area inside `cut` — closed loops, counter-clockwise, apart
     /// from each other — out of the faces: their edges inside it go, the
     /// cut's curves inside a face become its edges, every curve split where
-    /// they cross. Refuses, naming the curves, a cut that crosses a curve
-    /// at its end, touches one, runs along one, or crosses one that is no
-    /// line or arc; and one that splits a face in two, takes one away
-    /// entirely, or misses the sheet.
+    /// they cross, or where a joint of the cut lies on one. Refuses, naming
+    /// the curves, a cut that crosses an edge at its end, touches one,
+    /// runs along one, or crosses one that is no line or arc; and one that
+    /// splits a face in two, takes one away entirely, or misses the sheet.
     pub fn subtract(&mut self, cut: &[Vec<CutCurve>]) -> GeopResult<()> {
         let used = self.used_edges();
         let segs: BTreeMap<usize, Seg> = used
@@ -281,9 +281,27 @@ impl Layout {
             })
             .collect();
 
-        // Where the cut's curves cross the edges: a vertex each, at its
-        // place along both.
+        // The joints of the cut's loops — joint `i` where its curve `i`
+        // starts — and those of them on an edge, where the loop crosses
+        // it: a vertex each, which splits the edge there.
         let mut vertices = self.vertices.clone();
+        let joints: Vec<Vec<usize>> = cut
+            .iter()
+            .map(|lp| {
+                lp.iter()
+                    .map(|c| {
+                        vertices.push(LayoutVertex {
+                            at: c.curve.start()?,
+                            name: None,
+                            own: None,
+                        });
+                        Ok(vertices.len() - 1)
+                    })
+                    .collect()
+            })
+            .collect::<GeopResult<_>>()?;
+        // Where the cut's curves cross the edges between their ends: a
+        // vertex each, at its place along both.
         let mut on_edge: BTreeMap<usize, Vec<(Scalar, usize)>> = BTreeMap::new();
         let mut on_cut: Vec<Vec<Vec<(Scalar, usize)>>> =
             cut.iter().map(|lp| vec![Vec::new(); lp.len()]).collect();
@@ -313,6 +331,28 @@ impl Layout {
                             .or_default()
                             .push((along_edge, vertices.len() - 1));
                         on_cut[l][i].push((along_cut, vertices.len() - 1));
+                    }
+                }
+            }
+        }
+        // The joints on an edge.
+        for &e in &used {
+            let edge = &self.edges[e];
+            for (l, lp) in cut.iter().enumerate() {
+                for (i, c) in lp.iter().enumerate() {
+                    let into = &lp[(i + lp.len() - 1) % lp.len()];
+                    let joint = joints[l][i];
+                    let along = joint_on(&segs[&e], &vertices[joint].at, &into.curve, &c.curve)
+                        .map_err(|why| {
+                            GeopError::new(format!(
+                                "the cut's curves {} and {} {why} the edge {}, where they meet",
+                                into.name.root(),
+                                c.name.root(),
+                                edge.name.root()
+                            ))
+                        })?;
+                    if let Some(along) = along {
+                        on_edge.entry(e).or_default().push((along, joint));
                     }
                 }
             }
@@ -352,17 +392,7 @@ impl Layout {
         // and placed in the face it lies in, if any.
         let mut added: Vec<Vec<usize>> = vec![Vec::new(); self.faces.len()];
         for (l, lp) in cut.iter().enumerate() {
-            let joints: Vec<usize> = lp
-                .iter()
-                .map(|c| {
-                    vertices.push(LayoutVertex {
-                        at: c.curve.start()?,
-                        name: None,
-                        own: None,
-                    });
-                    Ok(vertices.len() - 1)
-                })
-                .collect::<GeopResult<_>>()?;
+            let joints = &joints[l];
             for (i, c) in lp.iter().enumerate() {
                 let points = ordered(&mut on_cut[l][i], &c.name)?;
                 let mut stops = vec![joints[i]];
@@ -739,6 +769,14 @@ impl Seg {
         }
     }
 
+    /// Its ends, if it is a line or an arc.
+    fn ends(&self) -> Vec<Vector2> {
+        match self {
+            Seg::Line { a, b } | Seg::Arc { a, b, .. } => vec![*a, *b],
+            Seg::Other => Vec::new(),
+        }
+    }
+
     /// A point of it, away from its ends: halfway, along a line or an arc.
     pub fn middle(&self, curve: &NurbCurve2D) -> GeopResult<Vector2> {
         match self {
@@ -886,10 +924,63 @@ fn crossings(
             (Along::Outside, _) | (_, Along::Outside) => {}
             (Along::Inside(ke), Along::Inside(kc)) if !tangent => found.push((ke, kc, p)),
             (Along::Inside(_), Along::Inside(_)) => return Err("touches".into()),
+            // At a joint of the cut's loop, which `joint_on` decides.
+            (Along::Inside(_), Along::Undecided)
+                if c.ends().iter().any(|q| q.could_be_equal(&p)) => {}
             _ => return Err("crosses, at an end of one of them,".into()),
         }
     }
     Ok(found)
+}
+
+/// Where the joint `at` of a cut's loop, between its curves `into` and
+/// `out`, lies along the line or arc `e`: `None` off it, else its place
+/// along `e`, the loop crossing `e` there. Why not, if it lies at an end of
+/// `e`, or the loop could only touch `e` there. A curve that is neither
+/// line nor arc is checked against the cut's curves whole (see
+/// [`crossings`]).
+fn joint_on(
+    e: &Seg,
+    at: &Vector2,
+    into: &NurbCurve2D,
+    out: &NurbCurve2D,
+) -> Result<Option<Scalar>, String> {
+    // The direction of `e` there.
+    let direction = match e {
+        Seg::Line { a, b } => {
+            let d = b.sub(a);
+            if !d.prod_cross(&at.sub(a)).could_be_equal(Scalar::ZERO) {
+                return Ok(None);
+            }
+            d
+        }
+        Seg::Arc { center, radius, .. } => {
+            let r = at.sub(center);
+            if !r.norm_sq().could_be_equal(radius.mul(*radius)) {
+                return Ok(None);
+            }
+            r.perp()
+        }
+        Seg::Other => return Ok(None),
+    };
+    let along = match e.along(at) {
+        Along::Outside => return Ok(None),
+        Along::Inside(along) => along,
+        Along::Undecided => return Err("meet, at an end of".into()),
+    };
+    // The loop crosses `e` if it arrives from one side and leaves to the
+    // other: both its tangents there on one side of `e`'s direction.
+    let tangent = |curve: &NurbCurve2D, t: Scalar| curve.tangent(t).map_err(|e| e.to_string());
+    let side_in = direction.prod_cross(&tangent(into, into.domain().1)?);
+    let side_out = direction.prod_cross(&tangent(out, out.domain().0)?);
+    let zero = Scalar::ZERO;
+    if (side_in.definitely_greater(zero) && side_out.definitely_greater(zero))
+        || (side_in.definitely_less(zero) && side_out.definitely_less(zero))
+    {
+        Ok(Some(along))
+    } else {
+        Err("touch".into())
+    }
 }
 
 /// Where the line through `a` and `b` meets the circle: each point, and
@@ -938,12 +1029,13 @@ fn circle_circle(
             return Ok(Vec::new());
         }
         // One circle: apart only if neither arc reaches into the other.
-        let ends = |s: &Seg| match s {
-            Seg::Arc { a, b, .. } => vec![*a, *b],
-            _ => Vec::new(),
-        };
-        let apart = ends(c).iter().all(|p| matches!(e.along(p), Along::Outside))
-            && ends(e).iter().all(|p| matches!(c.along(p), Along::Outside));
+        let apart = c
+            .ends()
+            .iter()
+            .all(|p| matches!(e.along(p), Along::Outside))
+            && e.ends()
+                .iter()
+                .all(|p| matches!(c.along(p), Along::Outside));
         return if apart {
             Ok(Vec::new())
         } else {

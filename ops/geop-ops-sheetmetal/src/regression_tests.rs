@@ -154,18 +154,15 @@ fn hem_registry() -> GeopResult<OperationRegistry> {
 /// A round hole centred on a bend (a vent across a fold): a 100 x 60
 /// plate 1 thick, bend radius 1, a flange 30 high up its edge along `x`,
 /// then a sheet cut of a circle of radius 5 centred at `(50, 2)` — on the
-/// bend's line, where the plate meets the bend. Refused:
-///
-/// > the cut's curve sheet_cut(sc,c,c1) crosses, at an end of one of them,
-/// > the edge edge_flange(f1,line)
+/// bend's line, where the plate meets the bend.
 ///
 /// A circle is drawn as four quarter arcs, their ends at its left, right,
-/// top and bottom; centred on the line, two of those ends lie on it. The
-/// user drew one circle, not four arcs: centred at `(50, 0)` or `(50,
-/// 2.3)`, the same hole cuts. A hole of radius 3 centred `(50, 5)` beside
-/// a hem fails alike, its bottom on `hem(h,line)`.
+/// top and bottom; centred on the line, two of those joints lie on it.
+/// The layout looked for crossings only between the ends of the cut's
+/// curves, and refused one at a joint ("crosses, at an end of one of
+/// them"). A joint on an edge now splits it, where the loop arrives from
+/// one side of the edge and leaves to the other (`joint_on`).
 #[test]
-#[ignore = "bug: a sheet cut of a circle centred on a bend line is refused — \"the cut's curve sheet_cut(sc,c,c1) crosses, at an end of one of them, the edge edge_flange(f1,line)\": the circle's quarter points lie on the line; moved off it, the hole cuts"]
 fn round_hole_centred_on_a_bend_line() {
     let mut program = Program::new();
     let plate: Sketch = outline(&[[0.0, 0.0], [100.0, 0.0], [100.0, 60.0], [0.0, 60.0]]);
