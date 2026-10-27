@@ -333,6 +333,7 @@ fn view_of(
             view,
             state: instance.state,
             fixed: instance.fixed,
+            color: None,
         });
     }
     Ok(PartView {

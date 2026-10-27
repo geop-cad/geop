@@ -117,6 +117,21 @@ pub enum Command {
         name: String,
         visible: bool,
     },
+    /// Draw the placed part `name` — `bolt`, `asm/bolt` — in the colour
+    /// `color`, `#rrggbb`, over its own, or — `None` — in its own again,
+    /// for as long as the same file is edited: a display setting, as the
+    /// camera is, not a step.
+    Appearance {
+        name: String,
+        #[serde(default)]
+        color: Option<String>,
+    },
+    /// Show only the placed parts `names` — with the parts placed in them
+    /// and those they are placed in — of the parts placed, or every one
+    /// again for none, for as long as the same file is edited.
+    Isolate {
+        names: Vec<String>,
+    },
     /// Take the tool `key` in hand (see [`crate::tools::Tool`]), or —
     /// `None` — put the one in hand down. With no step being edited, the
     /// events of the viewport are the tool's. `pick:<inspector>` is the

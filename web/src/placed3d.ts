@@ -105,13 +105,14 @@ function share(view: PartView): Shared {
 }
 
 /** The boxes of `view`'s parts placed at `matrices`: its extent — a ball's diameter — as a cube about its center, where each is. */
-function boxesOf(view: PartView, matrices: THREE.Matrix4[]): THREE.InstancedMesh {
+function boxesOf(view: PartView, parts: ViewInstance[]): THREE.InstancedMesh {
   const { center, size } = view.extent;
   const edge = size / Math.sqrt(3);
   const local = new THREE.Matrix4().makeScale(edge, edge, edge).setPosition(center[0], center[1], center[2]);
-  const mesh = new THREE.InstancedMesh(BOX, BOXES, matrices.length);
-  matrices.forEach((m, i) => mesh.setMatrixAt(i, m.clone().multiply(local)));
+  const mesh = new THREE.InstancedMesh(BOX, BOXES, parts.length);
+  parts.forEach((p, i) => mesh.setMatrixAt(i, frameMatrix(p.frame).multiply(local)));
   mesh.instanceMatrix.needsUpdate = true;
+  tint(mesh, parts);
   mesh.computeBoundingSphere();
   return mesh;
 }
@@ -139,14 +140,24 @@ function copied(colors: Float32Array, copies: number): Float32Array {
   return out;
 }
 
-/** The batch of `shared` for the placed parts at `matrices`. */
-function batchOf(shared: Shared, matrices: THREE.Matrix4[]): THREE.Group {
+/** Tints each of `parts`, drawn by `mesh`, in its colour (see `ViewInstance.color`), if any has one: the rest in white, which leaves their own. */
+function tint(mesh: THREE.InstancedMesh, parts: ViewInstance[]) {
+  if (!parts.some((p) => p.color)) return;
+  const white = new THREE.Color(0xffffff);
+  parts.forEach((p, i) => mesh.setColorAt(i, p.color ? new THREE.Color(p.color) : white));
+  if (mesh.instanceColor) mesh.instanceColor.needsUpdate = true;
+}
+
+/** The batch of `shared` for the placed parts `parts`. */
+function batchOf(shared: Shared, parts: ViewInstance[]): THREE.Group {
   const group = new THREE.Group();
+  const matrices = parts.map((p) => frameMatrix(p.frame));
   if (shared.faces) {
     // The geometry is the component's, shared: disposing the batch leaves it.
     const mesh = new THREE.InstancedMesh(shared.faces, FACES, matrices.length);
     matrices.forEach((m, i) => mesh.setMatrixAt(i, m));
     mesh.instanceMatrix.needsUpdate = true;
+    tint(mesh, parts);
     mesh.computeBoundingSphere();
     group.add(mesh);
     // A section caps the placed parts as it does the part's own solids.
@@ -249,7 +260,7 @@ export class PlacedLayer {
 
     for (const [key, shared] of this.shared) {
       const parts = boxes.get(key) ?? [];
-      const built = JSON.stringify(parts.map((p) => [p.name, p.frame]));
+      const built = JSON.stringify(parts.map((p) => [p.name, p.frame, p.color]));
       if (built === shared.boxesBuilt) continue;
       if (shared.boxes) {
         this.group.remove(shared.boxes);
@@ -258,16 +269,13 @@ export class PlacedLayer {
       }
       shared.boxesBuilt = built;
       if (parts.length === 0) continue;
-      shared.boxes = boxesOf(
-        this.components[key],
-        parts.map((p) => frameMatrix(p.frame)),
-      );
+      shared.boxes = boxesOf(this.components[key], parts);
       this.group.add(shared.boxes);
     }
 
     for (const [key, shared] of this.shared) {
       const parts = batched.get(key) ?? [];
-      const built = JSON.stringify(parts.map((p) => [p.name, p.frame]));
+      const built = JSON.stringify(parts.map((p) => [p.name, p.frame, p.color]));
       if (built === shared.built) continue;
       if (shared.batch) {
         this.group.remove(shared.batch);
@@ -276,10 +284,7 @@ export class PlacedLayer {
       }
       shared.built = built;
       if (parts.length === 0) continue;
-      shared.batch = batchOf(
-        shared,
-        parts.map((p) => frameMatrix(p.frame)),
-      );
+      shared.batch = batchOf(shared, parts);
       this.group.add(shared.batch);
     }
 

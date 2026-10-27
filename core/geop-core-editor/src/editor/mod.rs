@@ -39,7 +39,7 @@ use geop_core_program::{
     element::PickedElement,
     operation_registry::OperationRegistry,
     part::Part,
-    placed::PlacedPart,
+    placed::{INSTANCE_SEPARATOR, PlacedPart},
     program::{Program, ProgramStep},
     reader::{Reader, Seen},
     runner::Runner,
@@ -48,7 +48,7 @@ use geop_core_program::{
 };
 use std::{
     cell::RefCell,
-    collections::{BTreeMap, HashMap},
+    collections::{BTreeMap, BTreeSet, HashMap},
     rc::Rc,
 };
 
@@ -58,7 +58,7 @@ use crate::{
     registry::{Drawings, Registry},
     step_editor::{Editing, StepEditor},
     tools::Tool,
-    view::{EMPTY_EXTENT, PartView, drawn},
+    view::{EMPTY_EXTENT, PartView, ViewInstance, drawn},
 };
 use build::Build;
 use geop_core_math::{
@@ -170,8 +170,20 @@ struct Shown {
     seen: Seen,
     steps: usize,
     hidden: Vec<String>,
+    /// The colours placed parts are drawn in, by name (see
+    /// [`Editor::colors`]).
+    colors: BTreeMap<String, String>,
     /// The sheet's centre and size.
     sheet: Option<([f64; 3], f64)>,
+}
+
+/// A placed part as the viewer was sent it: the key of the component it is
+/// drawn from, where it is, and the colour it is drawn in.
+#[derive(PartialEq)]
+struct Sent {
+    component: String,
+    frame: [f64; 12],
+    color: Option<String>,
 }
 
 /// Editing a program: see the module docs.
@@ -210,10 +222,9 @@ pub struct Editor {
     written: Vec<File>,
     /// The file the last command wrote, for the update to carry.
     exported: Option<Export>,
-    /// The placed parts the viewer was sent, by name: the key of the
-    /// component each is drawn from, and where it is, as sent — `None`
+    /// The placed parts the viewer was sent, by name, as sent — `None`
     /// when the viewer may have none (see [`SceneState`]).
-    placed: Option<HashMap<String, (String, [f64; 12])>>,
+    placed: Option<HashMap<String, Sent>>,
     /// What the viewer keeps of the scenes it was sent: the components and
     /// the meshes of faces, by key.
     kept: Kept,
@@ -236,6 +247,12 @@ pub struct Editor {
     /// What the user chose to show or hide, by name, over what the editor
     /// would by itself (see [`Editor::hidden`]).
     visibility: BTreeMap<String, bool>,
+    /// The colours the user chose to draw placed parts in, by name, over
+    /// their own ([`Command::Appearance`]).
+    colors: BTreeMap<String, String>,
+    /// The placed parts the user chose to show alone, if any
+    /// ([`Command::Isolate`]).
+    isolated: BTreeSet<String>,
 }
 
 impl Editor {
@@ -282,6 +299,8 @@ impl Editor {
             views: RefCell::default(),
             drawings: Drawings::default(),
             visibility: BTreeMap::new(),
+            colors: BTreeMap::new(),
+            isolated: BTreeSet::new(),
         }
     }
 
@@ -455,6 +474,7 @@ impl Editor {
             seen: self.shown_part(steps).seen(),
             steps,
             hidden,
+            colors: self.colors.clone(),
             sheet: (step.as_ref())
                 .and_then(|s| s.presentation.sheet)
                 .map(|e| (e.center.to_array().map(|c| c.to_f64()), e.size.to_f64())),
@@ -525,9 +545,17 @@ impl Editor {
             for (number, x) in numbers.iter_mut().zip(frame.iter().flatten()) {
                 *number = *x;
             }
-            let drawn = (instance.component.clone(), numbers);
+            let color = shown.colors.get(&instance.name).cloned();
+            let drawn = Sent {
+                component: instance.component.clone(),
+                frame: numbers,
+                color: color.clone(),
+            };
             if before.get(&instance.name) != Some(&drawn) {
-                instances.push(instance.clone());
+                instances.push(ViewInstance {
+                    color,
+                    ..instance.clone()
+                });
             }
             placed.insert(instance.name.clone(), drawn);
         }
@@ -935,6 +963,8 @@ impl Editor {
                     self.undo.clear();
                     self.redo.clear();
                     self.visibility.clear();
+                    self.colors.clear();
+                    self.isolated.clear();
                 }
                 self.file = program;
                 self.marker = None;
@@ -1001,6 +1031,25 @@ impl Editor {
             }
             Command::Visibility { name, visible } => {
                 self.visibility.insert(name, visible);
+                Changed::Nothing
+            }
+            Command::Appearance { name, color } => {
+                match color {
+                    Some(color) => {
+                        let hex = color.strip_prefix('#').unwrap_or_default();
+                        if hex.len() != 6 || !hex.chars().all(|c| c.is_ascii_hexdigit()) {
+                            return Err(GeopError::new(format!(
+                                "{color:?} is no colour: a colour is `#rrggbb`"
+                            )));
+                        }
+                        self.colors.insert(name, color)
+                    }
+                    None => self.colors.remove(&name),
+                };
+                Changed::Nothing
+            }
+            Command::Isolate { names } => {
+                self.isolated = names.into_iter().collect();
                 Changed::Nothing
             }
             #[expect(
@@ -1327,6 +1376,22 @@ impl Editor {
         let placing = (self.open.as_ref()).is_some_and(|open| self.picks_built(open));
         if !placing {
             hidden.extend(self.registry.hidden(&self.shown_part(steps)));
+        }
+        // The placed parts not isolated, of those drawn, when some are: a
+        // part is shown with the parts placed in it and those it is in.
+        if !self.isolated.is_empty() {
+            let related = |name: &str, other: &str| {
+                let inside = |a: &str, b: &str| {
+                    (a.strip_prefix(b)).is_some_and(|rest| rest.starts_with(INSTANCE_SEPARATOR))
+                };
+                name == other || inside(name, other) || inside(other, name)
+            };
+            for instance in &self.view_of(steps).instances {
+                let name = &instance.name;
+                if !self.isolated.iter().any(|i| related(name, i)) && !hidden.contains(name) {
+                    hidden.push(name.clone());
+                }
+            }
         }
         // Then what the user chose — but what a click could pick now is
         // shown, to be picked.

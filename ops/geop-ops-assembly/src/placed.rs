@@ -120,6 +120,7 @@ pub(crate) fn draw_instances(reader: &Reader, view: &mut PartView) -> GeopResult
                 .and_then(|state| unknowns.get(state))
                 .is_none_or(|unknown| unknown.mobility == Mobility::Fixed),
             state: located.state,
+            color: None,
         });
     }
     Ok(())

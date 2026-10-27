@@ -448,6 +448,10 @@ pub struct ViewInstance {
     /// Whether no mate moves it.
     #[serde(skip)]
     pub fixed: bool,
+    /// The colour it is drawn in over its own, `#rrggbb`, if the user chose
+    /// one for it (see [`crate::editor::Command::Appearance`]).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub color: Option<String>,
 }
 
 impl std::fmt::Debug for ViewInstance {

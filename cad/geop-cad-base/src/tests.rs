@@ -199,6 +199,58 @@ mod editor {
         assert_eq!(scene_again, scene);
     }
 
+    /// A placed part is drawn in the colour chosen for it, and shown alone
+    /// when isolated: the scene says so, and nothing is built for it.
+    #[test]
+    fn a_placed_part_is_coloured_and_isolated_as_chosen() {
+        let mut editor = crate::editor();
+        let name = "pin_in_plate".to_string();
+        let folder = None;
+        handled(&mut editor, Command::LoadWorkspaceExample { name, folder });
+        let makes = |editor: &Editor| editor.part().revision();
+        let built = makes(&editor);
+        let update = handled(
+            &mut editor,
+            Command::Appearance {
+                name: "pin".into(),
+                color: Some("#ff8800".into()),
+            },
+        );
+        let scene = update.scene.expect("the colour is drawn");
+        let colors: Vec<_> = (scene.instances.iter())
+            .map(|i| (i.name.as_str(), i.color.as_deref()))
+            .collect();
+        assert_eq!(
+            colors,
+            [("pin", Some("#ff8800"))],
+            "only the pin is sent again"
+        );
+        let refused = editor.handle(Command::Appearance {
+            name: "pin".into(),
+            color: Some("orange".into()),
+        });
+        assert!(refused.error.is_some_and(|e| e.contains("#rrggbb")));
+
+        let update = handled(
+            &mut editor,
+            Command::Isolate {
+                names: vec!["pin".into()],
+            },
+        );
+        let hidden = update.scene.expect("the plate is hidden").hidden;
+        assert!(hidden.contains(&"plate".to_string()), "{hidden:?}");
+        assert!(!hidden.contains(&"pin".to_string()), "{hidden:?}");
+        let update = handled(&mut editor, Command::Isolate { names: vec![] });
+        assert!(
+            !update
+                .scene
+                .expect("shown again")
+                .hidden
+                .contains(&"plate".to_string())
+        );
+        assert_eq!(makes(&editor), built, "a display setting builds nothing");
+    }
+
     fn distance(editor: &Editor, id: &str) -> f64 {
         let program = editor.program();
         let args: ExtrudeArgs = args(&program.steps[program.index_of(id).unwrap()]);

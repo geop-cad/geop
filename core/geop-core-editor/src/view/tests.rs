@@ -80,6 +80,7 @@ fn a_hover_tests_the_triangles_near_its_ray() {
             view: component.clone(),
             state: None,
             fixed: true,
+            color: None,
         });
     }
     let placed = placed.finish();
@@ -273,6 +274,7 @@ fn a_view_placed_three_times_is_picked_where_each_is() {
         view: component.clone(),
         state: None,
         fixed: true,
+        color: None,
     };
     let mut view = PartView::new();
     view.instances = vec![

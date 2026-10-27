@@ -127,6 +127,8 @@ export interface ViewInstance {
   /** The key of its component's view. */
   component: string;
   frame: Frame;
+  /** The colour to draw it in over its own, `#rrggbb`, if the user chose one (see the command `appearance`). */
+  color?: string;
 }
 
 /** A face of the part, as drawn. */
@@ -648,6 +650,8 @@ export type Command =
   | { command: "redo" }
   /** Show or hide the datum, sketch, solid, face standing on its own or placed part `name`. */
   | { command: "visibility"; name: string; visible: boolean }
+  | { command: "appearance"; name: string; color: string | null }
+  | { command: "isolate"; names: string[] }
   /** Something the user did in the panel `key` (see [[ProgramState]] `panels`), which it reads as `payload`. */
   | { command: "panel"; key: string; payload: unknown }
   /**
