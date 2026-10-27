@@ -791,7 +791,16 @@ impl Editor {
                 }
                 // A drag changes neither, but what it pulls moves the parts —
                 // of the program's own steps: a placed part's pulls nothing.
+                // The pointer moving over the view pulls nothing new: what
+                // the step pulled was solved for at the edit that pulled it,
+                // and a hover is not solved for again (nor its form built
+                // a second time).
+                let moved_only = matches!(
+                    event,
+                    StepEditEvent::Hover { .. } | StepEditEvent::Leave | StepEditEvent::View { .. }
+                );
                 let pulls = open.within.is_none()
+                    && !moved_only
                     && !(open
                         .editor
                         .form(

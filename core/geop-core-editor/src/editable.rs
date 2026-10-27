@@ -18,6 +18,18 @@ use serde::Serialize;
 
 use crate::editing::{Event, Form, hit::Scene};
 
+thread_local! {
+    static FORMS_BUILT: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
+/// How many forms of the step edited this thread has built
+/// ([`Editors::presentation`]) ever: what a test bounds the work of a
+/// pointer event by, as [`crate::view::parts_drawn`] does drawing — a form
+/// can ask the whole assembly about what it built.
+pub fn forms_built() -> usize {
+    FORMS_BUILT.get()
+}
+
 /// What an operation is to an editor: its short name and what it does —
 /// what an editor offers it by — and where and how prominently the editor
 /// offers it.
@@ -444,6 +456,7 @@ impl Editors {
         step: &str,
         editing: &dyn Any,
     ) -> GeopResult<Form> {
+        FORMS_BUILT.set(FORMS_BUILT.get() + 1);
         let step = self.step(runner, part, program, step)?;
         (step.operation).presentation(&step.context, step.args, editing)
     }

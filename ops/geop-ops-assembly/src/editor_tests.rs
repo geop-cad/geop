@@ -1195,6 +1195,32 @@ fn a_step_of_a_placed_part_is_edited_where_it_is_placed() {
     );
 }
 
+/// Moving the pointer over a part being placed, once its placement was
+/// typed in — which it then pulls to, for as long as it is edited — solves
+/// nothing again: each hover builds the step's form three times at most
+/// (to take the event, to see what it changed, to show it), not six with a
+/// solve between, and draws no part.
+#[test]
+fn hovering_over_a_part_placed_by_its_fields_solves_nothing() {
+    let mut step = placing(args(false, &[]));
+    step.dialog("x", Value::Number(2.0));
+    let (forms, parts) = (
+        geop_core_editor::editable::forms_built(),
+        geop_core_editor::view::parts_drawn(),
+    );
+    for k in 0..5 {
+        step.send(StepEditEvent::Hover {
+            pointer: down_at(0.1 * k as f64, 0.5, 1.0),
+            shift: false,
+        });
+    }
+    let forms = geop_core_editor::editable::forms_built() - forms;
+    assert!(forms <= 15, "five hovers built {forms} forms");
+    assert_eq!(geop_core_editor::view::parts_drawn() - parts, 0);
+    let pose = moved_to(&step, "b");
+    assert_close(apply(&pose, [0.0; 3]), [2.0, 0.0, 0.0], 1e-6);
+}
+
 /// What the scene of `editor` hides, sent afresh.
 fn scene_hidden(editor: &mut Editor) -> Vec<String> {
     let update = handled(editor, Command::Show);
