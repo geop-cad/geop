@@ -8,7 +8,8 @@
 //! ([`DragTool`]) with no step edited. The joints panel ([`JointsPanel`])
 //! sets a joint's coordinates, and says how free the placed parts are and
 //! which constraints conflict. [`PartPattern`] places copies of a placed
-//! part in a row or round an axis.
+//! part in a row or round an axis. [`Explode`] moves placed parts off
+//! where they are assembled, one move of an exploded view per step.
 //!
 //! Also what is exported of an assembly: an STL file of a part with the
 //! parts placed in it ([`Stl`]), and its mechanism as a robot description
@@ -26,6 +27,7 @@ pub mod editor;
 mod editor_tests;
 #[cfg(any(test, feature = "examples"))]
 pub mod examples;
+mod explode;
 #[cfg(test)]
 mod frame_tests;
 mod icons;
@@ -62,6 +64,7 @@ use geop_core_math::geop_error::GeopResult;
 pub use add_part::{AddPart, AddPartArgs};
 pub use drag_tool::DragTool;
 pub use draw::AssemblyDrawer;
+pub use explode::{Direction, Explode, ExplodeArgs};
 pub use mates::{
     Anchor, CouplingKind, Joint, JointKind, Kind, Limits, MOTIONS, Mate, MateKind, Motion, On,
     Resolved, Transmission, foot_parameter, joint_parameter, mate, mate_name,
@@ -84,6 +87,7 @@ pub fn register(r: Registry) -> GeopResult<Registry> {
     let r = r
         .operation(AddPart)?
         .operation(PartPattern)?
+        .operation(Explode)?
         .exporter(Stl)?
         .exporter(Urdf)?
         .drawer(AssemblyDrawer)?

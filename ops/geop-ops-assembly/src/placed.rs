@@ -29,7 +29,11 @@ use geop_lib_constraints::{solve::Mobility, unknown::Unknowns};
 use geop_ops_model::{
     datums::read_datums,
     parameters::{Instance, Placement, define_instance, read_properties},
-    placed::{Drawn, drawn, drawn_target, placed_parts},
+    placed::{
+        Drawn, drawn, drawn_target,
+        explode::{exploded, explosions},
+        placed_parts,
+    },
     read_model,
     sketch::PlacedSketch,
 };
@@ -104,12 +108,14 @@ pub fn define_placed(
 /// leaves out the parts placed in it — they are drawn here already.
 ///
 /// One is drawn fixed that no solve moves: a copy, or one a step holds
-/// fixed.
+/// fixed. One an exploded view moves is drawn where its moves put it (see
+/// [`geop_ops_model::placed::explode`]).
 pub(crate) fn draw_instances(reader: &Reader, view: &mut PartView) -> GeopResult<()> {
     let unknowns = Unknowns::of(reader)?;
+    let explosions = explosions(reader);
     for placed in placed_parts(reader)? {
         let located = placed.located;
-        let pose = located.world;
+        let pose = exploded(&explosions, &placed.name, &located.world);
         let origin = geop_core_math::primitives::CoordinateSystem::world_at(
             geop_core_math::vector::Vector3::zero(),
         );

@@ -2303,3 +2303,81 @@ fn an_unknown_solid_names_the_known_ones() {
     let err = stl_triangles(&runner, &mut part, &program, &["nothing"]).unwrap_err();
     assert!(err.to_string().contains("cylinder(hole)"), "{err}");
 }
+
+/// The chain's links exploded, move by move: the last lifted 2 up, then
+/// the last two slid 1 along `x` and turned a quarter about it. Each is
+/// drawn where its moves put it, the first as assembled; the lift trails a
+/// line; and what the state and the mates say is as assembled.
+#[test]
+fn an_exploded_view_draws_the_links_moved_move_by_move() {
+    use crate::{Direction, ExplodeArgs};
+    use geop_ops_model::placed::explode::explosions;
+    let (files, mut program) = workspace_example("chain");
+    program.push(
+        "lift",
+        ExplodeArgs {
+            parts: vec!["link3".into()],
+            distance: 2.0,
+            ..Default::default()
+        },
+    );
+    program.push(
+        "spread",
+        ExplodeArgs {
+            parts: vec!["link2".into(), "link3".into()],
+            direction: Direction::X,
+            distance: 1.0,
+            angle: 90.0,
+            trails: false,
+            ..Default::default()
+        },
+    );
+    let part = build(&program, &workspace(files)).unwrap();
+    let reader = part.view();
+    assert_eq!(explosions(&reader).len(), 2, "a target others read");
+    assert!(part.check_mates().unwrap().converged);
+    let mut view = geop_core_editor::view::PartView::new();
+    crate::placed::draw_instances(&reader, &mut view).unwrap();
+    let drawn = |name: &str| {
+        (view.instances.iter())
+            .find(|i| i.name == name)
+            .unwrap()
+            .pose
+    };
+    let assembled = |name: &str| locate(&reader, name).unwrap().world;
+    assert_eq!(drawn("link1"), assembled("link1"));
+    assert_eq!(
+        pose_of(&program, "link3"),
+        assembled("link3"),
+        "the state as it was"
+    );
+    // Both turned a quarter about x: their y now up.
+    for name in ["link2", "link3"] {
+        let up = drawn(name)
+            .motion()
+            .rotate(&Vector3::from_array([0.0, 1.0, 0.0].map(n)));
+        assert_close([0, 1, 2].map(|k| up[k].to_f64()), [0.0, 0.0, 1.0], 1e-9);
+    }
+    // The lift moved the last link 2 further up than the one before it,
+    // which the quarter turn about x turns into 2 along -y.
+    let origin = |name: &str| drawn(name).apply(&Vector3::zero());
+    let (two, three) = (origin("link2"), origin("link3"));
+    let apart = [0, 1, 2].map(|k| three[k].sub(two[k]).to_f64());
+    let before = [0, 1, 2].map(|k| {
+        let (a, b) = (assembled("link3"), assembled("link2"));
+        a.position()[k].sub(b.position()[k]).to_f64()
+    });
+    assert_close(apart, [before[0], -(before[2] + 2.0), before[1]], 1e-9);
+    // The lift trails a line, from the last link's middle up 2; the spread
+    // none.
+    let trails = geop_core_editor::view::annotations_of(&reader);
+    let [trail] = &trails[..] else {
+        panic!("one trail: {trails:?}");
+    };
+    assert_eq!(trail.name, "explode(lift,link3)");
+    let [from, to] = &trail.polyline[..] else {
+        panic!("a line: {trail:?}");
+    };
+    let up = [0, 1, 2].map(|k| to[k].sub(from[k]).to_f64());
+    assert_close(up, [0.0, 0.0, 2.0], 1e-12);
+}

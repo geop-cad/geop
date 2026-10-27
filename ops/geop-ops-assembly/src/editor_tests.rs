@@ -1339,3 +1339,116 @@ fn a_roller_is_mated_to_a_drum_by_clicking_its_face_and_rim() {
     assert!((x.hypot(y) - 2.5).abs() < 1e-7, "{x} {y} {z}");
     assert!(z <= 1.0 + 1e-7, "the rim no higher than the drum: {z}");
 }
+
+/// Where the scene `update` sent draws the placed part `name`: its frame's
+/// origin, if it sent it.
+fn sent_at(update: &Update, name: &str) -> Option<[f64; 3]> {
+    let scene = update.scene.as_ref()?;
+    let instance = scene.instances.iter().find(|i| i.name == name)?;
+    Some([0, 1, 2].map(|k| instance.frame.origin()[k].to_f64()))
+}
+
+/// Where the editor draws the placed part `name` of the part as it last
+/// ran: its frame's origin.
+fn drawn_at(editor: &Editor, name: &str) -> [f64; 3] {
+    let drawings = geop_core_editor::registry::Drawings::default();
+    let view = (editor.registry().draw(&editor.part(), &drawings, None)).unwrap();
+    let instance = view.instances.iter().find(|i| i.name == name).unwrap();
+    [0, 1, 2].map(|k| instance.frame.origin()[k].to_f64())
+}
+
+/// An exploded view made as a user makes it: a new explode step, a click
+/// on the chain's last link takes it in, and dragging it from the side
+/// lifts it the way it is dragged. The scene draws it lifted, a trail
+/// below it; seeking back before the step draws it assembled again.
+#[test]
+fn a_link_is_exploded_by_clicking_and_dragging_it() {
+    let mut editor = editor();
+    handled(
+        &mut editor,
+        Command::LoadWorkspaceExample {
+            name: "chain".into(),
+            folder: None,
+        },
+    );
+    let mut step = Stepping::new(editor, "explode");
+    step.send(StepEditEvent::Click {
+        pointer: from_above(8.0, 0.2),
+        button: geop_core_editor::editing::Button::Primary,
+        double: false,
+        shift: false,
+    });
+    assert_eq!(step.args::<crate::ExplodeArgs>().parts, ["link3"]);
+    assert!(step.presentation().dialog.get("distance").is_some());
+    // Grabbed on its side, looking along y, and dragged 2 up.
+    step.send(StepEditEvent::Drag {
+        from: pointer([8.0, -10.0, 0.5], [0.0, 1.0, 0.0]),
+        to: pointer([8.0, -10.0, 2.5], [0.0, 1.0, 0.0]),
+        done: true,
+        shift: false,
+    });
+    let distance = step.args::<crate::ExplodeArgs>().distance;
+    assert!((distance - 2.0).abs() < 1e-9, "{distance}");
+    let mut editor = step.editor;
+    handled(&mut editor, Command::Commit);
+    assert_close(drawn_at(&editor, "link3"), [6.0, 0.0, 2.4], 1e-9);
+    assert_close(drawn_at(&editor, "link2"), [3.0, 0.0, 0.2], 1e-9);
+    let trails = geop_core_editor::view::annotations_of(&editor.part());
+    assert_eq!(trails.len(), 1, "{trails:?}");
+    // What the state says is as assembled.
+    match editor.program().state.get(&pose_state("link3")) {
+        Some(StateValue::Pose(pose)) => {
+            let at = pose.position();
+            assert!((at[2].to_f64() - 0.4).abs() < 1e-9, "{at:?}")
+        }
+        other => panic!("the link's pose: {other:?}"),
+    }
+    // Grabbed where it is drawn, lifted, by the drag tool, it turns towards
+    // the pointer as it would assembled, and stays lifted.
+    handled(
+        &mut editor,
+        Command::Tool {
+            key: Some("drag".into()),
+        },
+    );
+    let update = handled(
+        &mut editor,
+        Command::Event {
+            event: StepEditEvent::Hover {
+                pointer: from_above(8.0, 0.2),
+                shift: false,
+            },
+        },
+    );
+    assert!(update.tool.unwrap().grab, "a press grabs the lifted link");
+    handled(
+        &mut editor,
+        Command::Event {
+            event: StepEditEvent::Drag {
+                from: from_above(8.0, 0.2),
+                to: from_above(7.0, 1.9),
+                done: true,
+                shift: false,
+            },
+        },
+    );
+    // The chain gives way as it would assembled: drawn lifted still.
+    let [_, _, z] = drawn_at(&editor, "link3");
+    assert!((z - 2.4).abs() < 1e-6, "{z}");
+    let turned = match editor.program().state.get(&pose_state("link3")) {
+        Some(StateValue::Pose(pose)) => pose.euler_degrees()[2],
+        other => panic!("the link's pose: {other:?}"),
+    };
+    assert!(turned > 30.0, "it turned towards the pointer: {turned}");
+    handled(&mut editor, Command::Tool { key: None });
+
+    let steps = editor.program().steps.len();
+    let update = handled(
+        &mut editor,
+        Command::Seek {
+            marker: Some(steps - 1),
+        },
+    );
+    let assembled = sent_at(&update, "link3").expect("the link is sent again");
+    assert!((assembled[2] - 0.4).abs() < 1e-9, "{assembled:?}");
+}

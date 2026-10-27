@@ -2,7 +2,8 @@
 //! as a node of the part placing it (see [`geop_core_program::placed`]) by
 //! the step that places it, and drawn as a part is drawn ([`Drawn`]) —
 //! read here, wherever they are placed ([`placed_parts`], [`locate`]), with
-//! their solids ([`solids`]) and the bill of materials they make ([`bom`]).
+//! their solids ([`solids`]), the bill of materials they make ([`bom`])
+//! and where an exploded view draws them ([`explode`]).
 //!
 //! Where an instance is, is the program's state: the pose state of its
 //! [`Placement`], or a fixed motion after another instance, as a pattern's
@@ -15,6 +16,7 @@
 //! Equal builds — every screw of a size — are one.
 
 pub mod bom;
+pub mod explode;
 pub mod solids;
 
 use geop_core_program::{
