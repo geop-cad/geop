@@ -97,7 +97,7 @@ impl GeopApp {
         }
         let app = &mut self.app;
         match action {
-            Action::NewStep(kind) => app.new_step(&kind),
+            Action::NewStep(kind, _) => app.new_step(&kind),
             Action::Commit => app.commit(),
             Action::Cancel => app.cancel(),
             Action::Undo => app.undo(),
@@ -168,6 +168,20 @@ impl GeopApp {
             }
             if !typing && input.consume_key(egui::Modifiers::COMMAND, egui::Key::Y) {
                 done.push(Action::Redo);
+            }
+            // An operation starts by its key while no step is edited: then
+            // the plain keys are the step's own tools'.
+            if !typing && self.app.step.is_none() {
+                let operations = (self.app.program.iter())
+                    .flat_map(|p| &p.operations)
+                    .map(|l| Action::NewStep(l.kind.to_string(), l.info.shortcut));
+                for action in operations {
+                    if let Some(shortcut) = action.shortcut()
+                        && input.consume_shortcut(&shortcut)
+                    {
+                        done.push(action);
+                    }
+                }
             }
         });
         let events = ctx.input(|i| i.events.clone());

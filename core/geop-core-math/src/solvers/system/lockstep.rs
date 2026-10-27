@@ -68,6 +68,11 @@ impl<'s, 'e, E: Equations> Batch<'s, 'e, E> {
     /// The terms `which` with the blocks `blocks` — a group's — at `values`
     /// and every other where the base has it, once the batch is answered.
     pub(super) async fn ask(&self, blocks: &[usize], values: &[E::Value], which: &[Term]) -> Made {
+        // Nothing asked is answered without making anything: a group of no
+        // limits asked which of them it is beyond.
+        if which.is_empty() {
+            return Made::new();
+        }
         let answer = Rc::new(RefCell::new(None));
         self.asked.borrow_mut().push(Request {
             blocks: blocks.to_vec(),

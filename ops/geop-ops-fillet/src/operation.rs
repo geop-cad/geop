@@ -133,6 +133,7 @@ impl PartOperation for Fillet {
         OperationGroup::Features,
         OperationTier::Big,
     )
+    .shortcut("Shift+F")
     .icon(icons::FILLET);
     type Args = FilletArgs;
     type Session = ();
@@ -316,6 +317,7 @@ impl PartOperation for Chamfer {
         OperationGroup::Features,
         OperationTier::Small,
     )
+    .shortcut("C")
     .icon(icons::CHAMFER);
     type Args = ChamferArgs;
     type Session = ();

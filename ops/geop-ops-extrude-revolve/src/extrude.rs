@@ -118,6 +118,7 @@ impl PartOperation for Extrude {
         OperationGroup::Solid,
         OperationTier::Big,
     )
+    .shortcut("E")
     .icon(crate::icons::EXTRUDE);
     type Args = ExtrudeArgs;
     type Session = ();

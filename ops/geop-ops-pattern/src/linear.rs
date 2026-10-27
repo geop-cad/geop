@@ -254,6 +254,7 @@ impl PartOperation for LinearPattern {
         OperationGroup::Bodies,
         OperationTier::Big,
     )
+    .shortcut("P")
     .icon(geop_core_editor::view::icons::LINEAR_PATTERN);
     type Args = LinearPatternArgs;
     type Session = ();

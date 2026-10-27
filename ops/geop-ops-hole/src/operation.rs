@@ -477,6 +477,7 @@ impl PartOperation for Hole {
         OperationGroup::Features,
         OperationTier::Big,
     )
+    .shortcut("H")
     .icon(crate::icons::HOLE);
     type Args = HoleArgs;
     type Session = ();
@@ -847,6 +848,7 @@ impl PartOperation for Thread {
         OperationGroup::Features,
         OperationTier::Small,
     )
+    .shortcut("T")
     .icon(crate::icons::THREAD);
     type Args = ThreadArgs;
     type Session = ();

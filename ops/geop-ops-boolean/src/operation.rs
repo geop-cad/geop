@@ -62,6 +62,7 @@ impl PartOperation for Boolean {
         OperationGroup::Bodies,
         OperationTier::Big,
     )
+    .shortcut("B")
     .icon(crate::icons::BOOLEAN);
     type Args = BooleanArgs;
     type Session = ();
@@ -142,6 +143,7 @@ impl PartOperation for Split {
         OperationGroup::Bodies,
         OperationTier::Menu,
     )
+    .shortcut("Shift+B")
     .icon(crate::icons::SPLIT);
     type Args = SplitArgs;
     type Session = ();

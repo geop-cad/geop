@@ -310,6 +310,7 @@ pub struct Elimination {
 /// tangent to two parallel sides was left with its sweep free and two
 /// tangencies over the same coordinate, and could not be enclosed.
 pub fn eliminate(mut rows: Vec<Vec<Scalar>>, n: usize) -> Elimination {
+    super::factorised(rows.len(), n);
     // Per row, the columns it has an entry in other than an exact zero, in
     // order — of the whole row, which may be longer than `n`: columns past
     // the pivots' go along, as in `inverse`'s: the only ones that can be a

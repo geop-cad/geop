@@ -6,6 +6,7 @@
 
 use geop_core_program::{
     element::{ElementReference, PickedElement},
+    placed::Located,
     program::Program,
     testing::{args as step_args, edit_args},
     values::{Setting, StateValue, pose_state},
@@ -1111,9 +1112,9 @@ fn a_step_of_a_placed_part_is_edited_where_it_is_placed() {
         .find(|item| item.name == "a")
         .expect("the part is listed");
     assert_eq!(
-        item.label.as_deref(),
-        Some("box: a"),
-        "called after its file too"
+        item.detail.as_deref(),
+        Some("box"),
+        "said beside it which file it is from"
     );
     let listed = &loaded.program.expect("the program is sent").steps[0];
     let [placed] = &listed.placed[..] else {
@@ -1586,4 +1587,94 @@ fn a_slider_is_driven_played_checked_and_exported() {
     assert!((last[2 + 7 + 2] - 0.25).abs() < 1e-9, "{}", lines[5]);
     // The part is left as it was shown.
     assert!((state_number(&editor, slide) - 0.6875).abs() < 1e-9);
+}
+
+/// Moving the pointer over a part being placed, once its placement was
+/// typed in — which it then pulls to, for as long as it is edited — solves
+/// nothing again: each hover builds the step's form three times at most
+/// (to take the event, to see what it changed, to show it), not six with a
+/// solve between, and draws no part.
+#[test]
+fn hovering_over_a_part_placed_by_its_fields_solves_nothing() {
+    let mut step = placing(args(false, &[]));
+    step.dialog("x", Value::Number(2.0));
+    let (forms, parts) = (
+        geop_core_editor::editable::forms_built(),
+        geop_core_editor::view::parts_drawn(),
+    );
+    for k in 0..5 {
+        step.send(StepEditEvent::Hover {
+            pointer: down_at(0.1 * k as f64, 0.5, 1.0),
+            shift: false,
+        });
+    }
+    let forms = geop_core_editor::editable::forms_built() - forms;
+    assert!(forms <= 15, "five hovers built {forms} forms");
+    assert_eq!(geop_core_editor::view::parts_drawn() - parts, 0);
+    let pose = moved_to(&step, "b");
+    assert_close(apply(&pose, [0.0; 3]), [2.0, 0.0, 0.0], 1e-6);
+}
+
+/// What the scene of `editor` hides, sent afresh.
+fn scene_hidden(editor: &mut Editor) -> Vec<String> {
+    let update = handled(editor, Command::Show);
+    update.scene.expect("a scene is sent on show").hidden
+}
+
+/// The placed parts' datums are drawn only to be picked: placing a part,
+/// they are not shown — until a mate waits for its entities, which a
+/// datum can be, and once it has them, they go again.
+#[test]
+fn placing_a_part_shows_the_datums_only_while_a_mate_picks() {
+    let mut step = placing(args(false, &[]));
+    let origins = ["a", "b"].map(|part| Located::in_instance(part, ORIGIN).key());
+    let hidden = scene_hidden(&mut step.editor);
+    for origin in &origins {
+        assert!(hidden.contains(origin), "{origin} shown: {hidden:?}");
+    }
+    step.dialog("add_mate", Value::Choice("coincident".into()));
+    let hidden = scene_hidden(&mut step.editor);
+    for origin in &origins {
+        assert!(!hidden.contains(origin), "{origin} hidden: {hidden:?}");
+    }
+    let picked = [origin("b"), origin("a")].map(|e| e.picked()).to_vec();
+    step.dialog("mate:m1:entities", Value::Elements(picked));
+    let hidden = scene_hidden(&mut step.editor);
+    for origin in &origins {
+        assert!(hidden.contains(origin), "{origin} shown: {hidden:?}");
+    }
+}
+
+/// A placed part hidden is not picked, and hides nothing behind it: the
+/// cube placed as `b` stood above `a`, and hidden, a mate's pick looking
+/// down through it lights `a`'s top, and a click picks what is lit.
+#[test]
+fn a_hidden_part_is_not_picked_through() {
+    let mut step = placing(args(true, &[]));
+    step.dialog("z", Value::Number(2.0));
+    handled(
+        &mut step.editor,
+        Command::Visibility {
+            name: "b".into(),
+            visible: false,
+        },
+    );
+    step.dialog("add_mate", Value::Choice("coincident".into()));
+    let at = down_at(0.5, 0.5, 4.0);
+    step.send(StepEditEvent::Hover {
+        pointer: at,
+        shift: false,
+    });
+    let lit = step.presentation().highlights.clone();
+    assert_eq!(lit.len(), 1, "{lit:?}");
+    assert_eq!(lit[0].target, Located::in_instance("a", "model"), "{lit:?}");
+    step.send(StepEditEvent::Click {
+        pointer: at,
+        button: Default::default(),
+        double: false,
+        shift: false,
+    });
+    let mate = &step.args::<AddPartArgs>().mates["m1"];
+    let picked: Vec<PickedElement> = mate.entities.iter().map(Selectable::picked).collect();
+    assert_eq!(picked, lit, "a click picks what the hover lit");
 }

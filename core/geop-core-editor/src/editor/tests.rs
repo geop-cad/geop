@@ -310,3 +310,45 @@ fn a_step_not_previewed_is_built_only_when_committed() -> Result<(), GeopError> 
     assert_eq!(drawn(&shown).len(), 2, "committed, it is built");
     Ok(())
 }
+
+/// The key a front end sends, as the step being edited gets it.
+fn key(key: &str) -> Command {
+    Command::Event {
+        event: crate::editing::StepEditEvent::Key { key: key.into() },
+    }
+}
+
+/// With nothing in progress in the step, Enter commits it — one edit to
+/// undo — and Escape cancels a step not edited yet; once edited, Escape
+/// leaves it open, so no edit is lost to a key.
+#[test]
+fn enter_commits_and_escape_cancels_a_step_at_rest() -> Result<(), GeopError> {
+    let registry = (Registry::default().operation(Place)).and_then(|r| r.drawer(Points))?;
+    let mut editor = editor_with(registry, Default::default());
+
+    handled(
+        &mut editor,
+        Command::New {
+            kind: "place".into(),
+        },
+    );
+    let update = handled(&mut editor, key("Escape"));
+    assert!(update.step.is_none(), "Escape cancels a step not edited");
+    assert!(editor.program().steps.is_empty());
+
+    handled(
+        &mut editor,
+        Command::New {
+            kind: "place".into(),
+        },
+    );
+    handled(&mut editor, click_at(from_above(2.0, 3.0)));
+    let update = handled(&mut editor, key("Escape"));
+    assert!(update.step.is_some(), "an edited step stays open on Escape");
+    let update = handled(&mut editor, key("Enter"));
+    assert!(update.step.is_none(), "Enter commits");
+    assert_eq!(editor.program().steps.len(), 1);
+    let update = handled(&mut editor, Command::Undo);
+    assert!(update.program.is_some_and(|p| p.program.steps.is_empty()));
+    Ok(())
+}

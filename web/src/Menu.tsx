@@ -49,6 +49,10 @@ export function DropdownArrow() {
 export function Menu({ label, title, entries, disabled, align = "left", className, triggerClassName, arrow = true }: Props) {
   const [open, setOpen] = useState(false);
   const [side, setSide] = useState(align);
+  /** How many columns the menu is laid out in: more than one when one would run out of its height. */
+  const [columns, setColumns] = useState(1);
+  /** Where the menu's left edge is from the trigger's, when it fits on neither side of it: kept in the window. */
+  const [shift, setShift] = useState<number | null>(null);
   const root = useRef<HTMLDivElement>(null);
   const menu = useRef<HTMLDivElement>(null);
   useEffect(() => {
@@ -66,6 +70,18 @@ export function Menu({ label, title, entries, disabled, align = "left", classNam
       window.removeEventListener("keydown", escape);
     };
   }, [open]);
+  // A menu taller than it may be is laid out in columns, every entry in
+  // sight: none scrolls out of view.
+  useLayoutEffect(() => {
+    if (!open) {
+      setColumns(1);
+      return;
+    }
+    const el = menu.current;
+    if (el && columns === 1 && el.scrollHeight > el.clientHeight + 1) {
+      setColumns(Math.ceil(el.scrollHeight / el.clientHeight));
+    }
+  }, [open, columns]);
   // Opened towards `align`, unless that runs off the window and the other side does not.
   useLayoutEffect(() => {
     if (!open || !menu.current || !root.current) return;
@@ -74,7 +90,10 @@ export function Menu({ label, title, entries, disabled, align = "left", classNam
     const fitsLeft = button.left + width <= window.innerWidth;
     const fitsRight = button.right - width >= 0;
     setSide(align === "left" ? (fitsLeft || !fitsRight ? "left" : "right") : fitsRight || !fitsLeft ? "right" : "left");
-  }, [open, align]);
+    const margin = 8;
+    const left = Math.max(margin, Math.min(button.left, window.innerWidth - width - margin));
+    setShift(fitsLeft || fitsRight ? null : left - button.left);
+  }, [open, align, columns]);
   return (
     <div className={["dropdown", className ?? ""].join(" ")} ref={root}>
       <button
@@ -89,7 +108,15 @@ export function Menu({ label, title, entries, disabled, align = "left", classNam
         {arrow && <DropdownArrow />}
       </button>
       {open && (
-        <div ref={menu} className={`dropdown-menu ${side}`} role="menu">
+        <div
+          ref={menu}
+          className={`dropdown-menu ${side}`}
+          role="menu"
+          style={{
+            ...(columns > 1 ? { columnCount: columns, width: columns * 230, overflowY: "hidden" } : {}),
+            ...(shift != null ? { left: shift, right: "auto" } : {}),
+          }}
+        >
           {entries.map((entry, i) => {
             switch (entry.kind) {
               case "heading":

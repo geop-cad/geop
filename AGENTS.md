@@ -875,6 +875,34 @@ not in slow arithmetic:
   `partials`, which a proof over a box (`enclose_foot`) reads; `evaluate`
   still extrapolates, and the tangent-branch search on blends pays for it.
 
+### A benchmark has to have the shape of the real thing
+
+The 2000-part robot benchmark mated every screw to a fixed plate, so
+the solver split it into 2000 groups of one screw, and drags were fast.
+A real robot mates screws to brackets fastened to links that turn: one
+group of every part. The `robot_arm` benchmark (`testing::robot_arm`)
+has that shape, and a drag of only 101 of its parts ran for over fifty
+minutes without finishing: one dense system of 600 variables.
+
+What fixed it: a block whose constraints only hang it off others — they
+hold, and constrain nothing of what they tie it to — is a pendant, solved
+and enclosed after what it hangs off, alone
+(`geop_core_math::solvers::system::Structure`). The arm's drag is then
+its links and joints, 42 variables, however many parts hang off them.
+Two things on the way:
+
+- The rank test that decides a pendant was first asked at the point.
+  Rounding leaves a hair of a row that depends on the others, `1e-17`,
+  definitely not zero, and nothing was a pendant off the axes. Asked over
+  a box as wide as the solver's tolerance, as the enclosure asks it, it
+  could be zero. "Decide a rank over the box", above, holds for every
+  rank decision, not only the enclosure's.
+- Every target revised by every step (`CHAIN`) is a square in the steps:
+  the unknowns were one, and made again whenever a joint's parts moved,
+  since a joint's coordinate is seeded where they are. A third of a drag
+  of the 1000-part arm was there. A step's own target, gathered when read
+  (`Unknowns::of`, like `Constraints::of`), costs what changed.
+
 ## An operation is a `PartOperation`, edited through one form
 
 Every operation of a part implements

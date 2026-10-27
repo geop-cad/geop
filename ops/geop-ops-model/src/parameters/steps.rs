@@ -72,6 +72,7 @@ impl PartOperation for DefineParameters {
         OperationGroup::Part,
         OperationTier::Small,
     )
+    .shortcut("Shift+V")
     .icon(crate::parameters::icons::PARAMETERS);
     type Args = DefineParametersArgs;
     type Session = ();

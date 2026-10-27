@@ -113,6 +113,10 @@ pub struct StepEditor {
     grab: Option<(Pointer, Grab)>,
     /// Which way the gizmo is turned, where it has a way of its own.
     orientation: Orientation,
+    /// The keys of the step's reference fields after the last event it
+    /// took — none known before the first, or after a restart: what the
+    /// next event is compared with, without building the form again.
+    references: Option<Vec<String>>,
 }
 
 /// Takes `x` out of `xs`, or adds it at the end.
@@ -213,6 +217,7 @@ impl StepEditor {
             pointer: None,
             grab: None,
             orientation: Orientation::default(),
+            references: None,
         })
     }
 
@@ -235,6 +240,7 @@ impl StepEditor {
         self.armed = None;
         self.hover = None;
         self.grab = None;
+        self.references = None;
         Ok(())
     }
 
@@ -249,13 +255,28 @@ impl StepEditor {
         editors.presentation(runner, part, program, &self.step, &*self.editing)
     }
 
+    /// Whether nothing is in progress in `form`, the step's form: no field
+    /// waits for a pick, nothing is selected or dragged, and the operation
+    /// has no tool in hand — so Escape has nothing to end, and Enter
+    /// nothing to finish, but the step itself (see
+    /// [`crate::editor::Editor::handle`]).
+    pub fn at_rest(&self, form: &Form) -> bool {
+        self.armed.is_none()
+            && self.grab.is_none()
+            && form.selection.is_empty()
+            && form.tool == InHand::Nothing
+    }
+
     /// Sends `event` to the operation, and keeps what it made of the step:
     /// its arguments in the program, its editing state here. A reference
     /// field that is gone after it waits for no pick any more, and one that
     /// appeared empty waits for one — what the step needs picked next, as
     /// for a new step.
     fn send<Sc: Scene>(&mut self, e: &mut Editing<'_, Sc>, event: Event) -> GeopResult<()> {
-        let before = references(&self.form(e.editors, e.runner, e.part, e.program)?);
+        let before = match self.references.take() {
+            Some(known) => known,
+            None => references(&self.form(e.editors, e.runner, e.part, e.program)?),
+        };
         let scene: &dyn Scene = e.scene;
         let edited = (e.editors).process_user_event(
             e.runner,
@@ -269,6 +290,7 @@ impl StepEditor {
         e.program.step_mut(&self.step)?.args = edited.args;
         self.editing = Rc::from(edited.editing);
         let form = self.form(e.editors, e.runner, e.part, e.program)?;
+        self.references = Some(references(&form));
         if let Some(armed) = &self.armed
             && !references(&form).contains(armed)
         {
@@ -754,10 +776,20 @@ impl StepEditor {
         let mut visuals = form.visuals;
         visuals.extend(handles(&form.dialog));
         // What the reference fields hold, and what a click would pick for
-        // the one waiting, drawn as they are — a frame as a triad — in the
-        // part as the step built it, where what the step places is.
-        let hover = self.armed.as_deref().zip(self.hover.as_ref());
-        let shown = form.dialog.shown(&part.after(&self.step), hover);
+        // the one waiting, drawn and lit as it would be held — a frame as a
+        // triad, on what it is put on — in the part it is picked in: as the
+        // step built it, where what the step places is, for a step picking
+        // in that; else as it was before.
+        let picks_built = (program.step(&self.step).ok())
+            .and_then(|step| editors.info(&step.operation))
+            .is_some_and(|listed| listed.info.picks_built);
+        let picked_in = match picks_built {
+            true => part.after(&self.step),
+            false => part.before(&self.step),
+        };
+        let previewed = (self.armed.as_deref().zip(self.hover.as_ref()))
+            .and_then(|(key, element)| form.dialog.previewed(&picked_in, key, element));
+        let shown = form.dialog.shown(previewed.as_ref());
         let tool = form.tool;
         // While a field waits for a pick, only a handle is hovered: no pick
         // takes one, so a press on it can only mean dragging it. Anything
@@ -793,7 +825,7 @@ impl StepEditor {
         }
         visuals.extend(shown);
         let highlights = (form.dialog.picked().cloned())
-            .chain(self.hover.clone())
+            .chain(previewed.into_iter().flat_map(|p| p.drawn))
             .collect();
         Ok(Presentation {
             dialog: form.dialog,

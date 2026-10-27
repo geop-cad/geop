@@ -31,7 +31,7 @@ use std::{
 
 use geop_core_math::{
     geop_error::GeopResult,
-    solvers::system::{self, Bound, Equations, Linearized, Phase, System, Term},
+    solvers::system::{self, Bound, Equations, Linearized, Phase, System, Term, Variable},
 };
 
 pub use geop_core_math::solvers::system::Mobility;
@@ -44,7 +44,7 @@ use geop_core_program::{
     values::{Settings, StateValue, StateValues},
 };
 
-use crate::constraint::{Constraint, Constraints};
+use crate::constraint::{Constraint, Constraints, DefinedAt};
 
 /// A program to run again at every state a solve tries, with its inputs:
 /// its state is the state tried.
@@ -117,6 +117,12 @@ pub struct Report {
     /// How many times the constraints were made: by the solve, and to
     /// enclose its solution — the work, which a test can bound.
     pub evaluations: [usize; 2],
+    /// The most variables of a group the solve moved — what one step of
+    /// it costs the cube of (see [`System::structure`]).
+    pub largest: usize,
+    /// The dense linear algebra the solve and its enclosure did (see
+    /// [`geop_core_math::solvers::work`]).
+    pub work: u64,
 }
 
 /// An enclosure of a true solution of the constraints: every value it
@@ -161,8 +167,8 @@ struct Solving<'r, 'p> {
     /// Per block, the value it is.
     blocks: Vec<String>,
     index: BTreeMap<String, usize>,
-    /// Per constraint, its name and what it asks.
-    constraints: Vec<(String, Bound)>,
+    /// Per constraint, its name, what it asks, and where it is defined.
+    constraints: Vec<(String, Bound, DefinedAt)>,
     preferences: &'p [&'p dyn Preference],
 }
 
@@ -175,8 +181,9 @@ impl<'r, 'p> Solving<'r, 'p> {
         state: &StateValues,
         problem: &'p Problem<'p>,
     ) -> GeopResult<(Self, Vec<StateValue>)> {
-        let constraints = (Constraints::of(&run.at(state).current())?.iter())
-            .map(|(name, constraint)| (name.to_string(), constraint.bound))
+        let all = Constraints::of(&run.at(state).current())?;
+        let constraints = (all.iter().zip(all.defining()))
+            .map(|((name, constraint), (_, at))| (name.to_string(), constraint.bound, at.clone()))
             .collect();
         let blocks: Vec<String> = (problem.free.iter())
             .filter(|(_, mobility)| mobility.free())
@@ -213,7 +220,7 @@ impl<'r, 'p> Solving<'r, 'p> {
     /// The names of the constraints `which`.
     fn names(&self, which: &[usize]) -> Vec<String> {
         (which.iter())
-            .filter_map(|&c| self.constraints.get(c).map(|(name, _)| name.clone()))
+            .filter_map(|&c| self.constraints.get(c).map(|(name, ..)| name.clone()))
             .collect()
     }
 
@@ -258,12 +265,11 @@ impl Equations for Solving<'_, '_> {
         }
         let mut run = self.run.borrow_mut();
         let reader = run.at(&self.working.borrow()).current();
-        let made = Constraints::of(&reader);
         (which.iter())
             .map(|term| match term {
                 Term::Constraint(c) => {
-                    let (name, _) = self.constraints.get(*c)?;
-                    Some(self.linearized(made.as_ref().ok()?.get(name)?))
+                    let (.., at) = self.constraints.get(*c)?;
+                    Some(self.linearized(&at.read(&reader).ok()?))
                 }
                 Term::Preference(p) => {
                     let preference = self.preferences.get(*p)?.evaluate(&reader).ok()?;
@@ -304,7 +310,9 @@ fn named(program: &Solving, enclosure: system::Enclosure<StateValue>) -> Enclosu
 pub fn solve(run: Run<'_>, state: &StateValues, problem: &Problem) -> GeopResult<Solved> {
     let (program, start) = Solving::new(run, state, problem)?;
     let system = program.system(problem);
+    let work = geop_core_math::solvers::work();
     let solution = system.solve(&start)?;
+    let work = geop_core_math::solvers::work() - work;
     let held = system.held(&solution.values)?;
     let mut solved = state.clone();
     let mut moved = Vec::new();
@@ -322,6 +330,15 @@ pub fn solve(run: Run<'_>, state: &StateValues, problem: &Problem) -> GeopResult
         iterations: solution.iterations,
         phases: solution.phases,
         evaluations: [solution.evaluations, solution.enclosure.evaluations],
+        largest: (solution.solved.iter())
+            .map(|g| {
+                (g.blocks.iter())
+                    .map(|&b| start.get(b).map_or(0, Variable::dimension))
+                    .sum()
+            })
+            .max()
+            .unwrap_or(0),
+        work,
     };
     let enclosure = named(&program, solution.enclosure);
     program.finish(&solved);

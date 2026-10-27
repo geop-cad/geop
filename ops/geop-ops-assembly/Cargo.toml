@@ -5,9 +5,9 @@ edition.workspace = true
 license.workspace = true
 
 [features]
-# Parts made in Rust as the programs of a workspace, for tests (see
-# `testing`).
-testing = []
+# Parts made in Rust as the programs of a workspace, for tests, and the
+# `robot_arm` benchmark, its parts given solids and datums (see `testing`).
+testing = ["dep:geop-lib-fixtures"]
 # The examples of assemblies: parts sketched and extruded, standard parts
 # placed. Written in those operations too, so only an editor turns it on.
 examples = [
@@ -36,6 +36,8 @@ serde_json.workspace = true
 geop-ops-extrude-revolve = { workspace = true, optional = true }
 geop-ops-sketch = { workspace = true, optional = true }
 geop-lib-stdlib = { workspace = true, optional = true }
+# Only for `testing`: the solids and datums of the benchmark's parts.
+geop-lib-fixtures = { workspace = true, optional = true }
 
 [dev-dependencies]
 geop-ops-model = { workspace = true, features = ["testing"] }
