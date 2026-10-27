@@ -6,7 +6,7 @@ use geop_core_program::{operation_registry::OperationRegistry, program::Program}
 use geop_ops_model::{
     sketch::{
         Sketch,
-        figures::{on_origin, outline},
+        figures::{disc, on_origin, outline},
         whole_sketch,
     },
     testing::{Built, assert_valid},
@@ -149,4 +149,55 @@ fn flange_beside_a_hem() {
 /// The operations of [`registry`], and the hem.
 fn hem_registry() -> GeopResult<OperationRegistry> {
     registry()?.with(crate::Hem)
+}
+
+/// A round hole centred on a bend (a vent across a fold): a 100 x 60
+/// plate 1 thick, bend radius 1, a flange 30 high up its edge along `x`,
+/// then a sheet cut of a circle of radius 5 centred at `(50, 2)` — on the
+/// bend's line, where the plate meets the bend. Refused:
+///
+/// > the cut's curve sheet_cut(sc,c,c1) crosses, at an end of one of them,
+/// > the edge edge_flange(f1,line)
+///
+/// A circle is drawn as four quarter arcs, their ends at its left, right,
+/// top and bottom; centred on the line, two of those ends lie on it. The
+/// user drew one circle, not four arcs: centred at `(50, 0)` or `(50,
+/// 2.3)`, the same hole cuts. A hole of radius 3 centred `(50, 5)` beside
+/// a hem fails alike, its bottom on `hem(h,line)`.
+#[test]
+#[ignore = "bug: a sheet cut of a circle centred on a bend line is refused — \"the cut's curve sheet_cut(sc,c,c1) crosses, at an end of one of them, the edge edge_flange(f1,line)\": the circle's quarter points lie on the line; moved off it, the hole cuts"]
+fn round_hole_centred_on_a_bend_line() {
+    let mut program = Program::new();
+    let plate: Sketch = outline(&[[0.0, 0.0], [100.0, 0.0], [100.0, 60.0], [0.0, 60.0]]);
+    program.push("k", AddSketchArgs::on(on_origin(FrameAxis::Z), plate));
+    program.push(
+        "plate",
+        BaseFlangeArgs {
+            sketch: whole_sketch("k"),
+            rules: SheetMetalRules {
+                thickness: 1.0,
+                bend_radius: 1.0,
+                corner_gap: 1.0,
+                ..SheetMetalRules::default()
+            },
+            depth: 1.0.into(),
+            flip: false,
+        },
+    );
+    program.push("f1", flange("base_flange(plate,k,c4,b)"));
+    program.push(
+        "c",
+        AddSketchArgs::on(on_origin(FrameAxis::Z), disc([50.0, 2.0], 5.0)),
+    );
+    program.push(
+        "sc",
+        crate::SheetCutArgs {
+            sketch: whole_sketch("c"),
+            face: None,
+        },
+    );
+    let part = program
+        .build_model(|| registry()?.with(crate::SheetCut))
+        .unwrap();
+    assert_valid(&part);
 }
