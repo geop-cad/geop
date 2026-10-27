@@ -202,8 +202,9 @@ pub struct Report {
     pub phases: Vec<(Stop, usize, f64)>,
     /// Every value the solve moved — and the others solved with them — as
     /// enclosed: the box its true value is in, about where the solve put
-    /// it (see [`solve::Enclosure`]).
-    pub enclosed: StateValues,
+    /// it (see [`solve::Enclosure`]). None for a solve not asked to prove
+    /// it, and for a check.
+    pub enclosed: Option<StateValues>,
     /// The values no true solution near where the solve ended is proven
     /// for, and why: the constraints that conflict there, by name, or what
     /// is singular.
@@ -275,7 +276,7 @@ pub fn check(reader: &Reader) -> GeopResult<Report> {
         at_limit: Vec::new(),
         iterations: 0,
         phases: Vec::new(),
-        enclosed: StateValues::new(),
+        enclosed: None,
         unproven: Vec::new(),
         evaluations: [0, 0],
         largest: 0,
@@ -440,7 +441,10 @@ fn local_at(located: &Located, world: &Pose) -> Pose {
 /// The state the solve found, and its report: the limits by the values
 /// they read.
 fn report(reader: &Reader, solved: solve::Solved) -> GeopResult<(StateValues, Report)> {
-    let made = Constraints::of(reader)?;
+    let made = match solved.report.at_limit.is_empty() {
+        true => Constraints::default(),
+        false => Constraints::of(reader)?,
+    };
     let mut at_limit: Vec<String> = (solved.report.at_limit.iter())
         .filter_map(|name| made.get(name.as_str()))
         .flat_map(|c| c.jacobian.keys().cloned())
@@ -455,8 +459,8 @@ fn report(reader: &Reader, solved: solve::Solved) -> GeopResult<(StateValues, Re
         phases: (solved.report.phases.iter())
             .map(|p: &Phase| (p.stop, p.iterations, p.max_residual.to_f64()))
             .collect(),
-        enclosed: solved.enclosure.state,
-        unproven: solved.enclosure.unproven,
+        unproven: (solved.enclosure.as_ref()).map_or_else(Vec::new, |e| e.unproven.clone()),
+        enclosed: solved.enclosure.map(|e| e.state),
         evaluations: solved.report.evaluations,
         largest: solved.report.largest,
         work: solved.report.work,
@@ -484,11 +488,16 @@ fn changes(state: &StateValues, solved: StateValues) -> StateValues {
 /// found. A part no solve may move — fixed, or not `only` — goes where its
 /// pulls take it, alone: to a pose pulled to, or moved as far as a point
 /// pulled goes.
+///
+/// A true solution near there is enclosed only where `prove` asks: an
+/// event of a drag is solved again at the next, and only the state it is
+/// let go at is kept (see [`solve::solve`]).
 pub fn solve(
     rerun: &mut Rerun,
     state: &StateValues,
     pulls: &[Pull],
     only: Option<&str>,
+    prove: bool,
 ) -> GeopResult<(StateValues, Report)> {
     let set: BTreeMap<String, Scalar> = (pulls.iter())
         .filter_map(|pull| match pull {
@@ -589,13 +598,24 @@ pub fn solve(
             let at = from + (to - from) * k as f64 / stages as f64;
             start.insert(name.clone(), StateValue::Number(Scalar::from_f64(at)));
         }
-        start = solve::solve(run(rerun), &start, &problem(&free, Vec::new(), scale))?.state;
+        start = solve::solve(
+            run(rerun),
+            &start,
+            &problem(&free, Vec::new(), scale),
+            false,
+        )?
+        .state;
     }
     for (name, value) in &set {
         start.insert(name.clone(), StateValue::Number(*value));
     }
     let preferences = preferences.iter().map(|p| &**p).collect();
-    let solved = solve::solve(run(rerun), &start, &problem(&free, preferences, scale))?;
+    let solved = solve::solve(
+        run(rerun),
+        &start,
+        &problem(&free, preferences, scale),
+        prove,
+    )?;
     let (solved, report) = report(&rerun.reader(), solved)?;
     Ok((changes(&had, solved), report))
 }
@@ -633,12 +653,12 @@ pub fn set(
     }
     every.extend(set.iter().map(|(p, v)| (p.clone(), *v)));
     let pulls: Vec<Pull> = every.iter().map(value).collect();
-    let (moved, report) = solve(rerun, state, &pulls, None)?;
+    let (moved, report) = solve(rerun, state, &pulls, None, true)?;
     if report.converged {
         return Ok((moved, report));
     }
     let pulls: Vec<Pull> = set.iter().map(value).collect();
-    solve(rerun, state, &pulls, None)
+    solve(rerun, state, &pulls, None, true)
 }
 
 /// The problem of every value a solve may move in the program `rerun`

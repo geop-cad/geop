@@ -179,12 +179,15 @@ impl Built {
     /// cost.
     fn solve_mates(&mut self, pull: Pull) -> GeopResult<(StateValues, Report)> {
         let state = self.program.state.clone();
-        let (moved, report) = solving::solve(&mut self.rerun(), &state, &[pull], None)?;
+        let (moved, report) = solving::solve(&mut self.rerun(), &state, &[pull], None, true)?;
         if report.converged {
             assert!(report.unproven.is_empty(), "{:?}", report.unproven);
             for name in moved.keys() {
                 assert!(
-                    report.enclosed.contains_key(name),
+                    report
+                        .enclosed
+                        .as_ref()
+                        .is_some_and(|e| e.contains_key(name)),
                     "{name} moved, not enclosed"
                 );
             }
@@ -982,7 +985,7 @@ fn a_mate_on_a_part_of_a_sub_assembly_is_solved() {
     );
     let report = built.check_mates().unwrap();
     assert!(!report.converged, "the pin is not up yet");
-    let (moved, report) = solving::solve(&mut built.rerun(), &top.state, &[], None).unwrap();
+    let (moved, report) = solving::solve(&mut built.rerun(), &top.state, &[], None, true).unwrap();
     assert!(report.converged, "{report:?}");
     let pin = match moved.get(&key_behind("hinge", &pose_state("pin"))) {
         Some(StateValue::Pose(pose)) => *pose,
@@ -2286,7 +2289,7 @@ fn an_assembly_is_meshed_from_its_files() {
         part: &mut part,
         program: &stale,
     };
-    let (moved, report) = solving::solve(&mut rerun, &stale.state, &[], None).unwrap();
+    let (moved, report) = solving::solve(&mut rerun, &stale.state, &[], None, true).unwrap();
     assert!(report.converged, "{report:?}");
     stale.state.extend(moved);
     stale.run(&runner, &mut part).unwrap();

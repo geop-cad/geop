@@ -116,17 +116,18 @@ fn a_pinned_body_goes_to_its_frame() {
         runner.rerun(&program, &x),
         &state,
         &problem(&["body"], vec![]),
+        true,
     )
     .unwrap();
     assert!(solved.report.converged, "{:?}", solved.report);
     assert_eq!(solved.report.moved, ["body"]);
     assert_near(where_is(&solved.state, "body"), [1.0, 0.0, 0.0]);
     assert!(
-        solved.enclosure.unproven.is_empty(),
+        solved.enclosure.as_ref().unwrap().unproven.is_empty(),
         "{:?}",
         solved.enclosure
     );
-    let enclosed = pose_of(&solved.enclosure.state["body"]).position();
+    let enclosed = pose_of(&solved.enclosure.as_ref().unwrap().state["body"]).position();
     for (k, exact) in [1.0, 0.0, 0.0].into_iter().enumerate() {
         assert!(
             Scalar::from_f64(exact).is_subset_of(enclosed[k]),
@@ -163,7 +164,7 @@ fn a_pull_moves_what_the_constraints_leave_free() {
         },
     );
     let both = problem(&["body", "loose"], vec![&body, &loose]);
-    let solved = solve(runner.rerun(&program, &x), &state, &both).unwrap();
+    let solved = solve(runner.rerun(&program, &x), &state, &both, true).unwrap();
     assert!(solved.report.converged);
     assert_near(where_is(&solved.state, "body"), [1.0, 0.0, 0.0]);
     assert_near(where_is(&solved.state, "loose"), [0.0, 2.0, 0.0]);
@@ -173,6 +174,7 @@ fn a_pull_moves_what_the_constraints_leave_free() {
         runner.rerun(&program, &x),
         &state,
         &problem(&["body", "loose"], vec![]),
+        true,
     )
     .unwrap();
     assert!(still.report.moved.is_empty());
@@ -200,6 +202,7 @@ fn a_limit_stops_a_pull() {
         runner.rerun(&program, &none),
         &state,
         &problem(&["body"], vec![&pull]),
+        true,
     )
     .unwrap();
     assert!(solved.report.converged, "{:?}", solved.report);
@@ -223,11 +226,11 @@ fn conflicts_and_freedom() {
     let values = inputs(&[("x", 1.0), ("y", 2.0)]);
     let state = at(&[("body", [0.0; 3]), ("loose", [0.0; 3])]);
     let both = problem(&["body", "loose"], vec![]);
-    let solved = solve(runner.rerun(&program, &values), &state, &both).unwrap();
+    let solved = solve(runner.rerun(&program, &values), &state, &both, true).unwrap();
     assert!(!solved.report.converged);
     assert_eq!(solved.report.failed, ["one", "two"]);
     // Nothing to enclose, and the enclosure says why, by name.
-    let [(group, why)] = &solved.enclosure.unproven[..] else {
+    let [(group, why)] = &solved.enclosure.as_ref().unwrap().unproven[..] else {
         panic!("{:?}", solved.enclosure);
     };
     assert_eq!(group, &["body"]);

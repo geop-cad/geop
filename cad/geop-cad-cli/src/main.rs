@@ -248,7 +248,7 @@ fn build(path: &Path) -> GeopResult<(Program, BuiltPart, Vec<String>)> {
             part: &mut built.part,
             program: &program,
         };
-        let (moved, _) = solve(&mut rerun, &program.state, &[], None)?;
+        let (moved, _) = solve(&mut rerun, &program.state, &[], None, true)?;
         program.state.extend(moved);
         program.run(&built.runner, &mut built.part)?;
     }

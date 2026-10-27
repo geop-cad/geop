@@ -44,14 +44,14 @@ impl Settle for Settler {
         let state = rerun.program.state.clone();
         let holds = check(&rerun.reader()).is_ok_and(|report| report.converged);
         let solved = if !pulls.is_empty() {
-            solving::solve(rerun, &state, pulls, None).ok()
+            solving::solve(rerun, &state, pulls, None, true).ok()
         } else if holds {
             None
         } else {
             let own_first = own
-                .and_then(|own| solving::solve(rerun, &state, &[], Some(own)).ok())
+                .and_then(|own| solving::solve(rerun, &state, &[], Some(own), true).ok())
                 .filter(|(_, report)| report.converged);
-            own_first.or_else(|| solving::solve(rerun, &state, &[], None).ok())
+            own_first.or_else(|| solving::solve(rerun, &state, &[], None, true).ok())
         };
         *self.settled.conflicting.borrow_mut() = match &solved {
             Some((_, report)) if !report.converged => {

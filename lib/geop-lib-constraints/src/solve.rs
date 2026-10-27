@@ -141,11 +141,12 @@ pub struct Enclosure {
 }
 
 /// Where a solve put the state, how it went, and the enclosure of a true
-/// solution near there of every group it solved.
+/// solution near there of every group it solved — if it was asked to
+/// prove it.
 pub struct Solved {
     pub state: StateValues,
     pub report: Report,
-    pub enclosure: Enclosure,
+    pub enclosure: Option<Enclosure>,
 }
 
 /// How free the values of the state are, where they are now (see
@@ -318,11 +319,24 @@ fn named(program: &Solving, enclosure: system::Enclosure<StateValue>) -> Enclosu
 ///
 /// The state is moved even where the constraints cannot all hold, to where
 /// they come closest; the report says which do not.
-pub fn solve(run: Run<'_>, state: &StateValues, problem: &Problem) -> GeopResult<Solved> {
+///
+/// Only where `prove` asks is the solution enclosed: a solve shown and
+/// solved again at once — an event of a drag — need not be, and proving
+/// every group it moved costs several times the solve (see
+/// [`System::solve_unproven`]).
+pub fn solve(
+    run: Run<'_>,
+    state: &StateValues,
+    problem: &Problem,
+    prove: bool,
+) -> GeopResult<Solved> {
     let (program, start) = Solving::new(run, state, problem)?;
     let system = program.system(problem);
     let work = geop_core_math::solvers::work();
-    let solution = system.solve(&start)?;
+    let solution = match prove {
+        true => system.solve(&start)?,
+        false => system.solve_unproven(&start)?,
+    };
     let work = geop_core_math::solvers::work() - work;
     let held = system.held(&solution.values)?;
     let mut solved = state.clone();
@@ -351,7 +365,7 @@ pub fn solve(run: Run<'_>, state: &StateValues, problem: &Problem) -> GeopResult
             .unwrap_or(0),
         work,
     };
-    let enclosure = named(&program, solution.enclosure);
+    let enclosure = prove.then(|| named(&program, solution.enclosure));
     program.finish(&solved);
     Ok(Solved {
         state: solved,

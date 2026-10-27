@@ -123,6 +123,18 @@ impl DefinedAt {
     }
 }
 
+thread_local! {
+    static MADE_AGAIN: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
+/// How many times this thread has made a step's constraints again at a
+/// state a solve tried ([`make_again`]), ever: what a solve's work grows
+/// with, now that it runs no program for a state it tries, so a test can
+/// bound it by a count rather than time it.
+pub fn made_again() -> usize {
+    MADE_AGAIN.get()
+}
+
 /// The constraints `which` of the part `reader` reads, as [`Constraints::of`]
 /// names their states — behind their paths — each made again by its step's
 /// generator of what `reader` reads: at the state it tries
@@ -133,6 +145,8 @@ impl DefinedAt {
 /// The make reads only the state and targets that read none — it refuses
 /// any other read ([`define_constraints`]) — so what it makes is what a
 /// run of the program at that state would.
+///
+/// Counted ([`made_again`]).
 pub fn make_again(reader: &Reader, which: &[&DefinedAt]) -> Vec<GeopResult<Constraint>> {
     let mut made: BTreeMap<(&[String], &str), GeopResult<StepConstraints>> = BTreeMap::new();
     (which.iter())
@@ -143,6 +157,7 @@ pub fn make_again(reader: &Reader, which: &[&DefinedAt]) -> Vec<GeopResult<Const
                     TargetReference::<StepConstraints>::new(format!("{CONSTRAINTS}:{}", at.step));
                 let own = inside.retrieve_element(&ElementReference::whole(own))?;
                 let after = inside.after_step(&at.step);
+                MADE_AGAIN.set(MADE_AGAIN.get() + 1);
                 let (again, _) =
                     after.recorded(|reader| (own.again.make)(reader, &*own.again.defining));
                 again

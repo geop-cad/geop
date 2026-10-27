@@ -703,6 +703,8 @@ fn pose_of_state(editor: &Editor, state: &str) -> Pose {
 #[derive(Debug)]
 struct DragCost {
     runs: usize,
+    /// The steps whose constraints were made again for a state tried.
+    made: usize,
     resolved: usize,
     work: u64,
     report: Report,
@@ -730,7 +732,11 @@ fn drag_wrist(editor: &mut Editor, arm: &RobotArm, by: &[[f64; 2]]) -> Vec<DragC
     let targets: Vec<Pointer> = by.iter().map(|&by| onto_wrist(editor, arm, by)).collect();
     let mut costs = Vec::new();
     for (k, &to) in targets.iter().enumerate() {
-        let before = (crate::mates_resolved(), geop_lib_constraints::solve::runs());
+        let before = (
+            crate::mates_resolved(),
+            geop_lib_constraints::solve::runs(),
+            geop_lib_constraints::constraint::made_again(),
+        );
         handled(
             editor,
             Command::Event {
@@ -748,6 +754,7 @@ fn drag_wrist(editor: &mut Editor, arm: &RobotArm, by: &[[f64; 2]]) -> Vec<DragC
             .expect("the drag solved");
         costs.push(DragCost {
             runs: geop_lib_constraints::solve::runs() - before.1,
+            made: geop_lib_constraints::constraint::made_again() - before.2,
             resolved: crate::mates_resolved() - before.0,
             work: report.work,
             report,
@@ -774,7 +781,9 @@ fn small_arm(screws: usize) -> RobotArm {
 /// they are mated to, and are solved after it, alone (see
 /// [`geop_core_math::solvers::system::Structure`]). Before, every part
 /// mated to a moving part was one group with it: the whole arm one dense
-/// system, a drag of 101 parts — 600 variables — taking minutes.
+/// system, a drag of 101 parts — 600 variables — taking minutes. Where it
+/// is let go, a true solution near there is proven for every part it moved;
+/// the events before, solved again at the next, are not proven.
 #[test]
 fn the_arm_solves_its_links_not_its_screws() {
     let mut largest = Vec::new();
@@ -787,11 +796,12 @@ fn the_arm_solves_its_links_not_its_screws() {
         let costs = drag_wrist(&mut editor, &arm, &DRAG);
         for cost in &costs {
             assert!(cost.report.converged, "{:?}", cost.report.failed);
-            assert!(
-                cost.report.unproven.is_empty(),
-                "{:?}",
-                cost.report.unproven
-            );
+        }
+        let released = &costs.last().unwrap().report;
+        assert!(released.enclosed.is_some(), "the drag let go is proven");
+        assert!(released.unproven.is_empty(), "{:?}", released.unproven);
+        for cost in &costs[..costs.len() - 1] {
+            assert_eq!(cost.report.enclosed, None, "an event of a drag is not");
         }
         assert_ne!(before, pose_of_state(&editor, &wrist), "the wrist moved");
         largest.push(costs.iter().map(|c| c.report.largest).max().unwrap());
@@ -895,8 +905,9 @@ fn robot_arm_timings() {
         for (k, cost) in costs.iter().enumerate() {
             assert!(cost.report.converged, "{:?}", cost.report.failed);
             println!(
-                "  drag event {k}: {} program runs, {} mates resolved, work {}, largest group {} variables, {} solve and {} enclosure evaluations",
+                "  drag event {k}: {} program runs, {} constraint steps made again, {} mates resolved, work {}, largest group {} variables, {} solve and {} enclosure evaluations",
                 cost.runs,
+                cost.made,
                 cost.resolved,
                 cost.work,
                 cost.report.largest,

@@ -265,7 +265,8 @@ pub struct Solution<V: Variable> {
     /// An enclosure of a true solution near where the solved groups ended
     /// (see [`System::enclose`]) — of those only: the others were not
     /// moved, and enclosing them is the caller's to ask
-    /// ([`System::enclose_rest`]).
+    /// ([`System::enclose_rest`]). Of none, for a solve not proven
+    /// ([`System::solve_unproven`]).
     pub enclosure: Enclosure<V>,
 }
 
@@ -344,6 +345,16 @@ impl<E: Equations> System<'_, E> {
     /// The blocks are moved even where the constraints cannot all hold, to
     /// where they come closest; [`System::held`] says which do not.
     pub fn solve(&self, start: &[E::Value]) -> GeopResult<Solution<E::Value>> {
+        let mut solution = self.solve_unproven(start)?;
+        solution.enclosure = self.enclose_groups(&solution.values, &solution.solved)?;
+        Ok(solution)
+    }
+
+    /// [`System::solve`], without the enclosure: its [`Solution::enclosure`]
+    /// encloses nothing. For a solve whose answer is shown and solved
+    /// again at once — an event of a drag — where proving every group it
+    /// moved would cost several times the solve; the answer kept is proven.
+    pub fn solve_unproven(&self, start: &[E::Value]) -> GeopResult<Solution<E::Value>> {
         let tolerance = tolerance(self.scale)?;
         let structure = self.structure(start);
         let mut values = start.to_vec();
@@ -394,7 +405,6 @@ impl<E: Equations> System<'_, E> {
         }
         solution.at_limit.sort_unstable();
         solution.at_limit.dedup();
-        solution.enclosure = self.enclose_groups(&values, &solution.solved)?;
         solution.values = values;
         Ok(solution)
     }

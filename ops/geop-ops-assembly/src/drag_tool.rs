@@ -105,7 +105,9 @@ impl Tool for DragTool {
                     };
                     let mut rerun = ctx.rerun();
                     let state = rerun.program.state.clone();
-                    if let Ok((moved, report)) = solving::solve(&mut rerun, &state, &[pull], None) {
+                    if let Ok((moved, report)) =
+                        solving::solve(&mut rerun, &state, &[pull], None, *done)
+                    {
                         ctx.move_state(moved);
                         self.dragged = Some(report);
                     }
