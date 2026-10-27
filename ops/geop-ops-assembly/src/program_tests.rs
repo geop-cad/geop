@@ -2413,7 +2413,7 @@ fn the_cam_drives_its_follower_round() {
     // Settled as the editor settles it: the foot point on the cam started
     // where it is nearest the follower.
     let state = part.program.state.clone();
-    let (moved, report) = solving::solve(&mut part.rerun(), &state, &[], None).unwrap();
+    let (moved, report) = solving::solve(&mut part.rerun(), &state, &[], None, true).unwrap();
     assert!(report.converged, "{report:?}");
     part.program.state.extend(moved);
     // The cam's side closes round on itself: its foot point runs on round
