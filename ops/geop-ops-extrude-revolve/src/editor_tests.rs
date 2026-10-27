@@ -1184,3 +1184,36 @@ fn undo_keeps_where_the_program_runs_to() {
     let redone = handled(&mut editor, Command::Redo);
     assert_eq!(redone.program.expect("the program is sent").marker, 3);
 }
+
+/// The program rolled back to before `hole_sketch`, then the hole dragged
+/// to the top of the step list: the marker stays before `hole_sketch`, as
+/// it does for every other edit that moves steps — the box still runs.
+#[test]
+#[ignore = "bug: Command::Move moves the step but leaves the marker at its index, unlike \
+            EditorContext::edit_program which keeps it at its step: with the marker at 2 \
+            (before `hole_sketch`), moving `hole` to the top leaves `box` past the marker, \
+            so the box the user saw disappears"]
+fn moving_a_step_keeps_where_the_program_runs_to() {
+    let (mut editor, _) = editor();
+    handled(&mut editor, Command::Seek { marker: Some(2) });
+    let moved = handled(
+        &mut editor,
+        Command::Move {
+            id: "hole".into(),
+            index: 0,
+        },
+    );
+    let state = moved.program.expect("the program is sent");
+    let runs: Vec<(&str, bool)> = (state.steps.iter())
+        .map(|step| (step.id.as_str(), step.runs))
+        .collect();
+    assert_eq!(
+        runs,
+        [
+            ("hole", true),
+            ("outline", true),
+            ("box", true),
+            ("hole_sketch", false)
+        ]
+    );
+}
