@@ -173,6 +173,8 @@ pub struct Pool {
     /// What was put since the last [`Pool::take_used`]: what the record
     /// being written uses.
     used: BTreeSet<String>,
+    /// What was read of it shared ([`Pool::shared`]), by key.
+    read: std::cell::RefCell<BTreeMap<String, Rc<dyn std::any::Any>>>,
 }
 
 impl Pool {
@@ -195,6 +197,26 @@ impl Pool {
             GeopError::new(format!("a kept value names {key}, which is not kept"))
         })?;
         from_text(raw.get())
+    }
+
+    /// What `read` reads of the value put as `key`, read once for every
+    /// record that reads it so: what many records hold alike — the drawing
+    /// of a part placed a thousand times — is one value in memory. `read`
+    /// reads the same of the same key, as a `V`.
+    pub fn shared<V: 'static>(
+        &self,
+        key: &str,
+        read: impl FnOnce() -> GeopResult<V>,
+    ) -> GeopResult<Rc<V>> {
+        let at = format!("{}:{key}", std::any::type_name::<V>());
+        if let Some(kept) = self.read.borrow().get(&at)
+            && let Ok(kept) = kept.clone().downcast::<V>()
+        {
+            return Ok(kept);
+        }
+        let kept = Rc::new(read()?);
+        (self.read.borrow_mut()).insert(at, kept.clone());
+        Ok(kept)
     }
 
     /// How many values it holds.
@@ -407,7 +429,7 @@ impl Builds {
             records,
             pool: Pool {
                 values: file.pool,
-                used: BTreeSet::new(),
+                ..Pool::default()
             },
             ..Self::default()
         }

@@ -69,7 +69,7 @@ impl Target for Drawn {
         read: |text, pool| {
             let (key, view): (String, String) = serde_json::from_str(text)
                 .map_err(|e| GeopError::new(format!("reading a kept drawing: {e}")))?;
-            let view = Rc::new(geop_core_editor::view::kept::get(&view, pool)?);
+            let view = geop_core_editor::view::kept::get(&view, pool)?;
             Ok(Drawn { key, view })
         },
     });

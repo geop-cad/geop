@@ -84,6 +84,35 @@ pub struct Part {
     pub(crate) states_read: BTreeSet<String>,
     /// The files it read, and in which revision.
     pub(crate) files_read: BTreeMap<String, u64>,
+    /// What was made of it whole, once for every reader of it (see
+    /// [`Reader::shared`]).
+    pub(crate) shared: Shared,
+}
+
+/// What was made of a part whole, by what made it, with what that read
+/// ([`Reader::shared`]): a part of equal builds — every screw of a size —
+/// is drawn once for every instance of it. A copy of the part, to be run
+/// again, holds none of it, and neither does a part once it is run again.
+#[derive(Default)]
+pub(crate) struct Shared(std::cell::RefCell<HashMap<&'static str, SharedMade>>);
+
+/// What was made of a part whole, and what making it read.
+pub(crate) type SharedMade = (Rc<dyn std::any::Any>, crate::reader::Reads);
+
+impl Clone for Shared {
+    fn clone(&self) -> Self {
+        Self::default()
+    }
+}
+
+impl Shared {
+    pub(crate) fn get(&self, key: &str) -> Option<SharedMade> {
+        self.0.borrow().get(key).cloned()
+    }
+
+    pub(crate) fn insert(&self, key: &'static str, made: SharedMade) {
+        self.0.borrow_mut().insert(key, made);
+    }
 }
 
 impl Part {
@@ -424,6 +453,7 @@ impl Part {
 
     /// Starts a run of the steps `order`, given `inputs` and `state`.
     pub(crate) fn begin(&mut self, order: Vec<String>, inputs: &Settings, state: &StateValues) {
+        self.shared = Shared::default();
         self.positions.clear();
         for (at, step) in order.iter().enumerate() {
             self.positions.entry(step.clone()).or_insert(at);

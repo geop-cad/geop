@@ -199,9 +199,10 @@ pub fn put(view: &PartView, pool: &mut Pool) -> GeopResult<String> {
     pool.put(&written)
 }
 
-/// The view [`put`] put as `key` in `pool`.
-pub fn get(key: &str, pool: &Pool) -> GeopResult<PartView> {
-    view_of(pool.get(key)?, pool, &mut HashMap::new())
+/// The view [`put`] put as `key` in `pool`: read once, however many
+/// records read it — the drawing of a part placed a thousand times.
+pub fn get(key: &str, pool: &Pool) -> GeopResult<Rc<PartView>> {
+    pool.shared(key, || view_of(pool.get(key)?, pool, &mut HashMap::new()))
 }
 
 fn text<T: Serialize>(value: &T) -> GeopResult<String> {
