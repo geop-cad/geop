@@ -206,6 +206,7 @@ pub struct Renderer {
     points: Growing,
 }
 
+#[allow(clippy::too_many_arguments)]
 fn pipeline(
     device: &wgpu::Device,
     layout: &wgpu::PipelineLayout,

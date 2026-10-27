@@ -883,7 +883,7 @@ fn datum(
     size: f64,
     center: V3,
     camera: &Camera,
-    fade: &dyn Fn(&[DatumKind], &str) -> (bool, f32),
+    fade: &Fade<'_>,
 ) {
     let paint = |base: Rgba, opacity: f32, (lit, factor): (bool, f32)| {
         let color = if lit { LIT } else { base };
@@ -994,6 +994,10 @@ fn datum(
 }
 
 // ── the step's visuals (`visuals3d.ts`) ─────────────────────────────────
+
+/// Whether a part of a datum, picked as `kinds`, named `element`, is lit,
+/// and by how much its opacity is multiplied.
+type Fade<'a> = dyn Fn(&[DatumKind], &str) -> (bool, f32) + 'a;
 
 /// How big a point is on screen, in pixels.
 const POINT_PX: f32 = 7.0;

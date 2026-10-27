@@ -322,10 +322,10 @@ pub fn explorer(window: &mut GeopApp, ui: &mut Ui) {
                             if let Some(image) = icons::image(arrow, 13.0, theme.weak()) {
                                 ui.add(image);
                             }
-                            if ui.selectable_label(false, name.as_str()).clicked() {
-                                if !state.expanded.remove(&key) {
-                                    state.expanded.insert(key.clone());
-                                }
+                            if ui.selectable_label(false, name.as_str()).clicked()
+                                && !state.expanded.remove(&key)
+                            {
+                                state.expanded.insert(key.clone());
                             }
                         }
                         Node::File { name, path, .. } => {
@@ -579,10 +579,8 @@ pub fn chooser(window: &mut GeopApp, ctx: &egui::Context, c: &mut Chooser) -> bo
                 }
                 if i.key_pressed(egui::Key::Enter) {
                     match row.node {
-                        Node::Folder { key, .. } if !searching => {
-                            if !c.expanded.remove(key) {
-                                c.expanded.insert(key.clone());
-                            }
+                        Node::Folder { key, .. } if !searching && !c.expanded.remove(key) => {
+                            c.expanded.insert(key.clone());
                         }
                         Node::File {
                             path,

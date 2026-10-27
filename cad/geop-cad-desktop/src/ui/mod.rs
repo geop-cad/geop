@@ -34,6 +34,9 @@ use actions::Action;
 
 pub use theme::Theme;
 
+/// Files read from disk to add, by name, with their contents.
+type Added = Vec<(String, String)>;
+
 /// What the window keeps beside the controller: how it is laid out, and
 /// what is under way in it.
 pub struct GeopApp {
@@ -53,10 +56,7 @@ pub struct GeopApp {
     /// A folder chosen to open.
     folders: (mpsc::Sender<PathBuf>, mpsc::Receiver<PathBuf>),
     /// Files chosen from disk to add to the workspace, read.
-    added: (
-        mpsc::Sender<Vec<(String, String)>>,
-        mpsc::Receiver<Vec<(String, String)>>,
-    ),
+    added: (mpsc::Sender<Added>, mpsc::Receiver<Added>),
     /// What was said of a file saved, or why it was not.
     notes: (mpsc::Sender<String>, mpsc::Receiver<String>),
     pub note: Option<(String, f64)>,
@@ -512,10 +512,10 @@ impl eframe::App for GeopApp {
         if !sidebar_dialog && self.app.step.is_some() {
             dialog::popup(self, &ctx);
         }
-        if let Some(mut chooser) = self.chooser.take() {
-            if explorer::chooser(self, &ctx, &mut chooser) {
-                self.chooser = Some(chooser);
-            }
+        if let Some(mut chooser) = self.chooser.take()
+            && explorer::chooser(self, &ctx, &mut chooser)
+        {
+            self.chooser = Some(chooser);
         }
         palette::show(self, &ctx);
         if self.shortcuts_open {
