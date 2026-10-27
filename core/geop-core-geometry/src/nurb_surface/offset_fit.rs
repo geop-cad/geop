@@ -94,6 +94,12 @@ const MAX_OFFSET_BOXES: usize = 1 << 14;
 /// factor `1 − d κ` comes within the box's width of zero.
 const REGULAR_SPLITS: usize = 6;
 
+/// How many splits in a row that do not halve how far from zero a box's
+/// entries could be leave whether the offset is regular there undecided:
+/// effort, like [`REGULAR_SPLITS`]. One was too few: by a cone's closing
+/// side the entries narrow slowly at first, then decide.
+const STALLED_SPLITS: usize = 3;
+
 /// The degree in each direction of the polynomial fitted to `1 / |m|` over
 /// a box: its error falls as the box's size to this plus one.
 const INVERSE_DEGREE: usize = 3;
@@ -737,17 +743,24 @@ impl NurbSurface3D {
                     offsetting.closes_over(u, v),
                 ))
             },
-            |(shape, distance, flipped, closes), u, v, last, parent: Option<&f64>| {
+            |(shape, distance, flipped, closes), u, v, last, parent: Option<&(f64, usize)>| {
                 let (said, size) = shape.regular(*distance, u, v, *closes, *flipped)?;
+                // How many splits in a row have not halved how far from zero
+                // the box's entries could be.
+                let stalled = match parent {
+                    Some(&(p, n)) if p <= 2.0 * size => n + 1,
+                    _ => 0,
+                };
                 Ok(match said {
                     Some(said) => Said::Is(Some(said)),
                     // Undecided at the last split, or where splitting the
-                    // box no longer halves how far from zero its entries
-                    // could be: a factor `1 − d κ` as near zero as the
-                    // arithmetic resolves, as a cylinder's offset by its
-                    // radius has all over, which no split decides.
-                    None if last || parent.is_some_and(|&p| p <= 2.0 * size) => Said::Is(None),
-                    None => Said::Split(size),
+                    // box has stopped narrowing how far from zero its
+                    // entries could be, [`STALLED_SPLITS`] times in a row: a
+                    // factor `1 − d κ` as near zero as the arithmetic
+                    // resolves, as a cylinder's offset by its radius has
+                    // all over, which no split decides.
+                    None if last || stalled >= STALLED_SPLITS => Said::Is(None),
+                    None => Said::Split((size, stalled)),
                 })
             },
             |said, u, v| match said {
