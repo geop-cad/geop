@@ -52,6 +52,7 @@ use std::{
     rc::Rc,
 };
 
+use crate::keys::APP_KEYS;
 use crate::{
     editing::{Extent, Presentation, Shape, StepEditEvent, Style},
     output::{Content, Export, Inspection, Output},
@@ -1684,6 +1685,7 @@ impl Editor {
             workspace_examples: self.registry.workspace_example_names().collect(),
             panels,
             details,
+            keys: APP_KEYS,
         })
     }
 }

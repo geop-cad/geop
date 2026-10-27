@@ -43,7 +43,17 @@ agree; a front end only draws what it is sent and sends what the user did.
   unique among the operations (`every_shortcut_starts_one_operation`);
   `F` and `Home` are the view's, `?` lists the keys, `Ctrl/⌘+K` opens the
   command palette, which searches operations, steps, examples, tools,
-  inspectors, exports and actions and shows each one's key.
+  inspectors, exports and actions and shows each one's key. What every
+  front end offers besides the operations has its key in the kernel too
+  (`geop_core_editor::keys::APP_KEYS`, sent as `ProgramState::keys`): the
+  palette, the key list, commit, cancel, undo, redo, fit (`F`), reset
+  (`Home`) and the projection (`O`). The desktop app's own extras (theme,
+  files, section) hold the command key.
+- **A key with Shift is another key.** `Shift+B` never starts what `B`
+  does; a symbol (`?`) is the symbol, whatever Shift it takes to type.
+- **The palette ranks alike everywhere**: the label starting with the
+  query, then a word of it, then the letters closest together; a group's
+  name finds its entries after those; what cannot be done now last.
 - **Plain letters belong to the step being edited** (its tools); the
   operations' keys work while no step is edited. Chords with Ctrl/⌘ work
   always; `Ctrl/⌘+Enter` commits from anywhere, a field included.

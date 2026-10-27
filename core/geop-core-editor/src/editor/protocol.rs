@@ -10,6 +10,7 @@ use serde::{Deserialize, Serialize};
 use crate::{
     editable::Listed,
     editing::{Presentation, StepEditEvent},
+    keys::AppKey,
     output::{Export, ExporterInfo, Inspection, InspectorInfo},
     registry::{Panel, StructureItem},
     tools::ToolInfo,
@@ -263,6 +264,9 @@ pub struct ProgramState {
     /// from what the panels show (see [`crate::registry::Panel::details`]):
     /// how free a placed part is.
     pub details: BTreeMap<String, String>,
+    /// The keys of what every front end offers besides the operations
+    /// (see [`crate::keys`]).
+    pub keys: &'static [AppKey],
 }
 
 /// What is drawn: a part, and which of its sketches and datums not to.

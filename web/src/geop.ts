@@ -735,6 +735,13 @@ export interface PlacedSteps {
   steps: StepInfo[];
 }
 
+/** Something every front end offers, and its key (`geop_core_editor::keys`): `Mod+K`, `?`, `F`. */
+export interface AppKey {
+  action: string;
+  key: string;
+  label: string;
+}
+
 export interface ProgramState {
   program: Program;
   /** The file it is in, if it is in one. */
@@ -764,6 +771,8 @@ export interface ProgramState {
   panels: Record<string, unknown>;
   /** What the part's structure says beside its items, by their names, from what the panels show: how free a placed part is. */
   details: Record<string, string>;
+  /** The keys of what every front end offers besides the operations. */
+  keys: AppKey[];
 }
 
 /**

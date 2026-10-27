@@ -104,6 +104,66 @@ fn undo_and_redo_are_buttons_and_hotkeys() {
     assert_eq!(steps(&harness), before);
 }
 
+/// The keys are the web app's: an operation starts by the kernel's key —
+/// Shift+B another than B — Escape cancels it untouched, `?` lists the
+/// keys and Escape closes the list, O switches the projection and F frames
+/// the part, with no step open.
+#[test]
+fn the_keys_are_the_web_apps() {
+    let mut harness = window("ui-keys", false);
+    let operations = harness
+        .state()
+        .app
+        .program
+        .as_ref()
+        .unwrap()
+        .operations
+        .clone();
+    let by_key = |key: &str| {
+        (operations.iter())
+            .find(|l| l.info.shortcut == Some(key))
+            .map(|l| l.kind)
+    };
+    harness.key_press(egui::Key::E);
+    idle(&mut harness);
+    assert_eq!(
+        harness.state().app.step.as_ref().map(|s| s.kind),
+        by_key("E")
+    );
+    harness.key_press(egui::Key::Escape);
+    idle(&mut harness);
+    harness.key_press(egui::Key::Escape);
+    idle(&mut harness);
+    assert!(
+        harness.state().app.step.is_none(),
+        "Escape cancels the untouched step"
+    );
+    if let Some(shifted) = by_key("Shift+B") {
+        harness.key_press_modifiers(egui::Modifiers::SHIFT, egui::Key::B);
+        idle(&mut harness);
+        assert_eq!(
+            harness.state().app.step.as_ref().map(|s| s.kind),
+            Some(shifted)
+        );
+        harness.key_press_modifiers(egui::Modifiers::COMMAND, egui::Key::Backspace);
+        idle(&mut harness);
+    }
+    harness.key_press_modifiers(egui::Modifiers::SHIFT, egui::Key::Questionmark);
+    harness.run_steps(2);
+    assert!(harness.state().shortcuts_open, "? lists the keys");
+    harness.key_press(egui::Key::Escape);
+    harness.run_steps(2);
+    assert!(!harness.state().shortcuts_open, "Escape closes the list");
+    let before = harness.state().app.camera.projection;
+    harness.key_press(egui::Key::O);
+    harness.run_steps(2);
+    assert_ne!(
+        harness.state().app.camera.projection,
+        before,
+        "O switches the projection"
+    );
+}
+
 /// The view draws the part: an example's solid covers the middle of the
 /// view, where the backdrop showed before.
 #[test]

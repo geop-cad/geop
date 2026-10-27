@@ -1,13 +1,13 @@
 //! The command palette (Ctrl+K): every operation, example, file, tool,
 //! inspector and action of the app, found by typing a few of its letters,
 //! moved through by the arrow keys and done with Enter — and the list of
-//! the keyboard's shortcuts (F1).
+//! the keyboard's shortcuts (`?`, or F1).
 
 use eframe::egui::{self, RichText};
 
 use super::{
     GeopApp,
-    actions::{Action, palette, score},
+    actions::{Action, palette, search},
     icons,
 };
 
@@ -38,15 +38,8 @@ pub fn show(window: &mut GeopApp, ctx: &egui::Context) {
         return;
     }
     let theme = window.theme;
-    let mut entries: Vec<(i64, usize, super::actions::Entry)> = palette(&window.app)
-        .into_iter()
-        .enumerate()
-        .filter_map(|(i, e)| {
-            let text = format!("{} {}", e.label, e.group);
-            score(&window.palette.query, &text).map(|s| (s, i, e))
-        })
-        .collect();
-    entries.sort_by(|a, b| b.0.cmp(&a.0).then(a.1.cmp(&b.1)));
+    let app = &window.app;
+    let mut entries = search(palette(app), &window.palette.query, |a| a.enabled(app));
     entries.truncate(60);
     let p = &mut window.palette;
     p.selected = p.selected.min(entries.len().saturating_sub(1));
@@ -79,7 +72,7 @@ pub fn show(window: &mut GeopApp, ctx: &egui::Context) {
                         p.selected = p.selected.saturating_sub(1);
                     }
                     if i.key_pressed(egui::Key::Enter) {
-                        run = entries.get(p.selected).map(|e| e.2.action.clone());
+                        run = entries.get(p.selected).map(|e| e.action.clone());
                     }
                     if i.key_pressed(egui::Key::Escape) {
                         close = true;
@@ -89,7 +82,7 @@ pub fn show(window: &mut GeopApp, ctx: &egui::Context) {
                 egui::ScrollArea::vertical()
                     .max_height(380.0)
                     .show(ui, |ui| {
-                        for (k, (_, _, entry)) in entries.iter().enumerate() {
+                        for (k, entry) in entries.iter().enumerate() {
                             let enabled = entry.action.enabled(&window.app);
                             let selected = k == p.selected;
                             let response = ui
@@ -223,6 +216,15 @@ pub fn shortcuts(window: &mut GeopApp, ctx: &egui::Context) {
                     for (action, what) in named {
                         if let Some(s) = action.shortcut() {
                             row(ctx.format_shortcut(&s), what);
+                        }
+                    }
+                    // The operations, by the kernel's keys, as the web app
+                    // lists them: with no step open.
+                    let operations = (window.app.program.iter()).flat_map(|p| &p.operations);
+                    for listed in operations {
+                        let action = Action::NewStep(listed.kind.to_string(), listed.info.shortcut);
+                        if let Some(s) = action.shortcut() {
+                            row(ctx.format_shortcut(&s), listed.info.label);
                         }
                     }
                     row(

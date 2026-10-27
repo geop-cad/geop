@@ -110,7 +110,11 @@ mod set {
                 "{}: {key:?} is no letter",
                 listed.kind
             );
-            assert!(key != "F", "{}: F frames the view", listed.kind);
+            assert!(
+                !geop_core_editor::keys::is_app_key(key),
+                "{}: {key} is the app's",
+                listed.kind
+            );
             assert!(taken.insert(key), "{key} starts two operations");
         }
         for kind in [

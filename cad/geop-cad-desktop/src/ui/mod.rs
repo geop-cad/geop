@@ -155,19 +155,24 @@ impl GeopApp {
     fn keys(&mut self, ctx: &egui::Context) {
         let typing = ctx.egui_wants_keyboard_input();
         let mut done = Vec::new();
+        let editing = self.app.step.is_some();
         ctx.input_mut(|input| {
             for action in Action::with_shortcuts() {
                 // Typing, a field's own keys are its: undo, a word deleted.
                 let while_typing = matches!(action, Action::Palette | Action::Commit);
                 if let Some(shortcut) = action.shortcut()
                     && (!typing || while_typing)
-                    && input.consume_shortcut(&shortcut)
+                    && (!editing || action.while_editing())
+                    && actions::take(input, &shortcut)
                 {
                     done.push(action);
                 }
             }
             if !typing && input.consume_key(egui::Modifiers::COMMAND, egui::Key::Y) {
                 done.push(Action::Redo);
+            }
+            if !typing && input.consume_key(egui::Modifiers::NONE, egui::Key::F1) {
+                done.push(Action::Shortcuts);
             }
             // An operation starts by its key while no step is edited: then
             // the plain keys are the step's own tools'.
@@ -177,7 +182,7 @@ impl GeopApp {
                     .map(|l| Action::NewStep(l.kind.to_string(), l.info.shortcut));
                 for action in operations {
                     if let Some(shortcut) = action.shortcut()
-                        && input.consume_shortcut(&shortcut)
+                        && actions::take(input, &shortcut)
                     {
                         done.push(action);
                     }
@@ -187,6 +192,23 @@ impl GeopApp {
         let events = ctx.input(|i| i.events.clone());
         for action in done {
             self.act(ctx, action);
+        }
+        // Escape closes the key list, as in the web app; the step never
+        // sees a key pressed over it.
+        if self.shortcuts_open {
+            if events.iter().any(|e| {
+                matches!(
+                    e,
+                    Event::Key {
+                        key: egui::Key::Escape,
+                        pressed: true,
+                        ..
+                    }
+                )
+            }) {
+                self.shortcuts_open = false;
+            }
+            return;
         }
         if typing || self.palette.open || self.chooser.is_some() {
             return;
@@ -379,13 +401,24 @@ impl GeopApp {
             }
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 ui.label(
-                    RichText::new("Ctrl+K: commands · F1: shortcuts")
-                        .weak()
-                        .small(),
+                    RichText::new(format!(
+                        "{}: commands · {}: shortcuts",
+                        shortcut_text(ui.ctx(), &Action::Palette),
+                        shortcut_text(ui.ctx(), &Action::Shortcuts),
+                    ))
+                    .weak()
+                    .small(),
                 );
             });
         });
     }
+}
+
+/// The key of `action`, as the platform writes it.
+pub fn shortcut_text(ctx: &egui::Context, action: &Action) -> String {
+    (action.shortcut())
+        .map(|s| ctx.format_shortcut(&s))
+        .unwrap_or_default()
 }
 
 /// A file dialog, on a thread of its own where the platform allows, so the

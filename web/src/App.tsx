@@ -738,6 +738,8 @@ function App() {
   // reach it: the operations by the kernel's keys, the steps, examples,
   // tools, inspectors and exports, and the app's own actions.
   const idle = wasmReady && step == null;
+  /** The key the kernel gives the app's `action` (see `geop_core_editor::keys`). */
+  const appKey = (action: string) => program?.keys.find((k) => k.action === action)?.key ?? null;
   const firstSentence = (doc: string) => doc.split(/(?<=\.)\s/)[0];
   const paletteEntries: PaletteEntry[] = [
     ...tools.map((t) => ({
@@ -753,7 +755,7 @@ function App() {
       id: "edit:commit",
       label: "OK: put the step into the program",
       group: "Edit",
-      shortcut: "Mod+Enter",
+      shortcut: appKey("commit"),
       disabled: step == null || step.missing.length > 0 || step.error != null,
       run: () => void close({ command: "commit" }),
     },
@@ -761,8 +763,8 @@ function App() {
       id: "edit:cancel",
       label: "Cancel the step",
       group: "Edit",
-      // As the desktop app has it: Escape is the step's own first.
-      shortcut: "Mod+Backspace",
+      // Whatever is in progress: Escape is the step's own first.
+      shortcut: appKey("cancel"),
       disabled: step == null,
       run: () => void close({ command: "cancel" }),
     },
@@ -770,7 +772,7 @@ function App() {
       id: "edit:undo",
       label: "Undo",
       group: "Edit",
-      shortcut: "Mod+Z",
+      shortcut: appKey("undo"),
       disabled: !(step ? step.can_undo : (program?.can_undo ?? false)),
       run: () => void dispatch({ command: "undo" }),
     },
@@ -778,7 +780,7 @@ function App() {
       id: "edit:redo",
       label: "Redo",
       group: "Edit",
-      shortcut: "Mod+Shift+Z",
+      shortcut: appKey("redo"),
       disabled: !(step ? step.can_redo : (program?.can_redo ?? false)),
       run: () => void dispatch({ command: "redo" }),
     },
@@ -789,12 +791,12 @@ function App() {
       disabled: step == null,
       run: () => void dispatch({ command: "preview", preview: !(step?.preview ?? true) }),
     },
-    { id: "view:fit", label: "Fit the part in the view", group: "View", shortcut: "F", disabled: !idle, run: () => fitView() },
+    { id: "view:fit", label: "Fit the part in the view", group: "View", shortcut: appKey("fit"), disabled: !idle, run: () => fitView() },
     {
       id: "view:home",
       label: "Reset the view",
       group: "View",
-      shortcut: "Home",
+      shortcut: appKey("home"),
       disabled: !idle,
       run: () => fitView(DEFAULT_POSE),
     },
@@ -802,7 +804,7 @@ function App() {
       id: "view:projection",
       label: projection === "perspective" ? "Orthographic view" : "Perspective view",
       group: "View",
-      shortcut: "O",
+      shortcut: appKey("projection"),
       disabled: !idle,
       run: () => setProjection(projection === "perspective" ? "orthographic" : "perspective"),
     },
@@ -856,8 +858,8 @@ function App() {
       disabled: !idle,
       run: () => void loadWorkspaceExample(name),
     })),
-    { id: "help:palette", label: "Command palette", group: "Help", shortcut: "Mod+K", run: () => setPalette("palette") },
-    { id: "help:keys", label: "Keyboard shortcuts", group: "Help", shortcut: "?", run: () => setPalette("keys") },
+    { id: "help:palette", label: "Command palette", group: "Help", shortcut: appKey("palette"), run: () => setPalette("palette") },
+    { id: "help:keys", label: "Keyboard shortcuts", group: "Help", shortcut: appKey("keys"), run: () => setPalette("keys") },
   ];
   const entriesRef = useRef(paletteEntries);
   entriesRef.current = paletteEntries;
@@ -869,7 +871,8 @@ function App() {
   // tools, Escape, Enter, Delete).
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if (matches(parseChord("Mod+K"), e)) {
+      const palettes = entriesRef.current.find((entry) => entry.id === "help:palette");
+      if (palettes?.shortcut && matches(parseChord(palettes.shortcut), e)) {
         e.preventDefault();
         setPalette((open) => (open === "palette" ? null : "palette"));
         return;
@@ -877,7 +880,7 @@ function App() {
       if (palette != null || e.defaultPrevented) return;
       // Ctrl+Enter commits from a field too, after the field took its Enter.
       const commit = entriesRef.current.find((entry) => entry.id === "edit:commit");
-      if (commit && !commit.disabled && matches(parseChord("Mod+Enter"), e)) {
+      if (commit?.shortcut && !commit.disabled && matches(parseChord(commit.shortcut), e)) {
         e.preventDefault();
         commit.run();
         return;
@@ -885,7 +888,7 @@ function App() {
       if (typing(e)) return;
       // While a step is edited, its tools take the plain keys.
       const usable = entriesRef.current.filter(
-        (entry) => !editing || entry.shortcut?.startsWith("Mod+") || entry.shortcut === "?",
+        (entry) => !editing || entry.shortcut?.startsWith("Mod+") || entry.id === "help:keys",
       );
       const entry = pressed(usable, e);
       if (entry) {

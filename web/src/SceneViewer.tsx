@@ -652,8 +652,10 @@ export function SceneViewer({
       ];
       if (datumInputs.some((input, k) => input !== datumsDrawn.inputs[k])) {
         const lit = litDatums(litRef.current);
-        const shown = new Set(lit);
-        const hidden = new Set(hiddenRef.current.filter((name) => !shown.has(name)));
+        // A hidden datum is shown while it, or a component of it (its
+        // axis, its plane), is lit — as the desktop app shows it.
+        const litShows = (name: string) => lit.some((l) => l === name || l.startsWith(`${name}:`));
+        const hidden = new Set(hiddenRef.current.filter((name) => !litShows(name)));
         const { extent } = partRef.current;
         datumLayer.sync(datumsRef.current, hidden, extent.size, vec(extent.center));
         datumsDrawn.inputs = datumInputs;

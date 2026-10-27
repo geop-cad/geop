@@ -168,7 +168,10 @@ pub fn ribbon(window: &mut GeopApp, ui: &mut Ui) {
             }
             if ui
                 .button("?")
-                .on_hover_text("Keyboard shortcuts (F1)")
+                .on_hover_text(format!(
+                    "Keyboard shortcuts ({})",
+                    super::shortcut_text(&ctx, &Action::Shortcuts)
+                ))
                 .clicked()
             {
                 acted = Some(Action::Shortcuts);
