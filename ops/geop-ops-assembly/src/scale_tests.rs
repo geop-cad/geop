@@ -13,9 +13,11 @@ use geop_core_editor::{
     testing::handled,
 };
 use geop_core_program::{
+    cache::Cache,
     part::Part,
     placed::Located,
     program::Program,
+    testing::Shelf,
     values::{StateValue, StateValues, pose_state},
     workspace::{FileStore, FileStoreMut},
 };
@@ -641,9 +643,15 @@ fn dragging_one_of_many_placed_parts_sends_only_it() {
 /// [`crate::testing::robot_arm`]), with every file sent, its mates holding
 /// where its state has the parts.
 pub(crate) fn arm_editor(arm: &RobotArm) -> Editor {
+    arm_editor_in(arm, Cache::new())
+}
+
+/// [`arm_editor`], what its files are made into kept in `cache`: a
+/// process's, kept on its shelf, which a second editor reopens from.
+fn arm_editor_in(arm: &RobotArm, cache: Cache) -> Editor {
     let mut files = robot_arm(arm);
     let top = Program::from_json(&files.remove(ARM).unwrap()).unwrap();
-    let mut editor = editor();
+    let mut editor = Editor::with_cache(registry(), WithStandardParts(BTreeMap::new()), cache);
     handled(
         &mut editor,
         Command::Files {
@@ -769,6 +777,26 @@ fn drag_wrist(editor: &mut Editor, arm: &RobotArm, by: &[[f64; 2]]) -> Vec<DragC
         });
     }
     costs
+}
+
+/// The arm reopened from what an editor that had it open kept builds the
+/// same arm and meshes no face: its standard parts — motors, pulleys,
+/// whose sketches and booleans are most of a load — are read back, not
+/// made again.
+#[test]
+fn the_arm_reopened_meshes_no_face() {
+    let arm = RobotArm {
+        axes: 2,
+        brackets_per_link: 1,
+        screws_per_bracket: 2,
+    };
+    let shelf = Shelf::of("arm");
+    let meshed = geop_core_rasterize::faces_meshed();
+    drop(arm_editor_in(&arm, shelf.cache()));
+    assert!(geop_core_rasterize::faces_meshed() > meshed);
+    let meshed = geop_core_rasterize::faces_meshed();
+    drop(arm_editor_in(&arm, shelf.cache()));
+    assert_eq!(geop_core_rasterize::faces_meshed(), meshed);
 }
 
 /// A short drag of the wrist: three events, a few millimetres each.
@@ -917,12 +945,20 @@ fn robot_arm_timings() {
             screws_per_bracket: screws,
             ..RobotArm::default()
         };
+        let shelf = Shelf::of("arm");
         let runs = geop_lib_constraints::solve::runs();
-        let (load, mut editor) = cpu_timed(|| arm_editor(&arm));
+        let (load, editor) = cpu_timed(|| arm_editor_in(&arm, shelf.cache()));
         println!(
             "robot arm of {} parts: load {load:.2} s, {} program runs",
             arm.parts(),
             geop_lib_constraints::solve::runs() - runs
+        );
+        drop(editor);
+        let meshed = geop_core_rasterize::faces_meshed();
+        let (reopen, mut editor) = cpu_timed(|| arm_editor_in(&arm, shelf.cache()));
+        println!(
+            "  reopened from what the load kept {reopen:.2} s, {} faces meshed",
+            geop_core_rasterize::faces_meshed() - meshed
         );
         let drags = [[2.0, 1.0], [4.0, 3.0], [6.0, 4.0], [9.0, 5.0], [12.0, 5.0]];
         let start = cpu_seconds();
