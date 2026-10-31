@@ -81,11 +81,26 @@ export function stale(output) {
   return fs.statSync(output).mtimeMs < newest([...SOURCES, path.join(ROOT, "Cargo.lock")], SOURCE_FILES);
 }
 
-/** Run `command` with `args` in `cwd`, showing its output; throws if it fails. */
-export function run(command, args, cwd = WEB) {
+/** Run `command` with `args` in `cwd`, `env` added to the environment, showing its output; throws if it fails. */
+export function run(command, args, cwd = WEB, env = {}) {
   console.log(`$ ${command} ${args.join(" ")}`);
-  const result = spawnSync(command, args, { cwd, stdio: "inherit", env: { CARGO_BUILD_JOBS: "6", ...process.env } });
+  const result = spawnSync(command, args, { cwd, stdio: "inherit", env: { CARGO_BUILD_JOBS: "6", ...process.env, ...env } });
   if (result.status !== 0) throw new Error(`${command} ${args.join(" ")} failed (${result.status ?? result.signal})`);
+}
+
+/**
+ * The assistant's bot check's site key, public, as the deploy and CI build
+ * with it (.github/workflows/deploy-app.yml, web.yml).
+ */
+const DEPLOYED_SITE_KEY = "0x4AAAAAAFlnEJQiD_GIxiZ-";
+
+/**
+ * Build `dist/` as it is deployed: offering the assistant, whose panel
+ * takes room beside the view — what a first visit has to leave room for.
+ * `VITE_TURNSTILE_SITE_KEY` set in the environment is kept.
+ */
+export function buildAsDeployed() {
+  run("npm", ["run", "build"], WEB, { VITE_TURNSTILE_SITE_KEY: process.env.VITE_TURNSTILE_SITE_KEY || DEPLOYED_SITE_KEY });
 }
 
 /** A TCP port nobody listens on right now. */

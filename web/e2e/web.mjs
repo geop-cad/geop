@@ -22,10 +22,10 @@
 import path from "node:path";
 import fs from "node:fs";
 import { firstRunChecks } from "./firstrun.mjs";
-import { Checks, clickOperation, expect, fileMenu, launch, operationLabels, OUT, pixelAt, preview, run, settle, shownErrors, stale, watchErrors, WEB } from "./lib.mjs";
+import { buildAsDeployed, Checks, clickOperation, expect, fileMenu, launch, operationLabels, OUT, pixelAt, preview, settle, shownErrors, stale, watchErrors, WEB } from "./lib.mjs";
 
 const browser = await launch();
-if (stale(path.join(WEB, "dist", "index.html"))) run("npm", ["run", "build"]);
+if (stale(path.join(WEB, "dist", "index.html"))) buildAsDeployed();
 const server = await preview();
 // First, a first visit, from a fresh profile: before anything here has been stored.
 const firstRun = await firstRunChecks(browser, server.url);
@@ -39,13 +39,17 @@ const check = (name, body) => checks.check(name, body);
 /**
  * The app as a new visitor sees it — no files kept from before, one empty
  * part — but offering every operation: the checks reach the experimental
- * ones too. `reduced` leaves reduced mode on, as a visitor has it.
+ * ones too. `reduced` leaves reduced mode on, as a visitor has it. The
+ * assistant is closed, as a visitor who closed it has it: the checks click
+ * the view beside a step's dialog, and need its room (a first visit with
+ * the assistant open is `firstrun.mjs`'s).
  */
 async function fresh({ reduced = false } = {}) {
   await page.goto(server.url);
   await page.evaluate((reduced) => {
     localStorage.clear();
     if (!reduced) localStorage.setItem("geop.reducedMode", "off");
+    localStorage.setItem("geop.assistantClosed", "1");
   }, reduced);
   await page.reload();
   await settle(page);

@@ -13,12 +13,12 @@ import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 
-import { ROOT, WEB, clickOperation, launch, preview, run, settle, stale, watchErrors } from "./lib.mjs";
+import { ROOT, WEB, clickOperation, buildAsDeployed, launch, preview, run, settle, stale, watchErrors } from "./lib.mjs";
 
 const OUT = path.join(WEB, "e2e", "out", "demo");
 const GIF = path.join(ROOT, "docs", "demo.gif");
 
-if (stale(path.join(WEB, "dist", "index.html"))) run("npm", ["run", "build"]);
+if (stale(path.join(WEB, "dist", "index.html"))) buildAsDeployed();
 fs.rmSync(OUT, { recursive: true, force: true });
 fs.mkdirSync(OUT, { recursive: true });
 

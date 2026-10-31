@@ -13,6 +13,8 @@
   flex: 1;
   min-height: 0;
   display: flex;
+  /* What has no room to dock beside the view lies over it (layout.ts). */
+  position: relative;
 }
 
 .sidebar {
@@ -1116,6 +1118,17 @@ button.inline {
   border-right: 1px solid var(--line);
 }
 
+/* The explorer where the window leaves it no room beside the view
+   (layout.ts): at the top of the program panel, scrolling on its own. */
+.sidebar-explorer {
+  flex-shrink: 0;
+  max-height: 35%;
+  overflow-y: auto;
+  margin: -0.5rem -0.6rem 0.25rem;
+  background: var(--bg-deep);
+  border-bottom: 1px solid var(--line);
+}
+
 .explorer {
   display: flex;
   flex-direction: column;
@@ -1414,6 +1427,18 @@ button.inline {
   height: 96px;
   cursor: pointer;
   touch-action: none;
+}
+/* The view the cube is drawn in: a small one has a smaller cube, which
+   stays clear of the origin's axes (FRAME_PX, 90 px) at the view's middle
+   (checked by e2e/firstrun.mjs). */
+.scene-view {
+  container-type: size;
+}
+@container (max-width: 640px) or (max-height: 480px) {
+  .view-cube {
+    width: 64px;
+    height: 64px;
+  }
 }
 .view-home {
   font-size: 1rem;
@@ -2542,6 +2567,16 @@ button.danger:hover:not(:disabled) {
   border-left: 1px solid var(--line);
   display: flex;
   min-height: 0;
+}
+/* Opened where docking it would leave the view less than VIEW_MIN
+   (layout.ts): over the view's right side, the view keeping its width. */
+.assistant-bar.assistant-over {
+  position: absolute;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 6;
+  box-shadow: var(--shadow);
 }
 .assistant {
   flex: 1;

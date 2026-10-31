@@ -12,10 +12,10 @@
 // app offers.
 
 import path from "node:path";
-import { Checks, expect, fileMenu, launch, preview, run, settle, stale, watchErrors, WEB } from "./lib.mjs";
+import { buildAsDeployed, Checks, expect, fileMenu, launch, preview, settle, stale, watchErrors, WEB } from "./lib.mjs";
 
 const browser = await launch();
-if (stale(path.join(WEB, "dist", "index.html"))) run("npm", ["run", "build"]);
+if (stale(path.join(WEB, "dist", "index.html"))) buildAsDeployed();
 const server = await preview();
 const context = await browser.newContext({ viewport: { width: 1400, height: 900 } });
 const page = await context.newPage();

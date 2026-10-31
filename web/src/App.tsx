@@ -50,6 +50,7 @@ import { Toolbar } from "./Toolbar";
 import { trackEdit, trackExample, trackFailures, trackFile } from "./analytics";
 import { MobileBottom, type MobileTab } from "./MobileBottom";
 import { useIsMobile } from "./useIsMobile";
+import { assistantFits, docked, useWindowWidth } from "./layout";
 import { scopeTextSelection } from "./selection";
 import { AssistantPanel } from "./Assistant";
 import { ASSISTANT_CONFIGURED, useAssistant } from "./useAssistant";
@@ -298,11 +299,12 @@ function App() {
     }
   }
 
-  // Shown by default where the assistant is offered, until closed: the
-  // session (and the check that one is human) starts with the first message,
-  // so a visitor who never asks costs nothing.
+  // Shown by default where the assistant is offered and the window has room
+  // to dock it beside the view (see `layout.ts`), until closed: the session
+  // (and the check that one is human) starts with the first message, so a
+  // visitor who never asks costs nothing.
   const [assistantOpen, setAssistantOpenState] = useState(() => {
-    if (!ASSISTANT_CONFIGURED) return false;
+    if (!ASSISTANT_CONFIGURED || !assistantFits(window.innerWidth)) return false;
     try {
       return localStorage.getItem(ASSISTANT_CLOSED) !== "1";
     } catch {
@@ -320,6 +322,7 @@ function App() {
       }
       return next;
     });
+  const dock = docked(useWindowWidth(), assistantOpen);
   const assistant = useAssistant({
     program: program?.program ?? null,
     idle: wasmReady && step == null,
@@ -1107,8 +1110,9 @@ function App() {
         }}
       />
       <div className="body">
-        {explorer && <aside className="explorer-bar desktop-only">{explorer}</aside>}
+        {explorer && dock.explorer && <aside className="explorer-bar desktop-only">{explorer}</aside>}
         <aside className="sidebar desktop-only">
+          {explorer && !dock.explorer && <div className="sidebar-explorer">{explorer}</div>}
           {programPanel}
           {structurePanel}
         </aside>
@@ -1211,7 +1215,7 @@ function App() {
           </main>
         </div>
         {!host && assistantOpen && (
-          <aside className="assistant-bar desktop-only">
+          <aside className={`assistant-bar desktop-only${dock.assistant ? "" : " assistant-over"}`}>
             <AssistantPanel assistant={assistant} onClose={() => setAssistantOpen(() => false)} />
           </aside>
         )}

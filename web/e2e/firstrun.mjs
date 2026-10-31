@@ -3,17 +3,21 @@
 // no cache), the page loaded once, nothing reloaded or cleared, in several
 // windows. The origin's coordinate system must be held by the view, drawn —
 // in the canvas's pixels where its axes project — and seen, in the page's
-// pixels there, with the welcome open, and after it is closed. The welcome
-// must show each example with its preview, its name and what it is, and
-// the keys must open one.
+// pixels there, clear of the view cube, with the welcome open, and after it
+// is closed. The view must keep its room (`VIEW_MIN` of `src/layout.ts`)
+// beside the panels docked by it, in the build as it is deployed: with the
+// assistant offered. The welcome must show each example with its preview,
+// its name and what it is, and the keys must open one.
 //
 // Part of `npm run e2e` (it runs first), and on its own: `npm run
-// e2e:first-run`, which CI runs on every push.
+// e2e:first-run`, which CI runs on every push. Both build `dist/` as it is
+// deployed when it is stale (`buildAsDeployed`); `--build` rebuilds it.
 
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { Checks, expect, launch, pixelAt, preview, run, settle, stale, watchErrors, WEB } from "./lib.mjs";
+import { Checks, expect, buildAsDeployed, launch, pixelAt, preview, settle, stale, watchErrors, WEB } from "./lib.mjs";
 import { previewsStale, renderPreviews } from "./previews.mjs";
+import { VIEW_MIN } from "../src/layout.ts";
 
 /** The datums of the origin every part has: its coordinate system. */
 const ORIGIN = "origin";
@@ -49,14 +53,17 @@ export function canvasPixels(page, at) {
   );
 }
 
+/** How long the origin's axes are drawn, in pixels: `FRAME_PX` of `datums3d.ts`. */
+const FRAME_PX = 90;
+
 /**
  * Where the origin's axes are drawn on screen: for each of x, y and z,
- * client points along it, from a third to two thirds of its arrow (90 px,
- * `FRAME_PX` of `datums3d.ts`), and a little either side of it — the
- * shaft is a few pixels thick.
+ * client points along it, from a third to two thirds of its arrow, and a
+ * little either side of it — the shaft is a few pixels thick. With
+ * `whole`, points along all of it instead, from the origin to its tip.
  */
-async function axisPoints(page) {
-  return page.evaluate(() => {
+async function axisPoints(page, whole = false) {
+  return page.evaluate(([whole, frame]) => {
     const { project } = window.geopView;
     const o = project([0, 0, 0]);
     const out = {};
@@ -74,13 +81,14 @@ async function axisPoints(page) {
       }
       const u = [d[0] / n, d[1] / n];
       const points = [];
-      for (const along of [30, 40, 50, 60]) {
-        for (const across of [-1, 0, 1]) points.push([o[0] + u[0] * along - u[1] * across, o[1] + u[1] * along + u[0] * across]);
+      const alongs = whole ? Array.from({ length: frame / 5 + 1 }, (_, i) => i * 5) : [30, 40, 50, 60];
+      for (const along of alongs) {
+        for (const across of whole ? [0] : [-1, 0, 1]) points.push([o[0] + u[0] * along - u[1] * across, o[1] + u[1] * along + u[0] * across]);
       }
       out[axis] = points;
     }
     return out;
-  });
+  }, [whole, FRAME_PX]);
 }
 
 /** Whether the pixel `[r, g, b, a]` is the axis `axis`'s colour: drawn, and that channel ahead of the others. */
@@ -126,12 +134,44 @@ export async function expectOriginDrawn(page) {
     }
     seen.push(`${axis} ${inCanvas}/${onScreen}/${pixels.length}`);
   }
+  // The view cube is drawn into the same canvas: it lies over none of the origin.
+  const cube = await page.locator(".view-cube-area").boundingBox();
+  if (cube) {
+    const whole = await axisPoints(page, true);
+    for (const axis of ["x", "y", "z"]) {
+      const under = whole[axis].filter(([x, y]) => x >= cube.x && x <= cube.x + cube.width && y >= cube.y && y <= cube.y + cube.height);
+      expect(under.length === 0, `the view cube (${JSON.stringify(cube)}) lies over the origin's ${axis} axis, at ${JSON.stringify(under[0])}`);
+    }
+  }
   return `datums [${drawn.join(", ")}], axis pixels drawn/seen ${seen.join(", ")}`;
+}
+
+/**
+ * Throw unless the view keeps its room beside the panels, as the build is
+ * deployed: it offers the assistant, the view is `VIEW_MIN` wide or wider,
+ * and nothing lies over it on a first visit. Returns what it saw.
+ */
+async function expectViewRoom(page) {
+  const offered = (await page.locator(".assistant-toggle").count()) > 0;
+  expect(
+    offered,
+    "this build does not offer the assistant, as the deployed one does: build it with VITE_TURNSTILE_SITE_KEY set (npm run e2e:first-run -- --build does)",
+  );
+  const view = await page.locator("main.viewport").boundingBox();
+  expect(view != null && view.width >= VIEW_MIN, `the view is ${view?.width} px wide, less than ${VIEW_MIN}`);
+  const over = await page.locator(".assistant-over").count();
+  expect(over === 0, "the assistant lies over the view on a first visit");
+  const docked = await page.evaluate(() =>
+    [".explorer-bar", ".assistant-bar"].filter((s) => document.querySelector(s) != null).map((s) => s.slice(1)),
+  );
+  return `the view ${Math.round(view.width)}×${Math.round(view.height)}, beside [${["sidebar", ...docked].join(", ")}]`;
 }
 
 /** The windows a first visit is checked in: desktops from wide to small, and a phone. */
 const WINDOWS = [
+  { name: "1440×900", viewport: { width: 1440, height: 900 } },
   { name: "1400×900", viewport: { width: 1400, height: 900 } },
+  { name: "1366×768", viewport: { width: 1366, height: 768 } },
   { name: "1280×720", viewport: { width: 1280, height: 720 } },
   { name: "1024×640", viewport: { width: 1024, height: 640 } },
   { name: "a phone", viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true },
@@ -156,7 +196,8 @@ export async function firstRunChecks(browser, url) {
       await page.goto(url);
       await settle(page);
       expect(await page.locator(".welcome-card").isVisible(), "no welcome on a first visit");
-      return expectOriginDrawn(page);
+      const room = options.isMobile ? "" : `${await expectViewRoom(page)}; `;
+      return `${room}${await expectOriginDrawn(page)}`;
     });
     await checks.check(`a first visit in ${window}: closing the welcome leaves the origin shown`, async () => {
       await page.locator(".welcome-card button[aria-label='Close']").click();
@@ -205,7 +246,7 @@ export async function firstRunChecks(browser, url) {
 // On its own: build what is stale, serve it, run the checks.
 if (process.argv[1] === fileURLToPath(import.meta.url)) {
   const browser = await launch();
-  if (stale(path.join(WEB, "dist", "index.html"))) run("npm", ["run", "build"]);
+  if (stale(path.join(WEB, "dist", "index.html"))) buildAsDeployed();
   const server = await preview();
   try {
     const checks = new Checks(null, []);

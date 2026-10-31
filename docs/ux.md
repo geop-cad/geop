@@ -162,9 +162,20 @@ agree; a front end only draws what it is sent and sends what the user did.
   a preview rendered from what it builds, its name and a line on what it
   is; the arrows move between them, Enter opens one, Escape closes the
   welcome — in both apps.
+- **The view keeps its room: 480 px wide at least** (`VIEW_MIN`,
+  `layout.ts`). Beside it the program panel always docks; the assistant,
+  open, docks next, then the explorer, each only where the view keeps
+  480 px. An explorer with no room moves to the top of the program panel;
+  an assistant opened with no room lies over the view's right side. The
+  assistant starts open (where the build offers it) only in a window that
+  docks it beside both others, 1363 px and wider; the explorer docks from
+  1022 px. At 860 px and below the panels are tabs under the view.
 - Nothing lies over the origin of an empty part: the welcome asks for a
   plane of it to be clicked. The view centres itself above what the
-  welcome covers, and on a phone the welcome lies over the panels.
+  welcome covers, and on a phone the welcome lies over the panels. The
+  view cube shrinks to 64 px in a view under 640 × 480, so in a view of
+  480 px or more it stays clear of the origin's axes (90 px from the
+  middle).
 - Every tooltip of something with a key says the key from where the
   kernel names it, never a key written into the front end.
 - A refusal names what to do: "pick the face first", not "invalid".
@@ -179,10 +190,14 @@ agree; a front end only draws what it is sent and sends what the user did.
 - The first run is tested from a fresh profile on every change: a browser
   that has never seen the app (no storage, no cache, as an incognito
   window) opens it once, and the origin's coordinate system must be held
-  by the view, drawn in its canvas and seen on the page, with the welcome
-  open and after it is closed, in desktop windows from wide to small and
-  on a phone (`npm run e2e:first-run`, first in `npm run e2e`; CI runs it
-  on every push, and the deploy runs it before it ships). A first visit
+  by the view, drawn in its canvas and seen on the page, clear of the view
+  cube, with the welcome open and after it is closed, and the view must
+  keep its 480 px, in windows of 1440 × 900, 1400 × 900, 1366 × 768,
+  1280 × 720 and 1024 × 640 and on a phone (`npm run e2e:first-run`, first
+  in `npm run e2e`; CI runs it on every push, and the deploy runs it
+  before it ships). It runs on the build as deployed, the assistant
+  offered (`buildAsDeployed` sets its public site key). A first visit
   once showed no coordinate system at all: the kernel took a scene it had
   shown itself as sent, the page was sent none, and no check started
-  from nothing.
+  from nothing. Another, at 1024 × 640, left the view 145 px between the
+  explorer, the program panel and the assistant, the cube over the origin.

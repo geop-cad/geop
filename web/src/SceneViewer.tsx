@@ -1065,6 +1065,7 @@ export function SceneViewer({
   return (
     <div
       ref={containerRef}
+      className="scene-view"
       style={{ position: "relative", width: "100%", height: "100%", minHeight: 0, touchAction: "none" }}
     >
       <div className="view-cube-area">

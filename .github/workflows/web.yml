@@ -47,9 +47,10 @@ jobs:
         run: npm ci
 
       # Built as deploy-app.yml builds it: the assistant's bot check's site
-      # key (public) puts the assistant beside the view, as a visitor has
-      # it, which leaves the view narrower. The build type-checks the
-      # protocol samples against src/geop.ts.
+      # key (public) offers the assistant, docked beside the view where
+      # the window has room, as a visitor has it (web/e2e/lib.mjs
+      # `buildAsDeployed` builds the same locally). The build type-checks
+      # the protocol samples against src/geop.ts.
       - name: Build (wasm + vite)
         working-directory: web
         run: timeout 1800 prlimit --as=68000000000 npm run build
