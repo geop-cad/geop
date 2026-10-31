@@ -16,9 +16,11 @@
 //! process a front end spawns and talks to over stdin/stdout (see
 //! [`serve`]). `geop mcp` is that editor as a Model Context Protocol server,
 //! for an agent to drive (see [`mcp`]). `geop open` serves that editor to
-//! a browser, editing a folder of files (see [`open`]), and `geop vscode`
-//! installs the VS Code extension of this release (see [`vscode`]).
+//! a browser, editing a folder of files (see [`open`]), `geop app` shows
+//! it in a window of its own (see [`app`]), and `geop vscode` installs the
+//! VS Code extension of this release (see [`vscode`]).
 
+mod app;
 mod mcp;
 mod open;
 mod release;
@@ -71,6 +73,10 @@ enum Command {
     /// the kernel running here: `geop open my-project`. The files stay on
     /// disk, written as they are edited.
     Open(open::OpenArgs),
+    /// Edit the files of a folder in the editor, in a window of its own:
+    /// `geop app my-project`, or `geop app` to choose the folder. The same
+    /// editor as `geop open`, without the browser.
+    App(app::AppArgs),
     /// Install the VS Code extension of this version of geop into VS Code
     /// (or Cursor, or VSCodium), downloaded from its GitHub release.
     Vscode(vscode::VscodeArgs),
@@ -396,6 +402,7 @@ fn main() -> ExitCode {
         Command::Serve(args) => serve(&args),
         Command::Mcp(McpArgs {}) => mcp::serve(),
         Command::Open(args) => open::open(&args),
+        Command::App(args) => app::run(&args),
         Command::Vscode(args) => vscode::install(&args),
         Command::Compile(args) => compile(&args).map(|c| {
             if !c.solved_for.is_empty() {
@@ -620,7 +627,7 @@ mod tests {
     }
 
     #[test]
-    fn open_and_vscode_take_their_arguments() {
+    fn open_app_and_vscode_take_their_arguments() {
         let parse = |args: &[&str]| Cli::try_parse_from([&["geop"], args].concat());
         let Command::Open(open) = parse(&["open"]).unwrap().command else {
             panic!("not open")
@@ -640,6 +647,15 @@ mod tests {
             (PathBuf::from("proj"), Some(8080), true)
         );
         assert!(parse(&["open", "--port", "70000"]).is_err());
+        let Command::App(app) = parse(&["app"]).unwrap().command else {
+            panic!("not app")
+        };
+        assert_eq!(app.path, None);
+        let Command::App(app) = parse(&["app", "proj/part.geop"]).unwrap().command else {
+            panic!("not app")
+        };
+        assert_eq!(app.path, Some(PathBuf::from("proj/part.geop")));
+        assert!(parse(&["app", "a", "b"]).is_err());
         let Command::Vscode(vscode) = parse(&["vscode"]).unwrap().command else {
             panic!("not vscode")
         };
