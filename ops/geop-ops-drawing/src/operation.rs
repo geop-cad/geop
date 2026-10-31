@@ -826,7 +826,7 @@ impl DrawingSession {
         let mut more: Vec<&Candidate> = self.picks.iter().collect();
         let grows = hit.as_ref().is_some_and(|h| {
             more.push(h);
-            fits(self.tool, &more) && !(self.tool == Tool::Note && !self.picks.is_empty())
+            fits(self.tool, &more) && (self.tool != Tool::Note || self.picks.is_empty())
         });
         if grows && let Some(hit) = &hit {
             self.picks.push(hit.clone());

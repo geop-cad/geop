@@ -727,11 +727,10 @@ impl NurbSurface3D {
                     let angle = at.into.prod_dot(&normal).div(at.into.norm())?;
                     let away = at.into.prod_dot(&away).definitely_greater(Scalar::ZERO);
                     let corner = s.is_exactly(abscissae[0]);
-                    if !corner
-                        && !(away
-                            && angle.definitely_greater(Scalar::ZERO)
-                            && angle.definitely_less(tilt))
-                    {
+                    let leaves_as_it_should = away
+                        && angle.definitely_greater(Scalar::ZERO)
+                        && angle.definitely_less(tilt);
+                    if !(corner || leaves_as_it_should) {
                         seen.push(Stray {
                             at: s,
                             what: format!(

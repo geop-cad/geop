@@ -167,7 +167,8 @@ pub(crate) fn remove<P, C: Uses, K: Uses>(
         }
     }
     all_points.retain(|p, _| {
-        !points.contains(p) && !(used_before.contains(p) && !used_after.contains(p))
+        let only_used_before = used_before.contains(p) && !used_after.contains(p);
+        !(points.contains(p) || only_used_before)
     });
     all_curves.retain(|id, _| !dead_curves.contains(id));
     all_constraints.retain(|id, _| !dead_constraints.contains(id));
@@ -856,10 +857,10 @@ impl Sketch {
             | Angle { a, b, .. } => need(is_line(*a)? && is_line(*b)?, "two lines"),
             Tangent { a, b } => {
                 let shared = self.shared_endpoint(*a, *b)?.is_some();
-                let ok = shared
-                    && !(is_line(*a)? && is_line(*b)?)
-                    && !matches!(kind(*a)?, CurveKind::Circle { .. })
-                    && !matches!(kind(*b)?, CurveKind::Circle { .. })
+                let two_lines = is_line(*a)? && is_line(*b)?;
+                let a_circle = matches!(kind(*a)?, CurveKind::Circle { .. });
+                let b_circle = matches!(kind(*b)?, CurveKind::Circle { .. });
+                let ok = shared && !(two_lines || a_circle || b_circle)
                     || !shared
                         && (is_round(*a)? && (is_round(*b)? || is_line(*b)?)
                             || is_line(*a)? && is_round(*b)?);

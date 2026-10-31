@@ -950,7 +950,8 @@ fn iso_line(surface: &NurbSurface3D, along: &Curve2) -> GeopResult<Option<Curve3
         surface.domain_v()
     };
     let ends = at.is_exactly(lo) || at.is_exactly(hi);
-    if !ends && !(at.definitely_greater(lo) && at.definitely_less(hi)) {
+    let inside = at.definitely_greater(lo) && at.definitely_less(hi);
+    if !(ends || inside) {
         return Ok(None);
     }
     let row = surface.iso_curve(u_fixed, at)?;

@@ -929,7 +929,7 @@ impl<'a> Reader<'a> {
                 // The edge's own vertices say where it ends: only the basis
                 // curve, and which way round it is taken, matter.
                 let (basis, reversed) = self.curve(scope, args.reference(1)?)?;
-                (basis, reversed != !args.logical(4)?)
+                (basis, reversed == args.logical(4)?)
             }
             "HYPERBOLA" => (
                 CurveDef::Conic {
