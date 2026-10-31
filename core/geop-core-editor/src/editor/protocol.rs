@@ -4,7 +4,10 @@
 use std::{collections::BTreeMap, rc::Rc};
 
 use geop_core_math::geop_error::{GeopError, GeopResult};
-use geop_core_program::{element::PickedElement, program::Program};
+use geop_core_program::{
+    element::PickedElement,
+    program::{Program, ProgramStep},
+};
 use serde::{Deserialize, Serialize};
 
 use crate::{
@@ -183,6 +186,10 @@ pub enum Command {
     Light {
         elements: Vec<PickedElement>,
     },
+    /// What a bug report attaches of the session: the program, the step
+    /// being edited as it stands and the kernel's version, in the update's
+    /// [`Update::report`]. Changes nothing.
+    Report,
     /// Panic, on purpose: how the front ends' recovery from a kernel that
     /// crashed is checked (`web/e2e/`). A panic anywhere else is a bug;
     /// this one stands in for it.
@@ -354,6 +361,44 @@ pub struct StepState {
     pub can_redo: bool,
 }
 
+/// What a bug report attaches of an editor's session ([`Command::Report`]):
+/// what the user was doing, as the kernel has it, so that a report says
+/// it whether or not the step was committed.
+#[derive(Clone, Debug, Serialize)]
+pub struct Report {
+    /// The program, as committed: without the step being edited.
+    pub program: Program,
+    /// The step being edited, if one is.
+    pub step: Option<ReportedStep>,
+    /// The kernel's version. (Which commit it was built from the front
+    /// end says, built from the same one: told here, every commit would
+    /// build every crate again.)
+    pub version: &'static str,
+}
+
+/// The step being edited, as a bug report attaches it: what it is, its
+/// arguments as its edits leave them, and why it does not build, as its
+/// dialog shows it.
+#[derive(Clone, Debug, Serialize)]
+pub struct ReportedStep {
+    /// Its id — none yet, for a new step.
+    pub id: Option<String>,
+    /// Where it is, or goes, among the program's steps.
+    pub index: usize,
+    /// The part placed in the program it is a step of, edited where it is
+    /// placed (see [`Command::Open`]), if it is one.
+    pub placed: Option<String>,
+    /// Its operation and arguments.
+    pub step: ProgramStep,
+    /// What it still needs picked, by its fields' labels.
+    pub missing: Vec<String>,
+    /// Why it does not build, as the dialog says it.
+    pub error: Option<String>,
+    /// The key of the field the error stands beside, if it concerns one
+    /// (see `docs/ux.md`, "An error stands beside its cause").
+    pub concerning: Option<String>,
+}
+
 /// A program file, as a front end keeps it.
 #[derive(Clone, Debug, Serialize)]
 pub struct File {
@@ -391,4 +436,6 @@ pub struct Update {
     /// the tool lights and what [`Command::Light`] does. A viewer keeps it
     /// until it is sent again.
     pub lit: Option<Lighting>,
+    /// What [`Command::Report`] asked for.
+    pub report: Option<Report>,
 }

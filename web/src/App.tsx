@@ -1084,6 +1084,7 @@ function App() {
           setBugReportOpen(true);
           setMobileTab("bug");
         }}
+        onBugReportCollect={async () => (await dispatch({ command: "report" }))?.report ?? null}
         assistantOpen={host ? null : assistantOpen}
         onAssistant={() => setAssistantOpen((open) => !open)}
         onBugReportClose={() => {
