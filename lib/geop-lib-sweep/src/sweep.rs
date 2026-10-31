@@ -12,8 +12,12 @@
 //! (a vertex), every profile curve lies at every station (an edge), every
 //! joint travels along every span between two stations (a *lateral* edge),
 //! and every curve sweeps a *wall* face through every span. A solid swept
-//! along an open path is closed off by two flat *caps*, at the first and
-//! last station; along a closed path — a full turn — it needs none.
+//! along an open path is closed off by flat *caps*, at the first and last
+//! station; along a closed path — a full turn — it needs none. The loops
+//! swept are areas one after the other, each an outer loop and then its
+//! holes, which wind the other way — the letters of a text several — and
+//! each area is closed off by caps of its own, a lump of the solid (see
+//! [`areas`]).
 //!
 //! A revolve's axis makes two things degenerate. A joint on the axis is a
 //! *pole*: it stays put, so it is a single vertex at every station, with no
@@ -35,7 +39,7 @@
 use std::collections::BTreeMap;
 
 use geop_core_geometry::{
-    nurb_curve::{NurbCurve, NurbCurve2D, NurbCurve3D, embed_point},
+    nurb_curve::{NurbCurve, NurbCurve2D, NurbCurve3D, embed_point, loop_signed_area},
     nurb_surface::{FlatPatch, NurbSurface, NurbSurface3D},
 };
 use geop_core_math::{
@@ -613,33 +617,41 @@ pub(crate) fn skinned(
                 }
                 continue;
             }
-            let patch = FlatPatch::around(
-                frame.origin,
-                frame.e1,
-                frame.e2,
-                section.iter().flat_map(|l| &l.profile.curves),
-                path.along_normal == forward,
-            )?;
-            let loops = section
-                .iter()
-                .enumerate()
-                .map(|(l, lp)| {
-                    let pcurves = lp
-                        .profile
-                        .curves
-                        .iter()
-                        .map(|c| patch.pcurve(c))
-                        .collect::<GeopResult<_>>()?;
-                    Ok((l, pcurves))
-                })
-                .collect::<GeopResult<_>>()?;
-            caps.push(StripCap {
-                name: namer.name(&[name]),
-                station: s,
-                forward,
-                surface: patch.surface()?,
-                loops,
-            });
+            // A cap for each area: the first one's named for the station,
+            // every other's for the station and the least name of its outer
+            // loop's curves.
+            for (a, area) in areas(section).with_context(ctx)?.into_iter().enumerate() {
+                let patch = FlatPatch::around(
+                    frame.origin,
+                    frame.e1,
+                    frame.e2,
+                    area.iter().flat_map(|&l| &section[l].profile.curves),
+                    path.along_normal == forward,
+                )?;
+                let loops = (area.iter())
+                    .map(|&l| {
+                        let pcurves = (section[l].profile.curves.iter())
+                            .map(|c| patch.pcurve(c))
+                            .collect::<GeopResult<_>>()?;
+                        Ok((l, pcurves))
+                    })
+                    .collect::<GeopResult<_>>()?;
+                let name = match a {
+                    0 => namer.name(&[name]),
+                    _ => {
+                        let outline = &section[area[0]].profile.curve_names;
+                        let least = outline.iter().min().map_or("", String::as_str);
+                        namer.name(&[name, least])
+                    }
+                };
+                caps.push(StripCap {
+                    name,
+                    station: s,
+                    forward,
+                    surface: patch.surface()?,
+                    loops,
+                });
+            }
         }
     }
 
@@ -651,6 +663,37 @@ pub(crate) fn skinned(
     skin::skin(&mut spec, &mut names, &strips, &caps).with_context(ctx)?;
     spec.shells = connected_faces(&spec);
     Ok((spec, names))
+}
+
+/// The areas `loops` are, as the indices of their loops: a loop winding the
+/// way the first one does — by its signed area, integrated from its curves
+/// ([`loop_signed_area`]) — is the outer loop of an area, and the loops
+/// after it winding the other way are its holes. One loop is one area.
+pub(crate) fn areas(loops: &[SweepLoop]) -> GeopResult<Vec<Vec<usize>>> {
+    if loops.len() < 2 {
+        return Ok(vec![(0..loops.len()).collect()]);
+    }
+    let winds = |l: usize| -> GeopResult<bool> {
+        let area = loop_signed_area(&loops[l].profile.curves)?;
+        if area.definitely_greater(Scalar::ZERO) {
+            Ok(true)
+        } else if area.definitely_less(Scalar::ZERO) {
+            Ok(false)
+        } else {
+            Err(GeopError::new(format!(
+                "loop {l} of the profile encloses an area {area:?} that could be zero: which way it winds, and so whether it is a hole, is unknown"
+            )))
+        }
+    };
+    let outer = winds(0)?;
+    let mut areas: Vec<Vec<usize>> = Vec::new();
+    for l in 0..loops.len() {
+        match areas.last_mut() {
+            Some(area) if winds(l)? != outer => area.push(l),
+            _ => areas.push(vec![l]),
+        }
+    }
+    Ok(areas)
 }
 
 /// The wall the curve `i` of loop `l` of `loops` sweeps through span `j`

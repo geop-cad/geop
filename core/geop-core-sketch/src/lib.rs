@@ -15,6 +15,7 @@
 //! - [`space`]: 3-D sketches — points, lines, arcs and splines in space,
 //!   solved the same way, joined into chains of NURBS curves: paths and
 //!   rails.
+//! - [`text`]: the glyph outlines a text in a sketch is drawn as.
 
 pub mod copies;
 pub mod dimension;
@@ -25,6 +26,7 @@ pub mod profile;
 pub mod sketch;
 pub mod solve;
 pub mod space;
+pub mod text;
 mod variables;
 
 pub use profile::{ProfileEdge, ProfileJoint, ProfileLoop, ProfilePiece, Region, Shape};
@@ -852,5 +854,88 @@ mod tests {
         assert!(report.converged, "{report:?}");
         let q = xy(&s, c);
         assert!(close(q[0], 0.0) && close(q[1], 0.0), "{q:?}");
+    }
+
+    /// A text's letters are areas of their own, each with the holes its
+    /// glyph has — a `B` two, an `o` one, a `T` none — and the loops' pieces
+    /// are named apart: every piece and every joint of the text once.
+    #[test]
+    fn letters_are_areas_with_their_holes() {
+        let mut s = Sketch::new();
+        let anchor = s.add_point(n(3.0), n(-2.0));
+        let text = s.add_text(anchor, "BoT", n(5.0), n(0.2));
+        let regions = s.regions().unwrap();
+        let mut holes: Vec<usize> = regions.iter().map(|r| r.holes.len()).collect();
+        holes.sort();
+        assert_eq!(holes, [0, 1, 2], "{regions:?}");
+        let geometry = s.enclose().unwrap();
+        let mut names = Vec::new();
+        let mut joints = Vec::new();
+        for lp in regions
+            .iter()
+            .flat_map(|r| std::iter::once(&r.outer).chain(&r.holes))
+        {
+            let pieces = lp.to_nurbs(&s, &geometry).unwrap();
+            for (k, p) in pieces.iter().enumerate() {
+                assert_eq!(p.source, text);
+                assert_eq!(p.end, pieces[(k + 1) % pieces.len()].start, "{lp:?}");
+                names.push(p.name());
+                joints.push(p.start);
+            }
+        }
+        let count = names.len();
+        names.sort();
+        names.dedup();
+        joints.sort();
+        joints.dedup();
+        assert_eq!((names.len(), joints.len()), (count, count));
+    }
+
+    /// Drawn round with a rectangle, an `o` is a hole in it, and the hole
+    /// inside the `o` an island of its own: the areas are what the curves
+    /// enclose, whatever drew them.
+    #[test]
+    fn a_letter_inside_a_frame_is_a_hole_in_it() {
+        let mut s = Sketch::new();
+        let corners = [[-1.0, -2.0], [5.0, -2.0], [5.0, 6.0], [-1.0, 6.0]];
+        let p: Vec<PointId> = corners.iter().map(|&c| s.new_point_at(c)).collect();
+        for k in 0..4 {
+            s.add_line(p[k], p[(k + 1) % 4]);
+        }
+        let anchor = s.add_point(n(0.0), n(0.0));
+        s.add_text(anchor, "o", n(4.0), n(0.0));
+        let regions = s.regions().unwrap();
+        let mut holes: Vec<usize> = regions.iter().map(|r| r.holes.len()).collect();
+        holes.sort();
+        assert_eq!(holes, [0, 1], "{regions:?}");
+    }
+
+    /// A text is placed by its anchor: constrained, the anchor moves, and
+    /// the outlines with it; a constraint on the text itself is refused.
+    #[test]
+    fn a_text_follows_its_anchor() {
+        let mut s = Sketch::new();
+        let anchor = s.add_point(n(1.0), n(1.0));
+        let text = s.add_text(anchor, "l", n(2.0), n(0.0));
+        let low = |s: &Sketch| {
+            let lines = profile::curve_polylines(s, text).unwrap();
+            lines
+                .iter()
+                .flatten()
+                .map(|q| q[1].to_f64())
+                .fold(f64::INFINITY, f64::min)
+        };
+        assert!(close(low(&s), 1.0), "{}", low(&s));
+        s.constrain(Constraint::Fix {
+            point: anchor,
+            x: n(4.0),
+            y: n(-3.0),
+        });
+        assert!(s.solve().unwrap().converged);
+        assert!(close(low(&s), -3.0), "{}", low(&s));
+        let far = s.add_point(n(9.0), n(9.0));
+        let line = s.add_line(anchor, far);
+        let parallel = Constraint::Parallel { a: line, b: text };
+        assert!(s.validate_constraint(&parallel).is_err());
     }
 }

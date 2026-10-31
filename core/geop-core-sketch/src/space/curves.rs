@@ -329,6 +329,7 @@ impl Sketch3d {
                 .map(|&(curve, from)| ProfileEdge {
                     curve,
                     reversed: ends[&curve].0 != from,
+                    contour: 0,
                 })
                 .collect();
             used.extend(edges.iter().map(|edge| edge.curve));

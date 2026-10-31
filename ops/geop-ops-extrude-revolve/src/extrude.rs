@@ -17,7 +17,7 @@ use geop_core_math::{
     with_context,
 };
 use geop_core_program::{numeric::NumericInput, part::StepContext, reader::Reader};
-use geop_core_sketch::{Shape, Sketch, profile::curve_polyline};
+use geop_core_sketch::{Shape, Sketch, profile::curve_polylines};
 use geop_core_topology::{Body, build::BuiltBody};
 use geop_lib_shell::{rebuilt, room};
 use geop_ops_model::sketch::{PlacedSketch, SketchRef, shape_profiles};
@@ -30,7 +30,8 @@ use geop_lib_sweep::{SweepLoop, extrude};
 
 use crate::sweeping::{Extents, Output, Sweeping, build_extents};
 
-/// Extrudes the one area of a sketch along the sketch plane's normal, into
+/// Extrudes the areas of a sketch — each a lump, as a text's letters are —
+/// along the sketch plane's normal, into
 /// a solid named `extrude(E)` for the operation `E` — kept as a new body,
 /// or combined with another solid, see [`Combine`](geop_ops_model::Combine); the result is
 /// `extrude(E)` either way. Or, as faces ([`Output::Faces`]), sweeps the
@@ -202,6 +203,7 @@ impl ModelOperation for Extrude {
         let sketch = &placed.sketch;
         let geometry = sketch.enclose()?;
         let shape = args.output.shape(sketch)?;
+        args.extent.sweeps(&shape)?;
         let slope = match args.draft {
             0.0 => None,
             angle => Some(draft_slope(angle, &args.output, &shape).concerning("draft")?),
@@ -429,7 +431,8 @@ fn sketch_center(sketch: &Sketch) -> Option<Vector2> {
         .curves
         .iter()
         .filter(|(_, c)| !c.construction)
-        .flat_map(|(&id, _)| curve_polyline(sketch, id).unwrap_or_default())
+        .flat_map(|(&id, _)| curve_polylines(sketch, id).unwrap_or_default())
+        .flatten()
         .collect();
     if drawn.is_empty() {
         drawn = sketch.positions().into_values().collect();

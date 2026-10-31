@@ -47,7 +47,7 @@ use geop_core_program::{
 };
 use geop_core_sketch::{
     CurveId, Enclosure, PointId, Shape,
-    profile::{Piece, curve_nurbs, curve_polyline},
+    profile::{Piece, curve_nurbs, curve_polylines},
 };
 
 /// A sketch as a program holds it.
@@ -173,8 +173,9 @@ pub fn chain_of_pieces<const D: usize>(
 }
 
 /// The profiles of `shape`, one of the sketch `name`'s, its points at
-/// `geometry`: a region's loops, outer loop first, or the one open chain —
-/// each named after the sketch and its elements (see [`chain_of_pieces`]).
+/// `geometry`: each region's loops, its outer loop first and then its
+/// holes, one region after the other — or the one open chain — each named
+/// after the sketch and its elements (see [`chain_of_pieces`]).
 pub fn shape_profiles(
     name: &str,
     sketch: &Sketch,
@@ -182,8 +183,8 @@ pub fn shape_profiles(
     shape: Shape,
 ) -> GeopResult<Vec<Profile>> {
     match shape {
-        Shape::Region(region) => std::iter::once(&region.outer)
-            .chain(&region.holes)
+        Shape::Regions(regions) => (regions.iter())
+            .flat_map(|region| std::iter::once(&region.outer).chain(&region.holes))
             .map(|lp| Ok(chain_of_pieces(name, lp.to_nurbs(sketch, geometry)?, true)))
             .collect(),
         Shape::Chain(chain) => Ok(vec![chain_of_pieces(
@@ -213,8 +214,10 @@ impl PlacedSketch {
         let geometry = sketch.enclose().with_context(ctx)?;
         let (lp, closed) = match sketch.shape().with_context(ctx)? {
             Shape::Chain(chain) => (chain, false),
-            Shape::Region(region) if region.holes.is_empty() => (region.outer, true),
-            Shape::Region(_) => {
+            Shape::Regions(mut regions) if regions.len() == 1 && regions[0].holes.is_empty() => {
+                (regions.remove(0).outer, true)
+            }
+            Shape::Regions(_) => {
                 return Err(GeopError::new(
                     "it has more than one loop: a path or a rail is one chain of curves, or one loop",
                 ))
@@ -280,16 +283,23 @@ impl PlacedSketch {
                     .collect()
             })
             .unwrap_or_default();
-        let curves = (s.curves.iter())
+        // A curve is drawn as its lines, a text one for each contour.
+        let mut curves = Vec::new();
+        for (&id, c) in s
+            .curves
+            .iter()
             .filter(|(_, c)| !(c.fixed && c.construction))
-            .map(|(&id, c)| {
-                Ok(ViewCurve {
-                    id: id.to_string(),
-                    construction: c.construction,
-                    polyline: curve_polyline(s, id)?,
-                })
-            })
-            .collect::<GeopResult<_>>()?;
+        {
+            curves.extend(
+                curve_polylines(s, id)?
+                    .into_iter()
+                    .map(|polyline| ViewCurve {
+                        id: id.to_string(),
+                        construction: c.construction,
+                        polyline,
+                    }),
+            );
+        }
         let points = (s.positions().iter())
             .filter(|(id, _)| s.points.get(id).is_some_and(|p| !p.fixed))
             .map(|(id, &at)| ViewSketchPoint {

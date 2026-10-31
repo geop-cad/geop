@@ -263,7 +263,7 @@ fn cut_loops(
                 "an area of sketch {name} has a hole in it: cut out, the island inside would fall out — draw the area without it"
             )));
         }
-        for lp in shape_profiles(name, sketch, &geometry, Shape::Region(region))? {
+        for lp in shape_profiles(name, sketch, &geometry, Shape::Regions(vec![region]))? {
             let mut edges = lp
                 .curves
                 .iter()

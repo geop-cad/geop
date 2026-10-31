@@ -21,7 +21,7 @@ use geop_lib_sweep::{
 
 use crate::sweeping::{Output, PathRef};
 
-/// Sweeps the one area of a sketch — the profile — along the curves of
+/// Sweeps the areas of a sketch — the profile — along the curves of
 /// another sketch or of a 3-D sketch — the path — into a solid named `sweep(W)` for the
 /// operation `W`, kept as a new body or combined with another solid (see
 /// [`Combine`](geop_ops_model::Combine)). Or, as faces ([`Output::Faces`]), sweeps the profile's

@@ -33,9 +33,9 @@ pub(super) fn hidden_points(args: &AddSketchArgs) -> Vec<PointId> {
     axis_ends(args).into_iter().chain(inner.copied()).collect()
 }
 
-/// The polyline `curve` is drawn as: the sketch's own axes across all of
-/// it, any other curve as it is.
-pub(super) fn drawn(args: &AddSketchArgs, curve: CurveId) -> Vec<P2> {
+/// The polylines `curve` is drawn as: the sketch's own axes across all of
+/// it, any other curve as it is — a text a line for each contour.
+pub(super) fn drawn(args: &AddSketchArgs, curve: CurveId) -> Vec<Vec<P2>> {
     let sketch = &args.sketch;
     let ends = axis_ends(args);
     if let Some(CurveKind::Line { start, end }) = sketch.curves.get(&curve).map(|c| &c.kind)
@@ -55,12 +55,12 @@ pub(super) fn drawn(args: &AddSketchArgs, curve: CurveId) -> Vec<P2> {
             sub(xy(sketch, *end), xy(sketch, *start)),
         );
         let reach = 10.0 * extent;
-        return vec![
+        return vec![vec![
             sub(o, crate::geometry::scale(d, reach)),
             add(o, crate::geometry::scale(d, reach)),
-        ];
+        ]];
     }
-    polyline(sketch, curve)
+    polylines(sketch, curve)
 }
 
 /// What the sketch of `args` looks like in its plane `frame`, with what
@@ -128,19 +128,21 @@ pub(super) fn visuals(
         } else {
             Style::Fixed
         };
-        let visual = Visual::new(
-            id.to_string(),
-            Shape::Polyline {
-                points: drawn(args, id).into_iter().map(world).collect(),
-            },
-            style,
-        )
-        .selectable();
-        out.push(if curve.fixed {
-            visual
-        } else {
-            visual.draggable()
-        });
+        for line in drawn(args, id) {
+            let visual = Visual::new(
+                id.to_string(),
+                Shape::Polyline {
+                    points: line.into_iter().map(world).collect(),
+                },
+                style,
+            )
+            .selectable();
+            out.push(if curve.fixed {
+                visual
+            } else {
+                visual.draggable()
+            });
+        }
         if let CurveKind::Spline {
             control_points,
             shape: None,
@@ -361,7 +363,8 @@ fn draft_preview(args: &AddSketchArgs, s: &SketchSession, cursor: P2) -> Vec<Vec
         return Vec::new();
     };
     let draft = &s.draft;
-    if draft.placed.is_empty() {
+    // A text is placed by one click, and shown where it would go before.
+    if draft.placed.is_empty() && tool != DrawTool::Text {
         return Vec::new();
     }
     let mut placed = draft.placed.clone();
@@ -380,12 +383,13 @@ fn draft_preview(args: &AddSketchArgs, s: &SketchSession, cursor: P2) -> Vec<Vec
             tangent_to: draft.previous,
             sweep: draft.sweep,
             min_size: 0.0,
+            text: s.text.clone(),
         };
         if construct(tool, draft.arc, &mut temp, &placed, &hints).is_some() {
             return temp
                 .curves
                 .range(CurveId(first_new)..)
-                .map(|(&c, _)| polyline(&temp, c))
+                .flat_map(|(&c, _)| polylines(&temp, c))
                 .collect();
         }
     }
@@ -413,6 +417,6 @@ fn offset_preview(
     temp.curves
         .range(CurveId(first_new)..)
         .filter(|(_, c)| !c.construction)
-        .map(|(&c, _)| polyline(&temp, c))
+        .flat_map(|(&c, _)| polylines(&temp, c))
         .collect()
 }

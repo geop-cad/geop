@@ -112,7 +112,8 @@ impl Editing<'_> {
             }
         }
         for (&id, curve) in &sketch.curves {
-            if curve.points().iter().any(excluded) {
+            // A text is snapped to by its anchor alone: nothing lies on it.
+            if curve.points().iter().any(excluded) || matches!(curve.kind, CurveKind::Text { .. }) {
                 continue;
             }
             let axis = curve.points().iter().any(|q| hidden.contains(q));
@@ -127,8 +128,7 @@ impl Editing<'_> {
                 candidates.push(Visual::new(
                     id.to_string(),
                     Shape::Polyline {
-                        points: visuals::drawn(self.args, id)
-                            .into_iter()
+                        points: (visuals::drawn(self.args, id).into_iter().flatten())
                             .map(world)
                             .collect(),
                     },

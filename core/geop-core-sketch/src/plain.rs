@@ -112,7 +112,7 @@ pub enum Plain {
 
 impl Plain {
     /// `curve` of `sketch` as drawn, `infinite` if a line; none for a
-    /// spline, or an arc too straight to have a center.
+    /// spline or a text, or an arc too straight to have a center.
     pub fn of(sketch: &Sketch, curve: CurveId, infinite: bool) -> Option<Plain> {
         let p = |q: PointId| xy(sketch, q);
         Some(match sketch.curves.get(&curve)?.kind {
@@ -127,7 +127,7 @@ impl Plain {
                 span: None,
             },
             CurveKind::Arc { start, end, sweep } => Plain::arc(p(start), p(end), sweep.to_f64())?,
-            CurveKind::Spline { .. } => return None,
+            CurveKind::Spline { .. } | CurveKind::Text { .. } => return None,
         })
     }
 

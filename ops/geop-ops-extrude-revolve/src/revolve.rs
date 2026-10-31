@@ -46,7 +46,7 @@ one_of! {
     }
 }
 
-/// Revolves the one area of a sketch around a line in its plane, into a
+/// Revolves the areas of a sketch around a line in its plane, into a
 /// solid named `revolve(R)` for the operation `R` — or combines that with
 /// another solid (see [`Combine`](geop_ops_model::Combine)), the result named `revolve(R)` all the
 /// same. Or, as faces ([`Output::Faces`]), sweeps the sketch's curves into
@@ -294,9 +294,13 @@ impl ModelOperation for Revolve {
 
         // What to sweep, each loop as the sketch runs it: an area's outer
         // loop counter-clockwise, its holes clockwise.
-        let (loops, closed): (Vec<ProfileLoop>, bool) = match args.output.shape(sketch)? {
-            Shape::Region(region) => (
-                std::iter::once(region.outer).chain(region.holes).collect(),
+        let shape = args.output.shape(sketch)?;
+        args.extent.sweeps(&shape)?;
+        let (loops, closed): (Vec<ProfileLoop>, bool) = match shape {
+            Shape::Regions(regions) => (
+                (regions.into_iter())
+                    .flat_map(|r| std::iter::once(r.outer).chain(r.holes))
+                    .collect(),
                 true,
             ),
             Shape::Chain(chain) => (vec![chain], false),

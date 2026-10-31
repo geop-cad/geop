@@ -27,6 +27,7 @@ impl Editing<'_> {
             tangent_to: self.s.draft.previous,
             sweep: self.s.draft.sweep,
             min_size: pointer.reach_at(1.0, t).to_f64(),
+            text: self.s.text.clone(),
         }
     }
 
@@ -167,6 +168,7 @@ impl Editing<'_> {
                 tangent_to: None,
                 sweep: 0.0,
                 min_size: 0.0,
+                text: self.s.text.clone(),
             };
             let _ = self.build(DrawTool::Spline, &hints);
         }
@@ -287,7 +289,9 @@ impl Editing<'_> {
                         .map(|c| match &c.kind {
                             CurveKind::Circle { .. } => Drag::Circle { curve },
                             CurveKind::Arc { .. } => Drag::Arc { curve },
-                            CurveKind::Line { .. } | CurveKind::Spline { .. } => points(c.points()),
+                            CurveKind::Line { .. }
+                            | CurveKind::Spline { .. }
+                            | CurveKind::Text { .. } => points(c.points()),
                         })
                 }
                 _ => None,
@@ -533,8 +537,8 @@ impl Editing<'_> {
                 }
                 let drawn = visuals::drawn(self.args, id);
                 met.extend(
-                    drawn
-                        .windows(2)
+                    (drawn.iter())
+                        .flat_map(|line| line.windows(2))
                         .filter_map(|w| segments_cross(last, p, w[0], w[1]))
                         .map(|q| (id, q)),
                 );
@@ -559,6 +563,39 @@ impl Editing<'_> {
             return;
         }
         let next = plan.apply(&removed);
+        self.commit(next);
+    }
+
+    /// The text `curve` set again as `set` changes what it is set to: only
+    /// what changed is written, so the rest stays exactly as it was.
+    pub(super) fn set_text(&mut self, curve: CurveId, set: &dyn Fn(&mut TextOptions)) {
+        let Some(before) = TextOptions::of(self.sketch(), curve) else {
+            return;
+        };
+        let mut after = before.clone();
+        set(&mut after);
+        let mut next = self.sketch().clone();
+        let Some(CurveKind::Text {
+            text,
+            height,
+            angle,
+            ..
+        }) = next.curves.get_mut(&curve).map(|c| &mut c.kind)
+        else {
+            return;
+        };
+        if after.text != before.text {
+            *text = after.text;
+        }
+        if after.height != before.height {
+            *height = Scalar::from_f64(after.height);
+        }
+        if after.angle != before.angle {
+            let Ok(turned) = Scalar::from_f64(after.angle).degrees_to_radians() else {
+                return;
+            };
+            *angle = turned;
+        }
         self.commit(next);
     }
 

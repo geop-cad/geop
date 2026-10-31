@@ -53,6 +53,7 @@ pub fn set() -> ExampleSet {
             ("horn", horn),
             ("motor_flange", motor_flange),
             ("edge_part", edge_part),
+            ("name_plate", name_plate),
         ],
         workspaces: Vec::new(),
     }
@@ -80,6 +81,55 @@ fn on_face(name: impl Into<String>) -> SketchPlane {
 /// The plane of the origin normal to `normal`, as a plane to sketch on.
 fn on_origin(normal: FrameAxis) -> SketchPlane {
     SketchPlane::Datum(origin_plane(normal))
+}
+
+/// A name plate: a 40 x 14 x 3 plate sketched on the Z plane and
+/// extruded up (`plate`), and the word "GEOP", its capitals 7 tall, its
+/// baseline from a point fixed at `(7, 3.5)`, sketched on the plate's top
+/// `extrude(plate,end)` and extruded 1 up from it, joined to the plate
+/// (`letters`): each letter a lump standing on the plate, the holes of the
+/// `O` and the `P` open down to it.
+pub fn name_plate() -> Program {
+    let mut program = Program::new();
+
+    let mut outline = Sketch::new();
+    rectangle(&mut outline, [0.0, 0.0], 40.0, 14.0);
+    program.push(
+        "outline",
+        AddSketchArgs::on(on_origin(FrameAxis::Z), solved(outline)),
+    );
+    program.push(
+        "plate",
+        ExtrudeArgs {
+            sketch: whole_sketch("outline"),
+            extent: Extents::blind(3.0),
+            output: Output::Solid(Combine::NewBody),
+            draft: 0.0,
+        },
+    );
+
+    let mut lettering = Sketch::new();
+    let anchor = lettering.new_point_at([7.0, 3.5]);
+    lettering.constrain(Constraint::Fix {
+        point: anchor,
+        x: n(7.0),
+        y: n(3.5),
+    });
+    lettering.add_text(anchor, "GEOP", n(7.0), n(0.0));
+    program.push(
+        "lettering",
+        AddSketchArgs::on(on_face("extrude(plate,end)"), solved(lettering)),
+    );
+    program.push(
+        "letters",
+        ExtrudeArgs {
+            sketch: whole_sketch("lettering"),
+            extent: Extents::blind(1.0),
+            output: Output::Solid(Combine::join("extrude(plate)")),
+            draft: 0.0,
+        },
+    );
+    program
 }
 
 /// A 2 x 2 x 1 box with a blind hole drilled into its top: a rectangle

@@ -15,7 +15,8 @@ dependencies of theirs: the crate itself depends on no other operation.
 
 Its `examples` — `box_with_drill_hole`, `bracket`, `cross_drilled_shaft`,
 `handle_with_hole`, `luggage_tag`, `revolved_cone_on_box`,
-`parametric_plate`, `pipe`, and `edge_part`, drawn in the editor and kept
+`parametric_plate`, `pipe`, `name_plate` (a word embossed on a plate),
+and `edge_part`, drawn in the editor and kept
 as the `.geop` text it saved (`src/drawn/`) — are registered with its
 operations when the feature `examples` is on; each is
 tested to round-trip and to build incrementally (`example_tests.rs`). The
@@ -31,9 +32,14 @@ their own.
 
 `Extrude` and `Revolve` are the operations a program uses (see
 [geop-core-editor](../core/geop-core-editor.md#an-operation-partoperation)):
-they sweep a sketch of the part into a solid, and name everything after the sketch's elements. A sketch is one
-area to sweep — an outer loop and its holes; a sketch of several separate
-areas is refused.
+they sweep a sketch of the part into a solid, and name everything after the sketch's elements. A sketch's
+areas — each an outer loop and its holes — are swept together, each a lump
+of the solid with caps of its own: the first area's are `start` and `end`,
+every other's `start` and `end` followed by the least name of its outline's
+curves, `extrude(E,end,K,c5#2)`. That is how a text is embossed or
+engraved, a lump or a pocket per letter. Up to the next face takes one area
+only, each area going as far as a face of its own; blind and through all
+take any.
 
 How far they go is an `Extents`: the first side a length — an angle, for
 a revolve — `UpToNext` or `ThroughAll`, along the plane's normal or, if

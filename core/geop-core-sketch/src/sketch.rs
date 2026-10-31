@@ -245,6 +245,20 @@ pub enum CurveKind {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         shape: Option<SplineShape>,
     },
+    /// The outlines of `text`'s glyphs in the sketch font (see
+    /// [`crate::text`]): its first baseline from `anchor` on, its capitals
+    /// `height` tall, turned counter-clockwise by `angle` radians. Each of
+    /// a glyph's closed contours is a loop of the profile — an `o` an
+    /// outline and a hole in it. Only its anchor is solved for: a text is
+    /// placed by constraining that point, and takes no constraint itself.
+    Text {
+        anchor: PointId,
+        text: String,
+        #[serde(with = "as_f64")]
+        height: Scalar,
+        #[serde(with = "as_f64")]
+        angle: Scalar,
+    },
 }
 
 /// The shape of a [`CurveKind::Spline`] beyond its control points, for one
@@ -289,16 +303,17 @@ impl Curve {
             }
             CurveKind::Circle { center, .. } => vec![*center],
             CurveKind::Spline { control_points, .. } => control_points.clone(),
+            CurveKind::Text { anchor, .. } => vec![*anchor],
         }
     }
 
-    /// `(start, end)` for an open curve, `None` for a circle.
+    /// `(start, end)` for an open curve, `None` for a circle or a text.
     pub fn endpoints(&self) -> Option<(PointId, PointId)> {
         match &self.kind {
             CurveKind::Line { start, end } | CurveKind::Arc { start, end, .. } => {
                 Some((*start, *end))
             }
-            CurveKind::Circle { .. } => None,
+            CurveKind::Circle { .. } | CurveKind::Text { .. } => None,
             CurveKind::Spline { control_points, .. } => {
                 Some((control_points[0], *control_points.last()?))
             }
@@ -715,6 +730,23 @@ impl Sketch {
         })
     }
 
+    /// A text: `text`, its baseline from `anchor`, its capitals `height`
+    /// tall, turned by `angle` radians (see [`CurveKind::Text`]).
+    pub fn add_text(
+        &mut self,
+        anchor: PointId,
+        text: impl Into<String>,
+        height: Scalar,
+        angle: Scalar,
+    ) -> CurveId {
+        self.add_curve(CurveKind::Text {
+            anchor,
+            text: text.into(),
+            height,
+            angle,
+        })
+    }
+
     pub fn set_construction(&mut self, curve: CurveId, construction: bool) {
         if let Some(c) = self.curves.get_mut(&curve) {
             c.construction = construction;
@@ -808,6 +840,15 @@ impl Sketch {
                         )));
                     }
                 }
+                CurveKind::Text { height, angle, .. }
+                    if !height.is_finite()
+                        || !height.definitely_greater(Scalar::ZERO)
+                        || !angle.is_finite() =>
+                {
+                    return Err(GeopError::new(format!(
+                        "text {i} is {height:?} tall, turned by {angle:?}: a text is definitely taller than nothing, and turned by a finite angle"
+                    )));
+                }
                 _ => {}
             }
         }
@@ -826,6 +867,13 @@ impl Sketch {
             self.point(p)?;
         }
         let kind = |id: CurveId| self.curve(id).map(|c| &c.kind);
+        for curve in c.curves() {
+            if matches!(kind(curve)?, CurveKind::Text { .. }) {
+                return Err(GeopError::new(format!(
+                    "curve {curve} is a text, which takes no constraint: constrain the point it is placed at"
+                )));
+            }
+        }
         let is_line = |id| Ok::<_, GeopError>(matches!(kind(id)?, CurveKind::Line { .. }));
         let is_round = |id| {
             Ok::<_, GeopError>(matches!(

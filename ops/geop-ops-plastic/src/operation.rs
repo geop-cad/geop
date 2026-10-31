@@ -572,7 +572,7 @@ impl ModelOperation for Rib {
         let geometry = sketch.enclose()?;
         let chain = match sketch.shape()? {
             chain @ Shape::Chain(_) => chain,
-            Shape::Region(_) => {
+            Shape::Regions(_) => {
                 return Err(GeopError::new(format!(
                     "sketch {:?} encloses an area: a rib grows from an open profile",
                     placed.name

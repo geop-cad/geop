@@ -73,6 +73,14 @@ Every tool is a button of its own, shown as an icon.
   as points. The same construction previews the shape to the pointer and
   builds it on the click. Construction mode (or the curves selected) makes
   construction geometry.
+- **Text** (W) — a string, its capitals' height and its angle set in the
+  dialog, shown at the pointer and placed by a click at the start of its
+  baseline: the outlines of its glyphs, each closed contour a loop of the
+  profile, so a word extrudes into a lump or a pocket per letter. Its
+  anchor is a point like any other, to constrain and drag; selected, the
+  text is edited in the same fields. It takes no constraint itself, is not
+  snapped onto, and is never cut by trim, only removed whole (see
+  [geop-core-sketch](../core/geop-core-sketch.md#text)).
 - **Lines and arcs in one motion.** Drawing a chain of lines and moving the
   pointer back onto the chain's end switches the next segment to an arc
   tangent to the last one; after the arc the chain goes on with lines,

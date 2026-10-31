@@ -1,8 +1,8 @@
 //! Trimming: the trim tool removes the piece of a curve between the nearest
 //! places either side of where it is clicked — or crossed by a stroke — at
 //! which the sketch meets it: a point constrained onto it, or another curve
-//! crossing it. A curve met nowhere goes as a whole, as does a spline,
-//! which is never cut.
+//! crossing it. A curve met nowhere goes as a whole, as does a spline or a
+//! text, which is never cut.
 //!
 //! What is left keeps what it was. The first piece left of a curve is the
 //! curve itself, with its id and its constraints; every further piece is
@@ -40,8 +40,8 @@ struct Crossing {
     at: P2,
 }
 
-/// How a curve is cut: its plain shape — none for a spline, which is never
-/// cut — and what cuts it, in order along it (see [`Plain::param`]):
+/// How a curve is cut: its plain shape — none for a spline or a text,
+/// which is never cut — and what cuts it, in order along it (see [`Plain::param`]):
 /// strictly between its ends, for an open curve.
 struct Cuts {
     plain: Option<Plain>,
@@ -396,7 +396,9 @@ impl<'a> Plan<'a> {
                         end,
                         sweep: Scalar::from_f64(TAU * span),
                     },
-                    CurveKind::Spline { .. } => unreachable!("a spline is never cut"),
+                    CurveKind::Spline { .. } | CurveKind::Text { .. } => {
+                        unreachable!("a spline or a text is never cut")
+                    }
                 };
                 let id = if k == 0 {
                     c
