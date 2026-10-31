@@ -749,7 +749,12 @@ export interface StepInfo {
   placed: PlacedSteps[];
 }
 
-/** A part a step placed: what it is placed as, from which file, and that file's steps. */
+/**
+ * A part a step placed: what it is placed as — its path from the program,
+ * `neck/head` for a part placed in a part placed, which [[Command]] `open`
+ * and `new_in` take — from which file, and that file's steps, each with
+ * the parts it places in turn.
+ */
 export interface PlacedSteps {
   instance: string;
   /** The file it is placed from, as the workspace names it. */

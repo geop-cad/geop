@@ -11,9 +11,11 @@ import {
   type Inspection,
   type OperationInfo,
   type PartView,
+  type PlacedSteps,
   type Presentation,
   type Program,
   type ProgramState,
+  type StepInfo,
   type StepState,
   type Update,
   type Value,
@@ -45,7 +47,7 @@ import { suppressStep } from "./panels";
 import { SceneViewer } from "./SceneViewer";
 import { StructurePanel } from "./StructurePanel";
 import { OperationGrid, OperationRibbon, type Tool } from "./OperationRibbon";
-import { Timeline, type TimelineStep } from "./Timeline";
+import { Timeline, type TimelinePlaced, type TimelineStep } from "./Timeline";
 import { Toolbar } from "./Toolbar";
 import { trackEdit, trackExample, trackFailures, trackFile } from "./analytics";
 import { MobileBottom, type MobileTab } from "./MobileBottom";
@@ -96,6 +98,19 @@ function same<T>(shown: T, next: T): T {
 /** The last segment of `path`. */
 function baseName(path: string): string {
   return path.slice(path.lastIndexOf("/") + 1);
+}
+
+/** The file of every part `steps` placed, however deep, by its path from the program: `neck/head`. */
+function placedFiles(steps: StepInfo[]): Map<string, string> {
+  const files = new Map<string, string>();
+  const add = (steps: StepInfo[]) => {
+    for (const placed of steps.flatMap((s) => s.placed)) {
+      files.set(placed.instance, placed.file);
+      add(placed.steps);
+    }
+  };
+  add(steps);
+  return files;
 }
 
 /**
@@ -465,10 +480,11 @@ function App() {
    * with the file, or the part.
    */
   const [context, setContext] = useState<string | null>(null);
-  const placedNames = (program?.steps ?? []).flatMap((s) => s.placed.map((p) => p.instance)).join("\n");
+  /** The file of every part placed, however deep, by its path. */
+  const placedAt = useMemo(() => placedFiles(program?.steps ?? []), [program?.steps]);
   useEffect(() => {
-    if (context != null && !placedNames.split("\n").includes(context)) setContext(null);
-  }, [context, placedNames]);
+    if (context != null && !placedAt.has(context)) setContext(null);
+  }, [context, placedAt]);
 
   /** Suppress the step `id` in the configuration built, or run it again. */
   function suppress(id: string) {
@@ -748,7 +764,11 @@ function App() {
       dim: !s.editing && !s.runs,
       suppressed: s.suppressed,
       editing: s.editing,
-      placed: s.placed.map((p) => ({
+      placed: placedOf(s.placed),
+    }));
+    /** The parts placed, each with its steps and the parts they place, however deep. */
+    function placedOf(placed: PlacedSteps[]): TimelinePlaced[] {
+      return placed.map((p) => ({
         instance: p.instance,
         steps: p.steps.map((inner) => ({
           id: inner.id,
@@ -758,9 +778,10 @@ function App() {
           error: inner.error,
           suppressed: inner.suppressed,
           editing: inner.editing,
+          placed: placedOf(inner.placed),
         })),
-      })),
-    }));
+      }));
+    }
   }, [steps, infos]);
 
   const inHand = program?.tool ?? null;
@@ -1019,6 +1040,11 @@ function App() {
           enabled={wasmReady}
           onVisibility={(name, visible) => dispatch({ command: "visibility", name, visible })}
           onLight={light}
+          placed={placedAt}
+          context={context}
+          onContext={setContext}
+          // Where the browser keeps the files; VS Code opens its own.
+          onOpenFile={host ? undefined : (file) => void openFile(file)}
         />
       </section>
       <section className="panel inspect-panel">

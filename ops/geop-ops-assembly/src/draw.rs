@@ -6,19 +6,18 @@ use geop_core_editor::{
     view::PartView,
 };
 use geop_core_math::geop_error::GeopResult;
-use geop_core_program::{placed::Located, reader::Reader};
-
-use geop_ops_model::{
-    parameters::instances,
-    placed::{drawn, placed_parts},
+use geop_core_program::{
+    placed::{Located, split_instance_path},
+    reader::Reader,
 };
-use std::collections::BTreeMap;
+
+use geop_ops_model::placed::{drawn, placed_parts};
 
 use crate::placed::draw_instances;
 
 /// Draws the parts placed in a part, however deep, each as an instance of
 /// its component where the state has it (see [`draw_instances`]), and lists
-/// those placed in the part itself.
+/// them all, however deep, by their paths.
 pub struct AssemblyDrawer;
 
 impl Drawer for AssemblyDrawer {
@@ -26,23 +25,18 @@ impl Drawer for AssemblyDrawer {
         draw_instances(reader, view)
     }
 
-    /// Each part placed in it, by its name, said beside it which file it
-    /// is from — unless the name says so already.
+    /// Each part placed in it, however deep — each before those placed in
+    /// it, by its path, `neck/head` — said beside it which file it is from,
+    /// unless its name says so already.
     fn structure(&self, reader: &Reader) -> GeopResult<Vec<StructureItem>> {
         let placed = placed_parts(reader).unwrap_or_default();
-        let files: BTreeMap<&str, &str> = (instances(reader).unwrap_or_default().into_iter())
-            .map(|(name, instance)| (name, instance.file.as_str()))
-            .collect();
         Ok((placed.iter())
-            .filter(|p| p.parent.is_none())
             .map(|p| {
                 let item = StructureItem::drawn("part", "Placed parts", &p.name);
-                let Some(file) = files.get(p.name.as_str()) else {
-                    return item;
-                };
+                let file = p.located.instance.file.as_str();
                 let file = file.rsplit(['/', ':']).next().unwrap_or(file);
                 let stem = file.strip_suffix(".geop").unwrap_or(file);
-                match stem == p.name {
+                match stem == split_instance_path(&p.name).1 {
                     true => item,
                     false => item.detailed(stem.to_string()),
                 }

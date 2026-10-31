@@ -220,4 +220,6 @@ mod in_context;
 #[cfg(test)]
 mod mirrored;
 #[cfg(test)]
+mod nested;
+#[cfg(test)]
 mod tests;

@@ -1772,6 +1772,19 @@ button.inline {
 .structure-eye:hover:not(:disabled) {
   color: #fff;
 }
+/* A placed part's: edit it in place, open its file. */
+.structure-action {
+  flex-shrink: 0;
+  padding: 1px 3px;
+  background: transparent;
+  border: none;
+  color: var(--text-2);
+  cursor: pointer;
+}
+.structure-action:hover:not(:disabled),
+.structure-action.on {
+  color: #7ec9ff;
+}
 
 /* ── top bar ───────────────────────────────────────────────────────────── */
 

@@ -31,7 +31,8 @@ pub enum Command {
         kind: String,
     },
     /// Start a new step of the operation `kind` after the steps of the
-    /// part placed as `placed`, edited where it is placed: built against
+    /// part placed at `placed` — `neck`, or `neck/head` for one placed in a
+    /// placed part, however deep — edited where it is placed: built against
     /// the parts placed beside it, which it reads in context (see
     /// [`geop_core_program::placed::OUTSIDE`]). Committed, it is written to
     /// that part's file.
@@ -40,7 +41,7 @@ pub enum Command {
         placed: String,
     },
     /// Start editing the step `id` — of the program, or, given `placed`,
-    /// of the part placed as that instance, where it is placed (see
+    /// of the part placed at that path, however deep, where it is placed (see
     /// [`StepInfo::placed`]).
     Open {
         id: String,
@@ -235,8 +236,10 @@ pub struct StepInfo {
     pub placed: Vec<PlacedSteps>,
 }
 
-/// A part a step placed, as the program shows it: what it is placed as,
-/// from which file, and the steps of that file's program.
+/// A part a step placed, as the program shows it: what it is placed as —
+/// its path from the program, `neck/head` for one placed in a placed part —
+/// from which file, and the steps of that file's program, each with the
+/// parts it places in turn.
 #[derive(Clone, Debug, PartialEq, Serialize)]
 pub struct PlacedSteps {
     pub instance: String,
