@@ -205,6 +205,37 @@ fn the_smallest_visible_entity_wins() {
     );
 }
 
+/// Everything along the pointer's ray lies under it: the one a click
+/// picks first, then the rest front to back, those hidden behind the
+/// first face included — and a pointer stepped behind picks each in turn,
+/// wrapping round.
+#[test]
+fn what_lies_under_the_pointer_is_stepped_through_front_to_back() {
+    let view = cube();
+    let names = |pointer: Pointer, accepts: &[&str]| -> Vec<String> {
+        let accepts: Vec<String> = accepts.iter().map(|k| k.to_string()).collect();
+        (view.under(&pointer, &accepts, &[]).into_iter())
+            .map(|hit| hit.element.name)
+            .collect()
+    };
+    let (top, bottom) = (face(2, 1), face(2, 0));
+    assert_eq!(
+        names(down(0.5, 0.5), &[drawn::FACE]),
+        [top.clone(), bottom.clone()]
+    );
+    let face_at = |cycle: usize| picked(&view, &down(0.5, 0.5).cycled(cycle), &[drawn::FACE]);
+    assert_eq!(face_at(1).map(|f| f.name), Some(bottom.clone()));
+    assert_eq!(face_at(2).map(|f| f.name), Some(top.clone()));
+    // Near the top's back edge: the edge, the top, and below them the
+    // bottom's edge and the bottom, hidden — as far along the ray as each
+    // other.
+    let near_edge = names(down(0.5, 0.995), ANY);
+    assert_eq!(near_edge[..2], ["v011-v111".to_string(), top]);
+    let mut behind = near_edge[2..].to_vec();
+    behind.sort();
+    assert_eq!(behind, ["v010-v110".to_string(), bottom], "{near_edge:?}");
+}
+
 /// Datums are hit as drawn — a plane as a square around the drawing's
 /// center — and only for the kinds they can be.
 #[test]
@@ -240,6 +271,7 @@ fn edge_of_the_face_hit_at_a_glancing_angle() {
     let view = cube();
     let (origin, aim) = ([0.5, -10.0, 1.1], [0.5, 0.9, 1.0]);
     let glancing = Pointer {
+        cycle: 0,
         ray: Ray::try_new(
             v3(origin[0], origin[1], origin[2]),
             v3(aim[0] - origin[0], aim[1] - origin[1], aim[2] - origin[2]),

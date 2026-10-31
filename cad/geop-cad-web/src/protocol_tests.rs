@@ -64,7 +64,7 @@ fn kind(command: &Command) -> &'static str {
 
 /// A pointer at `origin` looking along `dir`, reaching as a cone does.
 fn pointer(origin: [f64; 3], dir: [f64; 3]) -> Value {
-    json!({ "ray": { "origin": origin, "dir": dir }, "reach": { "type": "cone", "slope": 0.01 } })
+    json!({ "ray": { "origin": origin, "dir": dir }, "reach": { "type": "cone", "slope": 0.01 }, "cycle": 0 })
 }
 
 /// The commands of a session, as the app sends them: each kind at least
@@ -73,7 +73,7 @@ fn pointer(origin: [f64; 3], dir: [f64; 3]) -> Value {
 fn session(kinds: &[&str]) -> Vec<Value> {
     let above = pointer([1.0, 1.0, 5.0], [0.0, 0.0, -1.0]);
     let tube = json!({ "ray": { "origin": [1.0, 1.0, 5.0], "dir": [0.0, 0.0, -1.0] },
-        "reach": { "type": "tube", "radius": 0.01 } });
+        "reach": { "type": "tube", "radius": 0.01 }, "cycle": 1 });
     let event = |event: Value| json!({ "command": "event", "event": event });
     let dialog =
         |key: &str, value: Value| event(json!({ "type": "dialog", "key": key, "value": value }));
@@ -92,8 +92,8 @@ fn session(kinds: &[&str]) -> Vec<Value> {
         dialog("draft", json!({ "type": "number", "value": 0.0 })),
         event(json!({ "type": "hover", "pointer": above, "shift": false })),
         event(json!({ "type": "hover", "pointer": tube, "shift": true })),
-        event(json!({ "type": "click", "pointer": above, "button": "primary", "double": false, "shift": false })),
-        event(json!({ "type": "click", "pointer": above, "button": "secondary", "double": true, "shift": true })),
+        event(json!({ "type": "click", "pointer": above, "double": false, "shift": false })),
+        event(json!({ "type": "click", "pointer": tube, "double": true, "shift": true })),
         event(json!({ "type": "drag", "from": above, "to": pointer([1.5, 1.0, 5.0], [0.0, 0.0, -1.0]), "done": true, "shift": false })),
         event(json!({ "type": "leave" })),
         event(json!({ "type": "view", "up": [0.0, 1.0, 0.0] })),

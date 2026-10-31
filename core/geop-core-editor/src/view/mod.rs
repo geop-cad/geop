@@ -33,7 +33,7 @@ use std::{cell::RefCell, rc::Rc};
 
 use crate::editing::{
     Extent, Pointer,
-    hit::{ElementHit, Scene, nearer},
+    hit::{ElementHit, Scene, cycled, nearer},
 };
 use geop_core_math::{
     geop_error::GeopResult,
@@ -553,6 +553,11 @@ impl Layer<'_> {
         (self.view).pick_face(&self.pointer, |f| self.shows_face(f))
     }
 
+    /// Every face drawn the ray enters, the nearest first.
+    fn faces_entered(&self) -> Vec<(Scalar, &ViewFace)> {
+        (self.view).faces_entered(&self.pointer, |f| self.shows_face(f))
+    }
+
     /// The element `kind` `name` of the target `target` of this layer, as
     /// the part drawn names it.
     fn element(&self, target: &str, kind: &str, name: &str) -> PickedElement {
@@ -697,6 +702,7 @@ impl PartView {
             };
             let view = &*instance.view;
             let pointer = Pointer {
+                cycle: pointer.cycle,
                 ray,
                 reach: pointer.reach,
             };
@@ -811,42 +817,59 @@ impl PartView {
         }
     }
 
-    /// Whatever drawn of a kind in `accepts` the pointer is over. Frame
-    /// datums are drawn on top of everything, so they are picked first.
+    /// Every element drawn of a kind in `accepts` under the pointer, each
+    /// once (see [`Scene::under`]). The first is the one meant at a glance.
+    /// Frame datums are drawn on top of everything, so they come first.
     /// Otherwise a vertex or a sketch point, else an edge or a sketch curve,
-    /// near the pointer — and not hidden behind a face — wins: the smallest
-    /// element under the pointer is the one meant. Else the nearest along
-    /// the ray of the faces, sketches and other datums hit. The parts placed
-    /// in the part count alike, each where it is (see [`PartView::layers`]):
-    /// a vertex of one is hidden behind a face of another. What the viewer
-    /// does not draw — named in `hidden`, sorted, as
-    /// [`crate::editor::SceneState::hidden`] names it — is not hit, and
-    /// hides nothing behind it: a pick is made in what is seen.
-    pub fn pick(
+    /// near the pointer — and not hidden behind a face — comes first: the
+    /// smallest element under the pointer is the one meant. Else the
+    /// nearest along the ray of the faces, sketches and other datums hit.
+    /// Everything else under the pointer follows, front to back along the
+    /// ray: the faces behind the first, and the vertices and edges they
+    /// hide. The parts placed in the part count alike, each where it is
+    /// (see [`PartView::layers`]): a vertex of one is hidden behind a face
+    /// of another. What the viewer does not draw — named in `hidden`,
+    /// sorted, as [`crate::editor::SceneState::hidden`] names it — is not
+    /// hit, and hides nothing behind it: a pick is made in what is seen.
+    pub fn under(
         &self,
         pointer: &Pointer,
         accepts: &[String],
         hidden: &[String],
-    ) -> Option<ElementHit> {
+    ) -> Vec<ElementHit> {
         let accepted = |kind: &str| accepts.iter().any(|a| a == kind);
         if accepted(drawn::FRAME) {
-            return self.pick_frame_on(pointer, hidden);
+            return self.frames_under(pointer, hidden);
         }
         let layers = self.layers(pointer, hidden);
+        // What comes first, and everything under the pointer.
+        let mut first = None;
+        let mut all = Vec::new();
         if accepted(drawn::DATUM) {
-            let frames = layers.iter().filter_map(|l| l.view.pick_frame(l));
-            if let Some(hit) = nearest(frames) {
-                return Some(hit);
-            }
+            let [balls, axes, planes] = (layers.iter()).map(|l| l.view.frame_parts_under(l)).fold(
+                Default::default(),
+                |mut parts: [Vec<_>; 3], of| {
+                    for (part, hits) in parts.iter_mut().zip(of) {
+                        part.extend(hits);
+                    }
+                    parts
+                },
+            );
+            first = (nearest(balls.iter().cloned()))
+                .or_else(|| nearest(axes.iter().cloned()))
+                .or_else(|| nearest(planes.iter().cloned()));
+            all.extend(balls.into_iter().chain(axes).chain(planes));
         }
 
-        // The nearest face of any layer: a rigid motion keeps distances
-        // along the ray, so every layer's `t` is the part drawn's.
-        let face = layers
-            .iter()
+        // Every face of every layer the ray enters, the nearest first: a
+        // rigid motion keeps distances along the ray, so every layer's `t`
+        // is the part drawn's.
+        let mut faces: Vec<_> = (layers.iter())
             .filter(|l| l.near)
-            .filter_map(|l| l.pick_face().map(|(t, f)| (t, l, f)))
-            .min_by(|a, b| nearer(a.0, b.0));
+            .flat_map(|l| l.faces_entered().into_iter().map(move |(t, f)| (t, l, f)))
+            .collect();
+        faces.sort_by(|a, b| nearer(a.0, b.0));
+        let face = faces.first();
         // In front of the face hit, give or take the reach — or on its
         // boundary, of the same layer: `faces`, those a vertex or an edge
         // bounds, name it. That is asked of the topology, not the depth: at
@@ -854,23 +877,24 @@ impl PartView {
         // ray than the face is hit by more than a reach, and its triangles
         // are chords, in front of a face that curves away.
         let visible = |t: Scalar, faces: &[String], layer: &Layer<'_>| {
-            face.as_ref().is_none_or(|(ft, l, f)| {
+            face.is_none_or(|(ft, l, f)| {
                 (l.instance == layer.instance && faces.contains(&f.name))
                     || !t.definitely_greater(ft.add(pointer.reach_at(1.0, *ft)))
             })
         };
 
+        // Points and curves near the pointer, each with whether it is seen.
         let mut points = Vec::new();
         for l in layers.iter().filter(|l| l.near) {
             let ray = &l.pointer.ray;
             let near = |at: &Vector3, faces: &[String]| {
                 let (dist, t) = ray.distance_to_point(at);
-                (l.pointer.within(dist, t, 1.0) && visible(t, faces, l)).then_some(t)
+                (l.pointer.within(dist, t, 1.0)).then(|| (t, visible(t, faces, l)))
             };
             if accepted(drawn::VERTEX) {
                 for v in (l.view.vertices.iter()).filter(|v| l.shows_boundary(&v.solid, &v.faces)) {
-                    if let Some(t) = near(&v.at, &v.faces) {
-                        points.push(l.hit(&l.view.model, drawn::VERTEX, &v.name, v.at, t));
+                    if let Some((t, seen)) = near(&v.at, &v.faces) {
+                        points.push((l.hit(&l.view.model, drawn::VERTEX, &v.name, v.at, t), seen));
                     }
                 }
             }
@@ -878,35 +902,34 @@ impl PartView {
                 for sketch in l.view.sketches.iter().filter(|s| !l.hides(&s.name)) {
                     for p in &sketch.points {
                         let at = sketch.plane.uv_to_xyz(&p.at);
-                        if let Some(t) = near(&at, &[]) {
-                            points.push(l.hit(&sketch.target, drawn::SKETCH_POINT, &p.id, at, t));
+                        if let Some((t, seen)) = near(&at, &[]) {
+                            let hit = l.hit(&sketch.target, drawn::SKETCH_POINT, &p.id, at, t);
+                            points.push((hit, seen));
                         }
                     }
                 }
             }
         }
-        if let Some(hit) = nearest(points) {
-            return Some(hit);
-        }
-
         let (mut edges, mut sketch_curves) = (Vec::new(), Vec::new());
         for l in layers.iter().filter(|l| l.near) {
             let ray = &l.pointer.ray;
-            // How far along the ray `polyline` is hit, if it is near enough
-            // and not hidden.
+            // How far along the ray `polyline` is first hit, if it is near
+            // enough — where it is seen, if it is anywhere — and whether
+            // it is seen there.
             let hit_along = |polyline: &mut dyn Iterator<Item = (Vector3, Vector3)>,
                              faces: &[String]| {
                 polyline
                     .map(|(a, b)| ray.distance_to_segment(&a, &b))
-                    .filter(|&(dist, t)| l.pointer.within(dist, t, 1.0) && visible(t, faces, l))
-                    .map(|(_, t)| t)
-                    .min_by(|&a, &b| nearer(a, b))
+                    .filter(|&(dist, t)| l.pointer.within(dist, t, 1.0))
+                    .map(|(_, t)| (t, visible(t, faces, l)))
+                    .min_by(|a, b| b.1.cmp(&a.1).then(nearer(a.0, b.0)))
             };
             if accepted(drawn::EDGE) {
                 for e in (l.view.edges.iter()).filter(|e| l.shows_boundary(&e.solid, &e.faces)) {
                     let mut segments = e.polyline.array_windows().map(|&[a, b]| (a, b));
-                    if let Some(t) = hit_along(&mut segments, &e.faces) {
-                        edges.push(l.hit(&l.view.model, drawn::EDGE, &e.name, ray.at(t), t));
+                    if let Some((t, seen)) = hit_along(&mut segments, &e.faces) {
+                        let hit = l.hit(&l.view.model, drawn::EDGE, &e.name, ray.at(t), t);
+                        edges.push((hit, seen));
                     }
                 }
             }
@@ -918,61 +941,89 @@ impl PartView {
                             .polyline
                             .array_windows()
                             .map(|[a, b]| (world(a), world(b)));
-                        if let Some(t) = hit_along(&mut segments, &[]) {
+                        if let Some((t, seen)) = hit_along(&mut segments, &[]) {
                             let at = ray.at(t);
                             let hit = l.hit(&sketch.target, drawn::SKETCH_CURVE, &c.id, at, t);
-                            sketch_curves.push(hit);
+                            sketch_curves.push((hit, seen));
                         }
                     }
                 }
             }
         }
+        let seen = |hits: &[(ElementHit, bool)]| {
+            nearest(
+                (hits.iter())
+                    .filter(|(_, seen)| *seen)
+                    .map(|(hit, _)| hit.clone()),
+            )
+        };
+        if first.is_none() {
+            first = seen(&points);
+        }
         // A sketch curve a feature was built from lies on the edge it made:
         // which of the two is nearer along the ray is rounding, so an edge
         // within a reach of the sketch curve hit is taken — the part's own.
-        let curve = match (nearest(edges), nearest(sketch_curves)) {
-            (Some(edge), Some(drawn))
-                if edge
-                    .t
-                    .definitely_greater(drawn.t.add(pointer.reach_at(1.0, drawn.t))) =>
-            {
-                Some(drawn)
-            }
-            (edge, drawn) => edge.or(drawn),
-        };
-        if let Some(hit) = curve {
-            return Some(hit);
+        if first.is_none() {
+            first = match (seen(&edges), seen(&sketch_curves)) {
+                (Some(edge), Some(drawn))
+                    if edge
+                        .t
+                        .definitely_greater(drawn.t.add(pointer.reach_at(1.0, drawn.t))) =>
+                {
+                    Some(drawn)
+                }
+                (edge, drawn) => edge.or(drawn),
+            };
         }
+        all.extend((points.into_iter().chain(edges).chain(sketch_curves)).map(|(hit, _)| hit));
 
-        let mut hits: Vec<ElementHit> = Vec::new();
-        if accepted(drawn::FACE)
-            && let Some((t, l, f)) = face
-        {
-            let point = l.pointer.ray.at(t);
-            hits.push(l.hit(&l.view.model, drawn::FACE, &f.name, point, t));
+        let mut areas: Vec<ElementHit> = Vec::new();
+        if accepted(drawn::FACE) {
+            for (t, l, f) in &faces {
+                let point = l.pointer.ray.at(*t);
+                areas.push(l.hit(&l.view.model, drawn::FACE, &f.name, point, *t));
+            }
         }
         for l in &layers {
             if accepted(drawn::SKETCH) {
-                hits.extend(l.view.pick_sketch(l));
+                areas.extend(l.view.sketches_under(l));
             }
             if accepted(drawn::DATUM) {
                 let extent = Extent {
                     center: l.local(self.extent.center),
                     size: self.extent.size,
                 };
-                hits.extend(l.view.pick_datum(l, extent));
+                areas.extend(l.view.datums_under(l, extent));
             }
         }
-        nearest(hits)
+        if first.is_none() {
+            first = nearest(areas.iter().cloned());
+        }
+        all.extend(areas);
+        all.sort_by(|a, b| nearer(a.t, b.t));
+        let mut under: Vec<ElementHit> = Vec::new();
+        for hit in first.into_iter().chain(all) {
+            if !under.iter().any(|u| u.element == hit.element) {
+                under.push(hit);
+            }
+        }
+        under
     }
 
-    /// A frame put on whatever the pointer is over (see [`FramePick`]): a
-    /// face under it gives its own, at the corner or the side the pointer
-    /// is near — and in the middle of the face if it is near neither; a
-    /// vertex of the face under the pointer, the face's at that corner; an
-    /// edge, its own, at the end the pointer is near; a point or a datum,
-    /// its own.
-    fn pick_frame_on(&self, pointer: &Pointer, hidden: &[String]) -> Option<ElementHit> {
+    /// What a click with `pointer` picks of a kind in `accepts`: of what
+    /// lies [`PartView::under`] it, the one its [`Pointer::cycle`] names.
+    pub fn pick(
+        &self,
+        pointer: &Pointer,
+        accepts: &[String],
+        hidden: &[String],
+    ) -> Option<ElementHit> {
+        cycled(self.under(pointer, accepts, hidden), pointer.cycle)
+    }
+
+    /// A frame put on each of what the pointer is over, in the order it is
+    /// under it (see [`FramePick`], [`PartView::frame_on`]), each once.
+    fn frames_under(&self, pointer: &Pointer, hidden: &[String]) -> Vec<ElementHit> {
         let kinds = [
             drawn::DATUM,
             drawn::VERTEX,
@@ -982,8 +1033,24 @@ impl PartView {
             drawn::SKETCH_CURVE,
         ];
         let accepts: Vec<String> = kinds.iter().map(|k| k.to_string()).collect();
-        let hit = self.pick(pointer, &accepts, hidden)?;
         let layers = self.layers(pointer, hidden);
+        let mut frames: Vec<ElementHit> = Vec::new();
+        for hit in self.under(pointer, &accepts, hidden) {
+            if let Some(frame) = self.frame_on(&layers, hit)
+                && !frames.iter().any(|f| f.element == frame.element)
+            {
+                frames.push(frame);
+            }
+        }
+        frames
+    }
+
+    /// A frame put on `hit`, of what the pointer is over: a face gives its
+    /// own, at the corner or the side the pointer is near — and in the
+    /// middle of the face if it is near neither; a vertex of the face under
+    /// the pointer, the face's at that corner; an edge, its own, at the end
+    /// the pointer is near; a point or a datum, its own.
+    fn frame_on(&self, layers: &[Layer<'_>], hit: ElementHit) -> Option<ElementHit> {
         let instance = Some(hit.element.target.path()).filter(|path| !path.is_empty());
         let layer = layers.iter().find(|l| l.instance == instance)?;
         let view = layer.view;
@@ -1062,15 +1129,15 @@ impl PartView {
         })
     }
 
-    /// The nearest face of those `shown` the ray enters, of the triangles
-    /// its tree finds the ray could meet (see [`tree`]) — the first of the
-    /// nearest, in the order of the faces and their triangles, as testing
-    /// every one finds.
-    fn pick_face(
+    /// Every face of those `shown` the ray enters, with how far along it
+    /// first does, the nearest first — of two as near, the first in the
+    /// order of the faces — of the triangles its tree finds the ray could
+    /// meet (see [`tree`]).
+    fn faces_entered(
         &self,
         pointer: &Pointer,
         shown: impl Fn(&ViewFace) -> bool,
-    ) -> Option<(Scalar, &ViewFace)> {
+    ) -> Vec<(Scalar, &ViewFace)> {
         let mut hits = Vec::new();
         self.faces_tree().near(&pointer.ray, |f, t| {
             if let Some(face) = self.faces.get(f).filter(|face| shown(face))
@@ -1081,9 +1148,29 @@ impl PartView {
             }
         });
         hits.sort_by_key(|(at, ..)| *at);
-        (hits.into_iter())
-            .map(|(_, hit, face)| (hit, face))
-            .min_by(|a, b| nearer(a.0, b.0))
+        let mut entered: Vec<(usize, Scalar, &ViewFace)> = Vec::new();
+        for ((f, _), hit, face) in hits {
+            match entered.last_mut() {
+                Some((g, t, _)) if *g == f => {
+                    if nearer(hit, *t).is_lt() {
+                        *t = hit;
+                    }
+                }
+                _ => entered.push((f, hit, face)),
+            }
+        }
+        entered.sort_by(|a, b| nearer(a.1, b.1));
+        entered.into_iter().map(|(_, t, face)| (t, face)).collect()
+    }
+
+    /// The nearest face of those `shown` the ray enters (see
+    /// [`PartView::faces_entered`]).
+    fn pick_face(
+        &self,
+        pointer: &Pointer,
+        shown: impl Fn(&ViewFace) -> bool,
+    ) -> Option<(Scalar, &ViewFace)> {
+        self.faces_entered(pointer, shown).into_iter().next()
     }
 
     /// The tree of its faces' triangles: built once, and again only once
@@ -1098,9 +1185,9 @@ impl PartView {
         tree
     }
 
-    /// The nearest sketch of `layer` hit inside one of its closed regions —
-    /// the area a viewer shades — or near one of its curves.
-    fn pick_sketch(&self, layer: &Layer<'_>) -> Option<ElementHit> {
+    /// Every sketch of `layer` hit inside one of its closed regions — the
+    /// area a viewer shades — or near one of its curves.
+    fn sketches_under(&self, layer: &Layer<'_>) -> Vec<ElementHit> {
         let pointer = &layer.pointer;
         let shown = self.sketches.iter().filter(|s| !layer.hides(&s.name));
         let hits = shown.filter_map(|sketch| {
@@ -1120,18 +1207,20 @@ impl PartView {
             (in_region || on_curve())
                 .then(|| layer.hit(&sketch.target, drawn::SKETCH, "", pointer.ray.at(t), t))
         });
-        nearest(hits)
+        hits.collect()
     }
 
-    /// The nearest datum of `layer` other than a frame the ray hits, as the
-    /// viewer draws it: a point at its origin, an axis as a line and a plane
+    /// Every datum of `layer` other than a frame the ray hits, as the viewer
+    /// draws it: a point at its origin, an axis as a line and a plane
     /// as a square, each [`Extent::size`] of `extent` — the whole drawing's —
     /// long around the point of it nearest the extent's center.
-    fn pick_datum(&self, layer: &Layer<'_>, extent: Extent) -> Option<ElementHit> {
+    fn datums_under(&self, layer: &Layer<'_>, extent: Extent) -> Vec<ElementHit> {
         let pointer = &layer.pointer;
         let Extent { center, size } = extent;
         let ray = &pointer.ray;
-        let half = size.div(Scalar::TWO).ok()?;
+        let Ok(half) = size.div(Scalar::TWO) else {
+            return Vec::new();
+        };
         let shown = self.datums.iter().filter(|d| !layer.hides(&d.name));
         let hits = shown.filter_map(|d| {
             let f = &d.frame;
@@ -1157,16 +1246,16 @@ impl PartView {
             };
             Some(layer.hit(&self.datum_target, drawn::DATUM, &d.name, ray.at(t), t))
         });
-        nearest(hits)
+        hits.collect()
     }
 
     /// The part of a frame datum of `layer` the ray hits, the frame
     /// [`FRAME`] reaches tall: its origin ball — the frame as a whole —
     /// else an axis (from a tenth of its length to its tip), else a plane's
-    /// square (off the origin, between the other two axes). The smallest
-    /// part under the pointer, as for the part's elements, and of the
-    /// nearest frame.
-    fn pick_frame(&self, layer: &Layer<'_>) -> Option<ElementHit> {
+    /// square (off the origin, between the other two axes): every ball,
+    /// every axis and every square under the pointer — the smallest part
+    /// under it is the one meant, as for the part's elements.
+    fn frame_parts_under(&self, layer: &Layer<'_>) -> [Vec<ElementHit>; 3] {
         let pointer = &layer.pointer;
         let ray = &pointer.ray;
         let frac = |size: Scalar, x: f64| size.mul(Scalar::from_f64(x));
@@ -1218,9 +1307,7 @@ impl PartView {
                 }
             }
         }
-        nearest(balls)
-            .or_else(|| nearest(axes))
-            .or_else(|| nearest(planes))
+        [balls, axes, planes]
     }
 }
 
@@ -1261,8 +1348,8 @@ pub struct Visible<'v> {
 
 /// A part as drawn, all of it shown.
 impl Scene for PartView {
-    fn pick(&self, pointer: &Pointer, accepts: &[String]) -> Option<ElementHit> {
-        PartView::pick(self, pointer, accepts, &[])
+    fn under(&self, pointer: &Pointer, accepts: &[String]) -> Vec<ElementHit> {
+        PartView::under(self, pointer, accepts, &[])
     }
 
     fn hit_instance(&self, name: &str, pointer: &Pointer) -> Option<Scalar> {
@@ -1279,8 +1366,8 @@ impl<'v> Visible<'v> {
 }
 
 impl Scene for Visible<'_> {
-    fn pick(&self, pointer: &Pointer, accepts: &[String]) -> Option<ElementHit> {
-        self.view.pick(pointer, accepts, self.hidden)
+    fn under(&self, pointer: &Pointer, accepts: &[String]) -> Vec<ElementHit> {
+        self.view.under(pointer, accepts, self.hidden)
     }
 
     fn hit_instance(&self, name: &str, pointer: &Pointer) -> Option<Scalar> {

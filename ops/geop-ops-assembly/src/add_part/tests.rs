@@ -145,6 +145,7 @@ const SOLVED: f64 = 1e-8;
 /// A pointer looking straight down at `at`.
 fn down_at(at: Vector3) -> Pointer {
     Pointer {
+        cycle: 0,
         ray: Ray::try_new(at.add(&v3(0.0, 0.0, 10.0)), v3(0.0, 0.0, -1.0)).unwrap(),
         reach: Reach::Tube {
             radius: Scalar::from_f64(0.01),

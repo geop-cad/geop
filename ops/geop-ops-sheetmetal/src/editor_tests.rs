@@ -3,7 +3,7 @@
 //! and set in their dialogs, and its flat pattern exported for cutting.
 
 use geop_core_editor::{
-    editing::{Button, StepEditEvent, Value},
+    editing::{StepEditEvent, Value},
     editor::{Command, Editor},
     registry::Registry,
     testing::{click_at, dialog, editor_with, from_above, handled, pointer},
@@ -130,7 +130,6 @@ fn sheet_metal_cut_hem_and_cutting_export() {
         Command::Event {
             event: StepEditEvent::Click {
                 pointer: pointer([1.0, 5.0, 0.3], [0.0, -1.0, 0.0]),
-                button: Button::Primary,
                 double: false,
                 shift: false,
             },

@@ -10,8 +10,7 @@ use std::{borrow::Cow, collections::BTreeMap};
 
 use geop_core_editor::{
     editing::{
-        Button, Control, Pointer, Reach, Shape, StepEditEvent, Style, TableEdit, Tone, Value,
-        Visual,
+        Control, Pointer, Reach, Shape, StepEditEvent, Style, TableEdit, Tone, Value, Visual,
     },
     editor::{Command, Editor, Update},
     output::{Inspector, InspectorInfo, Output as Made, Picks},
@@ -329,6 +328,7 @@ fn new_steps_handles_are_dragged_in_steps() {
     let side = |z: f64| {
         let v = |p: [f64; 3]| Vector3::from_array(p.map(Scalar::from_f64));
         Pointer {
+            cycle: 0,
             ray: Ray::try_new(v([1.0, -10.0, 2.0]), v([0.0, 11.0, z - 2.0])).unwrap(),
             reach: Reach::Cone {
                 slope: Scalar::from_f64(0.002),
@@ -798,7 +798,6 @@ fn a_3d_sketch_is_drawn_and_swept_along() {
         editor.handle(Command::Event {
             event: StepEditEvent::Click {
                 pointer: pointer(origin, dir),
-                button: Button::Primary,
                 double: false,
                 shift: false,
             },

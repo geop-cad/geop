@@ -45,12 +45,20 @@ impl Reach {
     }
 }
 
-/// Where the pointer is: the ray from the eye through it, and how far from
-/// that ray it reaches.
+/// Where the pointer is: the ray from the eye through it, how far from
+/// that ray it reaches, and which of what lies under it it means.
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
 pub struct Pointer {
     pub ray: Ray,
     pub reach: Reach,
+    /// Which of what lies under the pointer it means, counted front to
+    /// back from the one a click picks first (see
+    /// [`super::hit::Scene::under`]), wrapping round: a secondary click
+    /// steps one further behind, and any move of the pointer starts again
+    /// from the front. A pick, a hover and a click alike take the one
+    /// this names, so what is lit is what a click holds.
+    #[serde(default)]
+    pub cycle: usize,
 }
 
 impl Pointer {
@@ -62,10 +70,13 @@ impl Pointer {
             motion.apply(self.ray.origin()),
             motion.rotate(self.ray.dir()),
         )?;
-        Ok(Pointer {
-            ray,
-            reach: self.reach,
-        })
+        Ok(Pointer { ray, ..*self })
+    }
+
+    /// The same pointer, meaning the `cycle`-th of what lies under it (see
+    /// [`Pointer::cycle`]).
+    pub fn cycled(self, cycle: usize) -> Self {
+        Pointer { cycle, ..self }
     }
 
     /// `reaches` of the pointer's reach, `t` along its ray.
@@ -78,15 +89,6 @@ impl Pointer {
     pub fn within(&self, dist: Scalar, t: Scalar, reaches: f64) -> bool {
         !dist.definitely_greater(self.reach_at(reaches, t))
     }
-}
-
-/// Which mouse button.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum Button {
-    #[default]
-    Primary,
-    Secondary,
 }
 
 /// What a field was set to — or that it was pressed: in the dialog, by a
@@ -192,11 +194,11 @@ pub enum StepEditEvent {
     },
     /// The pointer left the viewport.
     Leave,
-    /// A click in the viewport: a press and release without moving.
+    /// A click in the viewport: a press and release of the primary button
+    /// without moving. (The secondary button's click is no event of its
+    /// own: it steps the pointer's [`Pointer::cycle`].)
     Click {
         pointer: Pointer,
-        #[serde(default)]
-        button: Button,
         /// The second click of a double click.
         #[serde(default)]
         double: bool,
@@ -235,12 +237,10 @@ impl StepEditEvent {
             },
             StepEditEvent::Click {
                 pointer,
-                button,
                 double,
                 shift,
             } => StepEditEvent::Click {
                 pointer: pointer.moved(motion)?,
-                button: *button,
                 double: *double,
                 shift: *shift,
             },
@@ -304,7 +304,7 @@ pub enum CanvasEvent {
     /// the points picked for a tool — and, with nothing in progress, put
     /// the tool in hand down. The selection is cleared already.
     Cancel,
-    /// What Enter and a secondary click do: finish what is in progress, a
+    /// What Enter does: finish what is in progress, a
     /// chain being drawn, a constraint to apply; the tool stays in hand.
     Confirm,
     /// What Delete and Backspace do: delete the selection.

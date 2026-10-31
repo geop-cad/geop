@@ -3,7 +3,7 @@
 //! and the sheet they make thickened.
 
 use geop_core_editor::{
-    editing::{Button, StepEditEvent, Value},
+    editing::{StepEditEvent, Value},
     editor::Command,
     registry::Registry,
     testing::{built, click_at, dialog, editor_with, from_above, pointer},
@@ -42,7 +42,6 @@ fn new_boundary_surface_picks_edges_then_thickens() {
     let click = |pointer| Command::Event {
         event: StepEditEvent::Click {
             pointer,
-            button: Button::Primary,
             double: false,
             shift: false,
         },

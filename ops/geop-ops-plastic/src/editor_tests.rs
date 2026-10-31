@@ -5,7 +5,7 @@
 use std::collections::BTreeMap;
 
 use geop_core_editor::{
-    editing::{Button, StepEditEvent, Value},
+    editing::{StepEditEvent, Value},
     editor::{Command, Editor},
     registry::Registry,
     testing::{dialog, pointer},
@@ -41,7 +41,6 @@ fn new_draft_picks_its_faces_and_neutral_plane() {
     let click = |pointer| Command::Event {
         event: StepEditEvent::Click {
             pointer,
-            button: Button::Primary,
             double: false,
             shift: false,
         },

@@ -22,9 +22,7 @@ use geop_lib_stdlib::WithStandardParts;
 use std::{collections::BTreeMap, rc::Rc};
 
 use geop_core_editor::{
-    editing::{
-        Button, Control, Pointer, Presentation, Pull, Reach, Shape, StepEditEvent, Style, Value,
-    },
+    editing::{Control, Pointer, Presentation, Pull, Reach, Shape, StepEditEvent, Style, Value},
     selectable::Selectable,
 };
 use geop_core_math::{
@@ -1158,6 +1156,7 @@ fn drive_chain(
     let eye = |x: f64, y: f64| {
         let v = |p: [f64; 3]| Vector3::from_array(p.map(Scalar::from_f64));
         Pointer {
+            cycle: 0,
             ray: Ray::try_new(v([x, y - 8.0, 8.2]), v([0.0, 8.0, -8.0])).unwrap(),
             reach: Reach::Tube {
                 radius: Scalar::from_f64(0.009),
@@ -1984,7 +1983,6 @@ fn a_joint_is_made_by_clicking_where_its_frames_go() {
     for (x, y, held) in [(3.6, 1.0, true), (0.3, 0.3, false)] {
         let click = StepEditEvent::Click {
             pointer: from_above(x, y),
-            button: Button::Primary,
             double: false,
             shift: false,
         };

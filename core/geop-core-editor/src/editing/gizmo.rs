@@ -647,6 +647,7 @@ mod tests {
     /// From `origin` along `dir`, a reach being a tenth of a unit.
     fn pointer(origin: [f64; 3], dir: [f64; 3]) -> Pointer {
         Pointer {
+            cycle: 0,
             ray: Ray::try_new(
                 v(origin[0], origin[1], origin[2]),
                 v(dir[0], dir[1], dir[2]),

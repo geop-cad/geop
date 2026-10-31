@@ -4,9 +4,9 @@
 use crate::{
     editable::{Context, Editable, Editors, OperationGroup, OperationInfo, OperationTier},
     editing::{
-        CanvasEvent, Control, Event, Form, Number, Picked, Pointer, Preview, Reach, Shape,
-        StepEditEvent, Style, Track, Unit, Value, Visual,
-        hit::{ElementHit, Scene},
+        CanvasEvent, Control, Event, Form, Number, Picked, Pointer, Presentation, Preview, Reach,
+        Shape, StepEditEvent, Style, Track, Unit, Value, Visual,
+        hit::{Cycle, ElementHit, Scene},
     },
 };
 use geop_core_math::{geop_error::GeopResult, primitives::Ray, scalars::Scalar, vector::Vector3};
@@ -29,6 +29,9 @@ const INFO: OperationInfo = OperationInfo::new("", "", OperationGroup::Solid, Op
 struct MarkArgs {
     on: Vec<PickedElement>,
     distance: NumericInput,
+    /// The solid marked, as a face of it picks it.
+    #[serde(default)]
+    body: Vec<PickedElement>,
 }
 
 /// What a mark keeps while edited: the selection, and the canvas events it
@@ -40,7 +43,8 @@ struct MarkEditing {
 }
 
 /// Marks a face at a distance: a reference field, a number with a handle
-/// along `x`, and a selectable dot at `(5, 0, 0)`. Builds nothing.
+/// along `x`, a selectable dot at `(5, 0, 0)`, and a field of the solid a
+/// face is of, to pick if asked. Builds nothing.
 struct MarkOperation;
 
 fn v(x: f64, y: f64, z: f64) -> Vector3 {
@@ -79,9 +83,18 @@ impl Editable for MarkOperation {
                 picked(&args.on),
                 &["face"],
                 false,
-                Preview(|_, _| None),
+                Preview(|_, hit| Some(Picked::new(hit.clone()))),
             )
-            .number("distance", distance);
+            .number("distance", distance)
+            .reference(
+                "body",
+                "Body",
+                picked(&args.body),
+                &["face"],
+                false,
+                Preview(|_, _| Some(Picked::new(solid()))),
+            )
+            .optional("body");
         let dot = Shape::Point {
             at: v(5.0, 0.0, 0.0),
         };
@@ -104,6 +117,10 @@ impl Editable for MarkOperation {
                 key,
                 value: Value::Elements(on),
             } if key == "on" => args.on = on,
+            Event::Field {
+                key,
+                value: Value::Elements(body),
+            } if key == "body" => args.body = body,
             Event::Field { key, value } if key == "distance" => {
                 if let Some(distance) = value.numeric_input() {
                     args.distance = distance;
@@ -122,16 +139,21 @@ impl Editable for MarkOperation {
     }
 }
 
-/// A part with one face, `top`, under every pointer.
-struct OneFace;
+/// A part with two faces of one solid under every pointer: `top`, and
+/// behind it `bottom`.
+struct TwoFaces;
 
-impl Scene for OneFace {
-    fn pick(&self, p: &Pointer, accepts: &[String]) -> Option<ElementHit> {
-        accepts.iter().any(|k| k == "face").then(|| ElementHit {
-            element: face("top"),
-            point: *p.ray.origin(),
-            t: Scalar::from_f64(0.0),
-        })
+impl Scene for TwoFaces {
+    fn under(&self, p: &Pointer, accepts: &[String]) -> Vec<ElementHit> {
+        let hit = |name: &str, t: f64| ElementHit {
+            element: face(name),
+            point: p.ray.at(Scalar::from_f64(t)),
+            t: Scalar::from_f64(t),
+        };
+        match accepts.iter().any(|k| k == "face") {
+            true => vec![hit("top", 0.0), hit("bottom", 1.0)],
+            false => Vec::new(),
+        }
     }
 
     fn hit_instance(&self, _: &str, _: &Pointer) -> Option<Scalar> {
@@ -148,6 +170,15 @@ fn face(name: &str) -> PickedElement {
     }
 }
 
+/// The solid both faces are of, as a pick names it.
+fn solid() -> PickedElement {
+    PickedElement {
+        target: geop_core_program::placed::Located::new("model"),
+        kind: "solid".into(),
+        name: "block".into(),
+    }
+}
+
 /// `elements`, as a reference field holds them.
 fn picked(elements: &[PickedElement]) -> Vec<Picked> {
     (elements.iter().cloned()).map(Picked::new).collect()
@@ -156,6 +187,7 @@ fn picked(elements: &[PickedElement]) -> Vec<Picked> {
 /// Looking straight down `-z` at `(x, y)`, reaching a tenth of a unit.
 fn down(x: f64, y: f64) -> Pointer {
     Pointer {
+        cycle: 0,
         ray: Ray::try_new(v(x, y, 10.0), v(0.0, 0.0, -1.0)).unwrap(),
         reach: Reach::Tube {
             radius: Scalar::from_f64(0.1),
@@ -198,19 +230,41 @@ impl Editor {
             runner: &self.runner,
             part: (&self.part).into(),
             program: &mut self.program,
-            scene: &OneFace,
+            scene: &TwoFaces,
         };
         self.editor.handle(editing, &event).unwrap();
         (self.runner).run(&mut self.part, &self.program, None);
     }
 
     fn click(&mut self, x: f64, y: f64) {
+        self.click_with(down(x, y));
+    }
+
+    fn click_with(&mut self, pointer: Pointer) {
         self.send(StepEditEvent::Click {
-            pointer: down(x, y),
-            button: Default::default(),
+            pointer,
             double: false,
             shift: false,
         });
+    }
+
+    fn hover(&mut self, pointer: Pointer) {
+        self.send(StepEditEvent::Hover {
+            pointer,
+            shift: false,
+        });
+    }
+
+    fn presentation(&self) -> Presentation {
+        (self.editor)
+            .presentation(
+                &self.editors,
+                &self.runner,
+                &self.part,
+                &self.program,
+                &TwoFaces,
+            )
+            .unwrap()
     }
 
     fn args(&self) -> MarkArgs {
@@ -223,15 +277,7 @@ impl Editor {
 
     /// Whether the field `on` waits for a click.
     fn armed(&self) -> bool {
-        let presentation = (self.editor)
-            .presentation(
-                &self.editors,
-                &self.runner,
-                &self.part,
-                &self.program,
-                &OneFace,
-            )
-            .unwrap();
+        let presentation = self.presentation();
         matches!(presentation.dialog.get("on"), Some(Control::Reference(r)) if r.armed)
     }
 }
@@ -266,6 +312,7 @@ fn a_handle_drags_its_number() {
     let args = MarkArgs {
         on: vec![face("top")],
         distance: NumericInput::Plain(1.0),
+        body: Vec::new(),
     };
     let mut editor = Editor::new(args, false);
     editor.send(StepEditEvent::Drag {
@@ -285,6 +332,7 @@ fn clicks_select_and_escape_clears() {
     let args = MarkArgs {
         on: vec![face("top")],
         distance: NumericInput::Plain(1.0),
+        body: Vec::new(),
     };
     let mut editor = Editor::new(args, false);
     editor.click(5.0, 0.0);
@@ -295,7 +343,7 @@ fn clicks_select_and_escape_clears() {
             &editor.runner,
             &editor.part,
             &editor.program,
-            &OneFace,
+            &TwoFaces,
         )
         .unwrap();
     let dot = presentation
@@ -311,4 +359,60 @@ fn clicks_select_and_escape_clears() {
     assert_eq!(editor.editing().events, vec!["cancel"]);
     editor.click(20.0, 20.0);
     assert_eq!(editor.editing().events, vec!["cancel", "click"]);
+}
+
+/// A pointer stepped behind lights the next of what lies under it, and a
+/// click takes the one lit: the face behind the first, and round again to
+/// the first. The presentation says which, of how many.
+#[test]
+fn a_pointer_stepped_behind_picks_what_is_behind() {
+    let mut editor = Editor::new(MarkArgs::default(), true);
+    editor.hover(down(0.0, 0.0));
+    let shown = editor.presentation();
+    assert_eq!(shown.highlights, vec![face("top")]);
+    assert_eq!(shown.cycle, Some(Cycle { at: 0, of: 2 }));
+    editor.hover(down(0.0, 0.0).cycled(1));
+    let shown = editor.presentation();
+    assert_eq!(shown.highlights, vec![face("bottom")]);
+    assert_eq!(shown.cycle, Some(Cycle { at: 1, of: 2 }));
+    assert_eq!(
+        editor.presentation().cycle,
+        Some(Cycle { at: 1, of: 2 }),
+        "a presentation asked again says the same"
+    );
+    editor.click_with(down(0.0, 0.0).cycled(1));
+    assert_eq!(editor.args().on, vec![face("bottom")]);
+
+    let mut editor = Editor::new(MarkArgs::default(), true);
+    editor.click_with(down(0.0, 0.0).cycled(2));
+    assert_eq!(
+        editor.args().on,
+        vec![face("top")],
+        "stepped past the last, the first"
+    );
+}
+
+/// What a field would hold of each element under the pointer is counted
+/// once: both faces pick the one solid, so there is nothing behind it to
+/// step to.
+#[test]
+fn what_a_click_would_hold_alike_is_one_candidate() {
+    let args = MarkArgs {
+        on: vec![face("top")],
+        distance: NumericInput::Plain(1.0),
+        body: Vec::new(),
+    };
+    let mut editor = Editor::new(args, false);
+    editor.send(StepEditEvent::Dialog {
+        key: "body".into(),
+        value: Value::Press,
+    });
+    editor.hover(down(0.0, 0.0).cycled(1));
+    assert_eq!(editor.presentation().cycle, Some(Cycle { at: 0, of: 1 }));
+    editor.click_with(down(0.0, 0.0).cycled(1));
+    assert_eq!(
+        editor.args().body,
+        vec![face("top")],
+        "the first face, the solid's"
+    );
 }

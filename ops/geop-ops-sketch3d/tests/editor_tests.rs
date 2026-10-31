@@ -5,7 +5,7 @@
 //! every tool shares.
 
 use geop_core_editor::editing::{
-    Axis, Button, GizmoPart, Pointer, Reach, Shape, StepEditEvent, Style, Value,
+    Axis, GizmoPart, Pointer, Reach, Shape, StepEditEvent, Style, Value,
 };
 use geop_core_math::{scalars::Scalar, vector::Vector3};
 use geop_core_program::{element::ElementReference, program::Program, testing::args};
@@ -54,6 +54,7 @@ fn close(a: &Vector3, b: [f64; 3]) -> bool {
 /// A pointer from `origin` along `dir`, reaching a hundredth of a unit.
 fn pointer(origin: [f64; 3], dir: [f64; 3]) -> Pointer {
     Pointer {
+        cycle: 0,
         reach: Reach::Tube {
             radius: Scalar::from_f64(0.01),
         },
@@ -113,7 +114,6 @@ impl Editor {
     fn click(&mut self, pointer: Pointer) {
         self.send(StepEditEvent::Click {
             pointer,
-            button: Button::Primary,
             double: false,
             shift: false,
         });
@@ -393,7 +393,6 @@ fn lines_snap_along_axes_and_onto_points() {
     // Up along `z` — with shift, it stays where it is clicked, unaligned.
     e.send(StepEditEvent::Click {
         pointer: side(3.004, 2.0),
-        button: Button::Primary,
         double: false,
         shift: true,
     });
@@ -434,7 +433,6 @@ fn a_3d_sketch_point_is_dragged_along_an_axis() {
             editor,
             StepEditEvent::Click {
                 pointer: reaching(origin, dir),
-                button: Button::Primary,
                 double: false,
                 shift: false,
             },
@@ -600,6 +598,7 @@ fn a_3d_line_is_drawn_from_the_origin_in_the_default_view() {
     let eye = |dir: [f64; 3]| {
         let v = |p: [f64; 3]| Vector3::from_array(p.map(Scalar::from_f64));
         Pointer {
+            cycle: 0,
             ray: Ray::try_new(
                 v([65.90889047678681, 43.93926031785788, 87.87852063571576]),
                 v(dir),
@@ -656,7 +655,7 @@ fn drawn_curves_3d(editor: &mut geop_core_editor::editor::Editor) -> Vec<String>
 /// taken by its key in either case.
 #[test]
 fn every_3d_drawing_tool_ends_its_chain_the_same_way() {
-    for gesture in [Gesture::Enter, Gesture::SecondaryClick, Gesture::Escape] {
+    for gesture in [Gesture::Enter, Gesture::Escape] {
         for key in ["l", "L"] {
             let mut editor = editor();
             editor.handle(Command::New {

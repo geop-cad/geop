@@ -7,7 +7,7 @@
 use std::collections::BTreeMap;
 
 use geop_core_editor::{
-    editing::{Button, Control, Shape, StepEditEvent, Value},
+    editing::{Control, Shape, StepEditEvent, Value},
     editor::{Command, Editor, Update},
     registry::Registry,
     testing::{dialog, loaded, pointer},
@@ -97,7 +97,6 @@ fn a_hole_is_dimensioned_on_a_drawing_and_a_dimension_removed() {
     let click = |p: [f64; 2]| Command::Event {
         event: StepEditEvent::Click {
             pointer: pointer([p[0], p[1], 10.0], [0.0, 0.0, -1.0]),
-            button: Button::Primary,
             double: false,
             shift: false,
         },
@@ -191,7 +190,6 @@ fn a_drawing_is_annotated_on_its_sheet_and_downloaded() {
     let click = |p: [f64; 2]| {
         event(StepEditEvent::Click {
             pointer: at(p),
-            button: Button::Primary,
             double: false,
             shift: false,
         })

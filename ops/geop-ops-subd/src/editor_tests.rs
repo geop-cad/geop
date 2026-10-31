@@ -5,7 +5,7 @@
 use std::collections::BTreeMap;
 
 use geop_core_editor::{
-    editing::{Button, Control, GizmoPart, Shape, StepEditEvent, Style, Value},
+    editing::{Control, GizmoPart, Shape, StepEditEvent, Style, Value},
     editor::{Command, Editor},
     registry::Registry,
     testing::{dialog, drag_gizmo, event, from_above, pointer},
@@ -42,7 +42,6 @@ fn subd_cage_is_shaped_in_the_viewport() {
     let click = |pointer| Command::Event {
         event: StepEditEvent::Click {
             pointer,
-            button: Button::Primary,
             double: false,
             shift: false,
         },
@@ -196,7 +195,6 @@ fn subd_faces_are_moved_turned_and_scaled_by_the_gizmo() {
         &mut editor,
         StepEditEvent::Click {
             pointer: from_above(0.3, 0.2),
-            button: Button::Primary,
             double: false,
             shift: false,
         },
@@ -300,7 +298,6 @@ fn subd_faces_are_moved_turned_and_scaled_by_the_gizmo() {
 fn click(pointer: geop_core_editor::editing::Pointer, double: bool, shift: bool) -> StepEditEvent {
     StepEditEvent::Click {
         pointer,
-        button: Button::Primary,
         double,
         shift,
     }

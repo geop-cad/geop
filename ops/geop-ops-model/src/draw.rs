@@ -153,6 +153,7 @@ mod tests {
     fn from_above(x: f64, y: f64) -> Pointer {
         let v = |p: [f64; 3]| Vector3::from_array(p.map(Scalar::from_f64));
         Pointer {
+            cycle: 0,
             ray: Ray::try_new(v([x, y, 10.0]), v([0.0, 0.0, -1.0])).unwrap(),
             reach: Reach::Tube {
                 radius: Scalar::from_f64(0.01),

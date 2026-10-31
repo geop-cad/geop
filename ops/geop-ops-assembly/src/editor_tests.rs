@@ -1317,7 +1317,6 @@ fn a_roller_is_mated_to_a_drum_by_clicking_its_face_and_rim() {
     assert!(hint.contains("first a face"), "{hint}");
     let click = |pointer| StepEditEvent::Click {
         pointer,
-        button: geop_core_editor::editing::Button::Primary,
         double: false,
         shift: false,
     };
@@ -1375,7 +1374,6 @@ fn a_link_is_exploded_by_clicking_and_dragging_it() {
     let mut step = Stepping::new(editor, "explode");
     step.send(StepEditEvent::Click {
         pointer: from_above(8.0, 0.2),
-        button: geop_core_editor::editing::Button::Primary,
         double: false,
         shift: false,
     });
@@ -1670,7 +1668,6 @@ fn a_hidden_part_is_not_picked_through() {
     assert_eq!(lit[0].target, Located::in_instance("a", "model"), "{lit:?}");
     step.send(StepEditEvent::Click {
         pointer: at,
-        button: Default::default(),
         double: false,
         shift: false,
     });

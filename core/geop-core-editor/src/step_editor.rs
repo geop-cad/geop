@@ -9,14 +9,14 @@ use geop_core_math::{geop_error::GeopResult, vector::Vector3};
 use crate::{
     editable::{Against, Editors},
     editing::{
-        Action, Button, CanvasEvent, Control, DRAG_SNAP, Dialog, Event, Form, Gizmo, GizmoView,
-        InHand, Orientation, Pointer, Presentation, Reference, Shape, StepEditEvent, Style, Value,
+        Action, CanvasEvent, Control, DRAG_SNAP, Dialog, Event, Form, Gizmo, GizmoView, InHand,
+        Orientation, Picked, Pointer, Presentation, Reference, Shape, StepEditEvent, Style, Value,
         Visual,
         gizmo::GizmoGrab,
-        hit::{Scene, hit_visuals},
+        hit::{Cycle, Scene, cycled, hit_visuals, visuals_under},
     },
 };
-use geop_core_program::{element::PickedElement, program::Program, runner::Runner};
+use geop_core_program::{element::PickedElement, program::Program, reader::Reader, runner::Runner};
 
 /// The key of the field the editor adds to a dialog whose gizmo has an
 /// orientation of its own: the world's axes or its own, as
@@ -88,9 +88,13 @@ enum Grab {
 ///   a pick: then it picks what is under it. Where it has an orientation
 ///   of its own, the dialog gets a [`GIZMO_ORIENTATION`] field to choose
 ///   the world's axes or its own.
-/// - Escape, Enter, Delete and a secondary click mean the same in every
-///   tool, and reach it as [`CanvasEvent::Cancel`], [`CanvasEvent::Confirm`]
-///   and [`CanvasEvent::Delete`]; any other key, lowercased, is a tool's
+/// - Of what lies under the pointer, a hover lights and a click takes the
+///   one its [`Pointer::cycle`] names, front to back: what a reference
+///   field would hold of each counted once (see [`candidates`]), or each
+///   visual.
+/// - Escape, Enter and Delete mean the same in every tool, and reach it as
+///   [`CanvasEvent::Cancel`], [`CanvasEvent::Confirm`] and
+///   [`CanvasEvent::Delete`]; any other key, lowercased, is a tool's
 ///   shortcut.
 ///
 /// Whatever else the pointer and the keys do goes to the operation as a
@@ -107,6 +111,9 @@ pub struct StepEditor {
     armed: Option<String>,
     /// What a click would pick for it.
     hover: Option<PickedElement>,
+    /// Which of what a click could pick for it the pointer is over (see
+    /// [`Pointer::cycle`]).
+    cycle: Option<Cycle>,
     /// Where the pointer last was, if over the viewport.
     pointer: Option<Pointer>,
     /// Where the drag under way went down, and what it holds.
@@ -171,6 +178,31 @@ fn references(form: &Form) -> Vec<String> {
         .collect()
 }
 
+/// What a click with `pointer` could pick for the reference field `key` of
+/// `dialog`, in what `scene` draws, read through `reader`: each element
+/// under the pointer that selects something, with what the field would
+/// hold of it — front to back (see [`Scene::under`]), and each held value
+/// once: two faces of one feature are one feature to a field of features.
+fn candidates(
+    scene: &dyn Scene,
+    reader: &Reader,
+    dialog: &Dialog,
+    key: &str,
+    reference: &Reference,
+    pointer: &Pointer,
+) -> Vec<(PickedElement, Picked)> {
+    let mut found: Vec<(PickedElement, Picked)> = Vec::new();
+    for hit in scene.under(pointer, &reference.accepts) {
+        let Some(held) = dialog.previewed(reader, key, &hit.element) else {
+            continue;
+        };
+        if !found.iter().any(|(_, h)| h.element == held.element) {
+            found.push((hit.element, held));
+        }
+    }
+    found
+}
+
 /// The program a step editor edits, the operations it is edited with, the
 /// runner and the part it was last run on, and the scene picks are made in
 /// — what every
@@ -214,6 +246,7 @@ impl StepEditor {
             editing,
             armed,
             hover: None,
+            cycle: None,
             pointer: None,
             grab: None,
             orientation: Orientation::default(),
@@ -239,6 +272,7 @@ impl StepEditor {
         self.editing = Rc::from(editors.initial_editing(program, &self.step)?);
         self.armed = None;
         self.hover = None;
+        self.cycle = None;
         self.grab = None;
         self.references = None;
         Ok(())
@@ -256,14 +290,15 @@ impl StepEditor {
     }
 
     /// Whether nothing is in progress in `form`, the step's form: no field
-    /// waits for a pick, nothing is selected or dragged, and the operation
-    /// has no tool in hand — so Escape has nothing to end, and Enter
-    /// nothing to finish, but the step itself (see
-    /// [`crate::editor::Editor::handle`]).
+    /// waits for a pick, nothing is selected or dragged, no value is asked
+    /// for in place, and the operation has no tool in hand — so Escape has
+    /// nothing to end, and Enter nothing to finish, but the step itself
+    /// (see [`crate::editor::Editor::handle`]).
     pub fn at_rest(&self, form: &Form) -> bool {
         self.armed.is_none()
             && self.grab.is_none()
             && form.selection.is_empty()
+            && form.prompt.is_none()
             && form.tool == InHand::Nothing
     }
 
@@ -395,7 +430,7 @@ impl StepEditor {
                         done,
                         shift,
                     } => self.drag(e, &form, from, to, *done, *shift, true),
-                    _ => self.pick(e, event, &key, reference),
+                    _ => self.pick(e, &form.dialog, event, &key, reference),
                 };
             }
             self.armed = None;
@@ -412,26 +447,24 @@ impl StepEditor {
             StepEditEvent::Leave => self.pass(e, CanvasEvent::Leave),
             StepEditEvent::Click {
                 pointer,
-                button,
                 double,
                 shift,
             } => {
                 let in_hand = form.tool != InHand::Nothing;
-                let hit = (*button == Button::Primary && !*double && !in_hand)
+                let hit = (!*double && !in_hand)
                     .then(|| {
                         let instance = |name: &str, p: &Pointer| e.scene.hit_instance(name, p);
                         hit_visuals(&form.visuals, pointer, instance, |v| v.selectable)
                             .map(|hit| hit.visual.key.clone())
                     })
                     .flatten();
-                match (hit, button) {
-                    (_, Button::Secondary) => self.pass(e, CanvasEvent::Confirm),
-                    (Some(key), _) => {
+                match hit {
+                    Some(key) => {
                         let mut selection = form.selection.clone();
                         toggle(&mut selection, key);
                         self.select(e, &form, selection)
                     }
-                    (None, _) => {
+                    None => {
                         if !*shift && !in_hand {
                             self.select(e, &form, Vec::new())?;
                         }
@@ -506,32 +539,34 @@ impl StepEditor {
         self.send(e, Event::Field { key, value })
     }
 
-    /// A pointer event while the reference field `key` waits for a click:
-    /// a hover finds what a click would pick, a click picks it — and, for a
-    /// field of one entity, is done. Escape stops picking.
+    /// A pointer event while the reference field `key` of `dialog` waits
+    /// for a click: a hover finds what a click would pick, a click picks it
+    /// — and, for a field of one entity, is done. Of what lies under the
+    /// pointer, each is taken by what the field would hold of it (see
+    /// [`candidates`]), and the pointer's cycle names which. Escape stops
+    /// picking.
     fn pick<Sc: Scene>(
         &mut self,
         e: &mut Editing<'_, Sc>,
+        dialog: &Dialog,
         event: &StepEditEvent,
         key: &str,
         reference: &Reference,
     ) -> GeopResult<()> {
-        let scene = e.scene;
-        let pick = |pointer| {
-            scene
-                .pick(pointer, &reference.accepts)
-                .map(|hit| hit.element)
+        let reader = self.picked_in(e.editors, e.part.clone(), e.program)?;
+        let scene: &dyn Scene = e.scene;
+        let under = |pointer: &Pointer| {
+            let found = candidates(scene, &reader, dialog, key, reference, pointer);
+            let cycle = Cycle::of(found.len(), pointer);
+            (cycled(found, pointer.cycle).map(|(hit, _)| hit), cycle)
         };
         match event {
-            StepEditEvent::Hover { pointer, .. } => self.hover = pick(pointer),
-            StepEditEvent::Leave => self.hover = None,
-            StepEditEvent::Click {
-                pointer,
-                button: Button::Primary,
-                ..
-            } => {
-                self.hover = None;
-                if let Some(element) = pick(pointer) {
+            StepEditEvent::Hover { pointer, .. } => (self.hover, self.cycle) = under(pointer),
+            StepEditEvent::Leave => (self.hover, self.cycle) = (None, None),
+            StepEditEvent::Click { pointer, .. } => {
+                let (picked, _) = under(pointer);
+                (self.hover, self.cycle) = (None, None);
+                if let Some(element) = picked {
                     let mut elements: Vec<PickedElement> = reference.elements().cloned().collect();
                     if reference.multiple {
                         toggle(&mut elements, element);
@@ -545,11 +580,30 @@ impl StepEditor {
             }
             StepEditEvent::Key { key } if key == "Escape" => {
                 self.armed = None;
-                self.hover = None;
+                (self.hover, self.cycle) = (None, None);
             }
             _ => {}
         }
         Ok(())
+    }
+
+    /// The part the step's picks are made in, and what they are read
+    /// through: what the step builds, for an operation that picks in that
+    /// (see [`crate::editable::OperationInfo::picks_built`]); else the part
+    /// before the step.
+    fn picked_in<'a>(
+        &self,
+        editors: &Editors,
+        part: Against<'a>,
+        program: &Program,
+    ) -> GeopResult<Reader<'a>> {
+        let picks_built = (program.step(&self.step).ok())
+            .and_then(|step| editors.info(&step.operation))
+            .is_some_and(|listed| listed.info.picks_built);
+        match picks_built {
+            true => Ok(part.after(&self.step)),
+            false => part.before(program, &self.step),
+        }
     }
 
     /// A drag: of a number field's handle — its value when grabbed, moved
@@ -781,13 +835,7 @@ impl StepEditor {
         // triad, on what it is put on — in the part it is picked in: as the
         // step built it, where what the step places is, for a step picking
         // in that; else as it was before.
-        let picks_built = (program.step(&self.step).ok())
-            .and_then(|step| editors.info(&step.operation))
-            .is_some_and(|listed| listed.info.picks_built);
-        let picked_in = match picks_built {
-            true => part.after(&self.step),
-            false => part.before(program, &self.step)?,
-        };
+        let picked_in = self.picked_in(editors, part.clone(), program)?;
         let previewed = (self.armed.as_deref().zip(self.hover.as_ref()))
             .and_then(|(key, element)| form.dialog.previewed(&picked_in, key, element));
         let shown = form.dialog.shown(previewed.as_ref());
@@ -806,14 +854,23 @@ impl StepEditor {
             }
         }
         let on_gizmo = gizmo.as_ref().is_some_and(|g| g.hover.is_some());
-        let hovered = self.pointer.filter(|_| !on_gizmo).and_then(|pointer| {
+        let under = self.pointer.filter(|_| !on_gizmo).map(|pointer| {
             let instance = |name: &str, p: &Pointer| scene.hit_instance(name, p);
-            hit_visuals(&visuals, &pointer, instance, |v| match waiting {
+            let under = visuals_under(&visuals, &pointer, instance, |v| match waiting {
                 true => is_handle(v),
                 false => v.selectable || grabs(v, tool),
-            })
-            .map(|hit| (hit.visual.key.clone(), grabs(hit.visual, tool)))
+            });
+            let cycle = Cycle::of(under.len(), &pointer);
+            let hovered = cycled(under, pointer.cycle)
+                .map(|hit| (hit.visual.key.clone(), grabs(hit.visual, tool)));
+            (hovered, cycle)
         });
+        let (hovered, cycle) = under.unwrap_or_default();
+        // While a field waits, what the pointer is over is what it picks.
+        let cycle = match waiting {
+            true => self.cycle,
+            false => cycle,
+        };
         for visual in &mut visuals {
             if is_handle(visual) {
                 continue;
@@ -844,6 +901,7 @@ impl StepEditor {
             prompt: form.prompt,
             gizmo,
             hidden: form.hidden,
+            cycle,
         })
     }
 }

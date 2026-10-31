@@ -5,8 +5,7 @@
 
 use geop_core_editor::{
     editing::{
-        Axis, Button, Control, GizmoPart, Pointer, Presentation, Reach, Shape, StepEditEvent, Tone,
-        Value,
+        Axis, Control, GizmoPart, Pointer, Presentation, Reach, Shape, StepEditEvent, Tone, Value,
     },
     editor::Command,
     registry::Registry,
@@ -102,6 +101,7 @@ fn offset_points_are_dragged_by_a_gizmo() {
     // Seen from the side, its `z` arrow dragged half a unit up — the grid
     // the pointer's reach snaps to being a tenth.
     let side = |z: f64| Pointer {
+        cycle: 0,
         reach: Reach::Tube {
             radius: Scalar::from_f64(0.01),
         },
@@ -180,7 +180,6 @@ fn picks_build_the_selection() {
     // The origin's ball, from above.
     let click = StepEditEvent::Click {
         pointer: from_above(0.0, 0.0),
-        button: Button::Primary,
         double: false,
         shift: false,
     };
@@ -322,7 +321,6 @@ fn new_offset_plane_dragged_by_its_handle() {
     let click = |pointer| Command::Event {
         event: StepEditEvent::Click {
             pointer,
-            button: Button::Primary,
             double: false,
             shift: false,
         },

@@ -12,7 +12,7 @@
 //! they draw extruded, and a sketch is copied and pasted as a step.
 
 use geop_core_editor::editing::{
-    Button, Control, Pointer, Presentation, Shape, StepEditEvent, Style, Tone, Value,
+    Control, Pointer, Presentation, Shape, StepEditEvent, Style, Tone, Value,
 };
 use geop_core_math::{
     primitives::FrameAxis,
@@ -140,7 +140,6 @@ impl Editor {
     fn click_with(&mut self, x: f64, y: f64, double: bool, shift: bool) {
         self.send(StepEditEvent::Click {
             pointer: down(x, y),
-            button: Button::Primary,
             double,
             shift,
         });
@@ -389,7 +388,6 @@ fn a_new_sketch_picks_its_plane_first() {
     let front = pointer([0.04, -10.0, 0.04], [0.0, 1.0, 0.0]);
     e.send(StepEditEvent::Click {
         pointer: front,
-        button: Button::Primary,
         double: false,
         shift: false,
     });
@@ -1033,7 +1031,6 @@ fn another_plane_keeps_the_drawing() {
     assert!(e.presentation.focus.is_none());
     e.send(StepEditEvent::Click {
         pointer: pointer([0.04, -10.0, 0.04], [0.0, 1.0, 0.0]),
-        button: Button::Primary,
         double: false,
         shift: false,
     });
@@ -2130,7 +2127,7 @@ fn the_structure_is_listed_and_shown_as_chosen() {
 /// back once the sketch is put away.
 #[test]
 fn sketches_undo_their_own_edits() {
-    use geop_core_editor::editing::{Button, StepEditEvent};
+    use geop_core_editor::editing::StepEditEvent;
     use geop_core_editor::editor::{Command, Editor};
     use geop_core_editor::testing::handled;
     let mut editor = loaded(Program::new());
@@ -2144,7 +2141,6 @@ fn sketches_undo_their_own_edits() {
             editor,
             StepEditEvent::Click {
                 pointer: down(x, y),
-                button: Button::Primary,
                 double: false,
                 shift: false,
             },
@@ -2242,7 +2238,6 @@ fn sketch_tools_draw_profiles_that_extrude() {
             editor,
             StepEditEvent::Click {
                 pointer: from_above(x, y),
-                button: Button::Primary,
                 double: false,
                 shift: false,
             },
@@ -2352,11 +2347,11 @@ fn drawn_curves(editor: &mut geop_core_editor::editor::Editor) -> Vec<String> {
         .collect()
 }
 
-/// Enter, a secondary click and Escape all end the chain being drawn: two
-/// lines drawn after one, not a chain of three.
+/// Enter and Escape both end the chain being drawn: two lines drawn after
+/// one, not a chain of three.
 #[test]
 fn every_drawing_tool_ends_its_chain_the_same_way() {
-    for gesture in [Gesture::Enter, Gesture::SecondaryClick, Gesture::Escape] {
+    for gesture in [Gesture::Enter, Gesture::Escape] {
         // On the origin's xy plane, seen from above.
         let mut editor = editor();
         editor.handle(Command::New {

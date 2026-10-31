@@ -296,6 +296,7 @@ fn a_sketch_curve_is_picked_as_a_line() {
     let view = view.finish();
     let v = |p: [f64; 3]| Vector3::from_array(p.map(n));
     let pointer = Pointer {
+        cycle: 0,
         ray: Ray::try_new(v([0.5, 0.0, 10.0]), v([0.0, 0.0, -1.0])).unwrap(),
         reach: Reach::Tube { radius: n(0.01) },
     };

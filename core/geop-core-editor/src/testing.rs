@@ -13,7 +13,7 @@ use geop_core_program::{part::Part, program::Program, runner::Runner};
 use serde::de::DeserializeOwned;
 
 use crate::{
-    editing::{Button, GizmoPart, Pointer, Presentation, Reach, StepEditEvent, Value},
+    editing::{GizmoPart, Pointer, Presentation, Reach, StepEditEvent, Value},
     editor::{Command, Editor, StepState, Update},
     registry::Registry,
 };
@@ -53,6 +53,7 @@ pub fn pointer(origin: [f64; 3], dir: [f64; 3]) -> Pointer {
         reach: Reach::Tube {
             radius: Scalar::from_f64(0.009),
         },
+        cycle: 0,
     }
 }
 
@@ -75,7 +76,6 @@ pub fn click_at(pointer: Pointer) -> Command {
     Command::Event {
         event: StepEditEvent::Click {
             pointer,
-            button: Button::Primary,
             double: false,
             shift: false,
         },
@@ -150,13 +150,11 @@ pub fn drag_gizmo(
 #[derive(Clone, Copy, Debug)]
 pub enum Gesture {
     Enter,
-    SecondaryClick,
     Escape,
 }
 
 impl Gesture {
-    /// Sends the gesture to the step `editor` edits, a secondary click
-    /// looking down at the origin.
+    /// Sends the gesture to the step `editor` edits.
     pub fn send(self, editor: &mut Editor) {
         let sent = match self {
             Gesture::Enter => StepEditEvent::Key {
@@ -164,12 +162,6 @@ impl Gesture {
             },
             Gesture::Escape => StepEditEvent::Key {
                 key: "Escape".into(),
-            },
-            Gesture::SecondaryClick => StepEditEvent::Click {
-                pointer: from_above(0.0, 0.0),
-                button: Button::Secondary,
-                double: false,
-                shift: false,
             },
         };
         event(editor, sent);

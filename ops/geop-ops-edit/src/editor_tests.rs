@@ -4,7 +4,7 @@
 use std::collections::BTreeMap;
 
 use geop_core_editor::{
-    editing::{Button, StepEditEvent, Value},
+    editing::{StepEditEvent, Value},
     editor::{Command, Editor},
     registry::Registry,
     testing::{Stepping, dialog, pointer},
@@ -25,7 +25,6 @@ fn click(at: [f64; 3], towards: [f64; 3]) -> Command {
     Command::Event {
         event: StepEditEvent::Click {
             pointer: pointer(at, towards),
-            button: Button::Primary,
             double: false,
             shift: false,
         },

@@ -173,6 +173,7 @@ impl Tool for DragTool {
             prompt: None,
             gizmo: None,
             hidden: Vec::new(),
+            cycle: None,
         }
     }
 }

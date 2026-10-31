@@ -394,6 +394,7 @@ mod tests {
         let v = |p: [f64; 3]| Vector3::from_array(p.map(Scalar::from_f64));
         // Through the origin's xy square, as drawn at a reach of 0.1.
         let pointer = Pointer {
+            cycle: 0,
             ray: Ray::try_new(v([0.45, 0.45, 10.0]), v([0.0, 0.0, -1.0])).unwrap(),
             reach: Reach::Tube {
                 radius: Scalar::from_f64(0.1),

@@ -14,6 +14,8 @@ use geop_core_math::{
     vector::Vector3,
 };
 
+use serde::Serialize;
+
 use super::{Pointer, Reach, Shape, Style, Visual};
 use geop_core_program::element::PickedElement;
 
@@ -35,13 +37,50 @@ pub fn nearer(a: Scalar, b: Scalar) -> Ordering {
 /// is given to find what the pointer is over (see
 /// [`crate::editable::Context::scene`]).
 pub trait Scene {
-    /// What a click with `pointer` picks: the element nearest the eye of
-    /// one of the kinds `accepts`, and where it is hit.
-    fn pick(&self, pointer: &Pointer, accepts: &[String]) -> Option<ElementHit>;
+    /// Every element of the kinds `accepts` under `pointer`, each once: the
+    /// one a click picks first — the smallest, in front, nearest the eye
+    /// (see [`crate::view::PartView::under`]) — then the rest front to back
+    /// along the ray, those hidden behind the first included. Its
+    /// [`Pointer::cycle`] is not looked at.
+    fn under(&self, pointer: &Pointer, accepts: &[String]) -> Vec<ElementHit>;
+
+    /// What a click with `pointer` picks: of what lies [`Scene::under`]
+    /// it, the one its [`Pointer::cycle`] names, and where it is hit.
+    fn pick(&self, pointer: &Pointer, accepts: &[String]) -> Option<ElementHit> {
+        cycled(self.under(pointer, accepts), pointer.cycle)
+    }
 
     /// How far along `pointer`'s ray the placed part `name` is hit, if it
     /// is (see [`Shape::Instance`]).
     fn hit_instance(&self, name: &str, pointer: &Pointer) -> Option<Scalar>;
+}
+
+/// The one of `candidates` a pointer's [`Pointer::cycle`] `cycle` names:
+/// counted from the first, wrapping round. None of none.
+pub fn cycled<T>(candidates: Vec<T>, cycle: usize) -> Option<T> {
+    let count = candidates.len();
+    (count > 0)
+        .then(|| candidates.into_iter().nth(cycle % count))
+        .flatten()
+}
+
+/// Which of the candidates under the pointer is lit: the `at`-th of `of`,
+/// front to back, counted from 0 — what a front end says while its user
+/// steps through them (see [`Pointer::cycle`]).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
+pub struct Cycle {
+    pub at: usize,
+    pub of: usize,
+}
+
+impl Cycle {
+    /// Of `of` candidates, the one `pointer` names: none of none.
+    pub fn of(of: usize, pointer: &Pointer) -> Option<Self> {
+        (of > 0).then(|| Cycle {
+            at: pointer.cycle % of,
+            of,
+        })
+    }
 }
 
 /// An element of the part a pointer is over, as drawn: where, and how far
@@ -127,25 +166,47 @@ fn distance(
     }
 }
 
-/// The visual among those `accept` takes that the pointer is over: handles
-/// and labels first, then points, curves and areas — within each, the one
-/// nearest the pointer on screen, and of those as near, the one nearest the
-/// eye: of two areas the pointer is over, the one in front. Placed parts
-/// are hit where `instance` says (see [`no_instances`]).
+/// The visuals among those `accept` takes that the pointer is over: first
+/// the one a click takes — handles and labels first, then points, curves
+/// and areas; within each, the one nearest the pointer on screen, and of
+/// those as near, the one nearest the eye: of two areas the pointer is
+/// over, the one in front — then the rest front to back along the ray.
+/// Placed parts are hit where `instance` says (see [`no_instances`]).
+pub fn visuals_under<'a>(
+    visuals: &'a [Visual],
+    pointer: &Pointer,
+    instance: impl Fn(&str, &Pointer) -> Option<Scalar>,
+    accept: impl Fn(&Visual) -> bool,
+) -> Vec<VisualHit<'a>> {
+    let mut hits: Vec<_> = (visuals.iter())
+        .filter(|v| accept(v))
+        .filter_map(|v| {
+            distance(pointer, v, &instance).map(|(rank, reaches, t)| (rank, reaches, t, v))
+        })
+        .collect();
+    let first = (0..hits.len()).min_by(|&a, &b| {
+        let (a, b) = (&hits[a], &hits[b]);
+        a.0.cmp(&b.0).then(nearer(a.1, b.1)).then(nearer(a.2, b.2))
+    });
+    let first = first.map(|at| hits.remove(at));
+    hits.sort_by(|a, b| nearer(a.2, b.2));
+    (first.into_iter().chain(hits))
+        .map(|(_, _, t, visual)| VisualHit { visual, t })
+        .collect()
+}
+
+/// The visual among those `accept` takes that the pointer is over: of
+/// those [`visuals_under`] it, the one its [`Pointer::cycle`] names.
 pub fn hit_visuals<'a>(
     visuals: &'a [Visual],
     pointer: &Pointer,
     instance: impl Fn(&str, &Pointer) -> Option<Scalar>,
     accept: impl Fn(&Visual) -> bool,
 ) -> Option<VisualHit<'a>> {
-    visuals
-        .iter()
-        .filter(|v| accept(v))
-        .filter_map(|v| {
-            distance(pointer, v, &instance).map(|(rank, reaches, t)| (rank, reaches, t, v))
-        })
-        .min_by(|a, b| a.0.cmp(&b.0).then(nearer(a.1, b.1)).then(nearer(a.2, b.2)))
-        .map(|(_, _, t, visual)| VisualHit { visual, t })
+    cycled(
+        visuals_under(visuals, pointer, instance, accept),
+        pointer.cycle,
+    )
 }
 
 /// For [`hit_visuals`] where no placed part is drawn: none is hit.
@@ -264,6 +325,7 @@ mod tests {
     /// unit wherever it looks.
     fn down(x: f64, y: f64) -> Pointer {
         Pointer {
+            cycle: 0,
             ray: Ray::try_new(v(x, y, 10.0), v(0.0, 0.0, -1.0)).unwrap(),
             reach: Reach::Tube {
                 radius: Scalar::from_f64(0.1),
@@ -351,6 +413,7 @@ mod tests {
         assert!(corners[2].could_be_equal(&v(2.0, 1.0, 0.0)), "{corners:?}");
 
         let eye = |x: f64, y: f64| Pointer {
+            cycle: 0,
             ray: Ray::try_new(v(0.0, 0.0, 10.0), v(x, y, -10.0)).unwrap(),
             reach: Reach::Cone {
                 slope: Scalar::from_f64(0.01),
@@ -366,6 +429,7 @@ mod tests {
     fn cones_widen_with_distance() {
         let visuals = [point("p", v(0.3, 0.0, 0.0))];
         let from = |z: f64| Pointer {
+            cycle: 0,
             ray: Ray::try_new(v(0.0, 0.0, z), v(0.0, 0.0, -1.0)).unwrap(),
             reach: Reach::Cone {
                 slope: Scalar::from_f64(0.01),

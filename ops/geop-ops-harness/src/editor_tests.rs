@@ -7,7 +7,7 @@
 use std::collections::BTreeMap;
 
 use geop_core_editor::{
-    editing::{Button, Control, StepEditEvent, Style, Tone, Value},
+    editing::{Control, StepEditEvent, Style, Tone, Value},
     editor::{Command, Editor},
     output::Bounded,
     registry::Registry,
@@ -230,7 +230,6 @@ fn new_route_is_picked_and_its_wires_chosen() {
     let click = |pointer| Command::Event {
         event: StepEditEvent::Click {
             pointer,
-            button: Button::Primary,
             double: false,
             shift: false,
         },

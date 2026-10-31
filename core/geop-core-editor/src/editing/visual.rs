@@ -273,4 +273,9 @@ pub struct Presentation {
     /// Solids and faces of the part, by name, the step asks not to draw
     /// while it is edited (see [`super::Form::hidden`]).
     pub hidden: Vec<String>,
+    /// Which of what lies under the pointer is lit, and of how many: what
+    /// a front end says while its user steps through them (see
+    /// [`super::Pointer::cycle`]). None where the pointer is over nothing
+    /// a click takes.
+    pub cycle: Option<super::hit::Cycle>,
 }

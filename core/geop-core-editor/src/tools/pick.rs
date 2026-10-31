@@ -10,7 +10,10 @@ use geop_core_program::element::PickedElement;
 
 use super::Tool;
 use crate::{
-    editing::{Dialog, Layout, Presentation, StepEditEvent, hit::Scene},
+    editing::{
+        Dialog, Layout, Presentation, StepEditEvent,
+        hit::{Cycle, Scene, cycled},
+    },
     editor::{Changed, EditorContext},
     output::{Inspection, InspectorInfo, Picks},
 };
@@ -21,6 +24,9 @@ pub struct PickTool {
     info: &'static InspectorInfo,
     picks: Picks,
     hover: Option<PickedElement>,
+    /// Which of what lies under the pointer the hover is (see
+    /// [`crate::editing::Pointer::cycle`]).
+    cycle: Option<Cycle>,
     picked: Vec<PickedElement>,
     /// The answer about the picks, once asked, with the run of the part it
     /// was asked of: none while it is to be asked again.
@@ -45,6 +51,7 @@ impl PickTool {
             info,
             picks,
             hover: None,
+            cycle: None,
             picked: Vec::new(),
             answer: None,
         })
@@ -84,8 +91,15 @@ impl Tool for PickTool {
         let picked = |pointer| view.pick(pointer, &accepts).map(|hit| hit.element);
         let before = self.picked.clone();
         match event {
-            StepEditEvent::Hover { pointer, .. } => self.hover = picked(pointer),
-            StepEditEvent::Leave => self.hover = None,
+            StepEditEvent::Hover { pointer, .. } => {
+                let under = view.under(pointer, &accepts);
+                self.cycle = Cycle::of(under.len(), pointer);
+                self.hover = cycled(under, pointer.cycle).map(|hit| hit.element);
+            }
+            StepEditEvent::Leave => {
+                self.hover = None;
+                self.cycle = None;
+            }
             StepEditEvent::Click { pointer, .. } => match picked(pointer) {
                 Some(entity) => match self.picked.iter().position(|p| *p == entity) {
                     Some(i) => {
@@ -133,6 +147,7 @@ impl Tool for PickTool {
             prompt: None,
             gizmo: None,
             hidden: Vec::new(),
+            cycle: self.cycle,
         }
     }
 

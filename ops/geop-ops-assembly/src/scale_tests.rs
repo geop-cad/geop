@@ -379,6 +379,7 @@ fn size(update: &Update) -> String {
 fn down_onto(x: f64, y: f64) -> Pointer {
     let v = |p: [f64; 3]| Vector3::from_array(p.map(Scalar::from_f64));
     Pointer {
+        cycle: 0,
         ray: Ray::try_new(v([x, y, 50.0]), v([0.0, 0.0, -1.0])).unwrap(),
         reach: Reach::Tube {
             radius: Scalar::from_f64(0.01),
@@ -686,6 +687,7 @@ fn onto_wrist(editor: &Editor, arm: &RobotArm, by: [f64; 2]) -> Pointer {
     let at = wrist.apply(&local).to_array().map(|c| c.to_f64());
     let v = |p: [f64; 3]| Vector3::from_array(p.map(Scalar::from_f64));
     Pointer {
+        cycle: 0,
         ray: Ray::try_new(
             v([at[0] + by[0], at[1] + by[1], at[2] + 500.0]),
             v([0.0, 0.0, -1.0]),
@@ -1104,7 +1106,6 @@ fn latency_on_the_robot_arm() {
         editor.handle(Command::Event {
             event: StepEditEvent::Click {
                 pointer: there,
-                button: geop_core_editor::editing::Button::Primary,
                 double: false,
                 shift: false,
             },

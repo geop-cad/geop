@@ -626,7 +626,7 @@ impl Editing<'_> {
         }
     }
 
-    /// Enter and a secondary click: apply the constraint tool in hand, if
+    /// Enter: apply the constraint tool in hand, if
     /// what it needs is picked, else finish the draft.
     fn confirm(&mut self) {
         match self.s.tool {

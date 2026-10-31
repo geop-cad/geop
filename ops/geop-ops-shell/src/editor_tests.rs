@@ -2,7 +2,7 @@
 //! open clicked on the drilled box.
 
 use geop_core_editor::{
-    editing::{Button, StepEditEvent, Value},
+    editing::{StepEditEvent, Value},
     editor::Command,
     registry::Registry,
     testing::{dialog, editor_with, from_above},
@@ -35,7 +35,6 @@ fn new_shell_picks_its_faces_on_the_solid() {
     let click = |pointer| Command::Event {
         event: StepEditEvent::Click {
             pointer,
-            button: Button::Primary,
             double: false,
             shift: false,
         },
@@ -67,7 +66,6 @@ fn faces_of_another_thickness_are_picked_on_the_solid() {
     let click = |pointer| Command::Event {
         event: StepEditEvent::Click {
             pointer,
-            button: Button::Primary,
             double: false,
             shift: false,
         },
@@ -107,7 +105,6 @@ fn walls_outward_are_ticked() {
     let click = Command::Event {
         event: StepEditEvent::Click {
             pointer: from_above(0.3, 0.3),
-            button: Button::Primary,
             double: false,
             shift: false,
         },
