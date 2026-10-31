@@ -90,6 +90,12 @@ interface Props {
   onPose?: (pose: CameraPose) => void;
   /** A section view: what lies on the side the normal points to is not drawn, and cut solids are capped. */
   section?: SectionPlane | null;
+  /**
+   * How many pixels at the bottom of the view something lies over (the
+   * welcome): the view is centred in the rest, so what is in its middle —
+   * the origin of an empty part — is not under it.
+   */
+  covered?: number;
 }
 
 const vec = (v: [number, number, number]) => new THREE.Vector3(v[0], v[1], v[2]);
@@ -160,9 +166,12 @@ export function SceneViewer({
   onFocusReached,
   onPose,
   section,
+  covered,
 }: Props) {
   const sectionRef = useRef(section ?? null);
   sectionRef.current = section ?? null;
+  const coveredRef = useRef(covered ?? 0);
+  coveredRef.current = covered ?? 0;
   const containerRef = useRef<HTMLDivElement>(null);
   // Read inside the effects via refs so a prop change doesn't tear down
   // anything.
@@ -429,6 +438,8 @@ export function SceneViewer({
       },
       reach: (p: Vec3) => worldPerPixel(camera, vec(p), Math.max(container.clientHeight, 1)) * REACH_PX,
       pose: () => pose(),
+      /** The names of the datums drawn. */
+      datums: () => datumLayer.drawn(),
     };
 
     // A press: a click if it does not move, else the camera's — or, where
@@ -656,6 +667,14 @@ export function SceneViewer({
       const reach = camera.position.distanceTo(controls.target) + partRef.current.extent.size;
       perspective.near = reach / 10000;
       perspective.far = reach * 10;
+      // The middle of the view is the middle of what is not covered: the
+      // picture shifted up by half the covered height.
+      const lift = Math.round(coveredRef.current / 2);
+      const { clientWidth: w, clientHeight: h } = container;
+      for (const c of [perspective, orthographic]) {
+        if (lift > 0 && w > 0 && h > 0) c.setViewOffset(w, h, 0, lift, w, h);
+        else if (c.view?.enabled) c.clearViewOffset();
+      }
       perspective.updateProjectionMatrix();
       orthographic.near = -reach * 10;
       orthographic.far = reach * 10;

@@ -15,6 +15,7 @@
     "build:vscode": "vite build --mode vscode",
     "build:open": "vite build --mode open",
     "e2e": "node e2e/web.mjs",
+    "e2e:first-run": "node e2e/firstrun.mjs",
     "e2e:vscode": "node e2e/vscode.mjs",
     "e2e:perf": "node e2e/perf.mjs",
     "demo": "node e2e/demo.mjs"

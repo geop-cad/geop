@@ -10,17 +10,22 @@
 // File menu downloads a file; and a drawing is dimensioned on its sheet and
 // downloaded from its dialog.
 //
+// It starts with the first visit, from a fresh profile (`firstrun.mjs`).
+//
 // Flags: `--build` rebuilds even if `dist/` looks current; `--only <text>`
 // runs only the checks whose name contains the text; `--shots` saves a
 // screenshot after every check, not only after failing ones.
 
 import path from "node:path";
 import fs from "node:fs";
+import { firstRunChecks } from "./firstrun.mjs";
 import { Checks, clickOperation, expect, fileMenu, launch, operationLabels, OUT, pixelAt, preview, run, settle, shownErrors, stale, watchErrors, WEB } from "./lib.mjs";
 
 const browser = await launch();
 if (stale(path.join(WEB, "dist", "index.html"))) run("npm", ["run", "build"]);
 const server = await preview();
+// First, a first visit, from a fresh profile: before anything here has been stored.
+const firstRun = await firstRunChecks(browser, server.url);
 const context = await browser.newContext({ viewport: { width: 1400, height: 900 }, acceptDownloads: true });
 const page = await context.newPage();
 const errors = watchErrors(page);
@@ -1091,6 +1096,7 @@ await check("a dialog's first number has the focus: the arrows step it, Enter tw
   return `${before} → ${after} by the arrow, → ${scrubbed} scrubbed; ${await builtCleanly()}`;
 });
 
+checks.results.unshift(...firstRun);
 checks.report();
 await browser.close();
 server.stop();
