@@ -298,7 +298,7 @@ impl Program {
             );
             ids.push(id);
         }
-        for step in &mut self.steps[index..index + ids.len()] {
+        for step in self.steps.iter_mut().skip(index).take(ids.len()) {
             rename_in_args(&mut step.args, &renamed);
         }
         for (name, value) in pasted.state {
