@@ -1699,3 +1699,29 @@ fn fillet_of_a_pockets_upright_edge_and_the_floor_edge_it_stands_on() {
     );
     assert_builds_valid_with(&program, blade_registry);
 }
+
+/// The stepped block (`geop_lib_fixtures::bodies::block_stepped`), the
+/// three edges at a corner of the step's floor chamfered together by 0.1:
+/// the floor edge's tool ends flush with the step's wall, and the upright
+/// edge's chamfer has its contact on that wall 0.1 from the corner. A cap
+/// patch reaching a third of its size past the section put its side at
+/// exactly that line (the section reaches 0.05 past the corner, 0.15 in
+/// all), and the union exhausted `curve_curve_crossings` as the pocket's
+/// fillet above did (see `cap_face`).
+#[test]
+fn chamfer_of_a_steps_floor_corner() {
+    let (part, _) =
+        geop_lib_fixtures::bodies::one_solid(&geop_lib_fixtures::bodies::block_stepped());
+    let edges = [
+        "block(step,c0,start)",
+        "block(step,c1,start)",
+        "block(step,p1)",
+    ];
+    let chamfered = geop_ops_model::testing::apply_to_model::<crate::Chamfer>(
+        part,
+        "bevel",
+        &crate::ChamferArgs::even(edges.map(String::from).to_vec(), 0.1),
+    )
+    .unwrap();
+    assert_valid(&chamfered);
+}

@@ -58,20 +58,24 @@ impl FlatPatch {
         })
     }
 
-    /// The patch grown on every side by `fraction` of its larger size, so
-    /// that its sides stay clear of the curves it was made around.
+    /// The patch grown to reach past `[low, high]`, a box in the plane's
+    /// coordinates, on every side by its own larger size.
     ///
     /// The box's sides pass through the curves' extreme points, and a line
     /// of another body lying in the plane through such a point, along the
     /// box's side, runs along the patch's boundary to within rounding: where
     /// the two enclosures miss each other by less than their widths, no
     /// search can tell that apart from an overlap. Where the patch ends is a
-    /// free choice; this one keeps it away from where the curves are.
-    pub fn grown(&self, fraction: f64) -> Self {
-        let margin = self.size[0].to_f64().max(self.size[1].to_f64()) * fraction;
-        let lo: [f64; 2] = std::array::from_fn(|k| self.lo[k].to_f64() - margin);
-        let hi: [f64; 2] =
-            std::array::from_fn(|k| self.lo[k].add(self.size[k]).upper().to_f64() + margin);
+    /// free choice. Past the extent of everything that could lie in the
+    /// plane, nothing lies along its sides, whatever the dimensions.
+    pub fn past(&self, [low, high]: [Vector2; 2]) -> Self {
+        let margin = self.size[0].to_f64().max(self.size[1].to_f64());
+        let lo: [f64; 2] =
+            std::array::from_fn(|k| self.lo[k].to_f64().min(low[k].lower().to_f64()) - margin);
+        let hi: [f64; 2] = std::array::from_fn(|k| {
+            let own = self.lo[k].add(self.size[k]).upper().to_f64();
+            own.max(high[k].upper().to_f64()) + margin
+        });
         let size = std::array::from_fn(|k| reaching(lo[k], hi[k]));
         Self {
             lo: Vector2::from_array(lo.map(Scalar::from_f64)),

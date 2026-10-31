@@ -1166,7 +1166,7 @@ where the patch strays, not all of them, then converges in a few rounds.
 A blend tool meets the solid where the boolean finds it; any curve of the
 tool lying *in* a face of the solid, crossing that face's boundary, asks the
 boolean to resolve an overlap rather than a crossing, and it exhausts its
-search. Three times in `geop-ops-fillet`:
+search. Four times in `geop-ops-fillet`:
 
 - A rolled chamfer's run-out ended its last span with a station at the
   chain's end vertex, its section in the third face's plane, and its chord
@@ -1185,6 +1185,18 @@ search. Three times in `geop-ops-fillet`:
   What works for any two blends needs no mitre surface at all: each ends
   flush at the other's wall, and the corner is cut by the two run on past
   it, intersected — behind both walls, what both would cut.
+- Ending flush at a wall puts the tool's cap in the wall's plane, and the
+  cap's surface was the box around its section (`FlatPatch::around`), its
+  sides through the contacts. A pocket's upright edge rounded with the
+  floor edge it stands on, by one radius: the upright fillet's contact on
+  the wall runs exactly along the floor tool's cap side, `1.6e-12` off it,
+  which no search tells from an overlap. Where a patch ends is a free
+  choice, but reaching a third of its size past the section only moved the
+  side onto a stepped block's chamfer contact: a fraction of one design
+  dimension lands on another. The cap now reaches past the extent of every
+  edge of the model (`FlatPatch::past`), where nothing can lie along it.
+  Growing every `around` was tried and is wrong: face and solid boxes come
+  from the control points, and a sweep cap's wider box broke four tests.
 
 ## Newton needs the second derivatives where it is far from flat
 

@@ -8,6 +8,7 @@
 //! its control rows outright.
 
 use geop_core_geometry::{
+    aabb::union_aabb,
     nurb_curve::{self, NurbCurve, NurbCurve2D, NurbCurve3D, bezier_knots, embed_point},
     nurb_surface::{FlatPatch, Neighbour, NurbSurface, NurbSurface3D},
     search::{MAX_NODES, min_subdivision_size},
@@ -140,23 +141,29 @@ fn section_curve<const D: usize>(points: &[Vector<D>; 4], c: usize) -> GeopResul
 /// The flat cap on `cap`'s plane holding its section (see [`FlatPatch`]),
 /// facing out of the tool, and the section's curves in its parameters.
 ///
-/// The patch reaches a third of its size past the section on every side
-/// ([`FlatPatch::grown`]). A cap ends a tool flush with a face of the
-/// solid, and the box around the section has its sides through the
-/// contacts, where a blend of the same radius along another edge of that
-/// face has its contact: two fillets meeting where a pocket's upright edge
-/// runs into its floor, the upright one's contact on the wall running
-/// along the floor fillet's cap's side. The boolean then had a line of the
-/// solid running along the cap's patch boundary, a few `1e-12` off it, which
-/// no search can tell from an overlap.
-fn cap_face(cap: &Cap) -> GeopResult<(NurbSurface3D, [NurbCurve2D; 3])> {
+/// The patch reaches past `extent`, the box around every edge of the model
+/// the tool is built in ([`FlatPatch::past`]). A cap ends a tool flush with
+/// a face of the solid, in its plane, and the box around the section has
+/// its sides along that face's directions, through the contacts: where a
+/// blend of the same radius along another edge of that face has its
+/// contact. A pocket's upright edge rounded with the floor edge it stands
+/// on put the upright fillet's contact on the wall along the floor tool's
+/// cap side, a few `1e-12` off it, which no search can tell from an
+/// overlap. Reaching past it by a fraction of the section's size only moved
+/// the side onto another feature (a chamfer's contact `0.1` from a corner,
+/// the side `0.05` past the section). No edge of the model lies outside its
+/// extent, so none can run along a side past it.
+fn cap_face(cap: &Cap, extent: &[Scalar; 3]) -> GeopResult<(NurbSurface3D, [NurbCurve2D; 3])> {
     let curves = [
         section_curve(&cap.flat, 0)?,
         section_curve(&cap.flat, 1)?,
         section_curve(&cap.flat, 2)?,
     ];
     let [o, e1, e2] = cap.plane;
-    let patch = FlatPatch::around(o, e1, e2, &curves, false)?.grown(1.0 / 3.0);
+    // The extent in the plane's coordinates: weight 1, so `(x, y, 1)`.
+    let reach = flatten_point(&Vector3::from_array(*extent), &cap.plane);
+    let reach = Vector2::from_array([reach[0], reach[1]]);
+    let patch = FlatPatch::around(o, e1, e2, &curves, false)?.past([reach, reach]);
     Ok((
         patch.surface()?,
         [
@@ -245,6 +252,9 @@ pub(crate) fn build_tools(
     corners: &[Corner],
     solid: String,
 ) -> GeopResult<SolidId> {
+    // Where every edge of the model lies (see `cap_face`).
+    let extent = union_aabb(model.topology().edges.values().map(|e| e.curve.aabb()))
+        .ok_or_else(|| GeopError::new("build_tools: the model has no edges"))?;
     let mut spec = BodySpec::new(true);
     let mut names = BodyNames {
         solid: Some(solid),
@@ -309,7 +319,7 @@ pub(crate) fn build_tools(
                     }
                     return Err(GeopError::new(format!("the tool's {name} has no cap")));
                 };
-                let (surface, pcurves) = cap_face(cap)?;
+                let (surface, pcurves) = cap_face(cap, &extent)?;
                 caps.push(StripCap {
                     name: namer.name(&[name]),
                     station: s,
