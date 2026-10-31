@@ -32,10 +32,22 @@ export interface TimelineStep {
   placed: TimelinePlaced[];
 }
 
-/** A part a step placed, as the timeline lists it under that step. */
+/**
+ * A part a step placed, as the timeline lists it under that step: its
+ * path from the program — `neck/head`, for a part placed in a part placed
+ * — and its steps, each with the parts it places in turn, however deep.
+ */
 export interface TimelinePlaced {
   instance: string;
-  steps: Omit<TimelineStep, "placed" | "dim">[];
+  steps: TimelinePlacedStep[];
+}
+
+/** A step of a placed part, as the timeline lists it: with the parts it places. */
+export type TimelinePlacedStep = Omit<TimelineStep, "dim">;
+
+/** Whether a step of `placed`, however deep, is being written by the open form. */
+function editingIn(placed: TimelinePlaced[]): boolean {
+  return placed.some((p) => p.steps.some((s) => s.editing || editingIn(s.placed)));
 }
 
 interface Props {
@@ -91,10 +103,13 @@ export function Timeline({
   onMove,
   onSeek,
 }: Props) {
-  /** The steps whose placed parts' steps are listed — and any with one being edited. */
+  /**
+   * The steps whose placed parts' steps are listed — and any with one being
+   * edited, however deep — by key: a step of the program by its id, one of
+   * a placed part behind that part's path, `neck/head:part1`.
+   */
   const [unfolded, setUnfolded] = useState<Set<string>>(new Set());
-  const listed = (step: TimelineStep) =>
-    unfolded.has(step.id) || step.placed.some((p) => p.steps.some((s) => s.editing));
+  const listed = (key: string, step: { placed: TimelinePlaced[] }) => unfolded.has(key) || editingIn(step.placed);
   const unfold = (id: string) =>
     setUnfolded((was) => {
       const next = new Set(was);
@@ -208,12 +223,12 @@ export function Timeline({
         {step.placed.length > 0 && (
           <button
             className="step-unfold"
-            title={listed(step) ? "Hide the placed part's steps" : "Show the placed part's steps, to edit them here"}
-            aria-expanded={listed(step)}
+            title={listed(step.id, step) ? "Hide the placed part's steps" : "Show the placed part's steps, to edit them here"}
+            aria-expanded={listed(step.id, step)}
             onPointerDown={(e) => e.stopPropagation()}
             onClick={() => unfold(step.id)}
           >
-            {listed(step) ? "▾" : "▸"}
+            {listed(step.id, step) ? "▾" : "▸"}
           </button>
         )}
         <span className="step-name">{step.name}</span>
@@ -251,50 +266,71 @@ export function Timeline({
       </li>,
     );
     // Not boxes of the program: a drag counts only those (`data-step`).
-    if (listed(step)) {
-      for (const placed of step.placed) {
-        for (const inner of placed.steps) {
-          rows.push(
-            <li
-              key={`${step.id}/${placed.instance}/${inner.id}`}
-              className={[
-                "step-box",
-                "step-placed",
-                inner.error ? "op-error" : "",
-                inner.suppressed ? "step-suppressed" : "",
-                inner.editing ? "step-editing" : "",
-                enabled ? "" : "disabled",
-              ].join(" ")}
-              title={inner.error ? `${inner.title}\n\n${inner.error}` : inner.title}
-              onClick={() => enabled && onEditPlaced(placed.instance, inner.id)}
-            >
-              {inner.icon && (
-                <span className="step-icon">
-                  <Icon name={inner.icon} />
-                </span>
-              )}
-              <span className="step-name">{inner.name}</span>
-            </li>,
-          );
-        }
-        const here = context === placed.instance;
+    if (listed(step.id, step)) placedRows(step.placed, 1);
+  });
+
+  /** The rows of the steps of the parts `placed`, `depth` deep, each with those of the parts it places where it is unfolded. */
+  function placedRows(placed: TimelinePlaced[], depth: number) {
+    const indent = { marginLeft: `${18 * depth}px` };
+    for (const part of placed) {
+      for (const inner of part.steps) {
+        const key = `${part.instance}:${inner.id}`;
         rows.push(
           <li
-            key={`${step.id}/${placed.instance}/+`}
-            className={["step-box", "step-placed", "step-context", here ? "step-editing" : "", enabled ? "" : "disabled"].join(" ")}
-            title={
-              here
-                ? "New steps go into this part, built against the parts placed before it here. Click to put them into the program again."
-                : "Put new steps into this part, where it is placed: built against the parts placed before it here, in context."
-            }
-            onClick={() => enabled && onContext(here ? null : placed.instance)}
+            key={key}
+            style={indent}
+            className={[
+              "step-box",
+              "step-placed",
+              inner.error ? "op-error" : "",
+              inner.suppressed ? "step-suppressed" : "",
+              inner.editing ? "step-editing" : "",
+              enabled ? "" : "disabled",
+            ].join(" ")}
+            title={inner.error ? `${inner.title}\n\n${inner.error}` : inner.title}
+            onClick={() => enabled && onEditPlaced(part.instance, inner.id)}
           >
-            <span className="step-name">{here ? `New steps go into ${placed.instance} ✕` : `＋ New step in ${placed.instance}`}</span>
+            {inner.icon && (
+              <span className="step-icon">
+                <Icon name={inner.icon} />
+              </span>
+            )}
+            {inner.placed.length > 0 && (
+              <button
+                className="step-unfold"
+                title={listed(key, inner) ? "Hide the placed part's steps" : "Show the placed part's steps, to edit them here"}
+                aria-expanded={listed(key, inner)}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  unfold(key);
+                }}
+              >
+                {listed(key, inner) ? "▾" : "▸"}
+              </button>
+            )}
+            <span className="step-name">{inner.name}</span>
           </li>,
         );
+        if (listed(key, inner)) placedRows(inner.placed, depth + 1);
       }
+      const here = context === part.instance;
+      rows.push(
+        <li
+          key={`${part.instance}:+`}
+          style={indent}
+          className={["step-box", "step-placed", "step-context", here ? "step-editing" : "", enabled ? "" : "disabled"].join(" ")}
+          title={
+            here
+              ? "New steps go into this part, built against the parts placed before it here. Click to put them into the program again."
+              : "Put new steps into this part, where it is placed: built against the parts placed before it here, in context."
+          }
+          onClick={() => enabled && onContext(here ? null : part.instance)}
+        >
+          <span className="step-name">{here ? `New steps go into ${part.instance} ✕` : `＋ New step in ${part.instance}`}</span>
+        </li>,
+      );
     }
-  });
+  }
   if (dropSlot === steps.length) rows.push(<li key="drop" className="drop-indicator" />);
   if (seekerSlot === steps.length) rows.push(seekerRow);
 

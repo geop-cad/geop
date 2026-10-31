@@ -127,7 +127,7 @@ fn v(p: [f64; 3]) -> Vector3 {
 }
 
 /// The frame datum at `origin`, its `x` along `x` and `z` along `z`.
-fn frame(origin: [f64; 3], x: [f64; 3], z: [f64; 3]) -> GivenDatumArgs {
+pub(super) fn frame(origin: [f64; 3], x: [f64; 3], z: [f64; 3]) -> GivenDatumArgs {
     GivenDatumArgs::frame(origin, x, z)
 }
 
@@ -146,17 +146,17 @@ fn turned(degrees: f64) -> Pose {
 }
 
 /// Moved by `offset`.
-fn moved(offset: [f64; 3]) -> Pose {
+pub(super) fn moved(offset: [f64; 3]) -> Pose {
     Pose::identity().with_position(v(offset))
 }
 
 /// The pose as a file holds it.
-fn saved(pose: Pose) -> StateValue {
+pub(super) fn saved(pose: Pose) -> StateValue {
     StateValue::Pose(pose.saved().expect("a pose saves"))
 }
 
 /// The datum `name` of the part placed as `instance`.
-fn datum_of(instance: &str, name: &str) -> MateEntity {
+pub(super) fn datum_of(instance: &str, name: &str) -> MateEntity {
     MateEntity::of(instance, Selected::Datum(datum(name)))
 }
 
@@ -166,7 +166,7 @@ fn face_of(instance: &str, name: &str) -> MateEntity {
 }
 
 /// A part placed from `file`, held by `mates`, named `m1`, `m2`, ….
-fn placed(file: &str, mates: Vec<Mate>) -> AddPartArgs {
+pub(super) fn placed(file: &str, mates: Vec<Mate>) -> AddPartArgs {
     AddPartArgs {
         file: file.into(),
         mates: (mates.into_iter().enumerate())
@@ -177,7 +177,7 @@ fn placed(file: &str, mates: Vec<Mate>) -> AddPartArgs {
 }
 
 /// A joint of `kind` from `a` to `b`.
-fn joint(kind: JointKind, a: MateEntity, b: MateEntity) -> Mate {
+pub(super) fn joint(kind: JointKind, a: MateEntity, b: MateEntity) -> Mate {
     Mate::joint(kind, vec![a, b])
 }
 

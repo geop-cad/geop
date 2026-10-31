@@ -1326,6 +1326,43 @@ await check("a right click lights the face behind the one in front, and a left c
   return `${front[0].trim()}, then behind it ${behind[0].trim()}`;
 });
 
+await check("a left drag on a placed part drags it, with no tool taken, and undo puts it back", async () => {
+  await fresh();
+  await page.evaluate(() => window.geopCommand({ command: "load_workspace_example", name: "arm" }));
+  await settle(page);
+  await page.getByRole("button", { name: "Fit", exact: true }).click();
+  await page.waitForTimeout(1200);
+  const shown = await page.evaluate(() => window.geopCommand({ command: "show" }));
+  expect(shown.program.tool == null, `a tool is taken: ${shown.program.tool}`);
+  // The forearm, which turns on its elbow: grabbed at the middle of what it draws.
+  const fore = shown.scene.instances.find((i) => i.name === "fore");
+  expect(fore, `no forearm is drawn: ${shown.scene.instances.map((i) => i.name).join(", ")}`);
+  const c = shown.scene.components[fore.component].extent.center;
+  const { origin, u, v, w } = fore.frame;
+  const middle = [0, 1, 2].map((k) => origin[k] + u[k] * c[0] + v[k] * c[1] + w[k] * c[2]);
+  const from = await onScreen(middle);
+  await page.mouse.move(...from);
+  await settle(page);
+  const hover = await page.evaluate(async () => (await window.geopCommand({ command: "show" }))?.tool);
+  expect(hover?.grab, "the forearm under the pointer is not offered to grab");
+  const pose = async () => (await page.evaluate(() => window.geopCommand({ command: "show" }))).program.program.state["fore.pose"];
+  const before = await pose();
+  await page.mouse.down();
+  for (let i = 1; i <= 8; i++) {
+    await page.mouse.move(from[0] + 8 * i, from[1] + 6 * i);
+    await page.waitForTimeout(30);
+  }
+  await page.mouse.up();
+  await settle(page);
+  const after = await pose();
+  expect(JSON.stringify(after) !== JSON.stringify(before), "the forearm did not move");
+  await page.evaluate(() => window.geopCommand({ command: "undo" }));
+  await settle(page);
+  const undone = await pose();
+  expect(JSON.stringify(undone) === JSON.stringify(before), `undo left the forearm at ${JSON.stringify(undone)}`);
+  return "dragged and put back";
+});
+
 await check("Escape cancels an edited step, and undo opens it again as it was", async () => {
   await fresh();
   await fileMenu(page, "Box with drill hole");

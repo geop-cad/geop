@@ -38,8 +38,11 @@ use geop_ops_model::{
 };
 
 /// The part `reader` reads, drawn: its model, its datums — the origin
-/// first — its sketches, what its steps draw on it and the parts placed in
-/// it, in its colour.
+/// first — its sketches and what its steps draw on it, in its colour. Not
+/// the parts placed in it: the part placing it draws those, however deep
+/// ([`draw_instances`]), where its state has them. A drawing of them here
+/// would read where they are, and every move of a part three levels down
+/// would draw — and mesh — every part it is placed in again.
 pub(crate) fn draw(reader: &Reader) -> GeopResult<PartView> {
     let mut view = PartView::new();
     read_model(reader)?.draw("model", &mut Rasterizer::default(), &mut view)?;
@@ -52,7 +55,6 @@ pub(crate) fn draw(reader: &Reader) -> GeopResult<PartView> {
             .draw(&name, &mut view)?;
     }
     view.annotations = annotations_of(reader);
-    draw_instances(reader, &mut view)?;
     view.color = read_properties(reader)?.color().map(str::to_string);
     Ok(view.finish())
 }

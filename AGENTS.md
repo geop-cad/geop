@@ -838,6 +838,13 @@ that is cubic in the parts. What fixed it, and what to keep doing:
   the parts it moved, and the program once the drag is let go; a scene
   sends its structure and hidden names only where they changed. Every
   event sent all of it, 4.8 MB at 2000 parts, for an arm that moved.
+- A drawing is of what it draws, and reads nothing else. A placed part's
+  drawing (`Drawn`) drew the parts placed in it too, which the part
+  placing it draws anyway, so it read where they are: dragging a duck's
+  mouth, placed in its head, placed in its neck, drew and meshed the
+  head and the neck again at every event, and sent both anew — a second
+  of CPU an event, the head a subdivision surface, for a mouth that
+  moved. Nested benchmarks have the nesting (`testing::duck`).
 
 Timings mislead. Two builds of the same code differ by up to 30% (how
 code is split into codegen units), and other jobs on the machine slow

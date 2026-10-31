@@ -22,7 +22,7 @@ use geop_core_math::geop_error::{GeopError, GeopResult};
 use crate::{
     kept::{Derivation, Digest, Hasher, Keeper, KeptRead, digest_debug},
     numeric::{evaluate, read_parameter},
-    placed::{OUTSIDE, PLACED, PlacedPart, placed},
+    placed::{OUTSIDE, PLACED, PlacedPart, placed, split_instance_path},
     program::ProgramStep,
     reader::{Reader, Recording},
     runner::Runner,
@@ -298,18 +298,44 @@ impl Part {
         .collect()
     }
 
-    /// The part as the step that placed `instance` in the last run left it:
-    /// what a step of the part placed, edited where it is placed, reads in
-    /// context (see [`Reader::placed_in`]) — the parts placed before it,
-    /// and where it is itself. None, for no part placed so.
-    pub fn placing(&self, instance: &str) -> Option<Reader<'_>> {
+    /// The part placed at `path` — `bolt`, or `asm/bolt` for one placed in
+    /// a placed part, however deep — as the last run built it: none, for no
+    /// part placed so.
+    pub fn placed_at_path(&self, path: &str) -> Option<&PlacedPart> {
+        let (outer, name) = split_instance_path(path);
+        let part = match outer.is_empty() {
+            true => self,
+            false => &self.placed_at_path(outer)?.part,
+        };
+        (part.placed().into_iter())
+            .find(|(instance, _, _)| *instance == name)
+            .map(|(_, _, placed)| placed)
+    }
+
+    /// The part as the step that placed the part at `path` — `bolt`, or
+    /// `asm/bolt` — in the last run left it: what a step of the part placed,
+    /// edited where it is placed, reads in context (see
+    /// [`Reader::placed_in`]) — the parts placed before it, and where it is
+    /// itself — placed in turn where the part placing it is, so that it
+    /// reads through every level, `../../bracket`. None, for no part placed
+    /// so.
+    pub fn placing(&self, path: &str) -> Option<Reader<'_>> {
+        let (outer, instance) = split_instance_path(path);
+        let part = match outer.is_empty() {
+            true => self,
+            false => &self.placed_at_path(outer)?.part,
+        };
         let reference = placed(instance);
-        let (name, nodes) = self.nodes.get_key_value(reference.name())?;
+        let (name, nodes) = part.nodes.get_key_value(reference.name())?;
         let at = (nodes.iter())
-            .filter_map(|node| self.position(&node.step))
-            .filter(|at| *at < self.ran)
+            .filter_map(|node| part.position(&node.step))
+            .filter(|at| *at < part.ran)
             .max()?;
-        Some(Reader::new(self, at + 1).for_make_of(name))
+        let reader = Reader::new(part, at + 1).for_make_of(name);
+        match outer.is_empty() {
+            true => Some(reader),
+            false => Some(reader.placed_in(self.placing(outer)?)),
+        }
     }
 
     /// The part placed as `instance` that a reader before `before` sees.

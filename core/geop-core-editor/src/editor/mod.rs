@@ -129,14 +129,15 @@ struct Open {
     within: Option<Within>,
 }
 
-/// A step of a part placed in the program, edited where it is placed: the
-/// program run is the file's, the placed part's program — the step's edits
-/// in it — put in the workspace in place of its file, so the part placed
-/// is built anew and nothing else is. Its edits are made in the placed
-/// part's own coordinates: what the pointer does is moved there, and what
-/// the step shows moved out to where the part is placed.
+/// A step of a part placed in the program — however deep — edited where it
+/// is placed: the program run is the file's, the placed part's program — the
+/// step's edits in it — put in the workspace in place of its file, so the
+/// part placed, and every part it is placed in, is built anew and nothing
+/// else is. Its edits are made in the placed part's own coordinates: what
+/// the pointer does is moved there, and what the step shows moved out to
+/// where the part is placed.
 struct Within {
-    /// The instance it is placed as.
+    /// The path of the instance it is placed as: `neck/head`.
     instance: String,
     /// Where its program is: its file, and the files placing it.
     location: Location,
@@ -185,10 +186,13 @@ enum Undone {
     Cancelled(Box<Open>),
 }
 
-/// The tool in hand, and the key it was taken in hand by.
+/// The tool in hand, the key it was taken in hand by, and whether it was
+/// taken — or is the registry's idle tool, in hand while none is (see
+/// [`Registry::idle_tool`]).
 struct InHand {
     key: String,
     tool: Box<dyn Tool>,
+    taken: bool,
 }
 
 /// Which part is drawn, and without what — or, for a step edited on a
@@ -316,7 +320,7 @@ impl Editor {
     ) -> Self {
         let operations = Rc::new(registry.operations());
         let files: Box<dyn FileStoreMut> = Box::new(files);
-        Self {
+        let mut editor = Self {
             workspace: Files::with_cache(files, operations.clone(), cache),
             build: Build::new(&operations),
             registry: Rc::new(registry),
@@ -347,7 +351,21 @@ impl Editor {
             lights: Vec::new(),
             lit: None,
             listing: None,
-        }
+        };
+        editor.put_down();
+        editor
+    }
+
+    /// Puts down the tool in hand: the registry's idle tool is in hand
+    /// again, a new one — what a press and a move in the view do while no
+    /// other tool is taken and no step is edited (see
+    /// [`Registry::idle_tool`]) — or none.
+    fn put_down(&mut self) {
+        self.tool = (self.registry.idle_in_hand()).map(|(key, tool)| InHand {
+            key,
+            tool,
+            taken: false,
+        });
     }
 
     pub fn program(&self) -> &Program {
@@ -459,8 +477,7 @@ impl Editor {
         self.build.run(program, end);
         if let Some(open) = &mut self.open
             && let Some(within) = &mut open.within
-            && let Some((_, _, placed)) = (self.build.part.placed().into_iter())
-                .find(|(instance, _, _)| *instance == within.instance)
+            && let Some(placed) = self.build.part.placed_at_path(&within.instance)
         {
             within.part = placed.part.clone();
         }
@@ -806,17 +823,17 @@ impl Editor {
         Ok(())
     }
 
-    /// Opens the step `id` of the part placed as `instance` in the program,
-    /// to edit where it is placed (see [`Within`]).
+    /// Opens the step `id` of the part placed at `instance` in the program
+    /// — `neck`, or `neck/head` for one placed in a placed part, however
+    /// deep — to edit where it is placed (see [`Within`]).
     /// `step` — one of its steps, by id, or a new one of an operation,
     /// after them.
     fn open_placed(&mut self, instance: String, step: PlacedStep) -> GeopResult<()> {
         let said = format!("open_placed(instance={instance}, {step:?})");
         let ctx = |e: GeopError| e.with_context(said.clone());
         self.run_to(self.marker);
-        let (part, location) = (self.build.part.placed().into_iter())
-            .find(|(placed, _, _)| *placed == instance)
-            .map(|(_, _, placed)| (placed.part.clone(), placed.location.clone()))
+        let (part, location) = (self.build.part.placed_at_path(&instance))
+            .map(|placed| (placed.part.clone(), placed.location.clone()))
             .ok_or_else(|| GeopError::new(format!("no part is placed as `{instance}`")))
             .map_err(ctx)?;
         let mut program = (*self.workspace.program(&location.file).map_err(ctx)?).clone();
@@ -911,7 +928,7 @@ impl Editor {
             }
             Command::New { kind } => {
                 self.idle()?;
-                self.tool = None;
+                self.put_down();
                 let index = self.marker.unwrap_or(self.file.steps.len());
                 self.run_to(Some(index));
                 let label = self.label_of(&kind)?;
@@ -927,7 +944,7 @@ impl Editor {
             }
             Command::Open { id, placed: None } => {
                 self.idle()?;
-                self.tool = None;
+                self.put_down();
                 let index = self.file.index_of(&id)?;
                 self.open(self.file.clone(), index, id, false)?;
                 Changed::Run
@@ -937,13 +954,13 @@ impl Editor {
                 placed: Some(instance),
             } => {
                 self.idle()?;
-                self.tool = None;
+                self.put_down();
                 self.open_placed(instance, PlacedStep::Existing(id))?;
                 Changed::Run
             }
             Command::NewIn { kind, placed } => {
                 self.idle()?;
-                self.tool = None;
+                self.put_down();
                 self.open_placed(placed, PlacedStep::New(kind))?;
                 Changed::Run
             }
@@ -1353,13 +1370,16 @@ impl Editor {
             }
             Command::Tool { key } => {
                 self.idle()?;
-                self.tool = match key {
-                    Some(key) => Some(InHand {
-                        tool: self.registry.tool_in_hand(&key)?,
-                        key,
-                    }),
-                    None => None,
-                };
+                match key {
+                    Some(key) => {
+                        self.tool = Some(InHand {
+                            tool: self.registry.tool_in_hand(&key)?,
+                            key,
+                            taken: true,
+                        })
+                    }
+                    None => self.put_down(),
+                }
                 Changed::Run
             }
             Command::Inspect {
@@ -1431,7 +1451,7 @@ impl Editor {
                     // it is when opened.
                     Undone::Cancelled(mut open) => {
                         open.reopened = Some(open.edited()?);
-                        self.tool = None;
+                        self.put_down();
                         self.give();
                         (self.build)
                             .run(&open.program, Some(open.index + usize::from(self.preview)));
@@ -1712,18 +1732,38 @@ impl Editor {
         })
     }
 
-    /// `view`, of the part placed as `instance` at `pose`, with the parts
-    /// placed beside it before it — each named as that part reads it in
-    /// context, `../bracket`, and where it is seen from there — so that a
-    /// step of it picks what it is built against (see
+    /// `view`, of the part placed at `instance` at `pose`, with the parts
+    /// placed beside it before it — at every level its path goes through:
+    /// beside it in the part placing it, and beside that in the part placing
+    /// that, however deep — each named as that part reads it in context,
+    /// `../bracket`, `../../bracket`, and where it is seen from there, so
+    /// that a step of it picks what it is built against (see
     /// [`geop_core_program::placed::OUTSIDE`]). Those placed after it it
     /// may not read: they are only drawn.
     fn beside(&self, instance: &str, pose: &Pose, view: Rc<PartView>) -> Rc<PartView> {
-        let placed = self.build.part.placed();
-        let Some(at) = placed.iter().position(|(name, _, _)| *name == instance) else {
-            return view;
-        };
-        let before: Vec<&str> = (placed.iter().take(at)).map(|(name, _, _)| *name).collect();
+        // The paths of the parts placed beside it, before it, and how many
+        // levels up from it each is.
+        let segments: Vec<&str> = instance.split(INSTANCE_SEPARATOR).collect();
+        let mut before: Vec<(String, usize)> = Vec::new();
+        let mut outer = String::new();
+        for (k, name) in segments.iter().enumerate() {
+            let part = match outer.is_empty() {
+                true => &self.build.part,
+                false => match self.build.part.placed_at_path(&outer) {
+                    Some(placed) => &*placed.part,
+                    None => return view,
+                },
+            };
+            let placed = part.placed();
+            let Some(at) = placed.iter().position(|(placed, _, _)| placed == name) else {
+                return view;
+            };
+            let up = segments.len() - k;
+            before.extend((placed.iter().take(at)).map(|(other, _, _)| {
+                (geop_core_program::placed::instance_path(&outer, other), up)
+            }));
+            outer = geop_core_program::placed::instance_path(&outer, name);
+        }
         let Ok(drawn) = self.draw(&self.build.part.current(), &self.build.runner) else {
             return view;
         };
@@ -1731,20 +1771,23 @@ impl Editor {
         let origin = CoordinateSystem::world_at(Vector3::zero());
         let mut with = (*view).clone();
         for other in &drawn.instances {
-            let outermost = other
-                .name
-                .split(INSTANCE_SEPARATOR)
-                .next()
-                .unwrap_or_default();
-            if !before.contains(&outermost) {
+            let Some((path, up)) = before.iter().find(|(path, _)| {
+                (other.name.strip_prefix(path.as_str()))
+                    .is_some_and(|rest| rest.is_empty() || rest.starts_with(INSTANCE_SEPARATOR))
+            }) else {
                 continue;
-            }
+            };
+            let (outer, _) = geop_core_program::placed::split_instance_path(path);
+            let inside = (other.name.strip_prefix(outer))
+                .and_then(|rest| rest.strip_prefix(INSTANCE_SEPARATOR))
+                .unwrap_or(&other.name);
             let pose = back.compose(&other.pose);
             let Ok(frame) = pose.motion().apply_frame(&origin) else {
                 continue;
             };
+            let up = format!("{OUTSIDE}{INSTANCE_SEPARATOR}").repeat(*up);
             with.instances.push(ViewInstance {
-                name: format!("{OUTSIDE}{INSTANCE_SEPARATOR}{}", other.name),
+                name: format!("{up}{inside}"),
                 frame,
                 pose,
                 state: None,
@@ -1874,12 +1917,7 @@ impl Editor {
 
     /// The steps of `program`, as `runner` last ran it on `part`: those
     /// before `runs_to` ran, failing as `error` says, the one `editing`
-    /// edited — and, `placing`, each with the steps of the parts it placed,
-    /// to edit where they are placed.
-    #[allow(
-        clippy::too_many_arguments,
-        reason = "one listing, of the program or of a placed part"
-    )]
+    /// edited — without the parts they place (see [`Self::with_placed`]).
     fn listed_steps(
         &self,
         runner: &Runner,
@@ -1888,16 +1926,8 @@ impl Editor {
         runs_to: usize,
         editing: Option<&str>,
         error: impl Fn(&str) -> Option<String>,
-        placing: bool,
     ) -> Vec<StepInfo> {
         let editors = self.registry.editors();
-        // The parts placed, by the step that placed them.
-        let mut placed: HashMap<&str, Vec<(&str, &PlacedPart)>> = HashMap::new();
-        if placing {
-            for (instance, by, part) in part.placed() {
-                placed.entry(by).or_default().push((instance, part));
-            }
-        }
         (program.steps.iter().enumerate())
             .map(|(i, step)| {
                 let listed = editors.info(&step.operation);
@@ -1906,9 +1936,6 @@ impl Editor {
                 let summary = (editors.listed(runner, part, program, &step.id))
                     .map(|form| form.dialog.summary())
                     .unwrap_or_default();
-                let placed = (placed.get(step.id.as_str()).into_iter().flatten())
-                    .filter_map(|(instance, placed)| self.placed_steps(instance, placed))
-                    .collect();
                 StepInfo {
                     id: step.id.clone(),
                     kind: listed.as_ref().map_or("", |l| l.kind),
@@ -1918,18 +1945,37 @@ impl Editor {
                     runs: i < runs_to,
                     suppressed: part.suppressed().contains(&step.id),
                     editing: editing == Some(step.id.as_str()),
-                    placed,
+                    placed: Vec::new(),
                 }
             })
             .collect()
     }
 
-    /// The steps of the part placed as `instance`, built as `placed`: none
-    /// if its program cannot be read.
+    /// `steps`, of the part `part` placed at `path` — the program's own,
+    /// for an empty one — each with the steps of the parts it placed, and
+    /// so on however deep, each part by its path (`neck/head`), to edit
+    /// where it is placed.
+    fn with_placed(&self, path: &str, part: &Part, steps: &mut [StepInfo]) {
+        let mut by_step: HashMap<&str, Vec<PlacedSteps>> = HashMap::new();
+        for (instance, by, placed) in part.placed() {
+            let inner = geop_core_program::placed::instance_path(path, instance);
+            if let Some(listed) = self.placed_steps(&inner, placed) {
+                by_step.entry(by).or_default().push(listed);
+            }
+        }
+        for step in steps {
+            step.placed = by_step.remove(step.id.as_str()).unwrap_or_default();
+        }
+    }
+
+    /// The steps of the part placed at `instance` — `neck/head` — built as
+    /// `placed`, with the parts they place: none if its program cannot be
+    /// read.
     ///
-    /// Listed once for every build and program — every screw of a size —
-    /// and kept: a drag moves placed parts and builds none of them again,
-    /// and a form of a placed standard part's sketch solves the sketch.
+    /// Its own steps are listed once for every build and program — every
+    /// screw of a size — and kept: a drag moves placed parts and builds none
+    /// of them again, and a form of a placed standard part's sketch solves
+    /// the sketch. The parts they place are of the instance, by its path.
     fn placed_steps(&self, instance: &str, placed: &PlacedPart) -> Option<PlacedSteps> {
         let file = placed.location.file.clone();
         let open = (self.open.as_ref())
@@ -1946,10 +1992,12 @@ impl Editor {
             && Rc::ptr_eq(&listed.part, &placed.part)
             && (Rc::ptr_eq(&listed.program, &program) || listed.program == program)
         {
+            let mut steps = listed.steps.clone();
+            self.with_placed(instance, &placed.part, &mut steps);
             return Some(PlacedSteps {
                 instance: instance.to_string(),
                 file,
-                steps: listed.steps.clone(),
+                steps,
             });
         }
         let editing = open.map(|open| open.id.as_str());
@@ -1960,14 +2008,13 @@ impl Editor {
                 .map(|(_, e)| e.to_string())
         };
         let runner = self.build.runner.nested(placed.location.clone());
-        let steps = self.listed_steps(
+        let mut steps = self.listed_steps(
             &runner,
             &placed.part,
             &program,
             program.steps.len(),
             editing,
             error,
-            false,
         );
         if open.is_none() {
             let listed = ListedBuild {
@@ -1977,6 +2024,7 @@ impl Editor {
             };
             self.listed.borrow_mut().insert(key, listed);
         }
+        self.with_placed(instance, &placed.part, &mut steps);
         Some(PlacedSteps {
             instance: instance.to_string(),
             file,
@@ -1994,11 +2042,19 @@ impl Editor {
         let editors = self.registry.editors();
         let errors = |id: &str| self.build.errors.get(id).map(|e| e.to_string());
         let (runner, part) = (&self.build.runner, &self.build.part);
-        let steps = self.listed_steps(runner, part, &self.file, runs_to, editing, errors, true);
-        // What no part placed now is built as is listed no more.
-        let builds: BTreeSet<*const Part> = (part.placed().into_iter())
-            .map(|(_, _, placed)| Rc::as_ptr(&placed.part))
-            .collect();
+        let mut steps = self.listed_steps(runner, part, &self.file, runs_to, editing, errors);
+        self.with_placed("", part, &mut steps);
+        // What no part placed now, however deep, is built as is listed no
+        // more.
+        let mut builds: BTreeSet<*const Part> = BTreeSet::new();
+        let mut parts = vec![part];
+        while let Some(part) = parts.pop() {
+            for (_, _, placed) in part.placed() {
+                if builds.insert(Rc::as_ptr(&placed.part)) {
+                    parts.push(&placed.part);
+                }
+            }
+        }
         (self.listed.borrow_mut()).retain(|(_, build), _| builds.contains(build));
         let mut operations = editors.infos();
         operations.sort_by_key(|listed| (listed.info.group, listed.info.tier));
@@ -2023,7 +2079,9 @@ impl Editor {
                 Some(open) => !open.redo.is_empty(),
                 None => !self.redo.is_empty(),
             },
-            tool: self.tool.as_ref().map(|in_hand| in_hand.key.clone()),
+            tool: (self.tool.as_ref())
+                .filter(|in_hand| in_hand.taken)
+                .map(|in_hand| in_hand.key.clone()),
             tools: self.registry.tools().into_iter().cloned().collect(),
             operations,
             exporters: self.registry.outputs().exporters(),
