@@ -263,19 +263,34 @@ fn point_on(
     )
 }
 
-/// Every stretch of `curve` lying on `surface` (see [`coincidence`]), with
-/// the surface parameters as the partner. Candidates are the curve's ends
-/// found on the surface, and where the curve meets the patch's four
-/// boundary curves — through [`curve_curve::curve_curve_overlaps_and_crossings`],
-/// so a curve running *along* a boundary contributes that stretch's ends.
-/// A boundary that isn't clamped (so its control row isn't the surface
-/// there) contributes no candidates.
+/// Every stretch of `curve` lying on `surface` (see [`coincidence`]), or —
+/// for a `reach` above zero — running within `reach` of it along every
+/// axis, with the surface parameters as the partner (see
+/// [`curve_curve::curve_curve_overlaps_and_crossings`] on `reach`): the
+/// stretches lying on the surface widened by `reach`
+/// ([`NurbSurface::widen`]), its boundary curves with it. Candidates are
+/// the curve's ends found on the surface, and where the curve meets the
+/// patch's four boundary curves — through
+/// [`curve_curve::curve_curve_overlaps_and_crossings`], so a curve running
+/// *along* a boundary contributes that stretch's ends. A boundary that
+/// isn't clamped (so its control row isn't the surface there) contributes
+/// no candidates.
 pub fn curve_surface_overlaps(
     curve: &NurbCurve<4>,
     surface: &NurbSurface<4>,
+    reach: Scalar,
     max_nodes: usize,
     min_subdivision_size: Scalar,
 ) -> GeopResult<Vec<Overlap<Vector2>>> {
+    let widened;
+    let surface = if reach.definitely_greater(Scalar::ZERO) {
+        let mut wide = surface.clone();
+        wide.widen(reach);
+        widened = wide;
+        &widened
+    } else {
+        surface
+    };
     let on_surface = |t: Scalar| point_on(curve, surface, t, max_nodes, min_subdivision_size);
 
     let mut candidates = Vec::new();
@@ -301,6 +316,7 @@ pub fn curve_surface_overlaps(
         let (overlaps, crossings) = curve_curve::curve_curve_overlaps_and_crossings::<4, 3>(
             curve,
             &boundary,
+            Scalar::ZERO,
             max_nodes,
             min_subdivision_size,
         )?;
@@ -346,8 +362,14 @@ pub fn curve_surface_intersect(
              min_subdivision_size={min_subdivision_size:?})"
         ))
     };
-    let overlaps = curve_surface_overlaps(curve, surface, max_nodes, min_subdivision_size)
-        .with_context(&ctx)?;
+    let overlaps = curve_surface_overlaps(
+        curve,
+        surface,
+        Scalar::ZERO,
+        max_nodes,
+        min_subdivision_size,
+    )
+    .with_context(&ctx)?;
     let crossings = coincidence::crossings_between(curve, &overlaps, |piece| {
         curve_surface_crossings(piece, surface, max_nodes, min_subdivision_size)
     })

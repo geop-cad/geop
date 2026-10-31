@@ -1497,8 +1497,13 @@ pub fn surface_missed(
 ) -> GeopResult<Option<(usize, Vector3)>> {
     let (t0, t1) = curve.domain();
     for f in faces {
-        let overlaps =
-            curve_surface_overlaps(curve, &surfaces[f], MAX_NODES, min_subdivision_size())?;
+        let overlaps = curve_surface_overlaps(
+            curve,
+            &surfaces[f],
+            Scalar::ZERO,
+            MAX_NODES,
+            min_subdivision_size(),
+        )?;
         if overlaps
             .iter()
             .any(|o| o.start.t.could_be_equal(t0) && o.end.t.could_be_equal(t1))

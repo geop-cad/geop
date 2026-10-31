@@ -918,43 +918,34 @@ mod examples {
         )
     }
 
-    /// The example assemblies that do not draw yet, each with a test of its
-    /// own saying why ([`duck_draws`]).
-    const NOT_DRAWN: [&str; 1] = ["duck"];
+    /// The duck, the first example a new visitor is offered, seen from the
+    /// front: its neck is placed turned about `x` by a pose rounded in its
+    /// last bits, and its side face lies `8e-15` off the line of sight. Its
+    /// edges, `1e-13` apart on the paper, ran the searches for where they
+    /// cross out of nodes (see `geop_ops_drawing`'s
+    /// `box_seen_a_hair_off_its_front`).
+    #[test]
+    fn duck_draws_from_the_front() {
+        let (_, built) = example_assembly("duck");
+        let scene = Scene::of(&built.current()).unwrap();
+        let frame = ViewKind::Front.frame().unwrap();
+        let view = scene
+            .project(&frame, &ViewOptions::default())
+            .unwrap_or_else(|e| panic!("{e}"));
+        assert!(view.lines.iter().any(|l| l.visible));
+    }
 
-    /// Every example assembly draws, but those [`NOT_DRAWN`] (see
-    /// [`assert_assemblies_draw`]).
+    /// Every example assembly draws: its default sheet with the bill of
+    /// materials builds, with a balloon per line of the bill whose part has
+    /// faces drawn, and in no view does a hidden piece run along a visible one.
     #[test]
     #[ignore = "slow: every example assembly drawn — run with `cargo test -- --ignored`"]
     fn every_example_assembly_draws() {
-        let registry = crate::registry().unwrap();
-        let names: Vec<&str> = (registry.workspace_example_names())
-            .filter(|name| !NOT_DRAWN.contains(name))
-            .collect();
-        assert_assemblies_draw(&names);
-    }
-
-    /// The duck draws (see [`assert_assemblies_draw`]).
-    #[test]
-    #[ignore = "fails: the sheet's front view of the duck's left leg (`part1`): \
-                `project_view` where EdgeId(15) and EdgeId(17) cross on the paper \
-                exhausts `curve_curve_crossings` (20000 nodes, 8252 pairs pending). \
-                Both lie in x = -10; EdgeId(17) runs along y, the front view's \
-                direction, from (-10, 22.6, -6.67) to (-10, -0.41, -6.67), so on \
-                the paper it is a single point, (x, z) = (-10, -6.67)"]
-    fn duck_draws() {
-        assert_assemblies_draw(&["duck"]);
-    }
-
-    /// The example assemblies `names` draw: each one's default sheet with
-    /// the bill of materials builds, with a balloon per line of the bill
-    /// whose part has faces drawn, and in no view does a hidden piece run
-    /// along a visible one.
-    fn assert_assemblies_draw(names: &[&str]) {
         use geop_lib_sheet::Shape;
         use geop_ops_drawing::layer;
         let mut failures = Vec::new();
-        for &name in names {
+        let registry = crate::registry().unwrap();
+        for name in registry.workspace_example_names() {
             let (path, built) = example_assembly(name);
             let args = DrawingArgs {
                 bom: true,
@@ -1018,11 +1009,14 @@ mod examples {
                         .find(|l| on(l, &p) && on(l, &q))
                     {
                         failures.push(format!(
-                            "{name}, {} view: the hidden {:?} of {} runs along the visible {:?} of {}",
+                            "{name}, {} view: the hidden {:?} {:?} of {} runs along the visible \
+                             {:?} {:?} of {}, through {p:?} and {q:?} on the paper",
                             kind.name(),
                             hidden.kind,
+                            hidden.edge,
                             scene.bodies[hidden.body].path,
                             visible.kind,
+                            visible.edge,
                             scene.bodies[visible.body].path,
                         ));
                     }

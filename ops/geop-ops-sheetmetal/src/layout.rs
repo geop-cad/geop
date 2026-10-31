@@ -869,9 +869,14 @@ fn crossings(
     c_curve: &NurbCurve2D,
 ) -> Result<Vec<(Scalar, Scalar, Vector2)>, String> {
     if matches!(e, Seg::Other) || matches!(c, Seg::Other) {
-        let (overlaps, crossings) =
-            curve_curve_overlaps_and_crossings(e_curve, c_curve, MAX_NODES, min_subdivision_size())
-                .map_err(|err| format!("could not be checked against ({err})"))?;
+        let (overlaps, crossings) = curve_curve_overlaps_and_crossings(
+            e_curve,
+            c_curve,
+            Scalar::ZERO,
+            MAX_NODES,
+            min_subdivision_size(),
+        )
+        .map_err(|err| format!("could not be checked against ({err})"))?;
         if overlaps.is_empty() && crossings.is_empty() {
             return Ok(Vec::new());
         }
@@ -1147,6 +1152,7 @@ fn ray_crossings(piece: &Piece<'_>, p: &Vector2, d: &Vector2, reach: f64) -> Opt
             let (overlaps, crossings) = curve_curve_overlaps_and_crossings(
                 &ray,
                 piece.curve,
+                Scalar::ZERO,
                 MAX_NODES,
                 min_subdivision_size(),
             )

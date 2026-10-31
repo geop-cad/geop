@@ -319,8 +319,13 @@ fn fits_on_rim(
             .collect();
         let flat = NurbCurve2D::try_new(curve.degree, flat, curve.knot_vector.clone())?;
         for side in &far_side {
-            let (overlaps, crossings) =
-                curve_curve_overlaps_and_crossings(side, &flat, MAX_NODES, min_subdivision_size())?;
+            let (overlaps, crossings) = curve_curve_overlaps_and_crossings(
+                side,
+                &flat,
+                Scalar::ZERO,
+                MAX_NODES,
+                min_subdivision_size(),
+            )?;
             if !(overlaps.is_empty() && crossings.is_empty()) {
                 return Err(refuse(format!(
                     "its far side meets the rim's edge {}",

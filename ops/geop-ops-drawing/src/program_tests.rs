@@ -536,6 +536,7 @@ fn subd_mug_floor_silhouettes_are_one_line_from_the_right() {
     let (overlaps, crossings) = curve_curve_overlaps_and_crossings(
         &on_paper[0],
         &on_paper[1],
+        Scalar::ZERO,
         MAX_NODES,
         min_subdivision_size(),
     )

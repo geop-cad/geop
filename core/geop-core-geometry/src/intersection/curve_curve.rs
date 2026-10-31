@@ -220,27 +220,35 @@ where
     Ok(solutions.into_vec())
 }
 
-/// Where `other(t)` lies on `curve`, if it does: its parameter there.
+/// Where `other(t)` lies on `curve`, if it does — or, for a `reach` above
+/// zero, where `curve` could pass within `reach` of it along every axis:
+/// its parameter there.
 fn point_on<const D: usize, const C: usize>(
     curve: &NurbCurve<D>,
     other: &NurbCurve<D>,
     t: Scalar,
+    reach: Scalar,
     max_nodes: usize,
     min_subdivision_size: Scalar,
 ) -> GeopResult<Option<Scalar>>
 where
     NurbCurve<D>: ParameterRefinable<C>,
 {
-    let point = other.evaluate_cartesian(t)?;
+    let mut point = other.evaluate_cartesian(t)?;
+    if reach.definitely_greater(Scalar::ZERO) {
+        let around = reach.neg().union(reach);
+        point = point.map(|x| x.add(around));
+    }
     curve_could_contain(curve, &point, max_nodes, min_subdivision_size)
 }
 
-/// Every stretch of `a` lying on `b` (see [`coincidence`]), with
-/// `b`'s parameter as the partner: candidates are `a`'s ends found on `b`
-/// and `b`'s ends found on `a`.
+/// Every stretch of `a` lying on `b` (see [`coincidence`]), or within
+/// `reach` of it, with `b`'s parameter as the partner: candidates are `a`'s
+/// ends found on `b` and `b`'s ends found on `a`.
 pub(crate) fn curve_curve_overlaps<const D: usize, const C: usize>(
     a: &NurbCurve<D>,
     b: &NurbCurve<D>,
+    reach: Scalar,
     max_nodes: usize,
     min_subdivision_size: Scalar,
 ) -> GeopResult<Vec<Overlap<Scalar>>>
@@ -248,7 +256,7 @@ where
     NurbCurve<D>: ParameterRefinable<C>,
 {
     let on = |curve: &NurbCurve<D>, other: &NurbCurve<D>, t: Scalar| {
-        point_on(curve, other, t, max_nodes, min_subdivision_size)
+        point_on(curve, other, t, reach, max_nodes, min_subdivision_size)
     };
     let (a0, a1) = a.domain();
     let (b0, b1) = b.domain();
@@ -272,16 +280,24 @@ pub type OverlapsAndCrossings = (Vec<Overlap<Scalar>>, Vec<(Scalar, Scalar)>);
 
 /// Overlaps of `a` with `b`, and the isolated crossings away from them (the
 /// clipping search run on each stretch of `a` between overlaps).
+///
+/// With `reach` zero an overlap is a stretch lying on `b`. Above zero it is
+/// one running within `reach` of `b`: for a caller that works to a
+/// resolution of its own — a drawing to what a sheet shows — two curves
+/// that close are one line, and are taken as one. Without it the clipping
+/// search has to cover such a stretch with pairs of pieces no larger than
+/// `min_subdivision_size`, which no node budget does for a long one.
 pub fn curve_curve_overlaps_and_crossings<const D: usize, const C: usize>(
     a: &NurbCurve<D>,
     b: &NurbCurve<D>,
+    reach: Scalar,
     max_nodes: usize,
     min_subdivision_size: Scalar,
 ) -> GeopResult<OverlapsAndCrossings>
 where
     NurbCurve<D>: ParameterRefinable<C>,
 {
-    let overlaps = curve_curve_overlaps(a, b, max_nodes, min_subdivision_size)?;
+    let overlaps = curve_curve_overlaps(a, b, reach, max_nodes, min_subdivision_size)?;
     let crossings = coincidence::crossings_between(a, &overlaps, |piece| {
         curve_curve_crossings(piece, b, max_nodes, min_subdivision_size)
     })?;
@@ -328,11 +344,23 @@ where
              min_subdivision_size={min_subdivision_size:?})"
         ))
     };
-    let (overlaps, crossings) =
-        curve_curve_overlaps_and_crossings(curve_a, curve_b, max_nodes, min_subdivision_size)
-            .with_context(&ctx)?;
+    let (overlaps, crossings) = curve_curve_overlaps_and_crossings(
+        curve_a,
+        curve_b,
+        Scalar::ZERO,
+        max_nodes,
+        min_subdivision_size,
+    )
+    .with_context(&ctx)?;
     let samples = coincidence::samples(&overlaps, crossings.len(), max_solutions, |s| {
-        point_on(curve_b, curve_a, s, max_nodes, min_subdivision_size)
+        point_on(
+            curve_b,
+            curve_a,
+            s,
+            Scalar::ZERO,
+            max_nodes,
+            min_subdivision_size,
+        )
     })?;
     Ok(coincidence::assemble(
         &overlaps,
