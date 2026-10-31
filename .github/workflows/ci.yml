@@ -52,6 +52,31 @@ jobs:
           mkdir -p web/dist-open
           timeout 1800 prlimit --as=16000000000 cargo clippy -p geop-cad-cli --features app --all-targets -- -D warnings
 
+  app-elsewhere:
+    name: geop app on ${{ matrix.os }}
+    # The release builds `geop app` for macOS and Windows too, where it
+    # links WKWebView and WebView2: checked here on every push, not first
+    # on a release. There is no prlimit there; the job's timeout caps it.
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-latest, windows-latest]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+
+      - name: Clippy of geop app
+        shell: bash
+        run: |
+          mkdir -p web/dist-open
+          cargo clippy -p geop-cad-cli --features app --all-targets -- -D warnings
+
   affected:
     name: Tests of what the change affects
     if: github.event_name == 'pull_request'

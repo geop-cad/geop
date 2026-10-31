@@ -2152,6 +2152,9 @@ impl Builder<'_> {
                 // outwards, past the curve's true bound towards the point.
                 // An edge `4.4e-16` off a plane was widened four times and
                 // ended `6.7e-80` short of it. Twice the rounding reaches.
+                // The factor is a workaround, kept knowingly: the fix is to
+                // measure the gap from the curve's bound rounded towards the
+                // point, which reaches with the gap itself.
                 let gap = if round == 0 {
                     *gap
                 } else {
