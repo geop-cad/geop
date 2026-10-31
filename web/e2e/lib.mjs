@@ -36,12 +36,17 @@ export function findChrome() {
   return candidates.find((c) => fs.existsSync(c)) ?? null;
 }
 
-/** Headless Chrome, rendering WebGL in software (SwiftShader), so it needs no GPU. Exits the process — successfully — when there is no Chrome to drive. */
+/**
+ * Headless Chrome, rendering WebGL in software (SwiftShader), so it needs no
+ * GPU. Exits the process when there is no Chrome to drive: successfully on
+ * a developer's machine, as a failure in CI (`$CI`), where a check skipped
+ * is a check that did not guard anything.
+ */
 export async function launch() {
   const executablePath = findChrome();
   if (!executablePath) {
     console.log("SKIPPED: no Chrome or Chromium found. Set CHROME to its executable to run the end-to-end checks.");
-    process.exit(0);
+    process.exit(process.env.CI ? 1 : 0);
   }
   const { chromium } = await import("playwright-core");
   return chromium.launch({ executablePath, args: ["--use-gl=swiftshader", "--enable-unsafe-swiftshader"] });

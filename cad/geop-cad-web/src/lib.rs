@@ -165,6 +165,34 @@ mod tests {
         assert!(committed["error"].is_null(), "{committed}");
         assert_eq!(committed["program"]["steps"][0]["id"], "sketch1");
     }
+
+    /// A first visit, as the page makes it (`web/src/App.tsx`): a browser
+    /// with nothing stored has one empty file, which it sends, then opens.
+    /// The page draws nothing until it is sent a scene, so the first answer
+    /// must carry all of it, the origin's coordinate system in it. The
+    /// session had shown itself the empty part when it started and taken
+    /// that as sent: neither answer had a scene, and a new visitor saw an
+    /// empty view.
+    #[test]
+    fn a_first_visit_is_sent_the_whole_scene_with_the_origin() {
+        let files = send(serde_json::json!({
+            "command": "files", "files": {"part.geop": "{\n  \"steps\": []\n}\n"},
+        }));
+        let opened = send(serde_json::json!({
+            "command": "load", "program": {"steps": []}, "path": "part.geop",
+        }));
+        assert!(files["error"].is_null(), "{files}");
+        assert!(opened["error"].is_null(), "{opened}");
+        let scene = &files["scene"];
+        assert_eq!(scene["all"], true, "the first answer drew nothing: {files}");
+        let datums: Vec<&str> = (scene["part"]["datums"].as_array().unwrap().iter())
+            .map(|d| d["name"].as_str().unwrap())
+            .collect();
+        assert_eq!(datums, ["origin"]);
+        // Opening the empty file changes nothing drawn: the page keeps the
+        // scene it has.
+        assert!(opened["scene"].is_null() || opened["scene"]["part"]["datums"][0]["name"] == "origin");
+    }
 }
 
 #[cfg(test)]
