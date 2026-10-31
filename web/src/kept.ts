@@ -2,20 +2,36 @@
 // drawn, the views of their components and the meshes of the faces drawn,
 // each sent once by key and kept until the kernel says to forget it — the
 // viewer's side of `geop_core_editor::editor::kept`.
-import type { FaceMesh, PartView, SceneState, SentFaceMesh, SentPartView, Vec3, ViewInstance } from "./geop";
+import type {
+  FaceMesh,
+  PartView,
+  SceneState,
+  SentFaceMesh,
+  SentPartView,
+  StructureItem,
+  Vec3,
+  ViewInstance,
+} from "./geop";
 
 /** A scene as it is drawn: its part with its faces' meshes (see [[applyScene]]). */
-export type DrawnScene = Omit<SceneState, "part"> & { part: PartView };
+export type DrawnScene = Omit<SceneState, "part" | "structure" | "hidden"> & {
+  part: PartView;
+  structure: StructureItem[];
+  hidden: string[];
+};
 
 /** The placed parts drawn, by name, the views of the components they are drawn from, by key, and the meshes of the faces drawn, by key. */
 export interface Placed {
   instances: Map<string, ViewInstance>;
   components: Record<string, PartView>;
   meshes: Record<string, FaceMesh>;
+  /** The structure and the names hidden last sent: a scene sends them only when they change. */
+  structure: StructureItem[];
+  hidden: string[];
 }
 
 /** Nothing placed, nothing kept. */
-export const NOTHING_PLACED: Placed = { instances: new Map(), components: {}, meshes: {} };
+export const NOTHING_PLACED: Placed = { instances: new Map(), components: {}, meshes: {}, structure: [], hidden: [] };
 
 /** The bytes the base64 text `text` spells. */
 function bytes(text: string): ArrayBuffer {
@@ -67,5 +83,7 @@ export function applyScene(placed: Placed, scene: SceneState): { placed: Placed;
   for (const key of scene.forgotten) delete components[key];
   const part = withMeshes(scene.part, meshes);
   for (const key of scene.forgotten_meshes) delete meshes[key];
-  return { placed: { instances, components, meshes }, scene: { ...scene, part } };
+  const structure = scene.structure ?? placed.structure;
+  const hidden = scene.hidden ?? placed.hidden;
+  return { placed: { instances, components, meshes, structure, hidden }, scene: { ...scene, part, structure, hidden } };
 }

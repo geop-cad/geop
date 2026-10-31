@@ -721,7 +721,7 @@ fn an_assembly_lists_its_mates() {
             folder: None,
         },
     );
-    let structure = update.scene.expect("a scene").structure;
+    let structure = update.scene.expect("a scene").structure.expect("sent");
     let of = |kind: &str| -> Vec<&StructureItem> {
         structure.iter().filter(|i| i.kind == kind).collect()
     };
@@ -1107,7 +1107,11 @@ fn a_step_of_a_placed_part_is_edited_where_it_is_placed() {
             path,
         },
     );
-    let structure = loaded.scene.expect("the assembly is drawn").structure;
+    let structure = loaded
+        .scene
+        .expect("the assembly is drawn")
+        .structure
+        .expect("sent");
     let item = (structure.iter())
         .find(|item| item.name == "a")
         .expect("the part is listed");
@@ -1616,7 +1620,11 @@ fn hovering_over_a_part_placed_by_its_fields_solves_nothing() {
 /// What the scene of `editor` hides, sent afresh.
 fn scene_hidden(editor: &mut Editor) -> Vec<String> {
     let update = handled(editor, Command::Show);
-    update.scene.expect("a scene is sent on show").hidden
+    update
+        .scene
+        .expect("a scene is sent on show")
+        .hidden
+        .expect("sent")
 }
 
 /// The placed parts' datums are drawn only to be picked: placing a part,
@@ -1877,10 +1885,18 @@ fn an_example_opened_shows_whole_whatever_was_isolated_before() {
             names: vec!["upper".into()],
         },
     );
-    let hidden = isolated.scene.expect("the scene changed").hidden;
+    let hidden = isolated
+        .scene
+        .expect("the scene changed")
+        .hidden
+        .expect("sent");
     assert!(hidden.contains(&"fore".to_string()), "{hidden:?}");
     let opened = handled(&mut editor, example("pin_in_plate"));
-    let hidden = opened.scene.expect("the example is drawn").hidden;
+    let hidden = opened
+        .scene
+        .expect("the example is drawn")
+        .hidden
+        .expect("sent");
     let parts_hidden: Vec<&String> = (hidden.iter())
         .filter(|name| ["plate", "pin"].contains(&name.as_str()))
         .collect();

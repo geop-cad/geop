@@ -83,6 +83,7 @@ fn new_linear_pattern_dragged_by_its_spacing_handle() {
         .scene
         .expect("the scene changed")
         .structure
+        .expect("sent")
         .into_iter()
         .filter(|item| item.kind == "solid")
         .map(|item| item.name)

@@ -275,7 +275,7 @@ mod editor {
                 names: vec!["pin".into()],
             },
         );
-        let hidden = update.scene.expect("the plate is hidden").hidden;
+        let hidden = (update.scene.expect("the plate is hidden").hidden).expect("changed");
         assert!(hidden.contains(&"plate".to_string()), "{hidden:?}");
         assert!(!hidden.contains(&"pin".to_string()), "{hidden:?}");
         let update = handled(&mut editor, Command::Isolate { names: vec![] });
@@ -284,6 +284,7 @@ mod editor {
                 .scene
                 .expect("shown again")
                 .hidden
+                .expect("changed")
                 .contains(&"plate".to_string())
         );
         assert_eq!(makes(&editor), built, "a display setting builds nothing");

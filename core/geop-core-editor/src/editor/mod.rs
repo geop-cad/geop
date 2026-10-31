@@ -58,7 +58,7 @@ use crate::{
     editable::Against,
     editing::{Extent, Presentation, Shape, StepEditEvent, Style},
     output::{Content, Export, Inspection, Output},
-    registry::{Drawings, Registry},
+    registry::{Drawings, Registry, StructureItem},
     step_editor::{Editing, StepEditor},
     tools::Tool,
     view::{
@@ -282,6 +282,10 @@ pub struct Editor {
     lights: Vec<PickedElement>,
     /// What the viewer was last sent to draw lit (see [`Update::lit`]).
     lit: Option<Lighting>,
+    /// The names hidden and the structure the viewer was last sent (see
+    /// [`SceneState::hidden`]): a scene sends them again only where they
+    /// changed, or where it is sent whole.
+    listing: Option<(Vec<String>, Vec<StructureItem>)>,
     /// The steps of the parts placed, as listed, by file and build (see
     /// [`Editor::placed_steps`]).
     listed: RefCell<HashMap<(String, *const Part), ListedBuild>>,
@@ -342,6 +346,7 @@ impl Editor {
             listed: RefCell::default(),
             lights: Vec::new(),
             lit: None,
+            listing: None,
         }
     }
 
@@ -702,10 +707,19 @@ impl Editor {
         let structure = (self.registry)
             .structure(&self.shown_part(shown.steps), &shown.hidden)
             .unwrap_or_default();
+        // What the viewer has already is not sent again.
+        let listing = (shown.hidden, structure);
+        let (hidden, structure) = match !all && self.listing.as_ref() == Some(&listing) {
+            true => (None, None),
+            false => {
+                self.listing = Some(listing.clone());
+                (Some(listing.0), Some(listing.1))
+            }
+        };
         SceneState {
             part,
             structure,
-            hidden: shown.hidden,
+            hidden,
             instances,
             all,
             removed,

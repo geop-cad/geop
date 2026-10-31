@@ -146,7 +146,10 @@ impl Tool for DragTool {
                 if *done && let Some(grab) = self.grab.take() {
                     ctx.undoable(grab.before);
                 }
-                Changed::Run
+                match done {
+                    true => Changed::Run,
+                    false => Changed::State,
+                }
             }
             _ => Changed::Nothing,
         })

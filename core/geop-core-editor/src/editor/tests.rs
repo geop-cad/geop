@@ -229,7 +229,7 @@ fn an_editor_of_a_registry_of_its_own_edits_programs() -> Result<(), GeopError> 
             ("raise1".to_string(), [5.0, 0.0, 1.0]),
         ]
     );
-    let structure = update.scene.expect("a scene").structure;
+    let structure = update.scene.expect("a scene").structure.expect("sent");
     assert!(
         (structure.iter()).all(|i| i.kind_label == "Points" && i.visible == Some(true)),
         "{structure:?}"

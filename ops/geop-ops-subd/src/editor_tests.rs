@@ -612,14 +612,16 @@ fn subd_cage_only_hides_the_limit_surface() {
     let update = new_box(&mut editor);
     let id = editor.editing().expect("a step is edited").id.clone();
     let solid = format!("subd({id})");
-    let scene = update.scene.expect("the new step is drawn");
-    assert!(!scene.hidden.contains(&solid));
+    // Not sent: as hidden as before the step, which had no solid.
+    let hidden = update.scene.expect("the new step is drawn").hidden;
+    assert!(!hidden.is_some_and(|hidden| hidden.contains(&solid)));
     let update = editor.handle(dialog("cage_only", Value::Bool(true)));
-    let scene = update.scene.expect("what is hidden changed");
-    assert!(scene.hidden.contains(&solid), "{:?}", scene.hidden);
+    let hidden = update.scene.expect("what is hidden changed").hidden;
+    let hidden = hidden.expect("what is hidden is sent");
+    assert!(hidden.contains(&solid), "{hidden:?}");
     let step = update.step.expect("the subd is edited");
     assert!((step.presentation.visuals.iter()).any(|v| v.key == "f9"));
     let update = editor.handle(dialog("cage_only", Value::Bool(false)));
-    let scene = update.scene.expect("what is hidden changed");
-    assert!(!scene.hidden.contains(&solid));
+    let hidden = update.scene.expect("what is hidden changed").hidden;
+    assert!(!hidden.expect("what is hidden is sent").contains(&solid));
 }

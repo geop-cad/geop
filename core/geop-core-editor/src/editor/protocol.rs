@@ -305,7 +305,9 @@ pub struct SceneState {
     pub part: Rc<PartView>,
     /// The sketches and datums the steps shown have used: what was made
     /// from them shows them now. None of a kind while it is being picked.
-    pub hidden: Vec<String>,
+    /// Not sent — `None` — where it is as the last scene sent it: a drag
+    /// moving one placed part does not send every name again.
+    pub hidden: Option<Vec<String>>,
     /// The parts placed in the part drawn, however deep, that are new or
     /// moved or drawn from another component since the last scene — every
     /// one, if `all`.
@@ -336,8 +338,9 @@ pub struct SceneState {
     /// longest.
     pub forgotten_meshes: Vec<String>,
     /// What the part has beyond its faces, to list and show or hide (see
-    /// [`crate::registry::Drawer::structure`]).
-    pub structure: Vec<StructureItem>,
+    /// [`crate::registry::Drawer::structure`]). Not sent — `None` — where
+    /// it is as the last scene sent it.
+    pub structure: Option<Vec<StructureItem>>,
 }
 
 /// The step being edited, as shown.

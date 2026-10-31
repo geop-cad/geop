@@ -19,8 +19,14 @@ pub enum Changed {
     /// The arguments of the step being edited.
     Step,
     /// What runs: which steps, or up to where — or the program's state, as
-    /// a drag moves it, which is no edit to undo by itself.
+    /// a drag let go moved it, which is no edit to undo by itself.
     Run,
+    /// Only the program's state, as an event of a drag moves it: what it
+    /// moved is sent with the scene, and the program — its state, the
+    /// steps listed, the panels — once the drag is let go ([`Changed::Run`]).
+    /// Every event resending the whole program state grew with the
+    /// assembly, where one part moved.
+    State,
     /// The program.
     Program,
     /// How the program is shown ([`geop_core_program::program::Display`]):
