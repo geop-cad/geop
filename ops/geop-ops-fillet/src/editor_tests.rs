@@ -218,10 +218,6 @@ fn new_fillet_picks_edges() {
 /// A new fillet waits for its edges; its radius typed and taken back by
 /// undo, it still waits for them — a click on an edge then picks it.
 #[test]
-#[ignore = "bug: Command::Undo (and Redo) while a step is edited restarts its editor \
-            (`StepEditor::restart`), which forgets which reference field waits for picks: \
-            a new fillet's `edges`, armed when it opens, is no longer armed after its \
-            radius is set and undone, so the next click on an edge picks nothing"]
 fn undoing_a_radius_keeps_the_edges_waiting_for_picks() {
     let armed = |editor: &mut Editor| {
         let step = handled(editor, Command::Show)

@@ -17,7 +17,10 @@ use geop_lib_fixtures::{PrimitiveArgs, drilled_box};
 use geop_lib_constraints::Constraints;
 
 use crate::{
-    AddPartArgs, program_tests::editor, scale_tests::arm_editor, testing::robot_arm::RobotArm,
+    AddPartArgs,
+    program_tests::{editor, workspace},
+    scale_tests::arm_editor,
+    testing::robot_arm::RobotArm,
 };
 
 /// A robot's base held fixed beside a servo held fixed too, its pose saved
@@ -158,10 +161,6 @@ fn a_gripper_fastened_by_a_frame_of_its_own_holds_where_it_is() {
 /// way — its side facing opposite the other's — not left facing the same
 /// way, as at 0°.
 #[test]
-#[ignore = "bug: residuals::Kind::Angle holds 180° as it holds 0°, as a parallel (either way), so \
-            the cube placed as `b` on the fixed cube `a` with an angle mate of 180° between their \
-            faces `block(c,c1)` stays turned 0° (where it starts at 20°), while 179° turns it \
-            179°: the mate's geometry jumps half a turn between 179.9° and 180°"]
 fn an_angle_mate_of_half_a_turn_turns_the_part_half_way_round() {
     use crate::{Kind, Mate};
     use geop_ops_model::{element, mate_entity::MateEntity, selection::Selected};
@@ -219,12 +218,9 @@ fn an_angle_mate_of_half_a_turn_turns_the_part_half_way_round() {
 /// drawn far from where it goes — and then mated onto it by three faces:
 /// on top, flush at the front, half a unit beside it. Every mate is a
 /// plane against a plane and the cube is not turned, so the mates are
-/// linear in where it is: the solve puts it there, however far it starts.
+/// linear in where it is: the solve puts it there, however far it starts —
+/// turned a little, too, from ten thousand away.
 #[test]
-#[ignore = "bug: the settle leaves a part that starts far away unsolved: the cube placed as `b` \
-            at (600, -300, 200), not turned, mated to the fixed cube `a` by three plane-on-plane \
-            mates, is reported with add_part(b,m1), (b,m2) and (b,m3) all failing (a report of \
-            0 iterations); started at (60, -30, 20) it solves"]
 fn a_part_mated_from_far_away_is_brought_onto_its_mates() {
     use crate::{Kind, Mate};
     use geop_ops_model::{element, mate_entity::MateEntity, selection::Selected};
@@ -259,22 +255,51 @@ fn a_part_mated_from_far_away_is_brought_onto_its_mates() {
         file: "cube.geop".into(),
         ..Default::default()
     };
-    let mut program = Program::new();
-    program.push("a", placed.clone().fixed());
-    program.push("b", AddPartArgs { mates, ..placed });
-    let far = crate::examples::pose([600.0, -300.0, 200.0], [0.0; 3]);
-    program.state.insert(pose_state("b"), StateValue::Pose(far));
-    let mut editor = editor();
-    let files = BTreeMap::from([("cube.geop".to_string(), Some(cube.to_json().unwrap()))]);
-    handled(&mut editor, Command::Files { files });
-    let path = Some("cubes.geop".into());
-    handled(&mut editor, Command::Load { program, path });
-    let report = crate::solving::check(&editor.part()).unwrap();
-    assert!(report.converged, "{report:?}");
-    let Some(StateValue::Pose(pose)) = editor.program().state.get(&pose_state("b")) else {
-        panic!("the cube has a pose");
-    };
-    let at = pose.position().to_f64_array();
-    let off = (at.iter().zip([1.5, 0.0, 1.0])).map(|(a, b)| (a - b).abs());
-    assert!(off.fold(0.0, f64::max) < 1e-6, "the cube is at {at:?}");
+    let mut placing = Program::new();
+    placing.push("a", placed.clone().fixed());
+    placing.push("b", AddPartArgs { mates, ..placed });
+    let texts = BTreeMap::from([("cube.geop".to_string(), cube.to_json().unwrap())]);
+    let starts = [
+        ([600.0, -300.0, 200.0], [0.0; 3]),
+        ([1e4, -5e3, 2e3], [0.0, 0.0, 20.0]),
+    ];
+    for (at, turn) in starts {
+        let mut program = placing.clone();
+        let far = crate::examples::pose(at, turn);
+        program.state.insert(pose_state("b"), StateValue::Pose(far));
+        // The solve itself, which the settle asks and says nothing of when
+        // it fails.
+        let crate::program_tests::BuiltPart { runner, mut part } =
+            crate::program_tests::build_file(&program, "cubes.geop", workspace(texts.clone()))
+                .unwrap();
+        let mut rerun = geop_core_editor::editor::Rerun {
+            runner: &runner,
+            part: &mut part,
+            program: &program,
+        };
+        let (_, report) =
+            crate::solving::solve(&mut rerun, &program.state, &[], None, true, None).unwrap();
+        assert!(report.converged, "from {at:?}: {report:?}");
+        let mut editor = editor();
+        let files = BTreeMap::from([("cube.geop".to_string(), Some(cube.to_json().unwrap()))]);
+        handled(&mut editor, Command::Files { files });
+        let path = Some("cubes.geop".into());
+        handled(&mut editor, Command::Load { program, path });
+        let report = crate::solving::check(&editor.part()).unwrap();
+        assert!(report.converged, "from {at:?}: {report:?}");
+        // Turned, it may as well settle turned half way round, on the
+        // other side of the line it is held half a unit off.
+        if turn != [0.0; 3] {
+            continue;
+        }
+        let Some(StateValue::Pose(pose)) = editor.program().state.get(&pose_state("b")) else {
+            panic!("the cube has a pose");
+        };
+        let to = pose.position().to_f64_array();
+        let off = (to.iter().zip([1.5, 0.0, 1.0])).map(|(a, b)| (a - b).abs());
+        assert!(
+            off.fold(0.0, f64::max) < 1e-6,
+            "from {at:?}, the cube is at {to:?}"
+        );
+    }
 }
