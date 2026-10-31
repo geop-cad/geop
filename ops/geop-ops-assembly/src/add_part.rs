@@ -125,7 +125,9 @@ impl PartOperation for AddPart {
     type Session = PartSession;
 
     /// No file yet; the first part placed is fixed, the ones after it are
-    /// not — something has to stay put for the others to mate to.
+    /// not — something has to stay put for the others to mate to — until
+    /// a joint or a constraint is chosen for it, which then holds it (see
+    /// [`crate::editor`]).
     fn new_args(context: &Context) -> AddPartArgs {
         let args = AddPartArgs::default();
         match instances(&context.before).is_ok_and(|placed| placed.is_empty()) {

@@ -776,6 +776,13 @@ pub(crate) fn form<'a>(
             .collect(),
         |edit, name| {
             if let Some((_, kind, _, _)) = kinds().iter().find(|(n, ..)| *n == name) {
+                // A part is held where it is or by its mates, not both: a
+                // joint or a constraint chosen for it holds it, and the
+                // part held fixed — the first placed is, by default —
+                // could move on none of it.
+                if matches!(kind, MateKind::Joint(_) | MateKind::Constraint(_)) {
+                    edit.args.set_fixed(false);
+                }
                 let id = fresh_mate_id(&edit.args.mates);
                 let mate = Mate {
                     kind: *kind,
