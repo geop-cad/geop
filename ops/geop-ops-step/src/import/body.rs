@@ -3150,7 +3150,7 @@ fn heal(
             let fs = kept(&faces_of_vertex[v], &rebuild);
             let apart = match &vertex_apart[v] {
                 Some((measured, apart)) if *measured == fs => *apart,
-                _ => furthest(at, &fs).map_err(&vctx)?,
+                _ => furthest(at, &fs).map_err(vctx)?,
             };
             vertex_apart[v] = Some((fs.clone(), apart));
             if 2.0 * apart <= ACCURACY {
@@ -3160,7 +3160,7 @@ fn heal(
                 .iter()
                 .map(|&e| chord(&edges[e], vertices))
                 .fold(f64::INFINITY, f64::min);
-            let Some(healed) = settle(at, &fs, shortest / 2.0, &mut rebuild).map_err(&vctx)? else {
+            let Some(healed) = settle(at, &fs, shortest / 2.0, &mut rebuild).map_err(vctx)? else {
                 // Every face of it rebuilt: through it, where it is.
                 continue;
             };
@@ -3204,13 +3204,13 @@ fn heal(
             // middle.
             let length = chord(&edges[e], vertices);
             let middle =
-                settle(at(0.5).map_err(&ectx)?, &fs, length / 2.0, &mut rebuild).map_err(&ectx)?;
+                settle(at(0.5).map_err(ectx)?, &fs, length / 2.0, &mut rebuild).map_err(ectx)?;
             if !apply {
                 continue;
             }
             let fs = kept(&fs, &rebuild);
             // How far its ends move with its vertices.
-            let ends = [at(0.0).map_err(&ectx)?, at(1.0).map_err(&ectx)?];
+            let ends = [at(0.0).map_err(ectx)?, at(1.0).map_err(ectx)?];
             let shifts = [
                 sub(vertices[start].origin.to_f64_array(), ends[0]),
                 sub(vertices[end].origin.to_f64_array(), ends[1]),
@@ -3265,7 +3265,7 @@ fn heal(
                     let mut points = vec![vertices[start].origin];
                     for k in 1..samples {
                         let f = k as f64 / samples as f64;
-                        points.push(s3(onto(at(f).map_err(&ectx)?, f).map_err(&ectx)?));
+                        points.push(s3(onto(at(f).map_err(ectx)?, f).map_err(ectx)?));
                     }
                     points.push(vertices[end].origin);
                     let rebuilt = NurbCurve3D::interpolate(&points, 3).map_err(|err| {
@@ -3283,8 +3283,8 @@ fn heal(
                     let mut strays = 0.0f64;
                     for k in 0..samples {
                         let t = r0 + (r1 - r0) * (k as f64 + 0.5) / samples as f64;
-                        let p = super::geometry::point_at(&rebuilt, t).map_err(&ectx)?;
-                        strays = strays.max(furthest(p, &fs).map_err(&ectx)?);
+                        let p = super::geometry::point_at(&rebuilt, t).map_err(ectx)?;
+                        strays = strays.max(furthest(p, &fs).map_err(ectx)?);
                     }
                     if strays <= scope.uncertainty {
                         return Ok(Refine::Done(rebuilt));

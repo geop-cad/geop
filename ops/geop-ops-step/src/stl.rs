@@ -144,7 +144,7 @@ pub fn read_stl(file: &[u8]) -> GeopResult<(Vec<Vector3>, Vec<[usize; 3]>)> {
     if let Some(count) = count
         && file.len() == 84 + 50 * count
     {
-        for (k, facet) in file[84..].chunks_exact(50).enumerate() {
+        for (k, facet) in file[84..].as_chunks::<50>().0.iter().enumerate() {
             let corner = |c: usize| {
                 let at = 12 + 12 * c;
                 [0, 1, 2].map(|i| {

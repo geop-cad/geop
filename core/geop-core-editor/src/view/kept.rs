@@ -120,7 +120,8 @@ impl Mesh {
     }
 
     fn mesh(self) -> GeopResult<FaceMesh> {
-        let corners: Vec<[Scalar; 6]> = (from_base64(&self.corners)?.chunks_exact(48))
+        let corner_bytes = from_base64(&self.corners)?;
+        let corners: Vec<[Scalar; 6]> = (corner_bytes.as_chunks::<48>().0.iter())
             .map(|corner| {
                 std::array::from_fn(|k| {
                     let bytes = corner.get(8 * k..8 * k + 8).unwrap_or_default();
@@ -134,7 +135,8 @@ impl Mesh {
             (corners.get(at as usize)).ok_or_else(|| broken("a mesh's corners"))
         };
         let (mut triangles, mut normals) = (Vec::new(), Vec::new());
-        for triangle in from_base64(&self.triangles)?.chunks_exact(12) {
+        let triangle_bytes = from_base64(&self.triangles)?;
+        for triangle in triangle_bytes.as_chunks::<12>().0 {
             let [a, b, c] = [0, 4, 8].map(|k| corner(triangle.get(k..k + 4).unwrap_or_default()));
             let [a, b, c] = [a?, b?, c?];
             let point = |c: &[Scalar; 6]| Vector3::from_array([c[0], c[1], c[2]]);
