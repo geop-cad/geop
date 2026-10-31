@@ -33,7 +33,10 @@ use crate::{
     AddPartArgs, DragTool, JointsCommand, JointsPanel, Kind, Mate, Motion, Resolved,
     joint_parameter,
     solving::{Report, check as check_mates},
-    testing::robot_arm::{ARM, RobotArm, robot_arm},
+    testing::{
+        duck::{DUCK, MOUTH, MOUTH_TOP, duck},
+        robot_arm::{ARM, RobotArm, robot_arm},
+    },
 };
 use geop_core_editor::editing::{Pointer, Reach, StepEditEvent};
 use geop_core_math::{
@@ -650,8 +653,14 @@ pub(crate) fn arm_editor(arm: &RobotArm) -> Editor {
 /// [`arm_editor`], what its files are made into kept in `cache`: a
 /// process's, kept on its shelf, which a second editor reopens from.
 fn arm_editor_in(arm: &RobotArm, cache: Cache) -> Editor {
-    let mut files = robot_arm(arm);
-    let top = Program::from_json(&files.remove(ARM).unwrap()).unwrap();
+    editor_of(robot_arm(arm), ARM, cache)
+}
+
+/// The editor editing the file `path` of `files`, with every file sent,
+/// what they are made into kept in `cache`, its mates holding where its
+/// state has the parts.
+fn editor_of(mut files: BTreeMap<String, String>, path: &str, cache: Cache) -> Editor {
+    let top = Program::from_json(&files.remove(path).unwrap()).unwrap();
     let mut editor = Editor::with_cache(registry(), WithStandardParts(BTreeMap::new()), cache);
     handled(
         &mut editor,
@@ -663,7 +672,7 @@ fn arm_editor_in(arm: &RobotArm, cache: Cache) -> Editor {
         &mut editor,
         Command::Load {
             program: top,
-            path: Some(ARM.into()),
+            path: Some(path.into()),
         },
     );
     let steps = update.program.unwrap().steps;
@@ -674,17 +683,17 @@ fn arm_editor_in(arm: &RobotArm, cache: Cache) -> Editor {
     let report = check_mates(&editor.part()).unwrap();
     assert!(
         report.converged,
-        "the arm is loaded as its mates hold it: {report:?}"
+        "{path} is loaded as its mates hold it: {report:?}"
     );
     editor
 }
 
-/// A pointer straight down onto the wrist — the last link of `arm` — near
-/// its far end, where nothing stands on it, moved `by` in the world.
-fn onto_wrist(editor: &Editor, arm: &RobotArm, by: [f64; 2]) -> Pointer {
-    let wrist = pose_of_state(editor, &pose_state(&RobotArm::link(arm.axes)));
-    let local = Vector3::from_array([212.0, 18.0, 20.0].map(Scalar::from_f64));
-    let at = wrist.apply(&local).to_array().map(|c| c.to_f64());
+/// A pointer straight down onto the point `local` of the part placed at
+/// `path`, where the editor's part has it, moved `by` in the world.
+fn onto(editor: &Editor, path: &str, local: [f64; 3], by: [f64; 2]) -> Pointer {
+    let world = locate(&editor.part(), path).unwrap().world;
+    let local = Vector3::from_array(local.map(Scalar::from_f64));
+    let at = world.apply(&local).to_array().map(|c| c.to_f64());
     let v = |p: [f64; 3]| Vector3::from_array(p.map(Scalar::from_f64));
     Pointer {
         cycle: 0,
@@ -719,6 +728,8 @@ struct DragCost {
     forms: usize,
     /// The steps run, of every program run.
     steps: usize,
+    /// The faces meshed.
+    meshed: usize,
     resolved: usize,
     work: u64,
     /// The bytes of what the front end was sent.
@@ -733,15 +744,25 @@ struct DragCost {
     report: Report,
 }
 
-/// Drags the wrist of `arm` — grabbed near its far end — through the
-/// points `by` it is moved by in the world, the way the front end drags:
-/// the drag tool grabs the wrist under the pointer, and each event of the
-/// drag is answered. What each event cost.
+/// Where the wrist is grabbed, in its own frame: near its far end, where
+/// nothing stands on it.
+const WRIST: [f64; 3] = [212.0, 18.0, 20.0];
+
+/// Drags the wrist of `arm` — grabbed at [`WRIST`] — through the points
+/// `by` it is moved by in the world (see [`drag_part`]).
 fn drag_wrist(editor: &mut Editor, arm: &RobotArm, by: &[[f64; 2]]) -> Vec<DragCost> {
+    drag_part(editor, &RobotArm::link(arm.axes), WRIST, by)
+}
+
+/// Drags the part placed at `path` — grabbed at its point `local` — through
+/// the points `by` it is moved by in the world, the way the front end
+/// drags: the drag tool grabs the part under the pointer, and each event
+/// of the drag is answered. What each event cost.
+fn drag_part(editor: &mut Editor, path: &str, local: [f64; 3], by: &[[f64; 2]]) -> Vec<DragCost> {
     editor.handle(Command::Tool {
         key: Some("drag".into()),
     });
-    let from = onto_wrist(editor, arm, [0.0, 0.0]);
+    let from = onto(editor, path, local, [0.0, 0.0]);
     let update = editor.handle(Command::Event {
         event: StepEditEvent::Hover {
             pointer: from,
@@ -750,9 +771,9 @@ fn drag_wrist(editor: &mut Editor, arm: &RobotArm, by: &[[f64; 2]]) -> Vec<DragC
     });
     assert!(
         update.tool.expect("the drag tool is in hand").grab,
-        "the wrist is under the pointer"
+        "{path} is under the pointer"
     );
-    let targets: Vec<Pointer> = by.iter().map(|&by| onto_wrist(editor, arm, by)).collect();
+    let targets: Vec<Pointer> = by.iter().map(|&by| onto(editor, path, local, by)).collect();
     let mut costs = Vec::new();
     for (k, &to) in targets.iter().enumerate() {
         let before = (
@@ -761,6 +782,7 @@ fn drag_wrist(editor: &mut Editor, arm: &RobotArm, by: &[[f64; 2]]) -> Vec<DragC
             geop_lib_constraints::constraint::made_again(),
             geop_core_editor::editable::forms_listed(),
             geop_core_program::runner::steps_run(),
+            geop_core_rasterize::faces_meshed(),
         );
         let state = editor.program().state.clone();
         let start = cpu_seconds();
@@ -791,6 +813,7 @@ fn drag_wrist(editor: &mut Editor, arm: &RobotArm, by: &[[f64; 2]]) -> Vec<DragC
             made: geop_lib_constraints::constraint::made_again() - before.2,
             forms: geop_core_editor::editable::forms_listed() - before.3,
             steps: geop_core_program::runner::steps_run() - before.4,
+            meshed: geop_core_rasterize::faces_meshed() - before.5,
             resolved: crate::mates_resolved() - before.0,
             work: report.work,
             bytes,
@@ -1116,8 +1139,8 @@ fn latency_on_the_robot_arm() {
         key: Some("drag".into()),
     });
     let (here, there) = (
-        onto_wrist(&editor, &arm, [0.0, 0.0]),
-        onto_wrist(&editor, &arm, [1.0, 0.0]),
+        onto(&editor, &RobotArm::link(arm.axes), WRIST, [0.0, 0.0]),
+        onto(&editor, &RobotArm::link(arm.axes), WRIST, [1.0, 0.0]),
     );
     let (hover, update) = timed(|| {
         editor.handle(Command::Event {
@@ -1174,4 +1197,38 @@ fn latency_on_the_robot_arm() {
     }
     let (commit, update) = timed(|| editor.handle(Command::Commit));
     println!("  commit {:.1} ms, {}", commit * 1e3, size(&update));
+}
+
+/// The editor editing the duck (see [`crate::testing::duck`]).
+fn duck_editor() -> Editor {
+    editor_of(duck(), DUCK, Cache::new())
+}
+
+/// Dragging the duck's mouth — placed in the head, placed in the neck —
+/// meshes no face and sends no component again: the mouth moves, and is
+/// all that is sent. A placed part's drawing drew the parts placed in it
+/// too, so it read where they are: every event of the drag drew the head
+/// and the neck again, meshing their 14 faces, and sent both components
+/// anew — 0.18 s of CPU an event here, a second on the user's duck, whose
+/// head is a subdivision surface. Counted, not timed.
+#[test]
+fn dragging_a_part_placed_deep_draws_no_part_again() {
+    let mut editor = duck_editor();
+    let costs = drag_part(&mut editor, MOUTH, MOUTH_TOP, &DRAG);
+    for (k, cost) in costs.iter().enumerate() {
+        println!(
+            "event {k}: {:.3} s, {} faces meshed, {} steps run, {}",
+            cost.seconds,
+            cost.meshed,
+            cost.steps,
+            size(&cost.update)
+        );
+        assert!(cost.report.converged, "{:?}", cost.report.failed);
+        assert_eq!(cost.meshed, 0, "event {k}: faces meshed");
+        let scene = cost.update.scene.as_ref().expect("the mouth moved");
+        let components: Vec<&String> = scene.components.keys().collect();
+        assert!(components.is_empty(), "event {k}: sent {components:?}");
+        let sent: Vec<&str> = scene.instances.iter().map(|i| i.name.as_str()).collect();
+        assert_eq!(sent, [MOUTH], "event {k}");
+    }
 }

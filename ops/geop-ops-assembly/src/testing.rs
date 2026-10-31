@@ -1,8 +1,9 @@
 //! What the tests of what reads placed parts share: parts made in Rust as
 //! the programs of a workspace ([`Shelf`]), each giving its model
 //! ([`GivenModel`]) and placing others ([`Place`]); and the assembly a
-//! large robot is ([`robot_arm`]).
+//! large robot is ([`robot_arm`]), and one nested as a toy duck is ([`duck`]).
 
+pub mod duck;
 pub mod robot_arm;
 
 use geop_core_program::{
