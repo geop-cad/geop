@@ -65,9 +65,9 @@ use geop_core_math::{
     solvers::walk::{Walked, walk},
     vector::Vector3,
 };
+use geop_core_program::placed::{instance_path, split_instance_path};
 use geop_core_rasterize::stl::StlFormat;
 use geop_core_topology::mass::MassProperties;
-use geop_core_program::placed::{instance_path, split_instance_path};
 use geop_ops_model::parameters::{Placement, stem};
 use geop_ops_model::placed::{
     drawn, placed_parts,

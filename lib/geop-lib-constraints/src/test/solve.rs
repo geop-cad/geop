@@ -213,7 +213,11 @@ fn a_limit_stops_a_pull() {
     // only to the square root of the sum's precision (some 1e-15 of 9).
     let [x, y, z] = where_is(&solved.state, "body");
     let off = [x - 2.0, y - 1.0, z].map(f64::abs);
-    assert!(off.iter().all(|d| *d < 1e-7), "the body is at {:?}", [x, y, z]);
+    assert!(
+        off.iter().all(|d| *d < 1e-7),
+        "the body is at {:?}",
+        [x, y, z]
+    );
 }
 
 /// Two pins of one body to different frames cannot both hold: the solve

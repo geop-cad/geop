@@ -303,7 +303,8 @@ impl Program {
         }
         for (name, value) in pasted.state {
             if own.iter().any(|id| names_step(&name, id)) {
-                self.state.insert(rename_steps(&name, &renamed, true), value);
+                self.state
+                    .insert(rename_steps(&name, &renamed, true), value);
             }
         }
         Ok(ids)

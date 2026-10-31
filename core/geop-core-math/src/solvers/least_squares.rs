@@ -681,7 +681,8 @@ pub async fn minimize<P: Space>(
                             // sizes at a time.
                             let held = |old: Scalar, predicted: Scalar, new: Scalar| {
                                 let gained = old.sub(new).mul(Scalar::from_i64(4));
-                                gained.definitely_greater(old.sub(predicted).mul(Scalar::from_i64(3)))
+                                gained
+                                    .definitely_greater(old.sub(predicted).mul(Scalar::from_i64(3)))
                             };
                             let linear = theta.definitely_greater(Scalar::ZERO)
                                 && held(theta, predicted, norm(&e_next.constraints.values)?);

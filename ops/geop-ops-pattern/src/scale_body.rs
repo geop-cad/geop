@@ -149,7 +149,9 @@ fn imprecise(model: &NamedModel) -> Vec<String> {
         &mut errors,
         model.topology(),
     );
-    (errors.iter()).map(|e| e.root_message().to_string()).collect()
+    (errors.iter())
+        .map(|e| e.root_message().to_string())
+        .collect()
 }
 
 #[cfg(test)]

@@ -72,8 +72,9 @@ impl Build {
             return None;
         }
         Some(match self.errors.iter().next() {
-            Some((step, error)) => (error.clone())
-                .with_context(format!("an earlier step, `{step}`, failed")),
+            Some((step, error)) => {
+                (error.clone()).with_context(format!("an earlier step, `{step}`, failed"))
+            }
             None => GeopError::new("it did not run"),
         })
     }

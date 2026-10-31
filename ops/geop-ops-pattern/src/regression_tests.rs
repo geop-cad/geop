@@ -156,8 +156,13 @@ fn a_drilled_sphere_scaled_ten_thousand_times() {
         "hole",
         PrimitiveArgs::cylinder_z([0.0, 0.0, -2.0], 0.3, 4.0).cut("sphere(ball)"),
     );
-    let error = scaled(&drilled, "cylinder(hole)", 1e4).unwrap_err().to_string();
-    assert!(error.contains("not as precise as the kernel needs"), "{error}");
+    let error = scaled(&drilled, "cylinder(hole)", 1e4)
+        .unwrap_err()
+        .to_string();
+    assert!(
+        error.contains("not as precise as the kernel needs"),
+        "{error}"
+    );
     assert!(error.contains("wide"), "{error}");
     let mut block = Program::new();
     block.push("b", PrimitiveArgs::block([0.0; 3], [0.5; 3]));

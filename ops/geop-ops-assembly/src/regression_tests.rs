@@ -297,6 +297,9 @@ fn a_part_mated_from_far_away_is_brought_onto_its_mates() {
         };
         let to = pose.position().to_f64_array();
         let off = (to.iter().zip([1.5, 0.0, 1.0])).map(|(a, b)| (a - b).abs());
-        assert!(off.fold(0.0, f64::max) < 1e-6, "from {at:?}, the cube is at {to:?}");
+        assert!(
+            off.fold(0.0, f64::max) < 1e-6,
+            "from {at:?}, the cube is at {to:?}"
+        );
     }
 }

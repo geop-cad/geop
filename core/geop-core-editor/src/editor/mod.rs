@@ -1380,9 +1380,11 @@ impl Editor {
                 part: &within.part,
                 outside: self.build.part.placing(&within.instance),
             };
-            let pulls = (open.editor.form(editors, &within.runner, against, &open.program))
-                .map(|form| form.pulls)
-                .unwrap_or_default();
+            let pulls = (open
+                .editor
+                .form(editors, &within.runner, against, &open.program))
+            .map(|form| form.pulls)
+            .unwrap_or_default();
             if !pulls.is_empty() {
                 let mut part = (*within.part).clone();
                 let mut rerun = Rerun {
