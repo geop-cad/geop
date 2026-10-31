@@ -139,6 +139,16 @@ fn section_curve<const D: usize>(points: &[Vector<D>; 4], c: usize) -> GeopResul
 
 /// The flat cap on `cap`'s plane holding its section (see [`FlatPatch`]),
 /// facing out of the tool, and the section's curves in its parameters.
+///
+/// The patch reaches a third of its size past the section on every side
+/// ([`FlatPatch::grown`]). A cap ends a tool flush with a face of the
+/// solid, and the box around the section has its sides through the
+/// contacts, where a blend of the same radius along another edge of that
+/// face has its contact: two fillets meeting where a pocket's upright edge
+/// runs into its floor, the upright one's contact on the wall running
+/// along the floor fillet's cap's side. The boolean then had a line of the
+/// solid running along the cap's patch boundary, a few `1e-12` off it, which
+/// no search can tell from an overlap.
 fn cap_face(cap: &Cap) -> GeopResult<(NurbSurface3D, [NurbCurve2D; 3])> {
     let curves = [
         section_curve(&cap.flat, 0)?,
@@ -146,7 +156,7 @@ fn cap_face(cap: &Cap) -> GeopResult<(NurbSurface3D, [NurbCurve2D; 3])> {
         section_curve(&cap.flat, 2)?,
     ];
     let [o, e1, e2] = cap.plane;
-    let patch = FlatPatch::around(o, e1, e2, &curves, false)?;
+    let patch = FlatPatch::around(o, e1, e2, &curves, false)?.grown(1.0 / 3.0);
     Ok((
         patch.surface()?,
         [

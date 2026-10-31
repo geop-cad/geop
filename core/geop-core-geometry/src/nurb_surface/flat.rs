@@ -47,19 +47,7 @@ impl FlatPatch {
             .ok_or_else(|| GeopError::new("FlatPatch::around: no curves to span"))?;
         let lo: [f64; 2] = std::array::from_fn(|k| bounds[k].lower().to_f64());
         let hi: [f64; 2] = std::array::from_fn(|k| bounds[k].upper().to_f64());
-        // The corners are a free choice, so sharp; the size has to reach
-        // `hi`: `hi - lo` in plain numbers, unless that rounds so far down
-        // that `lo + size` falls definitely short of `hi`, and then the
-        // upper bound of `hi - lo`.
-        let size = std::array::from_fn(|k| {
-            let (from, to) = (Scalar::from_f64(lo[k]), Scalar::from_f64(hi[k]));
-            let plain = Scalar::from_f64(hi[k] - lo[k]);
-            if from.add(plain).definitely_less(to) {
-                to.sub(from).upper()
-            } else {
-                plain
-            }
-        });
+        let size = std::array::from_fn(|k| reaching(lo[k], hi[k]));
         Ok(Self {
             origin,
             e1,
@@ -68,6 +56,28 @@ impl FlatPatch {
             size: Vector2::from_array(size),
             swapped,
         })
+    }
+
+    /// The patch grown on every side by `fraction` of its larger size, so
+    /// that its sides stay clear of the curves it was made around.
+    ///
+    /// The box's sides pass through the curves' extreme points, and a line
+    /// of another body lying in the plane through such a point, along the
+    /// box's side, runs along the patch's boundary to within rounding: where
+    /// the two enclosures miss each other by less than their widths, no
+    /// search can tell that apart from an overlap. Where the patch ends is a
+    /// free choice; this one keeps it away from where the curves are.
+    pub fn grown(&self, fraction: f64) -> Self {
+        let margin = self.size[0].to_f64().max(self.size[1].to_f64()) * fraction;
+        let lo: [f64; 2] = std::array::from_fn(|k| self.lo[k].to_f64() - margin);
+        let hi: [f64; 2] =
+            std::array::from_fn(|k| self.lo[k].add(self.size[k]).upper().to_f64() + margin);
+        let size = std::array::from_fn(|k| reaching(lo[k], hi[k]));
+        Self {
+            lo: Vector2::from_array(lo.map(Scalar::from_f64)),
+            size: Vector2::from_array(size),
+            ..self.clone()
+        }
     }
 
     /// How far the patch reaches along the plane's two axes: its lowest
@@ -119,6 +129,20 @@ impl FlatPatch {
         } else {
             NurbSurface3D::bilinear(corner(0, 0), corner(1, 0), corner(1, 1), corner(0, 1))
         }
+    }
+}
+
+/// The size of a patch side from `lo` that reaches `hi`. The corners are a
+/// free choice, so sharp; the size has to reach `hi`: `hi - lo` in plain
+/// numbers, unless that rounds so far down that `lo + size` falls
+/// definitely short of `hi`, and then the upper bound of `hi - lo`.
+fn reaching(lo: f64, hi: f64) -> Scalar {
+    let (from, to) = (Scalar::from_f64(lo), Scalar::from_f64(hi));
+    let plain = Scalar::from_f64(hi - lo);
+    if from.add(plain).definitely_less(to) {
+        to.sub(from).upper()
+    } else {
+        plain
     }
 }
 

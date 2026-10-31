@@ -1631,3 +1631,71 @@ fn fillet_of_a_cross_hole_rim_breaking_out_through_the_top() {
     );
     assert_builds_valid_with(&program, sketch_chamfer_registry);
 }
+
+/// A plate 10 thick with a pocket 6.91 deep, at the report's coordinates,
+/// one of the pocket's upright edges rounded with the floor edge it stands
+/// on, by 1 (the report rounded the next upright edge too). The floor
+/// edge's tool ends flush with the wall the upright edge's fillet touches,
+/// along a line 1 from the corner, and that is where the side of the cap's
+/// patch, the box around its section, was: the union of the floor edge's
+/// tool ran out of nodes searching the fillet's edge `tb` against the
+/// patch, the two enclosures `1.6e-12` apart, each `6e-12` wide (see
+/// `cap_face`).
+#[test]
+fn fillet_of_a_pockets_upright_edge_and_the_floor_edge_it_stands_on() {
+    // The rectangle from `[x1, y1]` round to `[x0, y1]`, `[x0, y0]` and
+    // `[x1, y0]`, as the report drew it.
+    let rectangle = |[x0, y0]: [f64; 2], [x1, y1]: [f64; 2]| {
+        let mut sketch = Sketch::new();
+        let corners =
+            [[x1, y1], [x0, y1], [x0, y0], [x1, y0]].map(|[x, y]| sketch.add_point(n(x), n(y)));
+        for k in 0..4 {
+            let line = sketch.add_line(corners[k], corners[(k + 1) % 4]);
+            sketch.constrain(if k % 2 == 0 {
+                Constraint::Horizontal { line }
+            } else {
+                Constraint::Vertical { line }
+            });
+        }
+        sketch
+    };
+    let mut program = Program::new();
+    program.push(
+        "sketch1",
+        AddSketchArgs::on(
+            on_origin(FrameAxis::Z),
+            rectangle(
+                [-80.93526558639849, -79.24911422001517],
+                [80.93526558639849, 79.24911422001517],
+            ),
+        ),
+    );
+    program.push("extrude1", extrude("sketch1", 10.0, false));
+    program.push(
+        "sketch2",
+        AddSketchArgs::on(
+            on_face("extrude(extrude1,end)"),
+            rectangle(
+                [-51.98918128689173, -13.256205587095899],
+                [17.191641620765004, 48.468001677819366],
+            ),
+        ),
+    );
+    program.push(
+        "extrude2",
+        extrusion(
+            "sketch2",
+            Extents::blind(-6.91),
+            Combine::cut("extrude(extrude1)"),
+        ),
+    );
+    let edges = [
+        "extrude(extrude2,sketch2,p1)",
+        "extrude(extrude2,sketch2,c4,end)",
+    ];
+    program.push(
+        "round",
+        FilletArgs::constant(edges.map(String::from).to_vec(), 1.0),
+    );
+    assert_builds_valid_with(&program, blade_registry);
+}
