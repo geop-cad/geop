@@ -840,10 +840,10 @@ export interface StructureItem {
 export interface SceneState {
   /** The part, without the parts placed in it. */
   part: SentPartView;
-  /** What the part has beyond its faces, to list and show or hide. */
-  structure: StructureItem[];
-  /** Sketches and datums, by name, not to draw. */
-  hidden: string[];
+  /** What the part has beyond its faces, to list and show or hide: null where it is as the last scene sent it. */
+  structure: StructureItem[] | null;
+  /** Sketches and datums, by name, not to draw: null where they are as the last scene sent them. */
+  hidden: string[] | null;
   /** The placed parts new, moved or drawn from another component since the last scene — every one, if `all`. */
   instances: ViewInstance[];
   /** Whether the scene is all there is: forget any other placed parts, and every component and mesh kept. */

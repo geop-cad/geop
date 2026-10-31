@@ -1282,6 +1282,7 @@ fn a_part_exported_as_step_is_imported_back() {
         .scene
         .expect("the scene changed")
         .structure
+        .expect("sent")
         .into_iter()
         .filter(|item| item.kind == "solid")
         .map(|item| item.name)

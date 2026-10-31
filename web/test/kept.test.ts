@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import type { FaceMesh, SceneState, SentFaceMesh, SentPartView } from "../src/geop.ts";
+import type { FaceMesh, SceneState, SentFaceMesh, SentPartView, StructureItem, ViewInstance } from "../src/geop.ts";
 import { applyScene, NOTHING_PLACED, readMesh } from "../src/kept.ts";
 
 /** A mesh of one triangle at height `z`. */
@@ -146,4 +146,40 @@ test("the first update ever, of an empty part, is drawn with the origin and noth
     delta.scene.part.datums.map((d) => d.name),
     ["origin"],
   );
+});
+
+test("a drag's scene moves what it sends and keeps the rest: the parts that did not move, the structure, the names hidden", () => {
+  const at = (x: number) => ({ origin: [x, 0, 0], u: [1, 0, 0], v: [0, 1, 0], w: [0, 0, 1] }) as ViewInstance["frame"];
+  const listed: StructureItem = {
+    kind: "datum",
+    kind_label: "Datums",
+    name: "origin",
+    detail: null,
+    visible: true,
+    elements: [],
+  };
+  const first = applyScene(NOTHING_PLACED, {
+    ...scene([], {}, { all: true }),
+    structure: [listed],
+    hidden: ["outline"],
+    instances: [
+      { name: "link", component: "c", frame: at(0) },
+      { name: "base", component: "c", frame: at(0) },
+    ],
+  });
+  const base = first.placed.instances.get("base");
+  // As the kernel sends an event of a drag: the part moved, nothing else.
+  const moved = applyScene(first.placed, {
+    ...scene([], {}),
+    structure: null,
+    hidden: null,
+    instances: [{ name: "link", component: "c", frame: at(1) }],
+  });
+  assert.equal(moved.placed.instances.get("base"), base);
+  assert.deepEqual(moved.placed.instances.get("link")?.frame.origin, [1, 0, 0]);
+  assert.deepEqual(moved.scene.structure, [listed]);
+  assert.deepEqual(moved.scene.hidden, ["outline"]);
+  // Sent again, they are as sent.
+  const shown = applyScene(moved.placed, { ...scene([], {}), structure: [], hidden: [] });
+  assert.deepEqual([shown.scene.structure, shown.scene.hidden], [[], []]);
 });

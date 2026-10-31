@@ -833,6 +833,11 @@ that is cubic in the parts. What fixed it, and what to keep doing:
   by name, and made when opened or read.
 - Guard scaling with a count (`geop_ops_assembly::mates_resolved`), not
   a time: a quadratic shows at 80 parts as clearly as at 2000.
+- What is answered as often as the pointer moves sends what changed. An
+  event of a drag changes the state alone (`Changed::State`): it sends
+  the parts it moved, and the program once the drag is let go; a scene
+  sends its structure and hidden names only where they changed. Every
+  event sent all of it, 4.8 MB at 2000 parts, for an arm that moved.
 
 Timings mislead. Two builds of the same code differ by up to 30% (how
 code is split into codegen units), and other jobs on the machine slow

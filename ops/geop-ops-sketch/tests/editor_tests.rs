@@ -2076,10 +2076,9 @@ fn the_structure_is_listed_and_shown_as_chosen() {
         program: drilled_box(),
         path: None,
     });
-    let scene = update.scene.unwrap();
+    let structure = update.scene.unwrap().structure.expect("sent");
     let listed = |kind: &str| -> Vec<(String, Option<bool>)> {
-        scene
-            .structure
+        structure
             .iter()
             .filter(|i| i.kind == kind)
             .map(|i| (i.name.clone(), i.visible))
@@ -2107,12 +2106,10 @@ fn the_structure_is_listed_and_shown_as_chosen() {
         );
         let scene = update.scene.expect("what is hidden changed");
         assert!(
-            scene
-                .structure
-                .iter()
+            (scene.structure.expect("sent").iter())
                 .any(|i| i.name == name && i.visible == Some(visible))
         );
-        scene.hidden
+        scene.hidden.expect("sent")
     };
     let hidden = shown(&mut editor, "outline", true);
     assert!(!hidden.contains(&"outline".to_string()));

@@ -1325,7 +1325,14 @@ fn drags_around_the_fold_take_few_steps() {
 #[test]
 fn placed_datums_show_only_while_a_mate_picks() {
     let mut editor = editor_on(examples::pin_in_plate_assembly());
-    let hidden = |editor: &mut Editor| editor.handle(Command::Show).scene.unwrap().hidden;
+    let hidden = |editor: &mut Editor| {
+        editor
+            .handle(Command::Show)
+            .scene
+            .unwrap()
+            .hidden
+            .expect("sent")
+    };
     let origins = ["/pin:origin".to_string(), "/plate:origin".to_string()];
     let shown = hidden(&mut editor);
     assert!(origins.iter().all(|o| shown.contains(o)), "{shown:?}");

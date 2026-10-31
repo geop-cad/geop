@@ -229,7 +229,13 @@ impl Session {
         };
         let update = self.editor.handle(command);
         if let Some(scene) = &update.scene {
-            self.scene = Some(scene.clone());
+            // What a scene does not send again is as the last sent it.
+            let mut scene = scene.clone();
+            if let Some(last) = self.scene.take() {
+                scene.hidden = scene.hidden.or(last.hidden);
+                scene.structure = scene.structure.or(last.structure);
+            }
+            self.scene = Some(scene);
         }
         if let Some(program) = &update.program {
             self.shown = Some(program.clone());
@@ -543,7 +549,7 @@ impl Session {
         let datums: Vec<Value> = (part.datums.iter())
             .map(|d| json!({ "name": d.name, "kind": d.kind }))
             .collect();
-        let structure: Vec<Value> = (scene.structure.iter())
+        let structure: Vec<Value> = (scene.structure.iter().flatten())
             .map(|item| json!({ "kind": item.kind, "name": item.name }))
             .collect();
         // Every part placed, not only those the last scene sent anew.

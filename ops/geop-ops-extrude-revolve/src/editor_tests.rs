@@ -378,7 +378,7 @@ fn new_steps_handles_are_dragged_in_steps() {
 #[test]
 fn new_steps_pick_their_first_input() {
     let (mut editor, update) = editor();
-    let hidden = update.scene.unwrap().hidden;
+    let hidden = update.scene.unwrap().hidden.expect("sent");
     assert!(hidden.contains(&"outline".to_string()));
     assert!(hidden.contains(&"hole_sketch".to_string()));
 
@@ -409,7 +409,7 @@ fn new_steps_pick_their_first_input() {
     assert!(update.step.unwrap().presentation.pickable.is_empty());
     let update = editor.handle(dialog("sketch", Value::Press));
     assert_eq!(update.step.unwrap().presentation.pickable, [drawn::SKETCH]);
-    assert!(update.scene.unwrap().hidden.is_empty());
+    assert!(update.scene.unwrap().hidden.expect("sent").is_empty());
 }
 
 /// Choosing to cut sticks while the distance changes on the same side of
@@ -735,7 +735,9 @@ fn sweep_with_rails_twist_and_orientation() {
     );
     let solids = |update: &Update| {
         let scene = update.scene.as_ref().expect("a scene");
-        scene.structure.iter().filter(|i| i.kind == "solid").count()
+        (scene.structure.iter().flatten())
+            .filter(|i| i.kind == "solid")
+            .count()
     };
     assert_eq!(solids(&update), 1);
 

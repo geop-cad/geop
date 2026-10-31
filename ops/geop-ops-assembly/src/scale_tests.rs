@@ -721,6 +721,15 @@ struct DragCost {
     steps: usize,
     resolved: usize,
     work: u64,
+    /// The bytes of what the front end was sent.
+    bytes: usize,
+    /// The CPU seconds the event took, sending it included.
+    seconds: f64,
+    /// The update the front end was sent.
+    update: Update,
+    /// The placed parts whose pose the event changed in the program's
+    /// state, by name.
+    moved: BTreeSet<String>,
     report: Report,
 }
 
@@ -753,7 +762,9 @@ fn drag_wrist(editor: &mut Editor, arm: &RobotArm, by: &[[f64; 2]]) -> Vec<DragC
             geop_core_editor::editable::forms_listed(),
             geop_core_program::runner::steps_run(),
         );
-        handled(
+        let state = editor.program().state.clone();
+        let start = cpu_seconds();
+        let update = handled(
             editor,
             Command::Event {
                 event: StepEditEvent::Drag {
@@ -764,6 +775,13 @@ fn drag_wrist(editor: &mut Editor, arm: &RobotArm, by: &[[f64; 2]]) -> Vec<DragC
                 },
             },
         );
+        let bytes = serde_json::to_string(&update).unwrap().len();
+        let seconds = cpu_seconds() - start;
+        let after = &editor.program().state;
+        let moved = (after.iter())
+            .filter(|(key, value)| state.get(*key) != Some(*value))
+            .filter_map(|(key, _)| key.strip_suffix(".pose").map(str::to_string))
+            .collect();
         let report = (editor.tool::<DragTool>())
             .and_then(DragTool::dragged)
             .cloned()
@@ -775,6 +793,10 @@ fn drag_wrist(editor: &mut Editor, arm: &RobotArm, by: &[[f64; 2]]) -> Vec<DragC
             steps: geop_core_program::runner::steps_run() - before.4,
             resolved: crate::mates_resolved() - before.0,
             work: report.work,
+            bytes,
+            seconds,
+            update,
+            moved,
             report,
         });
     }
@@ -897,7 +919,12 @@ fn drag_work_grows_with_the_moving_links_not_the_screws() {
     let [few, many] = &costs[..] else {
         unreachable!()
     };
-    println!("{few:?}\n{many:?}");
+    for cost in few.iter().chain(many) {
+        println!(
+            "{} runs, {} resolved, work {}, {:?}",
+            cost.runs, cost.resolved, cost.work, cost.report
+        );
+    }
     for (k, (few, many)) in few.iter().zip(many).enumerate() {
         assert_eq!((few.resolved, many.resolved), (0, 0), "event {k}");
         assert!(few.runs <= 1, "event {k}: {} program runs", few.runs);
@@ -969,7 +996,12 @@ fn robot_arm_timings() {
         for (k, cost) in costs.iter().enumerate() {
             assert!(cost.report.converged, "{:?}", cost.report.failed);
             println!(
-                "  drag event {k}: {} program runs, {} constraint steps made again, {} forms listed, {} steps run, {} mates resolved, work {}, largest group {} variables, {} solve and {} enclosure evaluations",
+                "  drag event {k}: {:.3} s, {}",
+                cost.seconds,
+                size(&cost.update)
+            );
+            println!(
+                "    {} program runs, {} constraint steps made again, {} forms listed, {} steps run, {} mates resolved, work {}, largest group {} variables, {} solve and {} enclosure evaluations",
                 cost.runs,
                 cost.made,
                 cost.forms,
@@ -1010,56 +1042,59 @@ fn robot_arm_timings() {
     }
 }
 
-/// A screw dragged by the drag tool, each move of the pointer while the
-/// button is held: what the front end is sent is the screw where it went,
-/// and does not grow with the parts the robot has besides — four times the
-/// boards and screws, not three times the bytes. Counted in bytes, not
-/// timed (see "Count the work, not the seconds").
+/// Each move of the pointer while the wrist of the robot arm is dragged
+/// sends the front end the placed parts it moved, and nothing else that
+/// grows with the arm: not the program's state and steps listed, nor the
+/// scene's structure and hidden names, which have not changed. Four times
+/// the screws: the update less the parts moved is no larger. Counted in
+/// bytes, not timed (see "Count the work, not the seconds"). Every event
+/// used to return that the program ran, and sent all of it again: 4.8 MB
+/// an event at 2000 parts, of which 2.9 MB the program, 1.2 MB the
+/// structure. What the pointer let go of sends the program once.
 #[test]
-#[ignore = "bug: every Drag event of the drag tool returns Changed::Run, so the editor sends the \
-            whole program state (every step listed), the scene's structure and its hidden list \
-            on each move of the pointer: 40 KB a move for a robot of one board and 20 screws, \
-            131 KB for four boards and 80, 588 KB (0.68 s) for 2000 parts — where one instance \
-            moved"]
 fn a_drag_event_sends_what_moved_however_large_the_assembly() {
-    let sent = |boards: usize, screws: usize| {
-        let (mut editor, _) = robot_editor(boards, screws);
-        handled(
-            &mut editor,
-            Command::Tool {
-                key: Some("drag".into()),
-            },
+    let rest = |screws: usize| {
+        let arm = small_arm(screws);
+        let mut editor = arm_editor(&arm);
+        let costs = drag_wrist(&mut editor, &arm, &DRAG);
+        let (held, [released]) = costs.split_at(costs.len() - 1) else {
+            unreachable!()
+        };
+        assert!(
+            released.update.program.is_some(),
+            "let go, the state is sent"
         );
-        handled(
-            &mut editor,
-            Command::Event {
-                event: StepEditEvent::Hover {
-                    pointer: down_onto(5.25, 0.25),
-                    shift: false,
-                },
-            },
-        );
-        let moved = handled(
-            &mut editor,
-            Command::Event {
-                event: StepEditEvent::Drag {
-                    from: down_onto(5.25, 0.25),
-                    to: down_onto(5.3, 0.3),
-                    done: false,
-                    shift: false,
-                },
-            },
-        );
-        let names: Vec<String> = (moved.scene.iter())
-            .flat_map(|scene| scene.instances.iter().map(|i| i.name.clone()))
-            .collect();
-        assert_eq!(names, ["screw10"], "{}", size(&moved));
-        serde_json::to_string(&moved).unwrap().len()
+        let rest = (held.iter()).map(|cost| {
+            let update = &cost.update;
+            println!("{screws} screws a bracket: {}", size(update));
+            assert!(update.program.is_none(), "{}", size(update));
+            let scene = update.scene.as_ref().expect("the arm moved");
+            assert!(
+                scene.structure.is_none() && scene.hidden.is_none(),
+                "{}",
+                size(update)
+            );
+            // A part placed in one that moved moves with it: the gripper's
+            // fingers and palm, placed in the gripper.
+            let sent: BTreeSet<&str> = scene.instances.iter().map(|i| i.name.as_str()).collect();
+            let moved = |name: &str| {
+                (cost.moved.iter()).any(|m| name == m || name.starts_with(&format!("{m}/")))
+            };
+            let unmoved: Vec<&&str> = sent.iter().filter(|name| !moved(name)).collect();
+            assert!(unmoved.is_empty(), "sent, not moved: {unmoved:?}");
+            let unsent: Vec<&String> = (cost.moved.iter())
+                .filter(|name| !sent.contains(name.as_str()))
+                .collect();
+            assert!(unsent.is_empty(), "moved, not sent: {unsent:?}");
+            cost.bytes - serde_json::to_string(&scene.instances).unwrap().len()
+        });
+        rest.max().unwrap()
     };
-    let (few, many) = (sent(1, 20), sent(4, 80));
+    let (few, many) = (rest(5), rest(20));
     assert!(
-        many < 2 * few,
-        "a move of one screw sent {few} bytes with 20 screws, {many} with 80"
+        many <= few,
+        "besides the parts it moved, an event sent {few} bytes with 5 screws a bracket, {many} \
+         with 20"
     );
 }
 
