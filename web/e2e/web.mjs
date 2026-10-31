@@ -13,17 +13,22 @@
 // behind and a left click picks it; Escape cancels an edited step, which
 // undo opens again; and the view cube turns the view to the top and home.
 //
+// It starts with the first visit, from a fresh profile (`firstrun.mjs`).
+//
 // Flags: `--build` rebuilds even if `dist/` looks current; `--only <text>`
 // runs only the checks whose name contains the text; `--shots` saves a
 // screenshot after every check, not only after failing ones.
 
 import path from "node:path";
 import fs from "node:fs";
+import { firstRunChecks } from "./firstrun.mjs";
 import { Checks, clickOperation, expect, fileMenu, launch, operationLabels, OUT, pixelAt, preview, run, settle, shownErrors, stale, watchErrors, WEB } from "./lib.mjs";
 
 const browser = await launch();
 if (stale(path.join(WEB, "dist", "index.html"))) run("npm", ["run", "build"]);
 const server = await preview();
+// First, a first visit, from a fresh profile: before anything here has been stored.
+const firstRun = await firstRunChecks(browser, server.url);
 const context = await browser.newContext({ viewport: { width: 1400, height: 900 }, acceptDownloads: true });
 const page = await context.newPage();
 const errors = watchErrors(page);
@@ -707,12 +712,13 @@ await check("a subd cage face is moved up by the gizmo's arrow", async () => {
   await settle(page);
   await page.getByRole("button", { name: "Fit", exact: true }).click();
   await page.waitForTimeout(1200);
-  // The cage's top face — the cube 100 across — near its middle: selected,
-  // a gizmo at its centre.
-  await clickAt(await onScreen([15, 10, 50]));
+  // The cage's top face, near its middle: selected, a gizmo at its centre.
+  // A new basic shape is 100 across, about the origin.
+  const top = 50;
+  await clickAt(await onScreen([15, 10, top]));
   const selected = await presented();
   const at = selected.gizmo?.at;
-  expect(at && Math.abs(at[2] - 50) < 1e-9, `no gizmo at the top face's centre: ${JSON.stringify(selected.gizmo)}`);
+  expect(at && Math.abs(at[2] - top) < 1e-9, `no gizmo at the top face's centre: ${JSON.stringify(selected.gizmo)}`);
   expect(!selected.visuals.some((v) => v.shape === "handle"), "the old handles are still drawn");
   const reach = await reachAt(at);
   const step = gridStep(reach);
@@ -724,7 +730,7 @@ await check("a subd cage face is moved up by the gizmo's arrow", async () => {
     "subd-face",
   );
   const [z] = numbers(await presented(), ["z"]);
-  expect(Math.abs(z - (50 + 3 * step)) < 1e-9, `the face's centre went to z = ${z}, not ${50 + 3 * step}`);
+  expect(Math.abs(z - (top + 3 * step)) < 1e-9, `the face's centre went to z = ${z}, not ${top + 3 * step}`);
   await popup.locator(".button-row button.primary").click();
   const stats = await builtCleanly();
   return `moved by ${readout}; ${stats}`;
@@ -1245,6 +1251,7 @@ await check("a dialog's first number has the focus: the arrows step it, Enter tw
   return `${before} → ${after} by the arrow, → ${scrubbed} scrubbed; ${await builtCleanly()}`;
 });
 
+checks.results.unshift(...firstRun);
 checks.report();
 await browser.close();
 server.stop();

@@ -119,3 +119,31 @@ test("a scene that is all there is forgets every mesh kept before", () => {
   const all = applyScene(first.placed, scene([["bottom", "b"]], { b: mesh(0) }, { all: true }));
   assert.deepEqual(Object.keys(all.placed.meshes), ["b"]);
 });
+
+test("the first update ever, of an empty part, is drawn with the origin and nothing kept before", () => {
+  // As the kernel answers a first visit's first command (see
+  // `a_first_visit_is_sent_the_whole_scene_with_the_origin` in
+  // `cad/geop-cad-web`): all of the scene, an empty part with its origin.
+  const origin = {
+    name: "origin",
+    kind: "frame",
+    frame: { origin: [0, 0, 0], u: [1, 0, 0], v: [0, 1, 0], w: [0, 0, 1] },
+  };
+  const empty = { ...part([]), solids: [], datums: [origin] } as unknown as SentPartView;
+  const first: SceneState = { ...scene([], {}, { all: true }), part: empty };
+  const drawn = applyScene(NOTHING_PLACED, first);
+  assert.deepEqual(
+    drawn.scene.part.datums.map((d) => d.name),
+    ["origin"],
+  );
+  assert.deepEqual(drawn.scene.part.faces, []);
+  assert.equal(drawn.placed.instances.size, 0);
+  assert.deepEqual(drawn.placed.meshes, {});
+  // A scene that is not all there is, the first one a viewer gets, draws
+  // its part all the same: a part is always sent whole.
+  const delta = applyScene(NOTHING_PLACED, { ...first, all: false });
+  assert.deepEqual(
+    delta.scene.part.datums.map((d) => d.name),
+    ["origin"],
+  );
+});

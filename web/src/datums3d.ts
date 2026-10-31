@@ -179,6 +179,13 @@ function buildDatum(datum: DatumInfo, size: number, center: THREE.Vector3): THRE
 export class DatumLayer {
   readonly group = new THREE.Group();
   private signature = "";
+  /** The names of the datums drawn now. */
+  private shown: string[] = [];
+
+  /** The names of the datums drawn now: what the end-to-end checks ask of the view. */
+  drawn(): string[] {
+    return this.shown;
+  }
 
   /** Show `datums` but those in `hidden`, planes and axes `size` across around `center`. */
   sync(datums: DatumInfo[], hidden: Set<string>, size: number, center: THREE.Vector3) {
@@ -186,6 +193,7 @@ export class DatumLayer {
     const signature = JSON.stringify([shown, size, center.toArray()]);
     if (signature === this.signature) return;
     this.signature = signature;
+    this.shown = shown.map((d) => d.name);
     this.group.traverse((o) => {
       const mesh = o as THREE.Mesh;
       mesh.geometry?.dispose();

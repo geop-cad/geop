@@ -114,6 +114,12 @@ interface Props {
   onHome?: () => void;
   /** The home view's key, for the button's tooltip. */
   homeKey?: string | null;
+  /**
+   * How many pixels at the bottom of the view something lies over (the
+   * welcome): the view is centred in the rest, so what is in its middle —
+   * the origin of an empty part — is not under it.
+   */
+  covered?: number;
 }
 
 const vec = (v: [number, number, number]) => new THREE.Vector3(v[0], v[1], v[2]);
@@ -187,9 +193,12 @@ export function SceneViewer({
   cycle,
   onHome,
   homeKey,
+  covered,
 }: Props) {
   const sectionRef = useRef(section ?? null);
   sectionRef.current = section ?? null;
+  const coveredRef = useRef(covered ?? 0);
+  coveredRef.current = covered ?? 0;
   const containerRef = useRef<HTMLDivElement>(null);
   // Read inside the effects via refs so a prop change doesn't tear down
   // anything.
@@ -475,6 +484,8 @@ export function SceneViewer({
         const ndc = new THREE.Vector3(...region.map((k) => k * (many ? 0.45 : 0.5))).project(cube.camera);
         return [rect.left + ((ndc.x + 1) / 2) * rect.width, rect.top + ((1 - ndc.y) / 2) * rect.height];
       },
+      /** The names of the datums drawn. */
+      datums: () => datumLayer.drawn(),
     };
 
     // Which of what lies under the pointer it means (see `Pointer.cycle`):
@@ -648,7 +659,8 @@ export function SceneViewer({
     const onPress = () => {
       const focused = document.activeElement;
       if (focused instanceof HTMLInputElement || focused instanceof HTMLTextAreaElement) {
-        // A number's input has no selection to collapse.
+        // A number field has no selection (`selectionEnd` is null), and
+        // setting one throws.
         if (focused.selectionEnd != null) focused.setSelectionRange(focused.selectionEnd, focused.selectionEnd);
         focused.blur();
       }
@@ -824,6 +836,14 @@ export function SceneViewer({
       const reach = camera.position.distanceTo(controls.target) + partRef.current.extent.size;
       perspective.near = reach / 10000;
       perspective.far = reach * 10;
+      // The middle of the view is the middle of what is not covered: the
+      // picture shifted up by half the covered height.
+      const lift = Math.round(coveredRef.current / 2);
+      const { clientWidth: w, clientHeight: h } = container;
+      for (const c of [perspective, orthographic]) {
+        if (lift > 0 && w > 0 && h > 0) c.setViewOffset(w, h, 0, lift, w, h);
+        else if (c.view?.enabled) c.clearViewOffset();
+      }
       perspective.updateProjectionMatrix();
       orthographic.near = -reach * 10;
       orthographic.far = reach * 10;

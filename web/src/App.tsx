@@ -130,6 +130,10 @@ function App() {
   /** The last answers of the inspectors asked of the whole part, by kind — until the part changes. */
   const [answers, setAnswers] = useState<Record<string, Inspection>>({});
   const [inspecting, setInspecting] = useState(false);
+  /** Whether the welcome was closed: it stays closed for this page. */
+  const [welcomeClosed, setWelcomeClosed] = useState(false);
+  /** How much of the view's bottom the welcome covers, in pixels: the view is centred above it. */
+  const [covered, setCovered] = useState(0);
   /** The section view, if one is on: the view only, never the model. */
   const [section, setSection] = useState<Section | null>(null);
   /** What the kernel says is lit: kept until it sends it again. */
@@ -1160,9 +1164,10 @@ function App() {
                 cycle={presentation?.cycle ?? null}
                 onHome={() => fitView(DEFAULT_POSE)}
                 homeKey={appKey("home")}
+                covered={covered}
               />
             )}
-            {wasmReady && program && stepCount === 0 && step == null && pending === 0 && !host && (
+            {wasmReady && program && stepCount === 0 && step == null && pending === 0 && !host && !welcomeClosed && (
               <Welcome
                 examples={program.examples}
                 workspaceExamples={program.workspace_examples}
@@ -1171,6 +1176,8 @@ function App() {
                 keyOf={(kind) =>
                   program.operations.find((o) => o.kind === kind)?.shortcut ?? appKey(kind)
                 }
+                onClose={() => setWelcomeClosed(true)}
+                onCover={setCovered}
               />
             )}
             {(!wasmReady || pending > 0) && !wasmError && (

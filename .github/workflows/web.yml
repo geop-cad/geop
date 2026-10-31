@@ -1,0 +1,76 @@
+name: Web
+
+# The web app, on every push of every branch and every pull request: built
+# as it is deployed, its unit tests, and a first visit from a fresh browser
+# profile (web/e2e/firstrun.mjs) — the first thing a new user sees, which
+# once showed no coordinate system at all and nothing caught it. Capped in
+# memory and time, as AGENTS.md asks.
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: web-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  web:
+    name: Build, tests, and a first visit
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Install wasm-pack
+        run: curl https://rustwasm.github.io/wasm-pack/installer/init.sh -sSf | sh
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+
+      - name: Install JS dependencies
+        working-directory: web
+        run: npm ci
+
+      # Built as deploy-app.yml builds it: the assistant's bot check's site
+      # key (public) puts the assistant beside the view, as a visitor has
+      # it, which leaves the view narrower. The build type-checks the
+      # protocol samples against src/geop.ts.
+      - name: Build (wasm + vite)
+        working-directory: web
+        run: timeout 1800 prlimit --as=68000000000 npm run build
+        env:
+          VITE_TURNSTILE_SITE_KEY: 0x4AAAAAAFlnEJQiD_GIxiZ-
+
+      - name: Test
+        working-directory: web
+        run: timeout 600 npm test
+
+      # Headless Chrome, the runner's own (lib.mjs finds it). A fresh
+      # browser context is an incognito window: no storage, no cache. The
+      # examples' previews are rendered from this build on the way.
+      - name: A first visit, from a fresh profile
+        working-directory: web
+        run: timeout 900 prlimit --as=4000000000000 npm run e2e:first-run
+
+      - name: Keep the screenshots of a failed first visit
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: first-run-screenshots
+          path: web/e2e/out/
+          if-no-files-found: ignore

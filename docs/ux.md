@@ -158,8 +158,13 @@ agree; a front end only draws what it is sent and sends what the user did.
   quieter; a step by its id, its tooltip saying what it is.
 - An empty panel says what to do next, naming the key. An empty part
   shows how to start (Sketch, then Extrude, with their keys), the keys
-  of the palette, the key list and fit, and examples to open, in both
-  apps.
+  of the palette, the key list and fit, and examples to open — each with
+  a preview rendered from what it builds, its name and a line on what it
+  is; the arrows move between them, Enter opens one, Escape closes the
+  welcome — in both apps.
+- Nothing lies over the origin of an empty part: the welcome asks for a
+  plane of it to be clicked. The view centres itself above what the
+  welcome covers, and on a phone the welcome lies over the panels.
 - Every tooltip of something with a key says the key from where the
   kernel names it, never a key written into the front end.
 - A refusal names what to do: "pick the face first", not "invalid".
@@ -171,3 +176,13 @@ agree; a front end only draws what it is sent and sends what the user did.
 - What only a browser shows — the palette, the keys, the spinner — is
   checked by `npm run e2e`; front-end logic without a browser
   (`shortcuts.ts`) by `npm test`.
+- The first run is tested from a fresh profile on every change: a browser
+  that has never seen the app (no storage, no cache, as an incognito
+  window) opens it once, and the origin's coordinate system must be held
+  by the view, drawn in its canvas and seen on the page, with the welcome
+  open and after it is closed, in desktop windows from wide to small and
+  on a phone (`npm run e2e:first-run`, first in `npm run e2e`; CI runs it
+  on every push, and the deploy runs it before it ships). A first visit
+  once showed no coordinate system at all: the kernel took a scene it had
+  shown itself as sent, the page was sent none, and no check started
+  from nothing.

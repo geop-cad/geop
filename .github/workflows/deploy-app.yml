@@ -57,6 +57,14 @@ jobs:
           # secret is the Pages secret TURNSTILE_SECRET.
           VITE_TURNSTILE_SITE_KEY: 0x4AAAAAAFlnEJQiD_GIxiZ-
 
+      # Nothing ships that a new visitor would see broken: a first visit
+      # from a fresh browser profile, in the runner's headless Chrome
+      # (web/e2e/firstrun.mjs). It renders the welcome's previews of the
+      # examples into dist/examples/ on the way, from this build.
+      - name: A first visit, from a fresh profile
+        working-directory: web
+        run: timeout 900 npm run e2e:first-run
+
       # The Pages Functions bundle @anthropic-ai/sdk (the hosted assistant,
       # docs/agent-chat.md), so they need their own dependencies.
       - name: Install and check the Pages Functions
