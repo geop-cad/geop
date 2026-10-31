@@ -724,6 +724,35 @@ pub fn workspaces() -> Vec<Example<ExampleFiles>> {
                 ("link.geop", drawn(include_str!("drawn/press/link.geop"))),
             ]
         }),
+        ("duck", || {
+            vec![
+                ("duck.geop", drawn(include_str!("drawn/duck/duck.geop"))),
+                (
+                    "left_leg.geop",
+                    drawn(include_str!("drawn/duck/left_leg.geop")),
+                ),
+                (
+                    "right_leg.geop",
+                    drawn(include_str!("drawn/duck/right_leg.geop")),
+                ),
+                (
+                    "left_hip.geop",
+                    drawn(include_str!("drawn/duck/left_hip.geop")),
+                ),
+                (
+                    "left_knee.geop",
+                    drawn(include_str!("drawn/duck/left_knee.geop")),
+                ),
+                (
+                    "left_ankle.geop",
+                    drawn(include_str!("drawn/duck/left_ankle.geop")),
+                ),
+                ("foot.geop", drawn(include_str!("drawn/duck/foot.geop"))),
+                ("neck.geop", drawn(include_str!("drawn/duck/neck.geop"))),
+                ("head.geop", drawn(include_str!("drawn/duck/head.geop"))),
+                ("mouth.geop", drawn(include_str!("drawn/duck/mouth.geop"))),
+            ]
+        }),
         ("pin_in_plate", || {
             vec![
                 ("assembly.geop", pin_in_plate_assembly()),

@@ -77,6 +77,7 @@ pub(crate) fn registry() -> Registry {
         let r = geop_ops_extrude_revolve::register(r)?;
         let r = geop_ops_fillet::register(r)?;
         let r = geop_ops_pattern::register(r)?;
+        let r = geop_ops_subd::register(r)?;
         let r = geop_ops_inspect::register(r)?;
         let r = crate::register(r)?;
         Ok(r)
@@ -831,6 +832,7 @@ fn an_example_of_several_files_adds_its_files() {
         program.workspace_examples,
         [
             "press",
+            "duck",
             "pin_in_plate",
             "chain",
             "parametric_plates",
@@ -2043,9 +2045,9 @@ fn the_bolted_plate_holds_together() {
     }
 }
 
-/// The examples whose files take long to build: the press, rounded, and
-/// the bolted plate, of standard parts.
-const SLOW_EXAMPLES: [&str; 2] = ["press", "bolted_plate"];
+/// The examples whose files take long to build: the press, rounded, the
+/// duck, of ten files, and the bolted plate, of standard parts.
+const SLOW_EXAMPLES: [&str; 3] = ["press", "duck", "bolted_plate"];
 
 /// Every file of the examples of assemblies, `slow` or not (see
 /// [`SLOW_EXAMPLES`]) — of one made of several files, and an example
@@ -2090,7 +2092,7 @@ fn examples_round_trip() {
 
 /// [`assert_examples_round_trip`] on the [`SLOW_EXAMPLES`].
 #[test]
-#[ignore = "slow: the press and the bolted plate, built twice — run with `cargo test -- --ignored`"]
+#[ignore = "slow: the press, the duck and the bolted plate, built twice — run with `cargo test -- --ignored`"]
 fn slow_examples_round_trip() {
     assert_examples_round_trip(true);
 }
@@ -2135,7 +2137,7 @@ fn examples_build_incrementally() {
 
 /// [`assert_examples_incremental`] on the [`SLOW_EXAMPLES`].
 #[test]
-#[ignore = "slow: the press and the bolted plate, built several times over — run with `cargo test -- --ignored`"]
+#[ignore = "slow: the press, the duck and the bolted plate, built several times over — run with `cargo test -- --ignored`"]
 fn slow_examples_build_incrementally() {
     assert_examples_incremental(true);
 }
@@ -2175,6 +2177,27 @@ fn press_handle_rim_fillet_is_narrow() {
         );
     }
     assert!(faces > 0, "no blend faces");
+}
+
+/// The duck, drawn in the editor, builds once in the everyday suite (its
+/// round trip and incremental build are among the [`SLOW_EXAMPLES`]): its
+/// body places two legs of four parts each and the neck, the neck the
+/// head and the head the mouth.
+#[test]
+fn duck_places_its_legs_neck_head_and_mouth() {
+    let (_, files) = (examples::workspaces().into_iter())
+        .find(|(n, _)| *n == "duck")
+        .unwrap();
+    let files = files();
+    let saved: BTreeMap<String, String> = (files.iter())
+        .map(|(path, program)| (path.to_string(), program.to_json().unwrap()))
+        .collect();
+    let (_, duck) = files.iter().find(|(path, _)| *path == "duck.geop").unwrap();
+    let built = build_file(duck, "duck.geop", workspace(saved)).unwrap();
+    let view = built.part.current();
+    let placed = placed_parts(&view).unwrap();
+    let names: Vec<&str> = placed.iter().map(|p| p.name.as_str()).collect();
+    assert_eq!(placed.len(), 13, "{names:?}");
 }
 
 /// The value of the parameter `name` the part `view` shows was built with:

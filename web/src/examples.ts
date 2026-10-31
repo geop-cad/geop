@@ -13,6 +13,7 @@ export function title(name: string): string {
  * build:previews`, see `e2e/previews.mjs`).
  */
 export const FEATURED: { name: string; about: string }[] = [
+  { name: "duck", about: "A duck of ten files: legs of hips, knees, ankles and feet, a subdivided head" },
   { name: "turbine_blade", about: "A blade lofted through three sections, patterned round a hub" },
   { name: "cool_flange", about: "A revolved flange, a slot cut through it sixteen times" },
   { name: "press", about: "A base, handle, link and slider, each a file, mated to move" },

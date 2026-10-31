@@ -47,12 +47,14 @@ geop-core-editor = { workspace = true, features = ["testing"] }
 geop-core-program = { workspace = true, features = ["testing"] }
 # The tests' own parts are given solids and datums.
 geop-lib-fixtures.workspace = true
-# The examples are sketched and extruded, the press rounded and mirrored,
-# and standard parts placed; the tests edit and build them.
+# The examples are sketched and extruded, the press and the duck rounded
+# and mirrored, and standard parts placed; the tests edit and build them.
 geop-ops-fillet.workspace = true
 geop-ops-sketch.workspace = true
 geop-lib-stdlib.workspace = true
 geop-ops-pattern.workspace = true
+# The duck's head is a subdivision surface.
+geop-ops-subd.workspace = true
 # A motion is checked for collisions by the interference inspector, as an
 # editor composed with it does.
 geop-ops-inspect.workspace = true
