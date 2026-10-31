@@ -1,5 +1,5 @@
 import { useRef, useState, type ReactNode } from "react";
-import type { ExporterInfo, Program } from "./geop";
+import type { ExporterInfo, Program, Report } from "./geop";
 import { BugReport } from "./BugReport";
 import { acceptedFiles } from "./files";
 import { Icon } from "./icons";
@@ -51,6 +51,8 @@ interface Props {
   /** Where the bug-report form goes instead of floating over the viewport — the mobile "Bug" tab, when on mobile. */
   bugReportHost: HTMLElement | null;
   onBugReportOpen: () => void;
+  /** What a bug report attaches of the session, as the kernel says it (see [[Report]]). */
+  onBugReportCollect: () => Promise<Report | null>;
   /** Whether only the operations that are robust today are offered. */
   reducedMode: boolean;
   onReducedMode: (on: boolean) => void;
@@ -92,6 +94,7 @@ export function Toolbar({
   bugReportOpen,
   bugReportHost,
   onBugReportOpen,
+  onBugReportCollect,
   reducedMode,
   onReducedMode,
   onBugReportClose,
@@ -256,7 +259,8 @@ export function Toolbar({
           <BugReport
             open={bugReportOpen}
             program={program}
-            committedError={error}
+            lastError={error}
+            collect={onBugReportCollect}
             panelHost={bugReportHost}
             onClose={onBugReportClose}
           />

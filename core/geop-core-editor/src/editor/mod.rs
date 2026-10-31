@@ -31,7 +31,8 @@ mod tests;
 
 pub use context::{Changed, EditorContext, Rerun};
 pub use protocol::{
-    Command, File, PlacedSteps, ProgramState, SceneState, StepInfo, StepState, Update,
+    Command, File, PlacedSteps, ProgramState, Report, ReportedStep, SceneState, StepInfo,
+    StepState, Update,
 };
 
 use geop_core_program::{
@@ -235,6 +236,8 @@ pub struct Editor {
     written: Vec<File>,
     /// The file the last command wrote, for the update to carry.
     exported: Option<Export>,
+    /// Whether the last command asked for a report ([`Command::Report`]).
+    reporting: bool,
     /// The placed parts the viewer was sent, by name, as sent — `None`
     /// when the viewer may have none (see [`SceneState`]).
     placed: Option<HashMap<String, Sent>>,
@@ -310,6 +313,7 @@ impl Editor {
             added: None,
             written: Vec::new(),
             exported: None,
+            reporting: false,
             placed: None,
             kept: Kept::default(),
             tool: None,
@@ -551,6 +555,7 @@ impl Editor {
         {
             cache.flush();
         }
+        let report = std::mem::take(&mut self.reporting).then(|| self.report(step.as_ref()));
         let tool = self.tool_presentation(step.is_none());
         let lit = self.lit(
             step.as_ref().map(|s| &s.presentation).or(tool.as_ref()),
@@ -567,6 +572,31 @@ impl Editor {
             written: (!self.written.is_empty()).then(|| std::mem::take(&mut self.written)),
             inspection,
             export: self.exported.take(),
+            report,
+        }
+    }
+
+    /// What a bug report attaches (see [`Report`]): the program, and the
+    /// step being edited as `step` shows it.
+    fn report(&self, step: Option<&StepState>) -> Report {
+        let reported = match (&self.open, step) {
+            (Some(open), Some(state)) => open.step().ok().map(|edited| ReportedStep {
+                id: state.id.clone(),
+                index: open.index,
+                placed: open.within.as_ref().map(|w| w.instance.clone()),
+                step: edited.clone(),
+                missing: state.missing.clone(),
+                error: state.error.clone(),
+                concerning: (state.presentation.dialog.0.iter())
+                    .find(|field| field.failure.is_some())
+                    .map(|field| field.key.clone()),
+            }),
+            _ => None,
+        };
+        Report {
+            program: self.file.clone(),
+            step: reported,
+            version: env!("CARGO_PKG_VERSION"),
         }
     }
 
@@ -1200,6 +1230,10 @@ impl Editor {
                 reason = "the command is a panic on purpose, to check front ends recover"
             )]
             Command::Crash => panic!("the kernel was asked to crash"),
+            Command::Report => {
+                self.reporting = true;
+                Changed::Nothing
+            }
             Command::Export {
                 exporter,
                 format,

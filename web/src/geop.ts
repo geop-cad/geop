@@ -686,6 +686,8 @@ export type Command =
    * update's `export`.
    */
   | { command: "export"; exporter: string; format?: string; options?: unknown; date?: string }
+  /** What a bug report attaches: the update's `report`. Changes nothing. */
+  | { command: "report" }
   /** Panic, on purpose: how recovering from a kernel that crashed is checked (`e2e/`). */
   | { command: "crash" };
 
@@ -890,6 +892,38 @@ export interface Update {
   inspection: Inspection | null;
   /** What to draw lit, when it changed: kept until sent again (see [[Lighting]]). */
   lit: Lighting | null;
+  /** What `report` asked for. */
+  report: Report | null;
+}
+
+/**
+ * What a bug report attaches of the session — see
+ * `geop_core_editor::editor::Report`: the program as committed, the step
+ * being edited as it stands, and the kernel's version.
+ */
+export interface Report {
+  program: Program;
+  step: ReportedStep | null;
+  /** The kernel's version. */
+  version: string;
+}
+
+/** The step being edited, as a bug report attaches it. */
+export interface ReportedStep {
+  /** None yet, for a new step. */
+  id: string | null;
+  /** Where it is, or goes, among the program's steps. */
+  index: number;
+  /** The part placed in the program it is a step of, if it is one. */
+  placed: string | null;
+  /** Its operation and arguments, as its edits leave them. */
+  step: Step;
+  /** What it still needs picked, by its fields' labels. */
+  missing: string[];
+  /** Why it does not build, as the dialog says it. */
+  error: string | null;
+  /** The key of the field the error stands beside, if it concerns one. */
+  concerning: string | null;
 }
 
 /**
