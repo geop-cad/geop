@@ -585,7 +585,9 @@ export function SceneViewer({
     const onPress = () => {
       const focused = document.activeElement;
       if (focused instanceof HTMLInputElement || focused instanceof HTMLTextAreaElement) {
-        focused.setSelectionRange(focused.selectionEnd, focused.selectionEnd);
+        // A number field has no selection (`selectionEnd` is null), and
+        // setting one throws.
+        if (focused.selectionEnd != null) focused.setSelectionRange(focused.selectionEnd, focused.selectionEnd);
         focused.blur();
       }
     };
