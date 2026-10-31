@@ -7,7 +7,7 @@
 
 import * as THREE from "three";
 import { CSS2DObject } from "three/examples/jsm/renderers/CSS2DRenderer.js";
-import { REACH_PX, worldPerPixel } from "./camera";
+import { REACH_PX, worldPerPixel } from "./camera.ts";
 import type { GizmoPart, GizmoView } from "./geop";
 
 /** `geop_ops::ui::gizmo::size`, in reaches. */
@@ -41,6 +41,28 @@ function material(color: number, opacity = 0.9) {
     depthWrite: false,
     side: THREE.DoubleSide,
   });
+}
+
+/**
+ * The render order of `part`, drawn over everything: in the order the
+ * kernel picks parts where several are under the pointer (see
+ * `GizmoView::hit`), so the one on top is the one a press grabs. A square
+ * over the rings and arrows; the ball and the cubes over the squares,
+ * which win only over the reach around a cube, not over the cube drawn.
+ */
+export function drawOrder(part: GizmoPart): number {
+  switch (part.part) {
+    case "turn":
+      return 1002;
+    case "move":
+      return 1003;
+    case "plane":
+      return 1004;
+    case "free":
+    case "stretch":
+    case "scale":
+      return 1005;
+  }
 }
 
 /** Turns `object`, built along `y`, to point along local axis `i`. */
@@ -132,8 +154,11 @@ export class GizmoLayer {
         const frame = new THREE.Group();
         const [u, v, w] = view.axes.map(vec);
         frame.quaternion.setFromRotationMatrix(new THREE.Matrix4().makeBasis(u, v, w));
-        for (const part of view.parts) frame.add(build(part));
-        frame.traverse((o) => (o.renderOrder = 1002));
+        for (const part of view.parts) {
+          const built = build(part);
+          built.traverse((o) => (o.renderOrder = drawOrder(part)));
+          frame.add(built);
+        }
         this.group.add(frame);
         this.group.add(this.readout);
         this.group.position.set(...view.at);
