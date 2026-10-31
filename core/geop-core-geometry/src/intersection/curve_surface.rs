@@ -351,7 +351,11 @@ pub fn curve_surface_intersect(
     let crossings = coincidence::crossings_between(curve, &overlaps, |piece| {
         curve_surface_crossings(piece, surface, max_nodes, min_subdivision_size)
     })
-    .with_context(&|e: GeopError| ctx(e.with_context("crossing search")))?;
+    .with_context(&|e: GeopError| {
+        ctx(e.with_context(format!(
+            "the crossing search away from the overlaps {overlaps:?}"
+        )))
+    })?;
     let samples = coincidence::samples(&overlaps, crossings.len(), max_solutions, |t| {
         point_on(curve, surface, t, max_nodes, min_subdivision_size)
     })?;

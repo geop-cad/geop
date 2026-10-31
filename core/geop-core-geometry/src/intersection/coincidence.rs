@@ -107,7 +107,13 @@ pub(crate) fn crossings_between<const D: usize, P, R>(
     let mut crossings = Vec::new();
     for gap in bounds.chunks(2) {
         if gap[0].definitely_less(gap[1]) {
-            crossings.extend(search(&curve.sub_curve(gap[0], gap[1])?)?);
+            let piece = curve.sub_curve(gap[0], gap[1])?;
+            crossings.extend(search(&piece).map_err(|e| {
+                e.with_context(format!(
+                    "on the stretch {:?} of the curve",
+                    (gap[0], gap[1])
+                ))
+            })?);
         }
     }
     Ok(crossings)
