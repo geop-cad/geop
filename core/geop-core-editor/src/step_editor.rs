@@ -499,6 +499,21 @@ impl StepEditor {
                 done,
                 shift,
             } => self.drag(e, &form, from, to, *done, *shift, false),
+            StepEditEvent::SelectBox {
+                corners,
+                crossing,
+                add,
+            } => match form.select_box && form.tool == InHand::Nothing {
+                true => self.pass(
+                    e,
+                    CanvasEvent::SelectBox {
+                        corners: **corners,
+                        crossing: *crossing,
+                        add: *add,
+                    },
+                ),
+                false => Ok(()),
+            },
             StepEditEvent::Key { key } => match key.as_str() {
                 "Escape" => {
                     self.select(e, &form, Vec::new())?;
@@ -912,6 +927,7 @@ impl StepEditor {
                 || on_gizmo
                 || hovered.is_some_and(|(_, grab)| grab)
                 || (tool == InHand::Strokes && !waiting),
+            select_box: form.select_box && tool == InHand::Nothing && !waiting,
             prompt: form.prompt,
             gizmo,
             hidden: form.hidden,

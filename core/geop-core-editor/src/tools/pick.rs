@@ -144,6 +144,7 @@ impl Tool for PickTool {
             focus: None,
             sheet: None,
             grab: false,
+            select_box: false,
             prompt: None,
             gizmo: None,
             hidden: Vec::new(),

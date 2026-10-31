@@ -71,11 +71,19 @@ agree; a front end only draws what it is sent and sends what the user did.
 - **Plain letters belong to the step being edited** (its tools); the
   operations' keys work while no step is edited. Chords with Ctrl/⌘ work
   always; `Ctrl/⌘+Enter` commits from anywhere, a field included.
+  `Ctrl/⌘+Z` undoes, `Ctrl/⌘+Shift+Z` and `Ctrl+Y` redo — while a step
+  is edited, its own edits (a sketch's, line by line) — and in a field
+  too, unless something was typed into it since it took the focus: then
+  they are the field's.
 - **Escape ends what is in progress, Enter finishes it.** Escape first
   ends what is in progress inside the step: a field picking, a selection,
-  a drag, a value asked for in place, a tool in hand (a chain being drawn,
-  then the tool itself). With nothing in progress (`StepEditor::at_rest`),
-  Enter commits the step and Escape cancels it, edited or not. A cancel
+  a drag, a value asked for in place, a tool in hand (in a sketch, one
+  press puts the tool down with whatever it was drawing). With nothing in
+  progress (`StepEditor::at_rest`), Enter commits the step and Escape
+  cancels it, edited or not — except a sketch, which Escape keeps, as OK
+  does (`OperationInfo::kept_on_escape`), once it has its plane: Escape is
+  pressed again and again to stop a tool, and the press after the last
+  must never throw the drawing away. A held Escape repeats nothing. A cancel
   throws nothing away for good: a step cancelled after it was edited is
   one edit to undo, and undo opens it again as it was left, its own edits
   to undo with it (`Undone::Cancelled`); cancelled again as it was, that
@@ -111,7 +119,11 @@ agree; a front end only draws what it is sent and sends what the user did.
 ## Feel
 
 - **The left button picks, the right turns, the middle moves.** A left
-  click picks or selects, and a left drag is a grab's or nothing; a right
+  click picks or selects, and a left drag is a grab's — or, from nothing
+  in a sketch, a selection box: left to right (drawn solid) takes what
+  lies wholly in it, right to left (dashed) what it touches, decided on
+  the curves themselves (`NurbCurve::within`); Shift or Ctrl adds to the
+  selection. Elsewhere a left drag from nothing does nothing; a right
   drag turns the view about its target, a middle drag moves it sideways
   (in a plane worked in, the right drag moves it too: the view stays head
   on); a right click steps behind what is lit (see Picking). The key list

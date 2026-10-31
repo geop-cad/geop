@@ -53,7 +53,7 @@ fn tool_hint(s: &SketchSession) -> String {
                 "Click where the tangent arc ends · move back onto its start for a line"
             }
             (DrawTool::Line, _) => {
-                "Click the next point · move back onto the end for a tangent arc · Esc ends"
+                "Click the next point · move back onto the end for a tangent arc · Esc to stop"
             }
             (DrawTool::Rectangle, 0) => "Click one corner",
             (DrawTool::Rectangle, _) => "Click the opposite corner",

@@ -1447,6 +1447,20 @@ button.inline {
   background: var(--surface);
   border: 1px solid var(--line-strong);
 }
+/* A selection box being dragged: solid left to right (what lies wholly in
+   it), dashed right to left (what it touches), as CAD programs draw them. */
+.select-box {
+  position: absolute;
+  z-index: 4;
+  pointer-events: none;
+  border: 1px solid var(--accent);
+  background: var(--accent-soft);
+}
+.select-box.crossing {
+  border-style: dashed;
+  background: rgba(75, 200, 120, 0.14);
+  border-color: #4bc878;
+}
 /* Which of what lies under the pointer a right click lit, beside it. */
 .cycle-hint {
   position: absolute;

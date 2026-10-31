@@ -378,6 +378,8 @@ export type PointerEvent_ =
   /** A left click: the pointer's `cycle` names which of what lies under it is picked. */
   | { type: "click"; pointer: Pointer; double: boolean; shift: boolean }
   | { type: "drag"; from: Pointer; to: Pointer; done: boolean; shift: boolean }
+  /** A selection box let go: its corners in order round it; `crossing` (drawn right to left) takes what it touches, else what lies wholly in it; `add` adds to the selection. */
+  | { type: "select_box"; corners: [Pointer, Pointer, Pointer, Pointer]; crossing: boolean; add: boolean }
   /** The view settled: `up` is the world direction pointing up the screen. */
   | { type: "view"; up: Vec3 };
 
@@ -618,6 +620,8 @@ export interface Presentation {
   sheet: Extent | null;
   /** Whether a press where the pointer last hovered starts a drag. */
   grab: boolean;
+  /** Whether a left drag from where no grab is offered draws a selection box (sent as `select_box`). */
+  select_box: boolean;
   /** A value asked for in place, at `at`: what is typed goes to the field `key` as `text`. */
   prompt: Prompt | null;
   /** A gizmo to move, turn or scale by. */

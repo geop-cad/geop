@@ -47,3 +47,27 @@ export function zoomToward(position: V3, target: V3, under: V3, steps: number): 
   const to = under.map((u, k) => u + (target[k] - u) * factor) as V3;
   return { position: to.map((t, k) => t + back[k] * factor) as V3, target: to };
 }
+
+/** A box dragged over the view to select by, in client coordinates (see [[selectionBox]]). */
+export interface SelectionBox {
+  left: number;
+  top: number;
+  width: number;
+  height: number;
+  /** Its corners in order round it, from where the drag went down. */
+  corners: [Point, Point, Point, Point];
+  /** Dragged right to left: it takes what it touches; left to right, what lies wholly in it. */
+  crossing: boolean;
+}
+
+/** The selection box dragged from `from` to `to`, as CAD programs draw it: solid left to right, dashed (crossing) right to left. */
+export function selectionBox(from: Point, to: Point): SelectionBox {
+  return {
+    left: Math.min(from.x, to.x),
+    top: Math.min(from.y, to.y),
+    width: Math.abs(to.x - from.x),
+    height: Math.abs(to.y - from.y),
+    corners: [from, { x: to.x, y: from.y }, to, { x: from.x, y: to.y }],
+    crossing: to.x < from.x,
+  };
+}

@@ -266,6 +266,10 @@ pub struct Presentation {
     /// Whether a press where the pointer last hovered starts a drag (sent
     /// as [`super::StepEditEvent::Drag`]) rather than moving the camera.
     pub grab: bool,
+    /// Whether a press where the pointer last hovered, offering no grab,
+    /// draws a selection box when dragged (sent as
+    /// [`super::StepEditEvent::SelectBox`]) rather than doing nothing.
+    pub select_box: bool,
     /// A value asked for in place.
     pub prompt: Option<Prompt>,
     /// The gizmo to move, turn or scale by, as drawn.

@@ -96,6 +96,12 @@ fn session(kinds: &[&str]) -> Vec<Value> {
         event(json!({ "type": "click", "pointer": above, "double": false, "shift": false })),
         event(json!({ "type": "click", "pointer": tube, "double": true, "shift": true })),
         event(json!({ "type": "drag", "from": above, "to": pointer([1.5, 1.0, 5.0], [0.0, 0.0, -1.0]), "done": true, "shift": false })),
+        event(json!({ "type": "select_box", "corners": [
+            above,
+            pointer([1.5, 1.0, 5.0], [0.0, 0.0, -1.0]),
+            pointer([1.5, 1.5, 5.0], [0.0, 0.0, -1.0]),
+            pointer([1.0, 1.5, 5.0], [0.0, 0.0, -1.0]),
+        ], "crossing": true, "add": false })),
         event(json!({ "type": "leave" })),
         event(json!({ "type": "view", "up": [0.0, 1.0, 0.0] })),
         event(json!({ "type": "key", "key": "Escape" })),

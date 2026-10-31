@@ -49,6 +49,52 @@ pub fn polygons_contain(loops: &[Vec<Vector2>], p: &Vector2) -> bool {
     inside
 }
 
+/// A convex polygon, as the half-planes it is the intersection of: each an
+/// outward normal `n` and an offset `c`, the polygon lying where
+/// `n · p ≤ c`. What a box drawn on screen covers of a plane it looks at.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Convex {
+    pub sides: Vec<(Vector2, Scalar)>,
+}
+
+impl Convex {
+    /// The convex polygon of `corners`, in order either way round. None
+    /// where they could enclose no area: fewer than three, or all on a
+    /// line. Corners that do not go round convexly are no convex polygon,
+    /// and give one that contains less than they do.
+    pub fn new(corners: &[Vector2]) -> Option<Self> {
+        let area = signed_area2(corners);
+        if corners.len() < 3 || area.could_be_equal(Scalar::ZERO) {
+            return None;
+        }
+        // Counter-clockwise, the outward normal of a side is its direction
+        // turned clockwise.
+        let counter = area.definitely_greater(Scalar::ZERO);
+        let sides = (0..corners.len())
+            .map(|i| {
+                let (a, b) = (corners[i], corners[(i + 1) % corners.len()]);
+                let along = b.sub(&a);
+                let left = along.perp();
+                let n = if counter { left.neg() } else { left };
+                (n, n.prod_dot(&a))
+            })
+            .collect();
+        Some(Self { sides })
+    }
+
+    /// How far `p` lies past each side, along its normal (not normalized):
+    /// positive outside it.
+    pub fn past<'a>(&'a self, p: &'a Vector2) -> impl Iterator<Item = Scalar> + 'a {
+        (self.sides.iter()).map(move |(n, c)| n.prod_dot(p).sub(*c))
+    }
+
+    /// Whether `p` could lie in the polygon, its boundary included: past no
+    /// side definitely.
+    pub fn could_contain(&self, p: &Vector2) -> bool {
+        self.past(p).all(|d| !d.definitely_greater(Scalar::ZERO))
+    }
+}
+
 /// Ear-clip a (possibly non-convex) simple polygon into triangles, as
 /// index triples into `poly`: `n - 2` of them for `n >= 3` corners, none
 /// for fewer. Plain numbers, for rendering: a corner that rounding leaves
@@ -122,6 +168,27 @@ pub fn ear_clip(poly: &[[f64; 2]]) -> Vec<[usize; 3]> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn v(x: f64, y: f64) -> Vector2 {
+        Vector2::from_array([Scalar::from_f64(x), Scalar::from_f64(y)])
+    }
+
+    /// A square either way round holds its middle and its corners, and
+    /// nothing outside; corners on a line are no polygon.
+    #[test]
+    fn convex_polygons_either_way_round() {
+        let square = [v(0.0, 0.0), v(2.0, 0.0), v(2.0, 1.0), v(0.0, 1.0)];
+        let mut reversed = square;
+        reversed.reverse();
+        for corners in [square, reversed] {
+            let convex = Convex::new(&corners).unwrap();
+            assert!(convex.could_contain(&v(1.0, 0.5)));
+            assert!(convex.could_contain(&v(2.0, 1.0)));
+            assert!(!convex.could_contain(&v(2.5, 0.5)));
+            assert!(!convex.could_contain(&v(1.0, -0.1)));
+        }
+        assert!(Convex::new(&[v(0.0, 0.0), v(1.0, 1.0), v(2.0, 2.0)]).is_none());
+    }
 
     #[test]
     fn ear_clip_triangulates_convex_polygon_fully() {

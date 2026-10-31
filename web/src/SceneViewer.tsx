@@ -38,8 +38,8 @@ import type { SectionPlane } from "./section";
 import { PlaneGrid } from "./planeGrid";
 import { VisualLayer } from "./visuals3d";
 import { GizmoLayer } from "./gizmo3d";
-import { isDoubleClick, movedFromPress, wheelSteps, zoomToward } from "./gestures";
-import { withShortcut } from "./shortcuts";
+import { isDoubleClick, movedFromPress, selectionBox, wheelSteps, zoomToward } from "./gestures";
+import { historyOf, withShortcut } from "./shortcuts";
 import { ViewCube } from "./viewCube";
 
 /** The kinds of datum a click can pick something of, picking elements of the kinds `pickable`: every kind, if it picks datums or frames on them. */
@@ -87,6 +87,8 @@ interface Props {
   onPromptCancel?: () => void;
   /** Whether a press where the pointer hovers starts a drag, sent to [[Props.onPointer]], rather than moving the camera. */
   grab?: boolean;
+  /** Whether a left drag from where no grab is offered draws a selection box, sent to [[Props.onPointer]] once let go. */
+  selectBox?: boolean;
   /**
    * What the user does with the pointer: hovers, clicks, drags — as rays.
    * Resolves to whether a press where the pointer now is grabs.
@@ -180,6 +182,7 @@ export function SceneViewer({
   plane,
   grid,
   grab,
+  selectBox,
   onPointer,
   prompt,
   onPrompt,
@@ -232,6 +235,10 @@ export function SceneViewer({
   gridRef.current = grid ?? true;
   const grabRef = useRef(grab ?? false);
   grabRef.current = grab ?? false;
+  const selectBoxRef = useRef(selectBox ?? false);
+  selectBoxRef.current = selectBox ?? false;
+  /** The selection box drawn while it is dragged: set directly, not rendered per move. */
+  const boxElRef = useRef<HTMLDivElement | null>(null);
   const onPointerRef = useRef(onPointer);
   onPointerRef.current = onPointer;
   const promptAtRef = useRef<Vec3 | null>(null);
@@ -506,6 +513,8 @@ export function SceneViewer({
       y: number;
       button: number;
       grabbed: boolean;
+      /** A left drag from where nothing is grabbed, drawing a selection box (see `Props.selectBox`). */
+      boxing: boolean;
       from: Pointer;
       moved: boolean;
     } | null = null;
@@ -535,13 +544,14 @@ export function SceneViewer({
     // kernel is asked, and handed to them after all if it does not grab.
     let asking: number | null = null;
     let replaying = false;
-    const take = (e: PointerEvent, grabbed: boolean) => {
+    const take = (e: PointerEvent, grabbed: boolean, boxing = false) => {
       press = {
         id: e.pointerId,
         x: e.clientX,
         y: e.clientY,
         button: e.button,
         grabbed,
+        boxing,
         from: pointerAt(e.clientX, e.clientY, cycle),
         moved: false,
       };
@@ -550,6 +560,26 @@ export function SceneViewer({
         controls.enabled = false;
         container.setPointerCapture(e.pointerId);
       }
+      if (boxing) container.setPointerCapture(e.pointerId);
+    };
+    /** The selection box from where `down` went down to `(x, y)`, drawn over the view; hidden with no `down`. */
+    const drawBox = (down: { x: number; y: number } | null, x = 0, y = 0) => {
+      const el = boxElRef.current;
+      if (!el) return;
+      if (!down) {
+        el.style.display = "none";
+        return;
+      }
+      const rect = container.getBoundingClientRect();
+      const box = selectionBox({ x: down.x - rect.left, y: down.y - rect.top }, { x: x - rect.left, y: y - rect.top });
+      Object.assign(el.style, {
+        display: "block",
+        left: `${box.left}px`,
+        top: `${box.top}px`,
+        width: `${box.width}px`,
+        height: `${box.height}px`,
+      });
+      el.classList.toggle("crossing", box.crossing);
     };
     const onPointerDown = (e: PointerEvent) => {
       if (moveRef.current || replaying || onOverlay(e)) return;
@@ -576,8 +606,9 @@ export function SceneViewer({
         return;
       }
       const grabbed = e.button === 0 && grabRef.current;
-      take(e, grabbed);
-      if (grabbed) e.stopPropagation();
+      const boxing = e.button === 0 && !grabbed && selectBoxRef.current;
+      take(e, grabbed, boxing);
+      if (grabbed || boxing) e.stopPropagation();
     };
     const onPointerMove = (e: PointerEvent) => {
       shift = e.shiftKey;
@@ -585,6 +616,7 @@ export function SceneViewer({
         if (e.pointerId !== press.id) return;
         if (movedFromPress(press, { x: e.clientX, y: e.clientY })) press.moved = true;
         if (press.grabbed && press.moved) pendingDrag = { x: e.clientX, y: e.clientY };
+        if (press.boxing && press.moved) drawBox(press, e.clientX, e.clientY);
         return;
       }
       if (onOverlay(e)) {
@@ -610,6 +642,17 @@ export function SceneViewer({
         pendingDrag = null;
         if (done.moved) {
           send({ type: "drag", from: done.from, to: pointerAt(e.clientX, e.clientY), done: true, shift: e.shiftKey });
+          pendingHover = { x: e.clientX, y: e.clientY };
+          return;
+        }
+      }
+      if (done.boxing) {
+        drawBox(null);
+        if (done.moved) {
+          const box = selectionBox(done, { x: e.clientX, y: e.clientY });
+          const [a, b, c, d] = box.corners.map((p) => pointerAt(p.x, p.y));
+          const add = e.shiftKey || e.ctrlKey || e.metaKey;
+          send({ type: "select_box", corners: [a, b, c, d], crossing: box.crossing, add });
           pendingHover = { x: e.clientX, y: e.clientY };
           return;
         }
@@ -641,6 +684,7 @@ export function SceneViewer({
       if (press.grabbed && press.moved) onPointerUp(e);
       else {
         if (press.grabbed) controls.enabled = !moveRef.current;
+        if (press.boxing) drawBox(null);
         press = null;
       }
     };
@@ -872,7 +916,13 @@ export function SceneViewer({
           void send(event).finally(() => (following = false));
         }
       }
-      renderer.domElement.style.cursor = press?.grabbed ? "grabbing" : grabRef.current ? "grab" : "";
+      renderer.domElement.style.cursor = press?.grabbed
+        ? "grabbing"
+        : press?.boxing && press.moved
+          ? "crosshair"
+          : grabRef.current
+            ? "grab"
+            : "";
 
       // Which datums are drawn, and lit, only when what decides it
       // changed: not every frame — an assembly has a datum per part.
@@ -1070,6 +1120,7 @@ export function SceneViewer({
       className="scene-view"
       style={{ position: "relative", width: "100%", height: "100%", minHeight: 0, touchAction: "none" }}
     >
+      <div ref={boxElRef} className="select-box" style={{ display: "none" }} aria-hidden="true" />
       <div className="view-cube-area">
         <button
           className="view-home"
@@ -1101,7 +1152,8 @@ export function SceneViewer({
             title={`${prompt.label} — a number, or a formula of the parameters · Enter applies, Esc cancels`}
             onFocus={(e) => e.currentTarget.select()}
             onKeyDown={(e) => {
-              e.stopPropagation();
+              // Undo and redo are the app's to give the field or the history.
+              if (!historyOf(e)) e.stopPropagation();
               if (e.key === "Enter") onPrompt?.(prompt.key, e.currentTarget.value);
               if (e.key === "Escape") onPromptCancel?.();
             }}

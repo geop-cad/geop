@@ -73,6 +73,10 @@ pub struct Form {
     /// changes it, and the operation is sent the new selection
     /// ([`Event::Select`]) to keep.
     pub selection: Vec<String>,
+    /// Whether a drag from nothing, with nothing in hand, draws a box that
+    /// selects: the operation is sent it ([`CanvasEvent::SelectBox`]) and
+    /// decides what lies in it, from what its visuals stand for.
+    pub select_box: bool,
     /// What the step pulls the state towards: the editor solves the
     /// program with them.
     pub pulls: Vec<Pull>,
@@ -97,6 +101,7 @@ impl Default for Form {
             sheet: None,
             tool: InHand::Nothing,
             selection: Vec::new(),
+            select_box: false,
             pulls: Vec::new(),
             prompt: None,
             gizmo: None,

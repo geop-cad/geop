@@ -56,7 +56,7 @@ import { AssistantPanel } from "./Assistant";
 import { ASSISTANT_CONFIGURED, useAssistant } from "./useAssistant";
 import type { ToolResult } from "./agent";
 import { CommandPalette, ShortcutsOverlay } from "./CommandPalette";
-import { matches, parseChord, pressed, withShortcut, type PaletteEntry } from "./shortcuts";
+import { historyOf, matches, parseChord, pressed, withShortcut, type PaletteEntry } from "./shortcuts";
 
 /** What the pointer sends as it moves: answered as often as it moves, never "busy". */
 function following(command: Command): boolean {
@@ -804,7 +804,7 @@ function App() {
     },
     {
       id: "edit:escape",
-      label: "Stop what is in progress — a tool, a pick, a drag — else cancel the step (undo opens it again)",
+      label: "Stop what is in progress — a tool, a pick, a drag — else leave the step: a sketch kept, any other cancelled (undo opens it again)",
       group: "Edit",
       // The step's: it decides what is in progress (see the key handler).
       shortcut: appKey("escape"),
@@ -932,6 +932,18 @@ function App() {
   // palette's keys run what they name — an operation's only while no
   // step is edited. Any other key goes to the step being edited (its
   // tools, Escape, Enter, Delete).
+  /** The field last typed into since the focus last moved, if any (see the key handler). */
+  const typedIn = useRef<EventTarget | null>(null);
+  useEffect(() => {
+    const onFocus = () => (typedIn.current = null);
+    const onInput = (e: Event) => (typedIn.current = e.target);
+    window.addEventListener("focusin", onFocus, true);
+    window.addEventListener("input", onInput, true);
+    return () => {
+      window.removeEventListener("focusin", onFocus, true);
+      window.removeEventListener("input", onInput, true);
+    };
+  }, []);
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       const palettes = entriesRef.current.find((entry) => entry.id === "help:palette");
@@ -948,7 +960,23 @@ function App() {
         commit.run();
         return;
       }
+      // Undo and redo are the history's — the step's own edits while one
+      // is edited — from a field too, unless it was typed into since it
+      // took the focus: then its text is what they undo.
+      const history = historyOf(e);
+      if (history && !(typing(e) && typedIn.current === e.target)) {
+        e.preventDefault();
+        const entry = entriesRef.current.find((x) => x.id === `edit:${history}`);
+        if (entry && !entry.disabled) entry.run();
+        return;
+      }
       if (typing(e)) return;
+      // Escape held down stops one thing, not one after another until the
+      // step is left too.
+      if (e.key === "Escape" && e.repeat) {
+        e.preventDefault();
+        return;
+      }
       // While a step is edited, its tools take the plain keys.
       const usable = entriesRef.current.filter(
         (entry) => !editing || entry.shortcut?.startsWith("Mod+") || entry.id === "help:keys",
@@ -957,11 +985,6 @@ function App() {
       if (entry) {
         e.preventDefault();
         entry.run();
-        return;
-      }
-      if (matches(parseChord("Mod+Y"), e)) {
-        e.preventDefault();
-        void dispatch({ command: "redo" });
         return;
       }
       if (editing && !e.ctrlKey && !e.metaKey && !e.altKey) void event({ type: "key", key: e.key });
@@ -1157,6 +1180,7 @@ function App() {
                 plane={plane}
                 grid={presentation?.sheet == null}
                 grab={presentation?.grab ?? false}
+                selectBox={presentation?.select_box ?? false}
                 prompt={presentation?.prompt ?? null}
                 onPrompt={(key, text) => event({ type: "dialog", key, value: { type: "text", value: text } })}
                 onPromptCancel={() => event({ type: "key", key: "Escape" })}

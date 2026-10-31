@@ -217,6 +217,19 @@ pub enum StepEditEvent {
         #[serde(default)]
         shift: bool,
     },
+    /// A box drawn by a drag with the primary button from where the last
+    /// presentation offered no grab, while it offered a box (see
+    /// [`super::Presentation::select_box`]): the rays through its corners,
+    /// in order round it, released. `crossing` — drawn right to left — it
+    /// selects what it touches, else what lies wholly in it; `add` — Shift
+    /// or Ctrl held — it adds to the selection rather than replacing it.
+    SelectBox {
+        corners: Box<[Pointer; 4]>,
+        #[serde(default)]
+        crossing: bool,
+        #[serde(default)]
+        add: bool,
+    },
     /// A key, as the browser names it: `l`, `Escape`, `Enter`, `Delete`.
     Key { key: String },
     /// The view settled: `up` is the direction in the world that points up
@@ -258,6 +271,23 @@ impl StepEditEvent {
             StepEditEvent::View { up } => StepEditEvent::View {
                 up: motion.rotate(up),
             },
+            StepEditEvent::SelectBox {
+                corners,
+                crossing,
+                add,
+            } => {
+                let [a, b, c, d] = &**corners;
+                StepEditEvent::SelectBox {
+                    corners: Box::new([
+                        a.moved(motion)?,
+                        b.moved(motion)?,
+                        c.moved(motion)?,
+                        d.moved(motion)?,
+                    ]),
+                    crossing: *crossing,
+                    add: *add,
+                }
+            }
             other => other.clone(),
         })
     }
@@ -339,6 +369,15 @@ pub enum CanvasEvent {
         drag: GizmoDrag,
         from: Gizmo,
         done: bool,
+    },
+    /// A selection box, with nothing in hand (see
+    /// [`StepEditEvent::SelectBox`]): what it takes of the selectable
+    /// visuals is the operation's to decide, from what they stand for, and
+    /// to select — added to the selection, if `add`.
+    SelectBox {
+        corners: [Pointer; 4],
+        crossing: bool,
+        add: bool,
     },
     /// Any other key, as the browser names it, a letter lowercased: a
     /// tool's shortcut.

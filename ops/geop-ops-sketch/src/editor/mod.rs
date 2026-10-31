@@ -589,6 +589,7 @@ pub(crate) fn form<'a>(
     draw_dialog(&mut f, before, &args, &s, selection, &frame);
     f.form.visuals = visuals(&args, &s, selection, &frame);
     f.form.selection = selection.to_vec();
+    f.form.select_box = true;
     f.form.focus = Some(frame);
     f.form.tool = match s.tool {
         Tool::Select => InHand::Nothing,

@@ -10,7 +10,8 @@
 //! plain keys (`F`, `Home`, `O`) work only while no step is; the key
 //! list's (`?`) and those with `Mod` always. Escape is the step's while
 //! one is edited: it ends what is in progress in it first, and with
-//! nothing in progress cancels it (see [`crate::editor::Editor::handle`]).
+//! nothing in progress cancels it — or, for a sketch, keeps it, as OK does
+//! (see [`crate::editor::Editor::handle`]).
 
 use serde::Serialize;
 
@@ -45,7 +46,7 @@ pub const APP_KEYS: &[AppKey] = &[
     AppKey {
         action: "escape",
         key: "Escape",
-        label: "Stop what is in progress, else cancel the step",
+        label: "Stop what is in progress, else leave the step: a sketch kept, any other cancelled",
     },
     AppKey {
         action: "cancel",

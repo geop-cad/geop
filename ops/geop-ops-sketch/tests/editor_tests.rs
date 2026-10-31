@@ -255,7 +255,6 @@ impl Editor {
             self.click(p[0], p[1]);
         }
         self.key("Escape");
-        self.key("Escape");
     }
 
     fn sketch(&self) -> &Sketch {
@@ -2155,12 +2154,6 @@ fn sketches_undo_their_own_edits() {
             key: "Escape".into(),
         },
     );
-    event(
-        &mut editor,
-        StepEditEvent::Key {
-            key: "Escape".into(),
-        },
-    );
     let drawn = |editor: &Editor| {
         let args: AddSketchArgs = args(editor.editing().unwrap());
         args.sketch.curves.values().filter(|c| !c.fixed).count()
@@ -2344,11 +2337,12 @@ fn drawn_curves(editor: &mut geop_core_editor::editor::Editor) -> Vec<String> {
         .collect()
 }
 
-/// Enter and Escape both end the chain being drawn: two lines drawn after
-/// one, not a chain of three.
+/// Enter ends the chain being drawn and keeps the tool in hand: two lines
+/// drawn after one, not a chain of three. Escape puts the tool down with
+/// the chain, in one press: the next clicks draw nothing.
 #[test]
-fn every_drawing_tool_ends_its_chain_the_same_way() {
-    for gesture in [Gesture::Enter, Gesture::Escape] {
+fn enter_ends_the_chain_and_escape_the_tool() {
+    for (gesture, lines) in [(Gesture::Enter, 3), (Gesture::Escape, 1)] {
         // On the origin's xy plane, seen from above.
         let mut editor = editor();
         editor.handle(Command::New {
@@ -2364,31 +2358,91 @@ fn every_drawing_tool_ends_its_chain_the_same_way() {
         gesture.send(&mut editor);
         click(&mut editor, 0.0, 1.0);
         click(&mut editor, 1.0, 1.0);
+        click(&mut editor, 1.0, 2.0);
         let curves = drawn_curves(&mut editor);
-        assert_eq!(curves.len(), 2, "planar, {gesture:?}: {curves:#?}");
+        assert_eq!(curves.len(), lines, "{gesture:?}: {curves:#?}");
     }
 }
 
-/// A second Escape puts the drawing tool down: the next click draws nothing.
+/// Escape stops what is in progress and then leaves the sketch, keeping
+/// it as OK does — never throwing it away, however often it is pressed.
+/// It once ended a chain with one press and put the tool down with the
+/// next, but put a shape's tool down at once: the press after that
+/// cancelled the step, and a new sketch was gone after two presses with
+/// the rectangle tool, three with the line tool.
 #[test]
-fn a_second_escape_puts_the_drawing_tool_down() {
-    let mut editor = editor();
-    editor.handle(Command::New {
-        kind: "add_sketch".into(),
-    });
-    let click = |editor: &mut geop_core_editor::editor::Editor, x: f64, y: f64| {
-        editor.handle(click_at(from_above(x, y)));
-    };
-    click(&mut editor, 0.04, 0.04);
-    editor.handle(dialog("tool", Value::Choice("line".into())));
-    click(&mut editor, 0.0, 0.0);
-    click(&mut editor, 1.0, 0.0);
-    Gesture::Escape.send(&mut editor);
-    Gesture::Escape.send(&mut editor);
-    click(&mut editor, 0.0, 1.0);
-    click(&mut editor, 1.0, 1.0);
-    let curves = drawn_curves(&mut editor);
-    assert_eq!(curves.len(), 1, "{curves:#?}");
+fn escape_keeps_the_sketch_whatever_the_tool() {
+    // What each tool leaves in progress: a rectangle drawn, a line half
+    // drawn, a chain of lines, a constraint tool waiting for a pick, trim.
+    let tools: [(&str, &[P2]); 5] = [
+        ("r", &[[0.2, 0.2], [1.2, 0.7]]),
+        ("l", &[[0.2, 0.2]]),
+        ("l", &[[0.2, 0.2], [1.0, 0.3], [1.1, 1.0]]),
+        ("h", &[]),
+        ("m", &[]),
+    ];
+    for (tool, clicks) in tools {
+        let mut e = Editor::new(true);
+        // The origin's xy plane's square, picked from above.
+        e.click(0.04, 0.04);
+        e.lines(&[[-1.0, -1.0], [-0.5, -1.2]]);
+        e.key(tool);
+        for p in clicks {
+            e.click(p[0], p[1]);
+        }
+        let drawn = e.drawn_curves().len();
+        e.key("Escape");
+        assert_eq!(e.tool(), None, "{tool} {clicks:?}: the tool is put down");
+        let editor = &mut e.step.editor;
+        let update = handled(
+            editor,
+            Command::Event {
+                event: key("Escape"),
+            },
+        );
+        assert!(
+            update.step.is_none(),
+            "{tool} {clicks:?}: Escape leaves the sketch"
+        );
+        let program = editor.program();
+        assert_eq!(
+            program.steps.len(),
+            1,
+            "{tool} {clicks:?}: the sketch is kept"
+        );
+        let kept: AddSketchArgs = args(&program.steps[0]);
+        let kept = kept.sketch.curves.values().filter(|c| !c.fixed).count();
+        assert_eq!(kept, drawn, "{tool} {clicks:?}: with all it holds");
+        // Pressed once more, with no step edited, Escape does nothing.
+        handled(
+            editor,
+            Command::Event {
+                event: key("Escape"),
+            },
+        );
+        assert_eq!(editor.program().steps.len(), 1);
+    }
+}
+
+/// A new sketch with no plane yet holds nothing to keep: Escape stops the
+/// plane's pick, and then closes it.
+#[test]
+fn escape_closes_a_new_sketch_with_no_plane() {
+    let mut e = Editor::new(true);
+    e.key("Escape");
+    let editor = &mut e.step.editor;
+    let update = handled(
+        editor,
+        Command::Event {
+            event: key("Escape"),
+        },
+    );
+    assert!(update.step.is_none());
+    assert!(editor.program().steps.is_empty());
+}
+
+fn key(key: &str) -> StepEditEvent {
+    StepEditEvent::Key { key: key.into() }
 }
 
 /// A sketch is copied as the front end copies it — the update's export —
@@ -2560,4 +2614,116 @@ fn horizontal_and_vertical_are_named_as_seen() {
         up: Vector3::from_array([Scalar::ZERO, Scalar::ONE, Scalar::ZERO]),
     });
     assert!(glyphs(&e).contains(&"H".to_string()), "{:?}", glyphs(&e));
+}
+
+/// A box dragged from `a` to `b` over the drawing, seen from above, as the
+/// front end sends it: its corners in order round it, right to left a
+/// crossing box, `add` with Shift or Ctrl held.
+fn select_box(e: &mut Editor, a: P2, b: P2, add: bool) {
+    let corners = [a, [b[0], a[1]], b, [a[0], b[1]]].map(|p| down(p[0], p[1]));
+    e.send(StepEditEvent::SelectBox {
+        corners: Box::new(corners),
+        crossing: b[0] < a[0],
+        add,
+    });
+}
+
+/// A box drawn left to right selects what lies wholly in it: a rectangle's
+/// lines, corners and constraints, not the circle beside it it only cuts,
+/// nor the sketch's own origin and axes; right to left, what it touches.
+/// Shift adds to the selection; a box over nothing clears it.
+#[test]
+fn a_box_selects_what_lies_in_it_or_what_it_touches() {
+    let mut e = drawing();
+    assert!(e.presentation.select_box, "selecting, a drag draws a box");
+    e.key("r");
+    assert!(!e.presentation.select_box, "a tool in hand takes the drag");
+    e.click(0.2, 0.2);
+    e.click(1.2, 0.7);
+    e.key("c");
+    e.click(2.0, 0.5);
+    e.click(2.5, 0.5);
+    e.key("Escape");
+    let rectangle: Vec<String> = (e.drawn_curves().into_iter())
+        .filter(|(_, k)| matches!(k, CurveKind::Line { .. }))
+        .map(|(c, _)| c.to_string())
+        .collect();
+    let circle: Vec<String> = (e.drawn_curves().into_iter())
+        .filter(|(_, k)| matches!(k, CurveKind::Circle { .. }))
+        .map(|(c, _)| c.to_string())
+        .collect();
+    assert_eq!((rectangle.len(), circle.len()), (4, 1));
+    let selected = |e: &Editor| -> Vec<String> {
+        let mut s = e.selection().to_vec();
+        s.sort();
+        s
+    };
+    let of = |e: &Editor, keys: &[String]| keys.iter().all(|k| e.selection().contains(k));
+
+    // Left to right over the rectangle and half the circle, round the
+    // origin too.
+    select_box(&mut e, [-0.1, -0.1], [1.9, 0.9], false);
+    assert!(of(&e, &rectangle), "{:?}", selected(&e));
+    assert!(!of(&e, &circle), "the circle only cut: {:?}", selected(&e));
+    let sketch = e.sketch().clone();
+    let points = (sketch.points.iter()).filter(|(_, p)| !p.fixed).count();
+    let picked = |e: &Editor, prefix: char| {
+        (e.selection().iter())
+            .filter(|k| k.starts_with(prefix))
+            .count()
+    };
+    // The rectangle's four corners — not the circle's center, outside, nor
+    // the origin — and its four constraints, at its sides' middles.
+    assert_eq!(picked(&e, 'p'), 4, "{:?} of {points}", selected(&e));
+    assert_eq!(picked(&e, 'k'), 4, "{:?}", selected(&e));
+    assert!(!e.selection().contains(&e.origin().to_string()));
+    assert_eq!(picked(&e, 'c'), 4, "no axis: {:?}", selected(&e));
+
+    // Right to left, the same box touches the circle too.
+    select_box(&mut e, [1.9, 0.9], [-0.1, -0.1], false);
+    assert!(of(&e, &rectangle) && of(&e, &circle), "{:?}", selected(&e));
+
+    // Right to left over a strip of the rectangle's bottom alone, between
+    // its corners: the bottom line, no corner — and it replaced the
+    // selection.
+    select_box(&mut e, [0.9, 0.25], [0.5, 0.15], false);
+    let bottom = e.line_between([0.2, 0.2], [1.2, 0.2]).unwrap().to_string();
+    assert_eq!(picked(&e, 'c'), 1, "{:?}", selected(&e));
+    assert!(e.selection().contains(&bottom));
+    assert_eq!(picked(&e, 'p'), 0, "{:?}", selected(&e));
+
+    // Left to right round the circle, Shift held: added.
+    select_box(&mut e, [1.4, -0.1], [2.6, 1.1], true);
+    assert!(e.selection().contains(&bottom) && of(&e, &circle));
+
+    // Over nothing: nothing selected.
+    select_box(&mut e, [3.0, 3.0], [4.0, 4.0], false);
+    assert!(e.selection().is_empty(), "{:?}", selected(&e));
+}
+
+/// A circle is taken by itself, not by the polygon it is drawn as: a box
+/// a hair wider than it takes it, one a hair narrower does not, though it
+/// still holds every point the circle is drawn through but its leftmost
+/// and rightmost.
+#[test]
+fn a_box_takes_a_circle_by_the_circle_itself() {
+    let mut e = drawing();
+    e.key("c");
+    e.click(0.0, 0.0);
+    e.click(1.0, 0.0);
+    e.key("Escape");
+    let circle = (e.drawn_curves().into_iter())
+        .find(|(_, k)| matches!(k, CurveKind::Circle { .. }))
+        .map(|(c, _)| c.to_string())
+        .unwrap();
+    select_box(&mut e, [-1.0001, -1.0001], [1.0001, 1.0001], false);
+    assert!(e.selection().contains(&circle), "{:?}", e.selection());
+    select_box(&mut e, [-0.9999, -1.0001], [0.9999, 1.0001], false);
+    assert!(!e.selection().contains(&circle), "{:?}", e.selection());
+    // Right to left, a box inside the circle, touching none of it, takes
+    // nothing; one over its rim does.
+    select_box(&mut e, [0.5, 0.5], [-0.5, -0.5], false);
+    assert!(!e.selection().contains(&circle), "{:?}", e.selection());
+    select_box(&mut e, [1.1, 0.1], [0.9, -0.1], false);
+    assert!(e.selection().contains(&circle), "{:?}", e.selection());
 }

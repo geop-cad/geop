@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { CLICK_PX, DOUBLE_MS, isDoubleClick, movedFromPress } from "../src/gestures.ts";
+import { CLICK_PX, DOUBLE_MS, isDoubleClick, movedFromPress, selectionBox } from "../src/gestures.ts";
 
 test("a press that stays within the click distance is a click", () => {
   assert.equal(movedFromPress({ x: 10, y: 10 }, { x: 10, y: 10 }), false);
@@ -35,4 +35,20 @@ test("zooming keeps what is under the pointer under it, and a notch is a notch",
   assert.ok(Math.abs(position[2] - 8.5) < 1e-12, "a notch is 0.85 of the distance");
   assert.equal(wheelSteps(100, 0), -1);
   assert.equal(wheelSteps(-3, 1), 1);
+});
+
+test("a selection box left to right takes what lies in it, right to left what it touches", () => {
+  const right = selectionBox({ x: 10, y: 20 }, { x: 50, y: 5 });
+  assert.deepEqual([right.left, right.top, right.width, right.height], [10, 5, 40, 15]);
+  assert.equal(right.crossing, false);
+  // Its corners go round it from where it went down.
+  assert.deepEqual(right.corners, [
+    { x: 10, y: 20 },
+    { x: 50, y: 20 },
+    { x: 50, y: 5 },
+    { x: 10, y: 5 },
+  ]);
+  const left = selectionBox({ x: 50, y: 5 }, { x: 10, y: 20 });
+  assert.deepEqual([left.left, left.top, left.width, left.height], [10, 5, 40, 15]);
+  assert.equal(left.crossing, true);
 });

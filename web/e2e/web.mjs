@@ -10,7 +10,9 @@
 // File menu downloads a file; a drawing is dimensioned on its sheet and
 // downloaded from its dialog; the view starts orthographic, the right
 // button turns it and the middle moves it; a right click lights the face
-// behind and a left click picks it; Escape cancels an edited step, which
+// behind and a left click picks it; in a sketch, Ctrl+Z undoes a line,
+// Escape puts the tool down and then keeps the sketch, and a box dragged
+// over it selects; Escape cancels an edited step, which
 // undo opens again; and the view cube turns the view to the top and home.
 //
 // It starts with the first visit, from a fresh profile (`firstrun.mjs`).
@@ -776,6 +778,134 @@ await check("a 3-D sketch point is dragged along an axis by the gizmo", async ()
   await popup.locator(".button-row button.primary").click();
   const stats = await builtCleanly();
   return `moved by ${readout}; ${stats}`;
+});
+
+// ── the sketcher's keys and box ─────────────────────────────────────────
+
+/** A new sketch on the origin's zx plane, seen from the default view. */
+async function newSketch() {
+  await fresh();
+  await clickOperation(page, "Sketch");
+  await settle(page);
+  await clickView(8, 23);
+}
+
+/** The keys of the curves drawn in the sketch edited (not its axes), and of those selected. */
+async function sketchCurves() {
+  const visuals = (await presented())?.visuals ?? [];
+  const curves = visuals.filter((v) => /^c\d+$/.test(v.key) && v.style !== "reference");
+  return { drawn: curves.length, selected: curves.filter((v) => v.style === "selected").map((v) => v.key) };
+}
+
+/** Drags the left button over the view from `from` to `to`, pixels from its centre; `during` sees it on the way. */
+async function dragView(from, to, during = async () => {}) {
+  const box = await page.locator("main.viewport canvas").first().boundingBox();
+  const at = ([dx, dy]) => [box.x + box.width / 2 + dx, box.y + box.height / 2 + dy];
+  await page.mouse.move(...at(from));
+  await settle(page);
+  await page.mouse.down();
+  await page.mouse.move(...at([(from[0] + to[0]) / 2, (from[1] + to[1]) / 2]), { steps: 4 });
+  await page.mouse.move(...at(to), { steps: 4 });
+  await during();
+  await page.mouse.up();
+  await settle(page);
+}
+
+await check("in a sketch, Ctrl+Z undoes a line and Ctrl+Shift+Z or Ctrl+Y redoes it, from an untouched field too", async () => {
+  await newSketch();
+  await page.keyboard.press("l");
+  await clickView(-270, -190);
+  await clickView(-120, -190);
+  await clickView(-120, -70);
+  await page.keyboard.press("Escape");
+  await settle(page);
+  expect((await sketchCurves()).drawn === 2, `drew ${(await sketchCurves()).drawn} lines, not 2`);
+  await page.keyboard.press("Control+z");
+  await settle(page);
+  expect((await sketchCurves()).drawn === 1, "Ctrl+Z did not undo the last line");
+  expect((await popup.count()) === 1, "Ctrl+Z left the sketch");
+  await page.keyboard.press("Control+Shift+z");
+  await settle(page);
+  expect((await sketchCurves()).drawn === 2, "Ctrl+Shift+Z did not redo it");
+  await page.keyboard.press("Control+z");
+  await settle(page);
+  await page.keyboard.press("Control+y");
+  await settle(page);
+  expect((await sketchCurves()).drawn === 2, "Ctrl+Y did not redo it");
+  // The polygon's sides field, focused and not typed into: Ctrl+Z is the
+  // sketch's. Typed into, it is the field's.
+  await page.keyboard.press("g");
+  await settle(page);
+  const sides = page.locator(".field[data-field-key='sides'] input:visible").first();
+  await sides.focus();
+  await page.keyboard.press("Control+z");
+  await settle(page);
+  expect((await sketchCurves()).drawn === 1, "Ctrl+Z in an untouched field did not undo the line");
+  // Undoing starts the sketch's tools afresh: the polygon taken up again.
+  await page.keyboard.press("g");
+  await settle(page);
+  await sides.focus();
+  await sides.press("End");
+  await sides.type("1");
+  await page.keyboard.press("Control+z");
+  await settle(page);
+  expect((await sketchCurves()).drawn === 1, "Ctrl+Z in a field typed into undid the sketch, not the typing");
+  await popup.locator(".button-row button", { hasText: /^Cancel$/ }).click();
+  await settle(page);
+});
+
+await check("Escape puts a sketch's tool down, then leaves the sketch and keeps it; a held Escape does one thing", async () => {
+  await newSketch();
+  await page.keyboard.press("r");
+  await settle(page);
+  await clickView(-270, -190);
+  await clickView(-120, -70);
+  // Held down: it repeats, and only its first press counts.
+  await page.keyboard.down("Escape");
+  await page.keyboard.down("Escape");
+  await page.keyboard.down("Escape");
+  await page.keyboard.up("Escape");
+  await settle(page);
+  expect((await popup.count()) === 1, "a held Escape left the sketch");
+  const tool = await popup.locator(".field[data-field-key='tool'] button.active").count();
+  expect(tool === 0, "Escape did not put the rectangle tool down");
+  await page.keyboard.press("Escape");
+  const stats = await builtCleanly();
+  expect((await popup.count()) === 0, "the second Escape did not leave the sketch");
+  expect(stats.startsWith("1 step"), `the sketch was not kept: ${stats}`);
+  return stats;
+});
+
+await check("a box dragged left to right in a sketch selects what lies in it, right to left what it touches", async () => {
+  await newSketch();
+  await page.keyboard.press("r");
+  await settle(page);
+  await clickView(-270, -190);
+  await clickView(-120, -70);
+  await page.keyboard.press("Escape");
+  await settle(page);
+  const shown = () => page.locator(".select-box").evaluate((el) => ({ shown: el.style.display !== "none", crossing: el.classList.contains("crossing") }));
+  let during = null;
+  await dragView([-300, -220], [-90, -40], async () => (during = await shown()));
+  expect(during?.shown && !during.crossing, `a box left to right was drawn ${JSON.stringify(during)}`);
+  expect(!(await shown()).shown, "the box stayed after it was let go");
+  const whole = await sketchCurves();
+  expect(whole.selected.length === 4, `the box took ${whole.selected.join(", ") || "nothing"}, not the rectangle's 4 lines`);
+  // Right to left across the rectangle's right side alone.
+  await dragView([-105, -150], [-135, -120], async () => (during = await shown()));
+  expect(during?.shown && during.crossing, `a box right to left was drawn ${JSON.stringify(during)}`);
+  const side = await sketchCurves();
+  expect(side.selected.length === 1, `the crossing box took ${side.selected.join(", ") || "nothing"}, not one side`);
+  // Shift adds the rest.
+  await page.keyboard.down("Shift");
+  await dragView([-300, -220], [-90, -40]);
+  await page.keyboard.up("Shift");
+  expect((await sketchCurves()).selected.length === 4, "Shift did not add to the selection");
+  // A box over nothing clears it.
+  await dragView([-300, 60], [-200, 140]);
+  expect((await sketchCurves()).selected.length === 0, "a box over nothing kept the selection");
+  await popup.locator(".button-row button.primary").click();
+  return builtCleanly();
 });
 
 // ── exports ─────────────────────────────────────────────────────────────

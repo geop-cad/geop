@@ -60,6 +60,12 @@ pub struct OperationInfo {
     /// and shows it: `E`, `Shift+F`. Unique among the operations offered;
     /// `F` and `Home` are the view's (framing it), `?` lists the keys.
     pub shortcut: Option<&'static str>,
+    /// Whether Escape, with nothing in progress in a step of it, puts the
+    /// step into the program as OK does, rather than cancelling it: a
+    /// sketch is drawing its user expects kept, as every CAD program keeps
+    /// a sketch left by Escape (see [`crate::editor::Editor::handle`]).
+    #[serde(skip)]
+    pub kept_on_escape: bool,
 }
 
 impl OperationInfo {
@@ -81,6 +87,7 @@ impl OperationInfo {
             reads: &[],
             icon: None,
             shortcut: None,
+            kept_on_escape: false,
         }
     }
 
@@ -110,6 +117,15 @@ impl OperationInfo {
     pub const fn shortcut(self, shortcut: &'static str) -> Self {
         Self {
             shortcut: Some(shortcut),
+            ..self
+        }
+    }
+
+    /// The same, kept when Escape leaves a step of it (see
+    /// [`OperationInfo::kept_on_escape`]).
+    pub const fn kept_on_escape(self) -> Self {
+        Self {
+            kept_on_escape: true,
             ..self
         }
     }

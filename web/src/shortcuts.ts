@@ -117,6 +117,16 @@ export function search(entries: PaletteEntry[], query: string): PaletteEntry[] {
   return scored.map((x) => x.entry);
 }
 
+/**
+ * What `e` asks of the history: `Mod+Z` undo, `Mod+Shift+Z` and `Mod+Y`
+ * (as Windows programs have it) redo; `null` for any other key.
+ */
+export function historyOf(e: KeyLike): "undo" | "redo" | null {
+  if (matches(parseChord("Mod+Z"), e)) return "undo";
+  if (matches(parseChord("Mod+Shift+Z"), e) || matches(parseChord("Mod+Y"), e)) return "redo";
+  return null;
+}
+
 /** The first of `entries` whose shortcut `e` presses, and is not disabled. */
 export function pressed(entries: PaletteEntry[], e: KeyLike): PaletteEntry | undefined {
   return entries.find((entry) => !entry.disabled && entry.shortcut && matches(parseChord(entry.shortcut), e));

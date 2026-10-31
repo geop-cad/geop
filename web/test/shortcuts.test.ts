@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { formatShortcut, matches, parseChord, pressed, search, type KeyLike, type PaletteEntry } from "../src/shortcuts.ts";
+import { formatShortcut, historyOf, matches, parseChord, pressed, search, type KeyLike, type PaletteEntry } from "../src/shortcuts.ts";
 
 const key = (k: string, mods: Partial<KeyLike> = {}): KeyLike => ({
   key: k,
@@ -79,4 +79,15 @@ test("a key press runs the entry whose shortcut it is, never a disabled one", ()
   ];
   assert.equal(pressed(entries, key("e")), undefined);
   assert.equal(pressed(entries, key("F", { shiftKey: true }))?.label, "Fillet");
+});
+
+test("Ctrl/⌘+Z undoes; Ctrl/⌘+Shift+Z and Ctrl+Y redo; nothing else is the history's", () => {
+  assert.equal(historyOf(key("z", { ctrlKey: true })), "undo");
+  assert.equal(historyOf(key("z", { metaKey: true })), "undo");
+  assert.equal(historyOf(key("Z", { ctrlKey: true, shiftKey: true })), "redo");
+  assert.equal(historyOf(key("Z", { metaKey: true, shiftKey: true })), "redo");
+  assert.equal(historyOf(key("y", { ctrlKey: true })), "redo");
+  assert.equal(historyOf(key("z")), null);
+  assert.equal(historyOf(key("z", { ctrlKey: true, altKey: true })), null);
+  assert.equal(historyOf(key("Escape")), null);
 });

@@ -173,6 +173,7 @@ impl Tool for DragTool {
             focus: None,
             sheet: None,
             grab: lit.is_some(),
+            select_box: false,
             prompt: None,
             gizmo: None,
             hidden: Vec::new(),

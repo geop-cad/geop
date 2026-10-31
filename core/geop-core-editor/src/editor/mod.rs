@@ -951,7 +951,10 @@ impl Editor {
                 // With nothing in progress in the step, Enter commits it, and
                 // Escape cancels it — an edited one so that undo opens it
                 // again (see `Command::Cancel`): what every front end's keys
-                // do.
+                // do. A step of an operation kept on Escape (a sketch) is
+                // committed instead, once it has all it needs: Escape is
+                // pressed again and again to stop what is in progress, and
+                // the press after the last must not throw the drawing away.
                 if let Some(open) = &self.open
                     && let StepEditEvent::Key { key } = &event
                     && matches!(key.as_str(), "Enter" | "Escape")
@@ -960,8 +963,12 @@ impl Editor {
                     let editors = self.registry.editors();
                     let form = (open.editor).form(editors, runner, part, &open.program)?;
                     if open.editor.at_rest(&form) {
-                        return match key.as_str() {
-                            "Enter" => self.apply(Command::Commit),
+                        let kept = (open.step().ok())
+                            .and_then(|step| editors.info(&step.operation))
+                            .is_some_and(|listed| listed.info.kept_on_escape)
+                            && form.dialog.missing().is_empty();
+                        return match (key.as_str(), kept) {
+                            ("Enter", _) | (_, true) => self.apply(Command::Commit),
                             _ => self.apply(Command::Cancel),
                         };
                     }

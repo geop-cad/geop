@@ -176,7 +176,8 @@ impl PartOperation for AddSketch {
         OperationTier::Big,
     )
     .shortcut("S")
-    .icon(crate::icons::ADD_SKETCH);
+    .icon(crate::icons::ADD_SKETCH)
+    .kept_on_escape();
     type Args = AddSketchArgs;
     type Session = SketchSession;
 

@@ -3,8 +3,9 @@
 //! sketch.
 
 use geop_core_editor::editing::hit::no_instances;
-use geop_core_math::{scalars::Scalar, vector::Vector3};
+use geop_core_math::{geop_error::GeopResult, polygon::Convex, scalars::Scalar, vector::Vector3};
 use geop_core_program::numeric::NumericInput;
+use geop_core_sketch::{Enclosure, profile::curve_nurbs};
 
 use super::{
     drawing::{Built, Hints, construct, curve_ending_at},
@@ -423,6 +424,78 @@ impl Editing<'_> {
         self.commit(next);
     }
 
+    /// The selection box through `corners`: what lies wholly in it — or,
+    /// `crossing`, what it touches — selected, added to the selection if
+    /// `add`, else in its place. Points are taken by where they are,
+    /// constraints by where their glyphs are, curves by themselves, never
+    /// by the polylines they are drawn as (see [`NurbCurve::within`]). The
+    /// sketch's own origin and axes are none of the drawing — and the axes
+    /// run across every box — so neither is taken. A box whose corners do
+    /// not all meet the plane, or that covers none of it, takes nothing.
+    ///
+    /// [`NurbCurve::within`]: geop_core_geometry::nurb_curve::NurbCurve::within
+    fn select_in_box(&mut self, corners: &[Pointer; 4], crossing: bool, add: bool) {
+        let mut at = Vec::new();
+        let mut reach: Option<Scalar> = None;
+        for corner in corners {
+            let Some((p, t)) = self.in_plane(corner) else {
+                return;
+            };
+            at.push(Vector2::from_array(p.map(Scalar::from_f64)));
+            let here = corner.reach_at(1.0, t);
+            reach = Some(reach.map_or(here, |r| r.min(here)));
+        }
+        let (Some(region), Some(reach)) = (Convex::new(&at), reach) else {
+            return;
+        };
+        // How closely a curve is followed along the box's edge: a
+        // hundredth of a pointer's reach, well under a pixel.
+        let min_size = reach.mul(Scalar::from_f64(0.01));
+        let sketch = self.sketch();
+        let drawn = Enclosure::as_drawn(sketch);
+        let own = |pick: Pick| {
+            (self.args.reference_of(pick))
+                .is_some_and(|i| self.args.references[i].source == Source::Frame)
+        };
+        let curve_taken = |c: CurveId| -> GeopResult<bool> {
+            let (mut wholly, mut touches) = (true, false);
+            for piece in curve_nurbs(sketch, &drawn, c)? {
+                let within = piece.within(&region, min_size, 10_000)?;
+                wholly &= within.wholly;
+                touches |= within.touches;
+            }
+            Ok(match crossing {
+                true => touches,
+                false => wholly,
+            })
+        };
+        let visuals = visuals(self.args, self.s, self.selection, &self.frame);
+        let taken: Vec<String> = (visuals.iter().filter(|v| v.selectable))
+            .filter(|v| {
+                if let Some(p) = point_key(&v.key).filter(|p| sketch.points.contains_key(p)) {
+                    !own(Pick::Point(p)) && region.could_contain(&sketch.points[&p].xy())
+                } else if let Some(c) = curve_key(&v.key).filter(|c| sketch.curves.contains_key(c))
+                {
+                    // A curve the search cannot decide is not taken.
+                    !own(Pick::Curve(c)) && curve_taken(c).unwrap_or(false)
+                } else if let Shape::Label { at, .. } = &v.shape {
+                    is_glyph(&v.key) && region.could_contain(&self.frame.to_uv(at))
+                } else {
+                    false
+                }
+            })
+            .map(|v| v.key.clone())
+            .collect();
+        if !add {
+            self.selection.clear();
+        }
+        for key in taken {
+            if !self.selection.contains(&key) {
+                self.selection.push(key);
+            }
+        }
+    }
+
     /// The curve the trim tool, at `pointer`, is over — one it can trim —
     /// and where in the plane.
     fn meets(&self, pointer: &Pointer) -> Option<(CurveId, P2)> {
@@ -613,16 +686,16 @@ impl Editing<'_> {
         self.commit(next);
     }
 
-    /// Escape: close the prompt, else finish the draft, else put the tool
-    /// down.
+    /// Escape: close the prompt, else put the tool down with what it was
+    /// drawing — in one press, as every CAD program does: a press that only
+    /// ended the draft left the tool in hand, so how many presses it took
+    /// to be at rest, where the next one leaves the sketch, depended on the
+    /// tool and on how far it had got.
     fn cancel(&mut self) {
         if self.s.prompt.take().is_some() {
             self.s.error = None;
-        } else if !self.s.draft.placed.is_empty() {
-            self.finish_draft();
         } else {
-            self.s.tool = Tool::Select;
-            self.s.stroke = Stroke::default();
+            self.take(Tool::Select);
         }
     }
 
@@ -731,6 +804,11 @@ impl Editing<'_> {
                     self.stroke(from, to, *done);
                 }
             }
+            CanvasEvent::SelectBox {
+                corners,
+                crossing,
+                add,
+            } => self.select_in_box(corners, *crossing, *add),
             // A planar sketch asks for no gizmo: it is dragged in its plane.
             CanvasEvent::Gizmo { .. } => {}
         }

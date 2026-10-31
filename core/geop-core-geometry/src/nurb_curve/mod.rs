@@ -26,8 +26,10 @@ mod split;
 mod sweep;
 mod tangent;
 mod translate;
+mod within;
 pub(crate) use translate::transform_control_point;
 pub use translate::{embed_point, flatten_point};
+pub use within::Within;
 
 use std::fmt::Display;
 
