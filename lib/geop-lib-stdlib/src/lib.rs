@@ -146,19 +146,18 @@ const FAMILIES: [(&str, Family); 25] = [
 /// for: or why it would not build. `None` for a file that is no standard
 /// part.
 fn entry(file: &str) -> Option<GeopResult<&'static Entry>> {
-    static ENTRIES: [OnceLock<Result<Entry, String>>; FAMILIES.len()] =
+    static ENTRIES: [OnceLock<GeopResult<Entry>>; FAMILIES.len()] =
         [const { OnceLock::new() }; FAMILIES.len()];
     let k = FAMILIES.iter().position(|(f, _)| *f == file)?;
     let (file, family) = FAMILIES[k];
     let built = ENTRIES[k].get_or_init(|| {
-        let part = family(file).map_err(|e| format!("building the standard part {file}: {e}"))?;
-        let text = part
-            .program
-            .to_json()
-            .map_err(|e| format!("writing the standard part {file}: {e}"))?;
+        let part = family(file)
+            .map_err(|e| e.with_context(format!("building the standard part {file}")))?;
+        let text = (part.program.to_json())
+            .map_err(|e| e.with_context(format!("writing the standard part {file}")))?;
         Ok(Entry { part, text })
     });
-    Some(built.as_ref().map_err(|e| GeopError::new(e.clone())))
+    Some(built.as_ref().map_err(GeopError::clone))
 }
 
 /// Every standard part, each built if it was not yet.

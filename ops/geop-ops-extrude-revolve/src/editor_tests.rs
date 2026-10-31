@@ -1167,9 +1167,6 @@ fn opening_a_sketch_meshes_again_only_the_faces_changed_after_it() {
 /// back at 2, the hole not built — and redo puts the step back with the
 /// marker after it.
 #[test]
-#[ignore = "bug: Command::Undo and Command::Redo set the marker to None, so undoing a step added \
-            at the marker (2 of 4) runs the whole program — the marker jumps to the end (4) and \
-            the hole the user had rolled back reappears; redo leaves it at the end too (5)"]
 fn undo_keeps_where_the_program_runs_to() {
     let (mut editor, _) = editor();
     editor.handle(Command::Seek { marker: Some(2) });
@@ -1189,10 +1186,6 @@ fn undo_keeps_where_the_program_runs_to() {
 /// to the top of the step list: the marker stays before `hole_sketch`, as
 /// it does for every other edit that moves steps — the box still runs.
 #[test]
-#[ignore = "bug: Command::Move moves the step but leaves the marker at its index, unlike \
-            EditorContext::edit_program which keeps it at its step: with the marker at 2 \
-            (before `hole_sketch`), moving `hole` to the top leaves `box` past the marker, \
-            so the box the user saw disappears"]
 fn moving_a_step_keeps_where_the_program_runs_to() {
     let (mut editor, _) = editor();
     handled(&mut editor, Command::Seek { marker: Some(2) });
@@ -1222,10 +1215,6 @@ fn moving_a_step_keeps_where_the_program_runs_to() {
 /// app's Ctrl+C copies the step open: what is copied is the step as it is
 /// edited — 3 deep — not as it was before it was opened.
 #[test]
-#[ignore = "bug: Command::Copy copies the step from the program as committed (`self.file`), \
-            ignoring the step being edited: the desktop app enables Copy only while a step is \
-            open (Action::CopyStep), so Ctrl+C after typing 3 into the box's distance copies \
-            the extrusion 1 deep"]
 fn copying_the_step_being_edited_copies_it_as_edited() {
     let (mut editor, _) = editor();
     handled(&mut editor, open("box"));
