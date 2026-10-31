@@ -268,6 +268,8 @@ fn measure_tool_measures_what_is_clicked() {
     assert_eq!(report["found"], serde_json::json!([]));
 
     let update = editor.handle(Command::Tool { key: None });
-    assert!(update.tool.is_none() && update.inspection.is_none());
+    // Put down, no tool is taken: the idle one, the drag tool, is in hand.
+    assert!(update.inspection.is_none());
+    assert_eq!(update.program.and_then(|p| p.tool), None);
     assert_eq!(*editor.program(), before);
 }

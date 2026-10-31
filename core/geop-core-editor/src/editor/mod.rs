@@ -1738,8 +1738,8 @@ impl Editor {
         // levels up from it each is.
         let segments: Vec<&str> = instance.split(INSTANCE_SEPARATOR).collect();
         let mut before: Vec<(String, usize)> = Vec::new();
+        let mut outer = String::new();
         for (k, name) in segments.iter().enumerate() {
-            let outer = segments[..k].join(&INSTANCE_SEPARATOR.to_string());
             let part = match outer.is_empty() {
                 true => &self.build.part,
                 false => match self.build.part.placed_at_path(&outer) {
@@ -1755,6 +1755,7 @@ impl Editor {
             before.extend((placed.iter().take(at)).map(|(other, _, _)| {
                 (geop_core_program::placed::instance_path(&outer, other), up)
             }));
+            outer = geop_core_program::placed::instance_path(&outer, name);
         }
         let Ok(drawn) = self.draw(&self.build.part.current(), &self.build.runner) else {
             return view;
@@ -1770,10 +1771,9 @@ impl Editor {
                 continue;
             };
             let (outer, _) = geop_core_program::placed::split_instance_path(path);
-            let inside = match outer.is_empty() {
-                true => other.name.as_str(),
-                false => &other.name[outer.len() + 1..],
-            };
+            let inside = (other.name.strip_prefix(outer))
+                .and_then(|rest| rest.strip_prefix(INSTANCE_SEPARATOR))
+                .unwrap_or(&other.name);
             let pose = back.compose(&other.pose);
             let Ok(frame) = pose.motion().apply_frame(&origin) else {
                 continue;
