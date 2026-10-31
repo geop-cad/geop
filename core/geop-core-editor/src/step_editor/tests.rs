@@ -32,6 +32,9 @@ struct MarkArgs {
     /// The solid marked, as a face of it picks it.
     #[serde(default)]
     body: Vec<PickedElement>,
+    /// A face only the bottom is of the kind to be.
+    #[serde(default)]
+    floor: Vec<PickedElement>,
 }
 
 /// What a mark keeps while edited: the selection, and the canvas events it
@@ -94,7 +97,16 @@ impl Editable for MarkOperation {
                 false,
                 Preview(|_, _| Some(Picked::new(solid()))),
             )
-            .optional("body");
+            .optional("body")
+            .reference(
+                "floor",
+                "Floor",
+                picked(&args.floor),
+                &["face"],
+                false,
+                Preview(|_, hit| (hit.name == "bottom").then(|| Picked::new(hit.clone()))),
+            )
+            .optional("floor");
         let dot = Shape::Point {
             at: v(5.0, 0.0, 0.0),
         };
@@ -313,6 +325,7 @@ fn a_handle_drags_its_number() {
         on: vec![face("top")],
         distance: NumericInput::Plain(1.0),
         body: Vec::new(),
+        floor: Vec::new(),
     };
     let mut editor = Editor::new(args, false);
     editor.send(StepEditEvent::Drag {
@@ -333,6 +346,7 @@ fn clicks_select_and_escape_clears() {
         on: vec![face("top")],
         distance: NumericInput::Plain(1.0),
         body: Vec::new(),
+        floor: Vec::new(),
     };
     let mut editor = Editor::new(args, false);
     editor.click(5.0, 0.0);
@@ -401,6 +415,7 @@ fn what_a_click_would_hold_alike_is_one_candidate() {
         on: vec![face("top")],
         distance: NumericInput::Plain(1.0),
         body: Vec::new(),
+        floor: Vec::new(),
     };
     let mut editor = Editor::new(args, false);
     editor.send(StepEditEvent::Dialog {
@@ -414,5 +429,30 @@ fn what_a_click_would_hold_alike_is_one_candidate() {
         editor.args().body,
         vec![face("top")],
         "the first face, the solid's"
+    );
+}
+
+/// What is in front comes first, though it holds nothing: a hover over it
+/// lights nothing, and only a pointer stepped behind it reaches the face
+/// behind, which it holds.
+#[test]
+fn what_holds_nothing_in_front_still_comes_first() {
+    let args = MarkArgs {
+        on: vec![face("top")],
+        ..MarkArgs::default()
+    };
+    let mut editor = Editor::new(args, false);
+    editor.send(StepEditEvent::Dialog {
+        key: "floor".into(),
+        value: Value::Press,
+    });
+    editor.hover(down(0.0, 0.0));
+    let shown = editor.presentation();
+    assert_eq!(shown.cycle, Some(Cycle { at: 0, of: 2 }));
+    assert_eq!(shown.highlights, vec![face("top")], "only what `on` holds");
+    editor.hover(down(0.0, 0.0).cycled(1));
+    assert_eq!(
+        editor.presentation().highlights,
+        vec![face("top"), face("bottom")]
     );
 }

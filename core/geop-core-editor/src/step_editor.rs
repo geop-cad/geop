@@ -179,10 +179,12 @@ fn references(form: &Form) -> Vec<String> {
 }
 
 /// What a click with `pointer` could pick for the reference field `key` of
-/// `dialog`, in what `scene` draws, read through `reader`: each element
-/// under the pointer that selects something, with what the field would
-/// hold of it — front to back (see [`Scene::under`]), and each held value
-/// once: two faces of one feature are one feature to a field of features.
+/// `dialog`, in what `scene` draws, read through `reader`, front to back
+/// (see [`Scene::under`]), each with what the field would hold of it: the
+/// element in front, whatever it holds — a click on the plate in front of
+/// a hole picks no hole behind it — then each element behind it that
+/// holds something not held already: two faces of one feature are one
+/// feature to a field of features.
 fn candidates(
     scene: &dyn Scene,
     reader: &Reader,
@@ -190,15 +192,18 @@ fn candidates(
     key: &str,
     reference: &Reference,
     pointer: &Pointer,
-) -> Vec<(PickedElement, Picked)> {
-    let mut found: Vec<(PickedElement, Picked)> = Vec::new();
+) -> Vec<(PickedElement, Option<Picked>)> {
+    let mut found: Vec<(PickedElement, Option<Picked>)> = Vec::new();
     for hit in scene.under(pointer, &reference.accepts) {
-        let Some(held) = dialog.previewed(reader, key, &hit.element) else {
-            continue;
+        let held = dialog.previewed(reader, key, &hit.element);
+        let behind = !found.is_empty();
+        let known = |held: &Picked| {
+            (found.iter()).any(|(_, h)| h.as_ref().is_some_and(|h| h.element == held.element))
         };
-        if !found.iter().any(|(_, h)| h.element == held.element) {
-            found.push((hit.element, held));
+        if behind && held.as_ref().is_none_or(known) {
+            continue;
         }
+        found.push((hit.element, held));
     }
     found
 }
