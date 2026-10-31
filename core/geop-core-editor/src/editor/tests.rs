@@ -321,7 +321,8 @@ fn key(key: &str) -> Command {
 
 /// With nothing in progress in the step, Enter commits it — one edit to
 /// undo — and Escape cancels it; a step cancelled once edited is no edit
-/// lost: undo opens it again, as it was left.
+/// lost: undo opens it again, as it was left, and cancelled again as it
+/// was, redo does.
 #[test]
 fn enter_commits_and_escape_cancels_a_step_at_rest() -> Result<(), GeopError> {
     let registry = (Registry::default().operation(Place)).and_then(|r| r.drawer(Points))?;
@@ -359,6 +360,13 @@ fn enter_commits_and_escape_cancels_a_step_at_rest() -> Result<(), GeopError> {
     let update = handled(&mut editor, Command::Undo);
     let step = update.step.expect("undo opens the step cancelled again");
     assert!(step.can_undo, "with its own edit to undo");
+    // Cancelled again as it was, it is that cancel again: undo goes on
+    // past it, redo opens it once more.
+    let update = handled(&mut editor, key("Escape"));
+    assert!(update.step.is_none());
+    assert!(update.program.is_some_and(|p| !p.can_undo && p.can_redo));
+    let update = handled(&mut editor, Command::Redo);
+    assert!(update.step.is_some(), "redo opens it again");
     let update = handled(&mut editor, key("Enter"));
     assert!(update.step.is_none(), "Enter commits");
     assert_eq!(

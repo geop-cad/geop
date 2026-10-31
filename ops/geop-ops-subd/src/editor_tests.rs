@@ -361,12 +361,6 @@ fn subd_loops_and_rings_are_selected_by_double_click() {
     );
     let mid = [0, 1, 2].map(|c| (p[c] + q[c]) / 2.0);
     let at = pointer(mid.map(|c| 10.0 * c), mid.map(|c| -c));
-    event(
-        &mut editor,
-        StepEditEvent::Key {
-            key: "Escape".into(),
-        },
-    );
     event(&mut editor, click(at, false, false));
     let step = event(&mut editor, click(at, true, false));
     assert_eq!(selection(&step).len(), 4, "{:?}", selection(&step));

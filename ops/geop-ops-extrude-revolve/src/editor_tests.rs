@@ -115,6 +115,14 @@ fn parameters_are_edited_and_undone() {
     let refused = editor.handle(Command::Commit).error.expect("a name taken");
     assert!(refused.contains("more than one parameter"), "{refused}");
     editor.handle(Command::Cancel);
+    // Undo opens the step cancelled again; cancelled once more as it was,
+    // undo goes on to the commit before it.
+    let reopened = editor.handle(Command::Undo);
+    assert!(
+        reopened.step.is_some(),
+        "undo opens the cancelled step again"
+    );
+    editor.handle(Command::Cancel);
     editor.handle(Command::Undo);
     assert_eq!(parameters_of(editor.program()), parameters_of(&program));
 }

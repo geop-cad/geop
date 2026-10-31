@@ -78,7 +78,9 @@ agree; a front end only draws what it is sent and sends what the user did.
   Enter commits the step and Escape cancels it, edited or not. A cancel
   throws nothing away for good: a step cancelled after it was edited is
   one edit to undo, and undo opens it again as it was left, its own edits
-  to undo with it (`Undone::Cancelled`). That is safer than refusing the
+  to undo with it (`Undone::Cancelled`); cancelled again as it was, that
+  is the same cancel, which redo takes back and undo goes past, so the
+  history before it stays in reach. That is safer than refusing the
   key once the step is edited, and less in the way than asking to
   confirm. A commit by key is one edit to undo too. The kernel decides
   this, so the web app and VS Code agree; `Ctrl/⌘+Backspace` cancels a

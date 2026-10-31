@@ -119,6 +119,10 @@ struct Open {
     /// The step as it was when the drag going on started: a drag is one
     /// edit, however many events it takes.
     dragging: Option<Edited>,
+    /// The step as it was when an undo of its cancel opened it again: a
+    /// cancel of it as it was then is that cancel again, which redo, not
+    /// undo, takes back (see `Command::Cancel`).
+    reopened: Option<Edited>,
     /// For a step of a part placed in the program, where it is placed:
     /// `program` is then that part's, and the program run is the file's.
     within: Option<Within>,
@@ -752,6 +756,7 @@ impl Editor {
             undo: Vec::new(),
             redo: Vec::new(),
             dragging: None,
+            reopened: None,
             within: None,
         });
         Ok(())
@@ -815,6 +820,7 @@ impl Editor {
             undo: Vec::new(),
             redo: Vec::new(),
             dragging: None,
+            reopened: None,
             within: Some(Within {
                 instance,
                 location,
@@ -1049,10 +1055,19 @@ impl Editor {
                     }) => {
                         (self.workspace).write(&within.location.file, Some(within.text));
                     }
-                    // What was edited is not lost: undo opens it again.
+                    // What was edited is not lost: undo opens it again. A
+                    // step opened again so and cancelled as it was is that
+                    // cancel redone: undo goes on past it, redo opens it.
                     Some(open) if !open.undo.is_empty() => {
-                        self.undo.push(Undone::Cancelled(Box::new(open)));
-                        self.redo.clear();
+                        let again = open.reopened.is_some()
+                            && open.reopened.as_ref() == open.edited().ok().as_ref();
+                        match again {
+                            true => self.redo.push(Undone::Cancelled(Box::new(open))),
+                            false => {
+                                self.undo.push(Undone::Cancelled(Box::new(open)));
+                                self.redo.clear();
+                            }
+                        }
                     }
                     _ => {}
                 }
@@ -1359,7 +1374,8 @@ impl Editor {
                     }
                     // The cancel undone: the step is edited again, built as
                     // it is when opened.
-                    Undone::Cancelled(open) => {
+                    Undone::Cancelled(mut open) => {
+                        open.reopened = Some(open.edited()?);
                         self.tool = None;
                         self.give();
                         (self.build)

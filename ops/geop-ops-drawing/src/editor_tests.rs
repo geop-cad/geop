@@ -243,10 +243,8 @@ fn a_drawing_is_annotated_on_its_sheet_and_downloaded() {
         "{label:?}"
     );
 
-    // Put down, the tool lets its value be dragged.
-    editor.handle(event(StepEditEvent::Key {
-        key: "Escape".into(),
-    }));
+    // Put down, the tool lets its value be dragged. (Escape once more,
+    // with nothing in progress, would cancel the drawing.)
     let update = editor.handle(event(StepEditEvent::Key {
         key: "Escape".into(),
     }));
