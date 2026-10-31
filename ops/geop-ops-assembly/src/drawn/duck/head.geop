@@ -1,0 +1,2647 @@
+{
+  "steps": [
+    {
+      "id": "sketch1",
+      "operation": "add_sketch",
+      "args": {
+        "labels": {
+          "19": [
+            3.788193048662508,
+            17.286965461502124
+          ],
+          "20": [
+            -13.969814838293587,
+            12.69844993777008
+          ]
+        },
+        "plane": {
+          "datum": "origin:xy"
+        },
+        "references": [
+          {
+            "curves": {
+              "x": 3,
+              "y": 4
+            },
+            "points": {
+              "origin": 0,
+              "x": 1,
+              "y": 2
+            },
+            "type": "frame"
+          }
+        ],
+        "sketch": {
+          "constraints": {
+            "13": {
+              "line": 9,
+              "type": "Horizontal"
+            },
+            "14": {
+              "line": 10,
+              "type": "Vertical"
+            },
+            "15": {
+              "line": 11,
+              "type": "Horizontal"
+            },
+            "16": {
+              "line": 12,
+              "type": "Vertical"
+            },
+            "18": {
+              "curve": 17,
+              "point": 0,
+              "type": "Midpoint"
+            },
+            "19": {
+              "curve": 9,
+              "type": "Length",
+              "value": 80
+            },
+            "20": {
+              "curve": 10,
+              "type": "Length",
+              "value": 50
+            }
+          },
+          "curves": {
+            "3": {
+              "construction": true,
+              "end": 1,
+              "fixed": true,
+              "start": 0,
+              "type": "Line"
+            },
+            "4": {
+              "construction": true,
+              "end": 2,
+              "fixed": true,
+              "start": 0,
+              "type": "Line"
+            },
+            "9": {
+              "construction": false,
+              "end": 6,
+              "start": 5,
+              "type": "Line"
+            },
+            "10": {
+              "construction": false,
+              "end": 7,
+              "start": 6,
+              "type": "Line"
+            },
+            "11": {
+              "construction": false,
+              "end": 8,
+              "start": 7,
+              "type": "Line"
+            },
+            "12": {
+              "construction": false,
+              "end": 5,
+              "start": 8,
+              "type": "Line"
+            },
+            "17": {
+              "construction": true,
+              "end": 7,
+              "start": 5,
+              "type": "Line"
+            }
+          },
+          "next_id": 21,
+          "points": {
+            "0": {
+              "fixed": true,
+              "x": 0,
+              "y": 0
+            },
+            "1": {
+              "fixed": true,
+              "x": 1,
+              "y": 0
+            },
+            "2": {
+              "fixed": true,
+              "x": 0,
+              "y": 1
+            },
+            "5": {
+              "x": 40,
+              "y": 25
+            },
+            "6": {
+              "x": -40,
+              "y": 25
+            },
+            "7": {
+              "x": -39.99999999999998,
+              "y": -25
+            },
+            "8": {
+              "x": 39.99999999999998,
+              "y": -25
+            }
+          }
+        }
+      }
+    },
+    {
+      "id": "subd1",
+      "operation": "subd",
+      "args": {
+        "cage": {
+          "creases": [],
+          "faces": [
+            {
+              "id": 8,
+              "vertices": [
+                15,
+                2,
+                1,
+                14
+              ]
+            },
+            {
+              "id": 9,
+              "vertices": [
+                16,
+                5,
+                6,
+                17
+              ]
+            },
+            {
+              "id": 10,
+              "vertices": [
+                20,
+                5,
+                16,
+                21
+              ]
+            },
+            {
+              "id": 11,
+              "vertices": [
+                19,
+                6,
+                5,
+                20
+              ]
+            },
+            {
+              "id": 12,
+              "vertices": [
+                19,
+                2,
+                15,
+                18
+              ]
+            },
+            {
+              "id": 22,
+              "vertices": [
+                18,
+                17,
+                6,
+                19
+              ]
+            },
+            {
+              "id": 23,
+              "vertices": [
+                20,
+                1,
+                2,
+                19
+              ]
+            },
+            {
+              "id": 24,
+              "vertices": [
+                21,
+                14,
+                1,
+                20
+              ]
+            }
+          ],
+          "next_id": 25,
+          "vertices": [
+            {
+              "at": [
+                41.42,
+                -44.8,
+                -77.26
+              ],
+              "id": 1
+            },
+            {
+              "at": [
+                41.42,
+                9.200000000000001,
+                -77.26
+              ],
+              "id": 2
+            },
+            {
+              "at": [
+                41.42,
+                -44.8,
+                36.739999999999995
+              ],
+              "id": 5
+            },
+            {
+              "at": [
+                41.42,
+                9.200000000000001,
+                36.739999999999995
+              ],
+              "id": 6
+            },
+            {
+              "at": [
+                0,
+                -44.8,
+                -77.26
+              ],
+              "id": 14
+            },
+            {
+              "at": [
+                0,
+                9.200000000000001,
+                -77.26
+              ],
+              "id": 15
+            },
+            {
+              "at": [
+                0,
+                -44.8,
+                36.739999999999995
+              ],
+              "id": 16
+            },
+            {
+              "at": [
+                0,
+                9.200000000000001,
+                36.739999999999995
+              ],
+              "id": 17
+            },
+            {
+              "at": [
+                0,
+                9.200000000000001,
+                -7.76
+              ],
+              "id": 18
+            },
+            {
+              "at": [
+                41.42,
+                9.200000000000001,
+                -7.76
+              ],
+              "id": 19
+            },
+            {
+              "at": [
+                41.42,
+                -44.8,
+                -7.76
+              ],
+              "id": 20
+            },
+            {
+              "at": [
+                0,
+                -44.8,
+                -7.76
+              ],
+              "id": 21
+            }
+          ]
+        },
+        "mirror": "x"
+      }
+    },
+    {
+      "id": "extrude1",
+      "operation": "extrude",
+      "args": {
+        "extent": {
+          "reversed": false,
+          "side1": "through_all",
+          "symmetric": true
+        },
+        "output": {
+          "solid": {
+            "mode": "with",
+            "op": "intersection",
+            "target": "subd(subd1)"
+          }
+        },
+        "sketch": {
+          "target": "/:sketch:sketch1"
+        }
+      }
+    },
+    {
+      "id": "sketch2",
+      "operation": "add_sketch",
+      "args": {
+        "plane": {
+          "datum": "origin:yz"
+        },
+        "references": [
+          {
+            "curves": {
+              "x": 3,
+              "y": 4
+            },
+            "points": {
+              "origin": 0,
+              "x": 1,
+              "y": 2
+            },
+            "type": "frame"
+          }
+        ],
+        "sketch": {
+          "constraints": {
+            "13": {
+              "line": 9,
+              "type": "Horizontal"
+            },
+            "14": {
+              "line": 10,
+              "type": "Vertical"
+            },
+            "15": {
+              "line": 11,
+              "type": "Horizontal"
+            },
+            "16": {
+              "line": 12,
+              "type": "Vertical"
+            }
+          },
+          "curves": {
+            "3": {
+              "construction": true,
+              "end": 1,
+              "fixed": true,
+              "start": 0,
+              "type": "Line"
+            },
+            "4": {
+              "construction": true,
+              "end": 2,
+              "fixed": true,
+              "start": 0,
+              "type": "Line"
+            },
+            "9": {
+              "construction": false,
+              "end": 7,
+              "start": 5,
+              "type": "Line"
+            },
+            "10": {
+              "construction": false,
+              "end": 6,
+              "start": 7,
+              "type": "Line"
+            },
+            "11": {
+              "construction": false,
+              "end": 8,
+              "start": 6,
+              "type": "Line"
+            },
+            "12": {
+              "construction": false,
+              "end": 5,
+              "start": 8,
+              "type": "Line"
+            }
+          },
+          "next_id": 17,
+          "points": {
+            "0": {
+              "fixed": true,
+              "x": 0,
+              "y": 0
+            },
+            "1": {
+              "fixed": true,
+              "x": 1,
+              "y": 0
+            },
+            "2": {
+              "fixed": true,
+              "x": 0,
+              "y": 1
+            },
+            "5": {
+              "x": 25.208143031133176,
+              "y": 14.52958965872012
+            },
+            "6": {
+              "x": -38.40677708913964,
+              "y": -86.21374108936993
+            },
+            "7": {
+              "x": -38.40677708913964,
+              "y": 14.52958965872012
+            },
+            "8": {
+              "x": 25.208143031133176,
+              "y": -86.21374108936993
+            }
+          }
+        }
+      }
+    },
+    {
+      "id": "extrude2",
+      "operation": "extrude",
+      "args": {
+        "extent": {
+          "reversed": false,
+          "side1": "through_all",
+          "symmetric": true
+        },
+        "output": {
+          "solid": {
+            "mode": "with",
+            "op": "intersection",
+            "target": "extrude(extrude1)"
+          }
+        },
+        "sketch": {
+          "target": "/:sketch:sketch2"
+        }
+      }
+    },
+    {
+      "id": "sketch4",
+      "operation": "add_sketch",
+      "args": {
+        "plane": {
+          "face": "extrude(extrude2,sketch2,c9)"
+        },
+        "references": [
+          {
+            "curves": {
+              "x": 3,
+              "y": 4
+            },
+            "points": {
+              "origin": 0,
+              "x": 1,
+              "y": 2
+            },
+            "type": "frame"
+          },
+          {
+            "curves": {
+              "combine(extrude2,extrude(extrude1,sketch1,c11),extrude(extrude2,sketch2,c9),combine(extrude2,#27820081a3bafc6b769478fb8a53ae7d,extrude(extrude2,sketch2,c9),0,1),combine(extrude2,#28ac05e2182ffda0f38dd66cd3d4b646,extrude(extrude2,sketch2,c9),0,1))": 7
+            },
+            "entity": {
+              "edge": "combine(extrude2,extrude(extrude1,sketch1,c11),extrude(extrude2,sketch2,c9),combine(extrude2,#27820081a3bafc6b769478fb8a53ae7d,extrude(extrude2,sketch2,c9),0,1),combine(extrude2,#28ac05e2182ffda0f38dd66cd3d4b646,extrude(extrude2,sketch2,c9),0,1))"
+            },
+            "points": {
+              "combine(extrude2,#27820081a3bafc6b769478fb8a53ae7d,extrude(extrude2,sketch2,c9),0,1)": 5,
+              "combine(extrude2,#28ac05e2182ffda0f38dd66cd3d4b646,extrude(extrude2,sketch2,c9),0,1)": 6
+            },
+            "type": "projection"
+          }
+        ],
+        "sketch": {
+          "constraints": {
+            "9": {
+              "curve": 4,
+              "point": 8,
+              "type": "PointOnCurve"
+            },
+            "16": {
+              "curve": 4,
+              "point": 15,
+              "type": "PointOnCurve"
+            },
+            "21": {
+              "curve": 7,
+              "point": 20,
+              "type": "PointOnCurve"
+            },
+            "23": {
+              "a": 17,
+              "b": 15,
+              "type": "DistanceY",
+              "value": 0
+            },
+            "25": {
+              "a": 17,
+              "b": 24,
+              "line": 4,
+              "type": "Symmetric"
+            },
+            "27": {
+              "a": 18,
+              "b": 26,
+              "line": 4,
+              "type": "Symmetric"
+            },
+            "29": {
+              "a": 19,
+              "b": 28,
+              "line": 4,
+              "type": "Symmetric"
+            },
+            "31": {
+              "a": 20,
+              "b": 30,
+              "line": 4,
+              "type": "Symmetric"
+            },
+            "34": {
+              "line": 33,
+              "type": "Horizontal"
+            }
+          },
+          "curves": {
+            "3": {
+              "construction": true,
+              "end": 1,
+              "fixed": true,
+              "start": 0,
+              "type": "Line"
+            },
+            "4": {
+              "construction": true,
+              "end": 2,
+              "fixed": true,
+              "start": 0,
+              "type": "Line"
+            },
+            "7": {
+              "construction": true,
+              "end": 5,
+              "fixed": true,
+              "start": 6,
+              "type": "Line"
+            },
+            "22": {
+              "construction": false,
+              "control_points": [
+                15,
+                17,
+                18,
+                19,
+                20
+              ],
+              "type": "Spline"
+            },
+            "32": {
+              "construction": false,
+              "control_points": [
+                15,
+                24,
+                26,
+                28,
+                30
+              ],
+              "type": "Spline"
+            },
+            "33": {
+              "construction": false,
+              "end": 30,
+              "start": 20,
+              "type": "Line"
+            }
+          },
+          "next_id": 35,
+          "points": {
+            "0": {
+              "fixed": true,
+              "x": 0,
+              "y": 0
+            },
+            "1": {
+              "fixed": true,
+              "x": 1,
+              "y": 0
+            },
+            "2": {
+              "fixed": true,
+              "x": 0,
+              "y": 1
+            },
+            "5": {
+              "fixed": true,
+              "x": -37.93280737888466,
+              "y": -24.999999999999993
+            },
+            "6": {
+              "fixed": true,
+              "x": 37.93280737888466,
+              "y": -24.999999999999993
+            },
+            "8": {
+              "x": -1.668805393880401e-308,
+              "y": 4.879224368253139
+            },
+            "15": {
+              "x": -2.121995791e-314,
+              "y": 5.675816805961717
+            },
+            "17": {
+              "x": 17.11785502956684,
+              "y": 5.675816805961717
+            },
+            "18": {
+              "x": 33.36938742216366,
+              "y": 1.2212443719814763
+            },
+            "19": {
+              "x": 36.33741930253663,
+              "y": -12.705799260966149
+            },
+            "20": {
+              "x": 34.67745899187802,
+              "y": -24.999999999999993
+            },
+            "24": {
+              "x": -17.11785502956684,
+              "y": 5.675816805961717
+            },
+            "26": {
+              "x": -33.36938742216366,
+              "y": 1.2212443719814763
+            },
+            "28": {
+              "x": -36.33741930253663,
+              "y": -12.705799260966149
+            },
+            "30": {
+              "x": -34.67745899187802,
+              "y": -24.999999999999993
+            }
+          }
+        }
+      }
+    },
+    {
+      "id": "extrude3",
+      "operation": "extrude",
+      "args": {
+        "extent": {
+          "reversed": false,
+          "side1": {
+            "blind": -14.34
+          },
+          "symmetric": false
+        },
+        "output": {
+          "solid": {
+            "mode": "with",
+            "op": "difference",
+            "target": "extrude(extrude2)"
+          }
+        },
+        "sketch": {
+          "target": "/:sketch:sketch4"
+        }
+      }
+    },
+    {
+      "id": "reference1",
+      "operation": "add_datum",
+      "args": {
+        "construction": {
+          "distance": 35,
+          "method": "offset"
+        },
+        "selection": [
+          {
+            "datum": "origin:yz"
+          }
+        ]
+      }
+    },
+    {
+      "id": "sketch5",
+      "operation": "add_sketch",
+      "args": {
+        "plane": {
+          "datum": "reference1"
+        },
+        "references": [
+          {
+            "curves": {
+              "x": 3,
+              "y": 4
+            },
+            "points": {
+              "origin": 0,
+              "x": 1,
+              "y": 2
+            },
+            "type": "frame"
+          },
+          {
+            "curves": {
+              "combine(extrude1,extrude(extrude1,sketch1,c11),subd(subd1,f11),combine(extrude1,subd(subd1,e19-20),extrude(extrude1,sketch1,c11),0,1),combine(extrude1,subd(subd1,e5-6),extrude(extrude1,sketch1,c11),0,1))": 16,
+              "combine(extrude1,extrude(extrude1,sketch1,c11),subd(subd1,f11m),combine(extrude1,subd(subd1,e19m-20m),extrude(extrude1,sketch1,c11),0,1),combine(extrude1,subd(subd1,e5m-6m),extrude(extrude1,sketch1,c11),0,1))": 17,
+              "combine(extrude1,extrude(extrude1,sketch1,c11),subd(subd1,f23),combine(extrude1,subd(subd1,e1-2),extrude(extrude1,sketch1,c11),0,1),combine(extrude1,subd(subd1,e19-20),extrude(extrude1,sketch1,c11),0,1))": 18,
+              "combine(extrude1,extrude(extrude1,sketch1,c11),subd(subd1,f23m),combine(extrude1,subd(subd1,e19m-20m),extrude(extrude1,sketch1,c11),0,1),combine(extrude1,subd(subd1,e1m-2m),extrude(extrude1,sketch1,c11),0,1))": 19,
+              "combine(extrude1,extrude(extrude1,sketch1,c11),subd(subd1,f8),combine(extrude1,subd(subd1,e1-2),extrude(extrude1,sketch1,c11),0,1),combine(extrude1,subd(subd1,e14-15),extrude(extrude1,sketch1,c11),0,1))": 20,
+              "combine(extrude1,extrude(extrude1,sketch1,c11),subd(subd1,f8m),combine(extrude1,subd(subd1,e14-15),extrude(extrude1,sketch1,c11),0,1),combine(extrude1,subd(subd1,e1m-2m),extrude(extrude1,sketch1,c11),0,1))": 21,
+              "extrude(extrude3,sketch4,p20)": 22,
+              "extrude(extrude3,sketch4,p30)": 23
+            },
+            "entity": {
+              "face": "extrude(extrude1,sketch1,c11)"
+            },
+            "points": {
+              "combine(extrude1,subd(subd1,e1-2),extrude(extrude1,sketch1,c11),0,1)": 5,
+              "combine(extrude1,subd(subd1,e14-15),extrude(extrude1,sketch1,c11),0,1)": 6,
+              "combine(extrude1,subd(subd1,e19-20),extrude(extrude1,sketch1,c11),0,1)": 7,
+              "combine(extrude1,subd(subd1,e19m-20m),extrude(extrude1,sketch1,c11),0,1)": 8,
+              "combine(extrude1,subd(subd1,e1m-2m),extrude(extrude1,sketch1,c11),0,1)": 9,
+              "combine(extrude2,#27820081a3bafc6b769478fb8a53ae7d,extrude(extrude2,sketch2,c9),0,1)": 10,
+              "combine(extrude2,#28ac05e2182ffda0f38dd66cd3d4b646,extrude(extrude2,sketch2,c9),0,1)": 11,
+              "extrude(extrude3,sketch4,p20,end)": 12,
+              "extrude(extrude3,sketch4,p20,start)": 13,
+              "extrude(extrude3,sketch4,p30,end)": 14,
+              "extrude(extrude3,sketch4,p30,start)": 15
+            },
+            "type": "projection"
+          }
+        ],
+        "sketch": {
+          "constraints": {
+            "25": {
+              "curve": 17,
+              "point": 24,
+              "type": "PointOnCurve"
+            },
+            "30": {
+              "a": 27,
+              "b": 29,
+              "type": "Tangent"
+            },
+            "37": {
+              "curve": 18,
+              "point": 36,
+              "type": "PointOnCurve"
+            },
+            "39": {
+              "a": 29,
+              "b": 38,
+              "type": "Tangent"
+            },
+            "41": {
+              "line": 40,
+              "type": "Vertical"
+            },
+            "42": {
+              "a": 38,
+              "b": 29,
+              "type": "Tangent"
+            },
+            "43": {
+              "a": 26,
+              "b": 28,
+              "type": "DistanceX",
+              "value": 0
+            }
+          },
+          "curves": {
+            "3": {
+              "construction": true,
+              "end": 1,
+              "fixed": true,
+              "start": 0,
+              "type": "Line"
+            },
+            "4": {
+              "construction": true,
+              "end": 2,
+              "fixed": true,
+              "start": 0,
+              "type": "Line"
+            },
+            "16": {
+              "construction": true,
+              "end": 7,
+              "fixed": true,
+              "start": 11,
+              "type": "Line"
+            },
+            "17": {
+              "construction": true,
+              "end": 8,
+              "fixed": true,
+              "start": 10,
+              "type": "Line"
+            },
+            "18": {
+              "construction": true,
+              "end": 7,
+              "fixed": true,
+              "start": 5,
+              "type": "Line"
+            },
+            "19": {
+              "construction": true,
+              "end": 8,
+              "fixed": true,
+              "start": 9,
+              "type": "Line"
+            },
+            "20": {
+              "construction": true,
+              "end": 6,
+              "fixed": true,
+              "start": 5,
+              "type": "Line"
+            },
+            "21": {
+              "construction": true,
+              "end": 9,
+              "fixed": true,
+              "start": 6,
+              "type": "Line"
+            },
+            "22": {
+              "construction": true,
+              "end": 12,
+              "fixed": true,
+              "start": 13,
+              "type": "Line"
+            },
+            "23": {
+              "construction": true,
+              "end": 14,
+              "fixed": true,
+              "start": 15,
+              "type": "Line"
+            },
+            "27": {
+              "construction": false,
+              "end": 26,
+              "start": 24,
+              "type": "Line"
+            },
+            "29": {
+              "construction": false,
+              "end": 28,
+              "start": 26,
+              "sweep": -2.489060692764724,
+              "type": "Arc"
+            },
+            "38": {
+              "construction": false,
+              "end": 36,
+              "start": 28,
+              "type": "Line"
+            },
+            "40": {
+              "construction": false,
+              "end": 24,
+              "start": 36,
+              "type": "Line"
+            }
+          },
+          "next_id": 44,
+          "points": {
+            "0": {
+              "fixed": true,
+              "x": 0,
+              "y": 0
+            },
+            "1": {
+              "fixed": true,
+              "x": 1,
+              "y": 0
+            },
+            "2": {
+              "fixed": true,
+              "x": 0,
+              "y": 1
+            },
+            "5": {
+              "fixed": true,
+              "x": -24.999999999999993,
+              "y": -62.64416256853966
+            },
+            "6": {
+              "fixed": true,
+              "x": -25.000000000000004,
+              "y": -73.23342622361365
+            },
+            "7": {
+              "fixed": true,
+              "x": -25.000000000000007,
+              "y": -11.926666666666666
+            },
+            "8": {
+              "fixed": true,
+              "x": -24.999999999999993,
+              "y": -11.926666666666662
+            },
+            "9": {
+              "fixed": true,
+              "x": -25,
+              "y": -62.644162568539684
+            },
+            "10": {
+              "fixed": true,
+              "x": -25.000000000000004,
+              "y": 14.52958965872012
+            },
+            "11": {
+              "fixed": true,
+              "x": -25,
+              "y": 14.529589658724767
+            },
+            "12": {
+              "fixed": true,
+              "x": -25,
+              "y": 0.18958965872012093
+            },
+            "13": {
+              "fixed": true,
+              "x": -25.000000000000004,
+              "y": 14.529589658721854
+            },
+            "14": {
+              "fixed": true,
+              "x": -25.000000000000004,
+              "y": 0.18958965872012093
+            },
+            "15": {
+              "fixed": true,
+              "x": -25.000000000000007,
+              "y": 14.529589658722411
+            },
+            "24": {
+              "x": -24.999999999999993,
+              "y": -19.650020988468217
+            },
+            "26": {
+              "x": -13.56352402378605,
+              "y": -23.519644932457258
+            },
+            "28": {
+              "x": -13.56352402378605,
+              "y": -35.413048566902255
+            },
+            "36": {
+              "x": -24.999999999999996,
+              "y": -39.2826725108913
+            }
+          }
+        }
+      }
+    },
+    {
+      "id": "extrude4",
+      "operation": "extrude",
+      "args": {
+        "extent": {
+          "reversed": false,
+          "side1": {
+            "blind": 10
+          },
+          "symmetric": false
+        },
+        "output": {
+          "solid": {
+            "mode": "with",
+            "op": "difference",
+            "target": "extrude(extrude3)"
+          }
+        },
+        "sketch": {
+          "target": "/:sketch:sketch5"
+        }
+      }
+    },
+    {
+      "id": "sketch3",
+      "operation": "add_sketch",
+      "args": {
+        "plane": {
+          "face": "extrude(extrude1,sketch1,c11)"
+        },
+        "references": [
+          {
+            "curves": {
+              "x": 3,
+              "y": 4
+            },
+            "points": {
+              "origin": 0,
+              "x": 1,
+              "y": 2
+            },
+            "type": "frame"
+          },
+          {
+            "curves": {
+              "combine(extrude2,extrude(extrude1,sketch1,c11),extrude(extrude2,sketch2,c9),combine(extrude2,#27820081a3bafc6b769478fb8a53ae7d,extrude(extrude2,sketch2,c9),0,1),combine(extrude2,#28ac05e2182ffda0f38dd66cd3d4b646,extrude(extrude2,sketch2,c9),0,1))": 101,
+              "combine(extrude2,extrude(extrude2,sketch2,c9),subd(subd1,f11),combine(extrude2,#28ac05e2182ffda0f38dd66cd3d4b646,extrude(extrude2,sketch2,c9),0,1),combine(extrude2,subd(subd1,e6-19),extrude(extrude2,sketch2,c9),0,1))": 102,
+              "combine(extrude2,extrude(extrude2,sketch2,c9),subd(subd1,f11m),combine(extrude2,#27820081a3bafc6b769478fb8a53ae7d,extrude(extrude2,sketch2,c9),0,1),combine(extrude2,subd(subd1,e6m-19m),extrude(extrude2,sketch2,c9),0,1))": 103,
+              "combine(extrude2,extrude(extrude2,sketch2,c9),subd(subd1,f22),combine(extrude2,subd(subd1,e17-18),extrude(extrude2,sketch2,c9),0,1),combine(extrude2,subd(subd1,e6-19),extrude(extrude2,sketch2,c9),0,1))": 104,
+              "combine(extrude2,extrude(extrude2,sketch2,c9),subd(subd1,f22m),combine(extrude2,subd(subd1,e17-18),extrude(extrude2,sketch2,c9),0,1),combine(extrude2,subd(subd1,e6m-19m),extrude(extrude2,sketch2,c9),0,1))": 105,
+              "combine(extrude3,#be17d65977e17b7e9e98033975654839,extrude(extrude3,sketch4,p30,start))": 106,
+              "extrude(extrude3,sketch4,c22,start)": 107,
+              "extrude(extrude3,sketch4,c32,start)": 108
+            },
+            "entity": {
+              "face": "extrude(extrude2,sketch2,c9)"
+            },
+            "points": {
+              "combine(extrude2,#27820081a3bafc6b769478fb8a53ae7d,extrude(extrude2,sketch2,c9),0,1)": 21,
+              "combine(extrude2,#28ac05e2182ffda0f38dd66cd3d4b646,extrude(extrude2,sketch2,c9),0,1)": 22,
+              "combine(extrude2,extrude(extrude2,sketch2,c9),subd(subd1,f11),combine(extrude2,#28ac05e2182ffda0f38dd66cd3d4b646,extrude(extrude2,sketch2,c9),0,1),combine(extrude2,subd(subd1,e6-19),extrude(extrude2,sketch2,c9),0,1))#1": 23,
+              "combine(extrude2,extrude(extrude2,sketch2,c9),subd(subd1,f11),combine(extrude2,#28ac05e2182ffda0f38dd66cd3d4b646,extrude(extrude2,sketch2,c9),0,1),combine(extrude2,subd(subd1,e6-19),extrude(extrude2,sketch2,c9),0,1))#10": 24,
+              "combine(extrude2,extrude(extrude2,sketch2,c9),subd(subd1,f11),combine(extrude2,#28ac05e2182ffda0f38dd66cd3d4b646,extrude(extrude2,sketch2,c9),0,1),combine(extrude2,subd(subd1,e6-19),extrude(extrude2,sketch2,c9),0,1))#11": 25,
+              "combine(extrude2,extrude(extrude2,sketch2,c9),subd(subd1,f11),combine(extrude2,#28ac05e2182ffda0f38dd66cd3d4b646,extrude(extrude2,sketch2,c9),0,1),combine(extrude2,subd(subd1,e6-19),extrude(extrude2,sketch2,c9),0,1))#12": 26,
+              "combine(extrude2,extrude(extrude2,sketch2,c9),subd(subd1,f11),combine(extrude2,#28ac05e2182ffda0f38dd66cd3d4b646,extrude(extrude2,sketch2,c9),0,1),combine(extrude2,subd(subd1,e6-19),extrude(extrude2,sketch2,c9),0,1))#13": 27,
+              "combine(extrude2,extrude(extrude2,sketch2,c9),subd(subd1,f11),combine(extrude2,#28ac05e2182ffda0f38dd66cd3d4b646,extrude(extrude2,sketch2,c9),0,1),combine(extrude2,subd(subd1,e6-19),extrude(extrude2,sketch2,c9),0,1))#14": 28,
+              "combine(extrude2,extrude(extrude2,sketch2,c9),subd(subd1,f11),combine(extrude2,#28ac05e2182ffda0f38dd66cd3d4b646,extrude(extrude2,sketch2,c9),0,1),combine(extrude2,subd(subd1,e6-19),extrude(extrude2,sketch2,c9),0,1))#15": 29,
+              "combine(extrude2,extrude(extrude2,sketch2,c9),subd(subd1,f11),combine(extrude2,#28ac05e2182ffda0f38dd66cd3d4b646,extrude(extrude2,sketch2,c9),0,1),combine(extrude2,subd(subd1,e6-19),extrude(extrude2,sketch2,c9),0,1))#16": 30,
+              "combine(extrude2,extrude(extrude2,sketch2,c9),subd(subd1,f11),combine(extrude2,#28ac05e2182ffda0f38dd66cd3d4b646,extrude(extrude2,sketch2,c9),0,1),combine(extrude2,subd(subd1,e6-19),extrude(extrude2,sketch2,c9),0,1))#17": 31,
+              "combine(extrude2,extrude(extrude2,sketch2,c9),subd(subd1,f11),combine(extrude2,#28ac05e2182ffda0f38dd66cd3d4b646,extrude(extrude2,sketch2,c9),0,1),combine(extrude2,subd(subd1,e6-19),extrude(extrude2,sketch2,c9),0,1))#18": 32,
+              "combine(extrude2,extrude(extrude2,sketch2,c9),subd(subd1,f11),combine(extrude2,#28ac05e2182ffda0f38dd66cd3d4b646,extrude(extrude2,sketch2,c9),0,1),combine(extrude2,subd(subd1,e6-19),extrude(extrude2,sketch2,c9),0,1))#19": 33,
+              "combine(extrude2,extrude(extrude2,sketch2,c9),subd(subd1,f11),combine(extrude2,#28ac05e2182ffda0f38dd66cd3d4b646,extrude(extrude2,sketch2,c9),0,1),combine(extrude2,subd(subd1,e6-19),extrude(extrude2,sketch2,c9),0,1))#2": 34,
+              "combine(extrude2,extrude(extrude2,sketch2,c9),subd(subd1,f11),combine(extrude2,#28ac05e2182ffda0f38dd66cd3d4b646,extrude(extrude2,sketch2,c9),0,1),combine(extrude2,subd(subd1,e6-19),extrude(extrude2,sketch2,c9),0,1))#20": 35,
+              "combine(extrude2,extrude(extrude2,sketch2,c9),subd(subd1,f11),combine(extrude2,#28ac05e2182ffda0f38dd66cd3d4b646,extrude(extrude2,sketch2,c9),0,1),combine(extrude2,subd(subd1,e6-19),extrude(extrude2,sketch2,c9),0,1))#21": 36,
+              "combine(extrude2,extrude(extrude2,sketch2,c9),subd(subd1,f11),combine(extrude2,#28ac05e2182ffda0f38dd66cd3d4b646,extrude(extrude2,sketch2,c9),0,1),combine(extrude2,subd(subd1,e6-19),extrude(extrude2,sketch2,c9),0,1))#22": 37,
+              "combine(extrude2,extrude(extrude2,sketch2,c9),subd(subd1,f11),combine(extrude2,#28ac05e2182ffda0f38dd66cd3d4b646,extrude(extrude2,sketch2,c9),0,1),combine(extrude2,subd(subd1,e6-19),extrude(extrude2,sketch2,c9),0,1))#23": 38,
+              "combine(extrude2,extrude(extrude2,sketch2,c9),subd(subd1,f11),combine(extrude2,#28ac05e2182ffda0f38dd66cd3d4b646,extrude(extrude2,sketch2,c9),0,1),combine(extrude2,subd(subd1,e6-19),extrude(extrude2,sketch2,c9),0,1))#24": 39,
+              "combine(extrude2,extrude(extrude2,sketch2,c9),subd(subd1,f11),combine(extrude2,#28ac05e2182ffda0f38dd66cd3d4b646,extrude(extrude2,sketch2,c9),0,1),combine(extrude2,subd(subd1,e6-19),extrude(extrude2,sketch2,c9),0,1))#25": 40,
+              "combine(extrude2,extrude(extrude2,sketch2,c9),subd(subd1,f11),combine(extrude2,#28ac05e2182ffda0f38dd66cd3d4b646,extrude(extrude2,sketch2,c9),0,1),combine(extrude2,subd(subd1,e6-19),extrude(extrude2,sketch2,c9),0,1))#26": 41,
+              "combine(extrude2,extrude(extrude2,sketch2,c9),subd(subd1,f11),combine(extrude2,#28ac05e2182ffda0f38dd66cd3d4b646,extrude(extrude2,sketch2,c9),0,1),combine(extrude2,subd(subd1,e6-19),extrude(extrude2,sketch2,c9),0,1))#27": 42,
+              "combine(extrude2,extrude(extrude2,sketch2,c9),subd(subd1,f11),combine(extrude2,#28ac05e2182ffda0f38dd66cd3d4b646,extrude(extrude2,sketch2,c9),0,1),combine(extrude2,subd(subd1,e6-19),extrude(extrude2,sketch2,c9),0,1))#28": 43,
+              "combine(extrude2,extrude(extrude2,sketch2,c9),subd(subd1,f11),combine(extrude2,#28ac05e2182ffda0f38dd66cd3d4b646,extrude(extrude2,sketch2,c9),0,1),combine(extrude2,subd(subd1,e6-19),extrude(extrude2,sketch2,c9),0,1))#29": 44,
+              "combine(extrude2,extrude(extrude2,sketch2,c9),subd(subd1,f11),combine(extrude2,#28ac05e2182ffda0f38dd66cd3d4b646,extrude(extrude2,sketch2,c9),0,1),combine(extrude2,subd(subd1,e6-19),extrude(extrude2,sketch2,c9),0,1))#3": 45,
+              "combine(extrude2,extrude(extrude2,sketch2,c9),subd(subd1,f11),combine(extrude2,#28ac05e2182ffda0f38dd66cd3d4b646,extrude(extrude2,sketch2,c9),0,1),combine(extrude2,subd(subd1,e6-19),extrude(extrude2,sketch2,c9),0,1))#30": 46,
+              "combine(extrude2,extrude(extrude2,sketch2,c9),subd(subd1,f11),combine(extrude2,#28ac05e2182ffda0f38dd66cd3d4b646,extrude(extrude2,sketch2,c9),0,1),combine(extrude2,subd(subd1,e6-19),extrude(extrude2,sketch2,c9),0,1))#31": 47,
+              "combine(extrude2,extrude(extrude2,sketch2,c9),subd(subd1,f11),combine(extrude2,#28ac05e2182ffda0f38dd66cd3d4b646,extrude(extrude2,sketch2,c9),0,1),combine(extrude2,subd(subd1,e6-19),extrude(extrude2,sketch2,c9),0,1))#4": 48,
+              "combine(extrude2,extrude(extrude2,sketch2,c9),subd(subd1,f11),combine(extrude2,#28ac05e2182ffda0f38dd66cd3d4b646,extrude(extrude2,sketch2,c9),0,1),combine(extrude2,subd(subd1,e6-19),extrude(extrude2,sketch2,c9),0,1))#5": 49,
+              "combine(extrude2,extrude(extrude2,sketch2,c9),subd(subd1,f11),combine(extrude2,#28ac05e2182ffda0f38dd66cd3d4b646,extrude(extrude2,sketch2,c9),0,1),combine(extrude2,subd(subd1,e6-19),extrude(extrude2,sketch2,c9),0,1))#6": 50,
+              "combine(extrude2,extrude(extrude2,sketch2,c9),subd(subd1,f11),combine(extrude2,#28ac05e2182ffda0f38dd66cd3d4b646,extrude(extrude2,sketch2,c9),0,1),combine(extrude2,subd(subd1,e6-19),extrude(extrude2,sketch2,c9),0,1))#7": 51,
+              "combine(extrude2,extrude(extrude2,sketch2,c9),subd(subd1,f11),combine(extrude2,#28ac05e2182ffda0f38dd66cd3d4b646,extrude(extrude2,sketch2,c9),0,1),combine(extrude2,subd(subd1,e6-19),extrude(extrude2,sketch2,c9),0,1))#8": 52,
+              "combine(extrude2,extrude(extrude2,sketch2,c9),subd(subd1,f11),combine(extrude2,#28ac05e2182ffda0f38dd66cd3d4b646,extrude(extrude2,sketch2,c9),0,1),combine(extrude2,subd(subd1,e6-19),extrude(extrude2,sketch2,c9),0,1))#9": 53,
+              "combine(extrude2,extrude(extrude2,sketch2,c9),subd(subd1,f11m),combine(extrude2,#27820081a3bafc6b769478fb8a53ae7d,extrude(extrude2,sketch2,c9),0,1),combine(extrude2,subd(subd1,e6m-19m),extrude(extrude2,sketch2,c9),0,1))#1": 54,
+              "combine(extrude2,extrude(extrude2,sketch2,c9),subd(subd1,f11m),combine(extrude2,#27820081a3bafc6b769478fb8a53ae7d,extrude(extrude2,sketch2,c9),0,1),combine(extrude2,subd(subd1,e6m-19m),extrude(extrude2,sketch2,c9),0,1))#10": 55,
+              "combine(extrude2,extrude(extrude2,sketch2,c9),subd(subd1,f11m),combine(extrude2,#27820081a3bafc6b769478fb8a53ae7d,extrude(extrude2,sketch2,c9),0,1),combine(extrude2,subd(subd1,e6m-19m),extrude(extrude2,sketch2,c9),0,1))#11": 56,
+              "combine(extrude2,extrude(extrude2,sketch2,c9),subd(subd1,f11m),combine(extrude2,#27820081a3bafc6b769478fb8a53ae7d,extrude(extrude2,sketch2,c9),0,1),combine(extrude2,subd(subd1,e6m-19m),extrude(extrude2,sketch2,c9),0,1))#12": 57,
+              "combine(extrude2,extrude(extrude2,sketch2,c9),subd(subd1,f11m),combine(extrude2,#27820081a3bafc6b769478fb8a53ae7d,extrude(extrude2,sketch2,c9),0,1),combine(extrude2,subd(subd1,e6m-19m),extrude(extrude2,sketch2,c9),0,1))#13": 58,
+              "combine(extrude2,extrude(extrude2,sketch2,c9),subd(subd1,f11m),combine(extrude2,#27820081a3bafc6b769478fb8a53ae7d,extrude(extrude2,sketch2,c9),0,1),combine(extrude2,subd(subd1,e6m-19m),extrude(extrude2,sketch2,c9),0,1))#14": 59,
+              "combine(extrude2,extrude(extrude2,sketch2,c9),subd(subd1,f11m),combine(extrude2,#27820081a3bafc6b769478fb8a53ae7d,extrude(extrude2,sketch2,c9),0,1),combine(extrude2,subd(subd1,e6m-19m),extrude(extrude2,sketch2,c9),0,1))#15": 60,
+              "combine(extrude2,extrude(extrude2,sketch2,c9),subd(subd1,f11m),combine(extrude2,#27820081a3bafc6b769478fb8a53ae7d,extrude(extrude2,sketch2,c9),0,1),combine(extrude2,subd(subd1,e6m-19m),extrude(extrude2,sketch2,c9),0,1))#16": 61,
+              "combine(extrude2,extrude(extrude2,sketch2,c9),subd(subd1,f11m),combine(extrude2,#27820081a3bafc6b769478fb8a53ae7d,extrude(extrude2,sketch2,c9),0,1),combine(extrude2,subd(subd1,e6m-19m),extrude(extrude2,sketch2,c9),0,1))#17": 62,
+              "combine(extrude2,extrude(extrude2,sketch2,c9),subd(subd1,f11m),combine(extrude2,#27820081a3bafc6b769478fb8a53ae7d,extrude(extrude2,sketch2,c9),0,1),combine(extrude2,subd(subd1,e6m-19m),extrude(extrude2,sketch2,c9),0,1))#18": 63,
+              "combine(extrude2,extrude(extrude2,sketch2,c9),subd(subd1,f11m),combine(extrude2,#27820081a3bafc6b769478fb8a53ae7d,extrude(extrude2,sketch2,c9),0,1),combine(extrude2,subd(subd1,e6m-19m),extrude(extrude2,sketch2,c9),0,1))#19": 64,
+              "combine(extrude2,extrude(extrude2,sketch2,c9),subd(subd1,f11m),combine(extrude2,#27820081a3bafc6b769478fb8a53ae7d,extrude(extrude2,sketch2,c9),0,1),combine(extrude2,subd(subd1,e6m-19m),extrude(extrude2,sketch2,c9),0,1))#2": 65,
+              "combine(extrude2,extrude(extrude2,sketch2,c9),subd(subd1,f11m),combine(extrude2,#27820081a3bafc6b769478fb8a53ae7d,extrude(extrude2,sketch2,c9),0,1),combine(extrude2,subd(subd1,e6m-19m),extrude(extrude2,sketch2,c9),0,1))#20": 66,
+              "combine(extrude2,extrude(extrude2,sketch2,c9),subd(subd1,f11m),combine(extrude2,#27820081a3bafc6b769478fb8a53ae7d,extrude(extrude2,sketch2,c9),0,1),combine(extrude2,subd(subd1,e6m-19m),extrude(extrude2,sketch2,c9),0,1))#21": 67,
+              "combine(extrude2,extrude(extrude2,sketch2,c9),subd(subd1,f11m),combine(extrude2,#27820081a3bafc6b769478fb8a53ae7d,extrude(extrude2,sketch2,c9),0,1),combine(extrude2,subd(subd1,e6m-19m),extrude(extrude2,sketch2,c9),0,1))#22": 68,
+              "combine(extrude2,extrude(extrude2,sketch2,c9),subd(subd1,f11m),combine(extrude2,#27820081a3bafc6b769478fb8a53ae7d,extrude(extrude2,sketch2,c9),0,1),combine(extrude2,subd(subd1,e6m-19m),extrude(extrude2,sketch2,c9),0,1))#23": 69,
+              "combine(extrude2,extrude(extrude2,sketch2,c9),subd(subd1,f11m),combine(extrude2,#27820081a3bafc6b769478fb8a53ae7d,extrude(extrude2,sketch2,c9),0,1),combine(extrude2,subd(subd1,e6m-19m),extrude(extrude2,sketch2,c9),0,1))#24": 70,
+              "combine(extrude2,extrude(extrude2,sketch2,c9),subd(subd1,f11m),combine(extrude2,#27820081a3bafc6b769478fb8a53ae7d,extrude(extrude2,sketch2,c9),0,1),combine(extrude2,subd(subd1,e6m-19m),extrude(extrude2,sketch2,c9),0,1))#25": 71,
+              "combine(extrude2,extrude(extrude2,sketch2,c9),subd(subd1,f11m),combine(extrude2,#27820081a3bafc6b769478fb8a53ae7d,extrude(extrude2,sketch2,c9),0,1),combine(extrude2,subd(subd1,e6m-19m),extrude(extrude2,sketch2,c9),0,1))#26": 72,
+              "combine(extrude2,extrude(extrude2,sketch2,c9),subd(subd1,f11m),combine(extrude2,#27820081a3bafc6b769478fb8a53ae7d,extrude(extrude2,sketch2,c9),0,1),combine(extrude2,subd(subd1,e6m-19m),extrude(extrude2,sketch2,c9),0,1))#27": 73,
+              "combine(extrude2,extrude(extrude2,sketch2,c9),subd(subd1,f11m),combine(extrude2,#27820081a3bafc6b769478fb8a53ae7d,extrude(extrude2,sketch2,c9),0,1),combine(extrude2,subd(subd1,e6m-19m),extrude(extrude2,sketch2,c9),0,1))#28": 74,
+              "combine(extrude2,extrude(extrude2,sketch2,c9),subd(subd1,f11m),combine(extrude2,#27820081a3bafc6b769478fb8a53ae7d,extrude(extrude2,sketch2,c9),0,1),combine(extrude2,subd(subd1,e6m-19m),extrude(extrude2,sketch2,c9),0,1))#29": 75,
+              "combine(extrude2,extrude(extrude2,sketch2,c9),subd(subd1,f11m),combine(extrude2,#27820081a3bafc6b769478fb8a53ae7d,extrude(extrude2,sketch2,c9),0,1),combine(extrude2,subd(subd1,e6m-19m),extrude(extrude2,sketch2,c9),0,1))#3": 76,
+              "combine(extrude2,extrude(extrude2,sketch2,c9),subd(subd1,f11m),combine(extrude2,#27820081a3bafc6b769478fb8a53ae7d,extrude(extrude2,sketch2,c9),0,1),combine(extrude2,subd(subd1,e6m-19m),extrude(extrude2,sketch2,c9),0,1))#30": 77,
+              "combine(extrude2,extrude(extrude2,sketch2,c9),subd(subd1,f11m),combine(extrude2,#27820081a3bafc6b769478fb8a53ae7d,extrude(extrude2,sketch2,c9),0,1),combine(extrude2,subd(subd1,e6m-19m),extrude(extrude2,sketch2,c9),0,1))#31": 78,
+              "combine(extrude2,extrude(extrude2,sketch2,c9),subd(subd1,f11m),combine(extrude2,#27820081a3bafc6b769478fb8a53ae7d,extrude(extrude2,sketch2,c9),0,1),combine(extrude2,subd(subd1,e6m-19m),extrude(extrude2,sketch2,c9),0,1))#32": 79,
+              "combine(extrude2,extrude(extrude2,sketch2,c9),subd(subd1,f11m),combine(extrude2,#27820081a3bafc6b769478fb8a53ae7d,extrude(extrude2,sketch2,c9),0,1),combine(extrude2,subd(subd1,e6m-19m),extrude(extrude2,sketch2,c9),0,1))#33": 80,
+              "combine(extrude2,extrude(extrude2,sketch2,c9),subd(subd1,f11m),combine(extrude2,#27820081a3bafc6b769478fb8a53ae7d,extrude(extrude2,sketch2,c9),0,1),combine(extrude2,subd(subd1,e6m-19m),extrude(extrude2,sketch2,c9),0,1))#34": 81,
+              "combine(extrude2,extrude(extrude2,sketch2,c9),subd(subd1,f11m),combine(extrude2,#27820081a3bafc6b769478fb8a53ae7d,extrude(extrude2,sketch2,c9),0,1),combine(extrude2,subd(subd1,e6m-19m),extrude(extrude2,sketch2,c9),0,1))#35": 82,
+              "combine(extrude2,extrude(extrude2,sketch2,c9),subd(subd1,f11m),combine(extrude2,#27820081a3bafc6b769478fb8a53ae7d,extrude(extrude2,sketch2,c9),0,1),combine(extrude2,subd(subd1,e6m-19m),extrude(extrude2,sketch2,c9),0,1))#4": 83,
+              "combine(extrude2,extrude(extrude2,sketch2,c9),subd(subd1,f11m),combine(extrude2,#27820081a3bafc6b769478fb8a53ae7d,extrude(extrude2,sketch2,c9),0,1),combine(extrude2,subd(subd1,e6m-19m),extrude(extrude2,sketch2,c9),0,1))#5": 84,
+              "combine(extrude2,extrude(extrude2,sketch2,c9),subd(subd1,f11m),combine(extrude2,#27820081a3bafc6b769478fb8a53ae7d,extrude(extrude2,sketch2,c9),0,1),combine(extrude2,subd(subd1,e6m-19m),extrude(extrude2,sketch2,c9),0,1))#6": 85,
+              "combine(extrude2,extrude(extrude2,sketch2,c9),subd(subd1,f11m),combine(extrude2,#27820081a3bafc6b769478fb8a53ae7d,extrude(extrude2,sketch2,c9),0,1),combine(extrude2,subd(subd1,e6m-19m),extrude(extrude2,sketch2,c9),0,1))#7": 86,
+              "combine(extrude2,extrude(extrude2,sketch2,c9),subd(subd1,f11m),combine(extrude2,#27820081a3bafc6b769478fb8a53ae7d,extrude(extrude2,sketch2,c9),0,1),combine(extrude2,subd(subd1,e6m-19m),extrude(extrude2,sketch2,c9),0,1))#8": 87,
+              "combine(extrude2,extrude(extrude2,sketch2,c9),subd(subd1,f11m),combine(extrude2,#27820081a3bafc6b769478fb8a53ae7d,extrude(extrude2,sketch2,c9),0,1),combine(extrude2,subd(subd1,e6m-19m),extrude(extrude2,sketch2,c9),0,1))#9": 88,
+              "combine(extrude2,subd(subd1,e17-18),extrude(extrude2,sketch2,c9),0,1)": 89,
+              "combine(extrude2,subd(subd1,e6-19),extrude(extrude2,sketch2,c9),0,1)": 90,
+              "combine(extrude2,subd(subd1,e6m-19m),extrude(extrude2,sketch2,c9),0,1)": 91,
+              "extrude(extrude3,sketch4,c22,start)#1": 92,
+              "extrude(extrude3,sketch4,c22,start)#2": 93,
+              "extrude(extrude3,sketch4,c22,start)#3": 94,
+              "extrude(extrude3,sketch4,c32,start)#1": 95,
+              "extrude(extrude3,sketch4,c32,start)#2": 96,
+              "extrude(extrude3,sketch4,c32,start)#3": 97,
+              "extrude(extrude3,sketch4,p15,start)": 98,
+              "extrude(extrude3,sketch4,p20,start)": 99,
+              "extrude(extrude3,sketch4,p30,start)": 100
+            },
+            "type": "projection"
+          }
+        ],
+        "sketch": {
+          "constraints": {
+            "13": {
+              "line": 9,
+              "type": "Horizontal"
+            },
+            "14": {
+              "line": 10,
+              "type": "Vertical"
+            },
+            "15": {
+              "line": 11,
+              "type": "Horizontal"
+            },
+            "16": {
+              "line": 12,
+              "type": "Vertical"
+            },
+            "19": {
+              "curve": 4,
+              "point": 18,
+              "type": "PointOnCurve"
+            },
+            "20": {
+              "curve": 17,
+              "point": 18,
+              "type": "Midpoint"
+            },
+            "109": {
+              "curve": 101,
+              "point": 5,
+              "type": "Midpoint"
+            }
+          },
+          "curves": {
+            "3": {
+              "construction": true,
+              "end": 1,
+              "fixed": true,
+              "start": 0,
+              "type": "Line"
+            },
+            "4": {
+              "construction": true,
+              "end": 2,
+              "fixed": true,
+              "start": 0,
+              "type": "Line"
+            },
+            "9": {
+              "construction": false,
+              "end": 6,
+              "start": 5,
+              "type": "Line"
+            },
+            "10": {
+              "construction": false,
+              "end": 7,
+              "start": 6,
+              "type": "Line"
+            },
+            "11": {
+              "construction": false,
+              "end": 8,
+              "start": 7,
+              "type": "Line"
+            },
+            "12": {
+              "construction": false,
+              "end": 5,
+              "start": 8,
+              "type": "Line"
+            },
+            "17": {
+              "construction": true,
+              "end": 7,
+              "start": 5,
+              "type": "Line"
+            },
+            "101": {
+              "construction": true,
+              "end": 99,
+              "fixed": true,
+              "start": 22,
+              "type": "Line"
+            },
+            "102": {
+              "construction": true,
+              "control_points": [
+                22,
+                23,
+                34,
+                45,
+                48,
+                49,
+                50,
+                51,
+                52,
+                53,
+                24,
+                25,
+                26,
+                27,
+                28,
+                29,
+                30,
+                31,
+                32,
+                33,
+                35,
+                36,
+                37,
+                38,
+                39,
+                40,
+                41,
+                42,
+                43,
+                44,
+                46,
+                47,
+                90
+              ],
+              "fixed": true,
+              "shape": {
+                "degree": 3,
+                "knots": [
+                  0,
+                  0,
+                  0,
+                  0,
+                  0.06364472688819672,
+                  0.09546386452836847,
+                  0.12805533835034316,
+                  0.16141248307428413,
+                  0.19552945749142175,
+                  0.22964634973962433,
+                  0.26366513747776765,
+                  0.2975795477172023,
+                  0.3313830799139585,
+                  0.3651866406099159,
+                  0.39899782865543304,
+                  0.43280995937147654,
+                  0.4666166878345396,
+                  0.5004236004510327,
+                  0.5339271647921082,
+                  0.5671200259802197,
+                  0.5999951231776341,
+                  0.6328705845597702,
+                  0.6644780928915905,
+                  0.694811010528579,
+                  0.7238612992038376,
+                  0.7529119984799725,
+                  0.780587508537959,
+                  0.8068821099818251,
+                  0.8317883737744973,
+                  0.8566950066030441,
+                  0.8831743370022517,
+                  0.9112123635959539,
+                  0.9408023411505708,
+                  1,
+                  1,
+                  1,
+                  1
+                ],
+                "weights": [
+                  1,
+                  1,
+                  1,
+                  1,
+                  1,
+                  1,
+                  1,
+                  1,
+                  1,
+                  1,
+                  1,
+                  1,
+                  1,
+                  1,
+                  1,
+                  1,
+                  1,
+                  1,
+                  1,
+                  1,
+                  1,
+                  1,
+                  1,
+                  1,
+                  1,
+                  1,
+                  1,
+                  1,
+                  1,
+                  1,
+                  1,
+                  1,
+                  1
+                ]
+              },
+              "type": "Spline"
+            },
+            "103": {
+              "construction": true,
+              "control_points": [
+                91,
+                54,
+                65,
+                76,
+                83,
+                84,
+                85,
+                86,
+                87,
+                88,
+                55,
+                56,
+                57,
+                58,
+                59,
+                60,
+                61,
+                62,
+                63,
+                64,
+                66,
+                67,
+                68,
+                69,
+                70,
+                71,
+                72,
+                73,
+                74,
+                75,
+                77,
+                78,
+                79,
+                80,
+                81,
+                82,
+                21
+              ],
+              "fixed": true,
+              "shape": {
+                "degree": 3,
+                "knots": [
+                  0,
+                  0,
+                  0,
+                  0,
+                  0.034225686342447506,
+                  0.051336782892826505,
+                  0.06927209403610117,
+                  0.08802782006287463,
+                  0.1076009717429084,
+                  0.12717393827921164,
+                  0.1476393090862746,
+                  0.16899284856136,
+                  0.19123112309606907,
+                  0.21346918701107293,
+                  0.2368166383852518,
+                  0.26126860382559797,
+                  0.2868212678440699,
+                  0.31237369862710274,
+                  0.3391351678990706,
+                  0.36710006425958175,
+                  0.3962639718583686,
+                  0.425427649719339,
+                  0.4557407487673735,
+                  0.4871968753264334,
+                  0.5197908601509449,
+                  0.5523846699719692,
+                  0.585388129932007,
+                  0.6187948634182595,
+                  0.6525988013136423,
+                  0.6864026947360219,
+                  0.7202127658806732,
+                  0.7540227199660059,
+                  0.7878262776209088,
+                  0.8216298962439491,
+                  0.8562186214320546,
+                  0.8915839834105613,
+                  0.9277195188622522,
+                  1,
+                  1,
+                  1,
+                  1
+                ],
+                "weights": [
+                  1,
+                  1,
+                  1,
+                  1,
+                  1,
+                  1,
+                  1,
+                  1,
+                  1,
+                  1,
+                  1,
+                  1,
+                  1,
+                  1,
+                  1,
+                  1,
+                  1,
+                  1,
+                  1,
+                  1,
+                  1,
+                  1,
+                  1,
+                  1,
+                  1,
+                  1,
+                  1,
+                  1,
+                  1,
+                  1,
+                  1,
+                  1,
+                  1,
+                  1,
+                  1,
+                  1,
+                  1
+                ]
+              },
+              "type": "Spline"
+            },
+            "104": {
+              "construction": true,
+              "end": 89,
+              "fixed": true,
+              "start": 90,
+              "type": "Line"
+            },
+            "105": {
+              "construction": true,
+              "end": 91,
+              "fixed": true,
+              "start": 89,
+              "type": "Line"
+            },
+            "106": {
+              "construction": true,
+              "end": 21,
+              "fixed": true,
+              "start": 100,
+              "type": "Line"
+            },
+            "107": {
+              "construction": true,
+              "control_points": [
+                99,
+                92,
+                93,
+                94,
+                98
+              ],
+              "fixed": true,
+              "shape": {
+                "degree": 3,
+                "knots": [
+                  5.551115123125784e-17,
+                  5.551115123125784e-17,
+                  5.551115123125784e-17,
+                  5.551115123125784e-17,
+                  0.5,
+                  1,
+                  1,
+                  1,
+                  1
+                ],
+                "weights": [
+                  1,
+                  1,
+                  1,
+                  1,
+                  1
+                ]
+              },
+              "type": "Spline"
+            },
+            "108": {
+              "construction": true,
+              "control_points": [
+                98,
+                95,
+                96,
+                97,
+                100
+              ],
+              "fixed": true,
+              "shape": {
+                "degree": 3,
+                "knots": [
+                  0,
+                  0,
+                  0,
+                  0,
+                  0.5,
+                  1,
+                  1,
+                  1,
+                  1
+                ],
+                "weights": [
+                  1,
+                  1,
+                  1,
+                  1,
+                  1
+                ]
+              },
+              "type": "Spline"
+            }
+          },
+          "next_id": 110,
+          "points": {
+            "0": {
+              "fixed": true,
+              "x": 0,
+              "y": 0
+            },
+            "1": {
+              "fixed": true,
+              "x": 1,
+              "y": 0
+            },
+            "2": {
+              "fixed": true,
+              "x": 0,
+              "y": 1
+            },
+            "5": {
+              "x": 36.305133185381344,
+              "y": 14.529589658723308
+            },
+            "6": {
+              "x": -36.305133185381344,
+              "y": 14.529589658723308
+            },
+            "7": {
+              "x": -36.305133185381344,
+              "y": -1.5255965466710815
+            },
+            "8": {
+              "x": 36.305133185381344,
+              "y": -1.5255965466710815
+            },
+            "18": {
+              "x": 0,
+              "y": 6.501996556026115
+            },
+            "21": {
+              "fixed": true,
+              "x": -37.93280737888465,
+              "y": 14.529589658724765
+            },
+            "22": {
+              "fixed": true,
+              "x": 37.93280737888466,
+              "y": 14.529589658724763
+            },
+            "23": {
+              "fixed": true,
+              "x": 38.04314104589996,
+              "y": 14.52958965871881
+            },
+            "24": {
+              "fixed": true,
+              "x": 38.65453409877502,
+              "y": 14.529589658720102
+            },
+            "25": {
+              "fixed": true,
+              "x": 38.6184716381615,
+              "y": 14.529589658720123
+            },
+            "26": {
+              "fixed": true,
+              "x": 38.562273217057616,
+              "y": 14.52958965872011
+            },
+            "27": {
+              "fixed": true,
+              "x": 38.485795840872974,
+              "y": 14.529589658720118
+            },
+            "28": {
+              "fixed": true,
+              "x": 38.38883876889068,
+              "y": 14.529589658720106
+            },
+            "29": {
+              "fixed": true,
+              "x": 38.271483710366546,
+              "y": 14.529589658720123
+            },
+            "30": {
+              "fixed": true,
+              "x": 38.134026936127306,
+              "y": 14.529589658720113
+            },
+            "31": {
+              "fixed": true,
+              "x": 37.97701521155449,
+              "y": 14.529589658720115
+            },
+            "32": {
+              "fixed": true,
+              "x": 37.800036931138166,
+              "y": 14.52958965872011
+            },
+            "33": {
+              "fixed": true,
+              "x": 37.60486751269616,
+              "y": 14.529589658720113
+            },
+            "34": {
+              "fixed": true,
+              "x": 38.18908423562868,
+              "y": 14.529589658720411
+            },
+            "35": {
+              "fixed": true,
+              "x": 37.39416412850251,
+              "y": 14.529589658720122
+            },
+            "36": {
+              "fixed": true,
+              "x": 37.172407859166384,
+              "y": 14.529589658720113
+            },
+            "37": {
+              "fixed": true,
+              "x": 36.938129986216865,
+              "y": 14.529589658720118
+            },
+            "38": {
+              "fixed": true,
+              "x": 36.69257357382911,
+              "y": 14.529589658720113
+            },
+            "39": {
+              "fixed": true,
+              "x": 36.43706265336422,
+              "y": 14.529589658720123
+            },
+            "40": {
+              "fixed": true,
+              "x": 36.17769733003577,
+              "y": 14.529589658720115
+            },
+            "41": {
+              "fixed": true,
+              "x": 35.91178413418986,
+              "y": 14.52958965872012
+            },
+            "42": {
+              "fixed": true,
+              "x": 35.62953454445237,
+              "y": 14.529589658720115
+            },
+            "43": {
+              "fixed": true,
+              "x": 35.31838016345989,
+              "y": 14.529589658720115
+            },
+            "44": {
+              "fixed": true,
+              "x": 34.96883876109027,
+              "y": 14.529589658720113
+            },
+            "45": {
+              "fixed": true,
+              "x": 38.34702080263773,
+              "y": 14.529589658720056
+            },
+            "46": {
+              "fixed": true,
+              "x": 34.453030768230555,
+              "y": 14.52958965872013
+            },
+            "47": {
+              "fixed": true,
+              "x": 34.024465255808266,
+              "y": 14.529589658720102
+            },
+            "48": {
+              "fixed": true,
+              "x": 38.448428703671865,
+              "y": 14.529589658720134
+            },
+            "49": {
+              "fixed": true,
+              "x": 38.53240912870428,
+              "y": 14.529589658720113
+            },
+            "50": {
+              "fixed": true,
+              "x": 38.597323706372876,
+              "y": 14.529589658720102
+            },
+            "51": {
+              "fixed": true,
+              "x": 38.64212615806136,
+              "y": 14.529589658720116
+            },
+            "52": {
+              "fixed": true,
+              "x": 38.666482371286946,
+              "y": 14.52958965872011
+            },
+            "53": {
+              "fixed": true,
+              "x": 38.670562612309915,
+              "y": 14.529589658720123
+            },
+            "54": {
+              "fixed": true,
+              "x": -33.89669548239953,
+              "y": 14.529589658720116
+            },
+            "55": {
+              "fixed": true,
+              "x": -36.153049424459766,
+              "y": 14.529589658720116
+            },
+            "56": {
+              "fixed": true,
+              "x": -36.378195728952065,
+              "y": 14.529589658720127
+            },
+            "57": {
+              "fixed": true,
+              "x": -36.59814877125888,
+              "y": 14.529589658720116
+            },
+            "58": {
+              "fixed": true,
+              "x": -36.815084153324555,
+              "y": 14.529589658720113
+            },
+            "59": {
+              "fixed": true,
+              "x": -37.02443698533634,
+              "y": 14.529589658720116
+            },
+            "60": {
+              "fixed": true,
+              "x": -37.225718606748075,
+              "y": 14.529589658720123
+            },
+            "61": {
+              "fixed": true,
+              "x": -37.41834197078164,
+              "y": 14.529589658720113
+            },
+            "62": {
+              "fixed": true,
+              "x": -37.60375450788976,
+              "y": 14.52958965872011
+            },
+            "63": {
+              "fixed": true,
+              "x": -37.77784080946764,
+              "y": 14.529589658720134
+            },
+            "64": {
+              "fixed": true,
+              "x": -37.939630809939715,
+              "y": 14.529589658720063
+            },
+            "65": {
+              "fixed": true,
+              "x": -34.15074844010984,
+              "y": 14.529589658720113
+            },
+            "66": {
+              "fixed": true,
+              "x": -38.08817280569094,
+              "y": 14.529589658720138
+            },
+            "67": {
+              "fixed": true,
+              "x": -38.22391743671169,
+              "y": 14.52958965872011
+            },
+            "68": {
+              "fixed": true,
+              "x": -38.343767228689984,
+              "y": 14.52958965872011
+            },
+            "69": {
+              "fixed": true,
+              "x": -38.44604105700661,
+              "y": 14.529589658720116
+            },
+            "70": {
+              "fixed": true,
+              "x": -38.5296586435291,
+              "y": 14.529589658720116
+            },
+            "71": {
+              "fixed": true,
+              "x": -38.59453822803088,
+              "y": 14.52958965872012
+            },
+            "72": {
+              "fixed": true,
+              "x": -38.639946267925865,
+              "y": 14.529589658720106
+            },
+            "73": {
+              "fixed": true,
+              "x": -38.6654559185928,
+              "y": 14.52958965872012
+            },
+            "74": {
+              "fixed": true,
+              "x": -38.67092283984305,
+              "y": 14.52958965872012
+            },
+            "75": {
+              "fixed": true,
+              "x": -38.65633683175467,
+              "y": 14.52958965872011
+            },
+            "76": {
+              "fixed": true,
+              "x": -34.47669271785348,
+              "y": 14.529589658720123
+            },
+            "77": {
+              "fixed": true,
+              "x": -38.62170236843537,
+              "y": 14.52958965872011
+            },
+            "78": {
+              "fixed": true,
+              "x": -38.56652604937506,
+              "y": 14.529589658720116
+            },
+            "79": {
+              "fixed": true,
+              "x": -38.48954068498723,
+              "y": 14.529589658720132
+            },
+            "80": {
+              "fixed": true,
+              "x": -38.3886727507401,
+              "y": 14.529589658720061
+            },
+            "81": {
+              "fixed": true,
+              "x": -38.220852759230404,
+              "y": 14.5295896587204
+            },
+            "82": {
+              "fixed": true,
+              "x": -38.05811007436366,
+              "y": 14.529589658718812
+            },
+            "83": {
+              "fixed": true,
+              "x": -34.72104159904774,
+              "y": 14.529589658720113
+            },
+            "84": {
+              "fixed": true,
+              "x": -34.96710060279731,
+              "y": 14.529589658720115
+            },
+            "85": {
+              "fixed": true,
+              "x": -35.21032678481726,
+              "y": 14.529589658720116
+            },
+            "86": {
+              "fixed": true,
+              "x": -35.4504404359485,
+              "y": 14.529589658720122
+            },
+            "87": {
+              "fixed": true,
+              "x": -35.68710753322705,
+              "y": 14.529589658720113
+            },
+            "88": {
+              "fixed": true,
+              "x": -35.92273749495409,
+              "y": 14.529589658720118
+            },
+            "89": {
+              "fixed": true,
+              "x": 0,
+              "y": 14.52958965872011
+            },
+            "90": {
+              "fixed": true,
+              "x": 33.72160700062351,
+              "y": 14.529589658720113
+            },
+            "91": {
+              "fixed": true,
+              "x": -33.72160700062351,
+              "y": 14.529589658720116
+            },
+            "92": {
+              "fixed": true,
+              "x": 36.33741930253663,
+              "y": 14.52958965872012
+            },
+            "93": {
+              "fixed": true,
+              "x": 33.369387422163655,
+              "y": 14.52958965872012
+            },
+            "94": {
+              "fixed": true,
+              "x": 17.11785502956684,
+              "y": 14.52958965872012
+            },
+            "95": {
+              "fixed": true,
+              "x": -17.11785502956684,
+              "y": 14.52958965872012
+            },
+            "96": {
+              "fixed": true,
+              "x": -33.369387422163655,
+              "y": 14.52958965872012
+            },
+            "97": {
+              "fixed": true,
+              "x": -36.33741930253663,
+              "y": 14.52958965872012
+            },
+            "98": {
+              "fixed": true,
+              "x": 0,
+              "y": 14.52958965872012
+            },
+            "99": {
+              "fixed": true,
+              "x": 34.67745899187801,
+              "y": 14.52958965872185
+            },
+            "100": {
+              "fixed": true,
+              "x": -34.67745899187801,
+              "y": 14.52958965872012
+            }
+          }
+        }
+      }
+    },
+    {
+      "id": "extrude5",
+      "operation": "extrude",
+      "args": {
+        "extent": {
+          "reversed": false,
+          "side1": {
+            "blind": -2.9
+          },
+          "symmetric": false
+        },
+        "output": {
+          "solid": {
+            "mode": "with",
+            "op": "union",
+            "target": "extrude(extrude4)"
+          }
+        },
+        "sketch": {
+          "target": "/:sketch:sketch3"
+        }
+      }
+    },
+    {
+      "id": "mirror1",
+      "operation": "mirror",
+      "args": {
+        "bodies": [],
+        "combine": {
+          "mode": "new_body"
+        },
+        "features": [
+          "extrude4"
+        ],
+        "plane": {
+          "datum": "origin:yz"
+        }
+      }
+    },
+    {
+      "id": "part1",
+      "operation": "add_part",
+      "args": {
+        "file": "mouth.geop",
+        "mates": {
+          "m1": {
+            "entities": [
+              {
+                "on": {
+                  "edge": "mirror(mirror1,extrude(extrude4,sketch5,c29#1,start))"
+                }
+              },
+              {
+                "at": {
+                  "vertex": {
+                    "name": "combine(extrude2,extrude(extrude1,sketch1,c20@1),extrude(extrude2,sketch2,c10),0,1)",
+                    "target": "/part1:model"
+                  }
+                },
+                "on": {
+                  "face": {
+                    "name": "extrude(extrude1,sketch1,c20)",
+                    "target": "/part1:model"
+                  }
+                }
+              }
+            ],
+            "type": "concentric"
+          },
+          "m2": {
+            "entities": [
+              {
+                "on": {
+                  "face": "mirror(mirror1,extrude(extrude4,start))"
+                }
+              },
+              {
+                "on": {
+                  "face": {
+                    "name": "extrude(extrude2,sketch2,c10)",
+                    "target": "/part1:model"
+                  }
+                }
+              }
+            ],
+            "type": "coincident"
+          }
+        }
+      }
+    },
+    {
+      "id": "reference2",
+      "operation": "add_datum",
+      "args": {
+        "construction": {
+          "distance": 10,
+          "method": "offset"
+        },
+        "selection": [
+          {
+            "datum": "origin:yz"
+          }
+        ]
+      }
+    },
+    {
+      "id": "sketch6",
+      "operation": "add_sketch",
+      "args": {
+        "plane": {
+          "datum": "reference2"
+        },
+        "references": [
+          {
+            "curves": {
+              "x": 3,
+              "y": 4
+            },
+            "points": {
+              "origin": 0,
+              "x": 1,
+              "y": 2
+            },
+            "type": "frame"
+          },
+          {
+            "curves": {
+              "combine(extrude1,extrude(extrude1,sketch1,c11),subd(subd1,f11),combine(extrude1,subd(subd1,e19-20),extrude(extrude1,sketch1,c11),0,1),combine(extrude1,subd(subd1,e5-6),extrude(extrude1,sketch1,c11),0,1))": 24,
+              "combine(extrude1,extrude(extrude1,sketch1,c11),subd(subd1,f11m),combine(extrude1,subd(subd1,e19m-20m),extrude(extrude1,sketch1,c11),0,1),combine(extrude1,subd(subd1,e5m-6m),extrude(extrude1,sketch1,c11),0,1))": 25,
+              "combine(extrude1,extrude(extrude1,sketch1,c11),subd(subd1,f23),combine(extrude1,subd(subd1,e1-2),extrude(extrude1,sketch1,c11),0,1),combine(extrude1,subd(subd1,e19-20),extrude(extrude1,sketch1,c11),0,1))": 26,
+              "combine(extrude1,extrude(extrude1,sketch1,c11),subd(subd1,f23m),combine(extrude1,subd(subd1,e19m-20m),extrude(extrude1,sketch1,c11),0,1),combine(extrude1,subd(subd1,e1m-2m),extrude(extrude1,sketch1,c11),0,1))": 27,
+              "combine(extrude1,extrude(extrude1,sketch1,c11),subd(subd1,f8),combine(extrude1,subd(subd1,e1-2),extrude(extrude1,sketch1,c11),0,1),combine(extrude1,subd(subd1,e14-15),extrude(extrude1,sketch1,c11),0,1))": 28,
+              "combine(extrude1,extrude(extrude1,sketch1,c11),subd(subd1,f8m),combine(extrude1,subd(subd1,e14-15),extrude(extrude1,sketch1,c11),0,1),combine(extrude1,subd(subd1,e1m-2m),extrude(extrude1,sketch1,c11),0,1))": 29,
+              "combine(extrude4,#fb79083575311bb90611a51247ae5a15,combine(extrude4,#fb79083575311bb90611a51247ae5a15,extrude(extrude4,sketch5,p24),0,1))": 30,
+              "combine(mirror1,image,extrude4,#db09bb225912312ec40ddfbbb83c46f2,combine(mirror1,image,extrude4,#db09bb225912312ec40ddfbbb83c46f2,mirror(mirror1,extrude(extrude4,sketch5,p24)),0,1))": 31,
+              "extrude(extrude3,sketch4,p20)": 32,
+              "extrude(extrude3,sketch4,p30)": 33,
+              "extrude(extrude4,sketch5,c40,start)": 34,
+              "mirror(mirror1,extrude(extrude4,sketch5,c40,start))": 35
+            },
+            "entity": {
+              "face": "extrude(extrude1,sketch1,c11)"
+            },
+            "points": {
+              "combine(extrude1,subd(subd1,e1-2),extrude(extrude1,sketch1,c11),0,1)": 5,
+              "combine(extrude1,subd(subd1,e14-15),extrude(extrude1,sketch1,c11),0,1)": 6,
+              "combine(extrude1,subd(subd1,e19-20),extrude(extrude1,sketch1,c11),0,1)": 7,
+              "combine(extrude1,subd(subd1,e19m-20m),extrude(extrude1,sketch1,c11),0,1)": 8,
+              "combine(extrude1,subd(subd1,e1m-2m),extrude(extrude1,sketch1,c11),0,1)": 9,
+              "combine(extrude2,#27820081a3bafc6b769478fb8a53ae7d,extrude(extrude2,sketch2,c9),0,1)": 10,
+              "combine(extrude2,#28ac05e2182ffda0f38dd66cd3d4b646,extrude(extrude2,sketch2,c9),0,1)": 11,
+              "combine(extrude4,#fb79083575311bb90611a51247ae5a15,extrude(extrude4,sketch5,p24),0,1)": 12,
+              "combine(extrude4,#fb79083575311bb90611a51247ae5a15,extrude(extrude4,sketch5,p36),0,1)": 13,
+              "combine(mirror1,image,extrude4,#db09bb225912312ec40ddfbbb83c46f2,mirror(mirror1,extrude(extrude4,sketch5,p24)),0,1)": 14,
+              "combine(mirror1,image,extrude4,#db09bb225912312ec40ddfbbb83c46f2,mirror(mirror1,extrude(extrude4,sketch5,p36)),0,1)": 15,
+              "extrude(extrude3,sketch4,p20,end)": 16,
+              "extrude(extrude3,sketch4,p20,start)": 17,
+              "extrude(extrude3,sketch4,p30,end)": 18,
+              "extrude(extrude3,sketch4,p30,start)": 19,
+              "extrude(extrude4,sketch5,p24,start)": 20,
+              "extrude(extrude4,sketch5,p36,start)": 21,
+              "mirror(mirror1,extrude(extrude4,sketch5,p24,start))": 22,
+              "mirror(mirror1,extrude(extrude4,sketch5,p36,start))": 23
+            },
+            "type": "projection"
+          }
+        ],
+        "sketch": {
+          "constraints": {
+            "37": {
+              "curve": 35,
+              "point": 36,
+              "type": "PointOnCurve"
+            },
+            "40": {
+              "line": 39,
+              "type": "Horizontal"
+            },
+            "43": {
+              "a": 39,
+              "b": 42,
+              "type": "Tangent"
+            },
+            "45": {
+              "curve": 26,
+              "point": 44,
+              "type": "PointOnCurve"
+            },
+            "47": {
+              "line": 46,
+              "type": "Horizontal"
+            },
+            "48": {
+              "a": 42,
+              "b": 46,
+              "type": "Tangent"
+            },
+            "50": {
+              "line": 49,
+              "type": "Vertical"
+            },
+            "53": {
+              "a": 52,
+              "b": 42,
+              "type": "Concentric"
+            }
+          },
+          "curves": {
+            "3": {
+              "construction": true,
+              "end": 1,
+              "fixed": true,
+              "start": 0,
+              "type": "Line"
+            },
+            "4": {
+              "construction": true,
+              "end": 2,
+              "fixed": true,
+              "start": 0,
+              "type": "Line"
+            },
+            "24": {
+              "construction": true,
+              "end": 7,
+              "fixed": true,
+              "start": 11,
+              "type": "Line"
+            },
+            "25": {
+              "construction": true,
+              "end": 8,
+              "fixed": true,
+              "start": 10,
+              "type": "Line"
+            },
+            "26": {
+              "construction": true,
+              "end": 13,
+              "fixed": true,
+              "start": 5,
+              "type": "Line"
+            },
+            "27": {
+              "construction": true,
+              "end": 15,
+              "fixed": true,
+              "start": 9,
+              "type": "Line"
+            },
+            "28": {
+              "construction": true,
+              "end": 6,
+              "fixed": true,
+              "start": 5,
+              "type": "Line"
+            },
+            "29": {
+              "construction": true,
+              "end": 9,
+              "fixed": true,
+              "start": 6,
+              "type": "Line"
+            },
+            "30": {
+              "construction": true,
+              "end": 7,
+              "fixed": true,
+              "start": 12,
+              "type": "Line"
+            },
+            "31": {
+              "construction": true,
+              "end": 8,
+              "fixed": true,
+              "start": 14,
+              "type": "Line"
+            },
+            "32": {
+              "construction": true,
+              "end": 16,
+              "fixed": true,
+              "start": 17,
+              "type": "Line"
+            },
+            "33": {
+              "construction": true,
+              "end": 18,
+              "fixed": true,
+              "start": 19,
+              "type": "Line"
+            },
+            "34": {
+              "construction": true,
+              "end": 20,
+              "fixed": true,
+              "start": 21,
+              "type": "Line"
+            },
+            "35": {
+              "construction": true,
+              "end": 22,
+              "fixed": true,
+              "start": 23,
+              "type": "Line"
+            },
+            "39": {
+              "construction": false,
+              "end": 38,
+              "start": 36,
+              "type": "Line"
+            },
+            "42": {
+              "construction": false,
+              "end": 41,
+              "start": 38,
+              "sweep": 3.141592653589793,
+              "type": "Arc"
+            },
+            "46": {
+              "construction": false,
+              "end": 44,
+              "start": 41,
+              "type": "Line"
+            },
+            "49": {
+              "construction": false,
+              "end": 36,
+              "start": 44,
+              "type": "Line"
+            },
+            "52": {
+              "center": 51,
+              "construction": false,
+              "radius": 3.5694086263992184,
+              "type": "Circle"
+            }
+          },
+          "next_id": 54,
+          "points": {
+            "0": {
+              "fixed": true,
+              "x": 0,
+              "y": 0
+            },
+            "1": {
+              "fixed": true,
+              "x": 1,
+              "y": 0
+            },
+            "2": {
+              "fixed": true,
+              "x": 0,
+              "y": 1
+            },
+            "5": {
+              "fixed": true,
+              "x": -25,
+              "y": -62.644162568539684
+            },
+            "6": {
+              "fixed": true,
+              "x": -25.000000000000007,
+              "y": -73.23342622361366
+            },
+            "7": {
+              "fixed": true,
+              "x": -25,
+              "y": -11.926666666666666
+            },
+            "8": {
+              "fixed": true,
+              "x": -25.000000000000007,
+              "y": -11.926666666666668
+            },
+            "9": {
+              "fixed": true,
+              "x": -25,
+              "y": -62.644162568539684
+            },
+            "10": {
+              "fixed": true,
+              "x": -25,
+              "y": 14.529589658720123
+            },
+            "11": {
+              "fixed": true,
+              "x": -24.999999999999993,
+              "y": 14.529589658724767
+            },
+            "12": {
+              "fixed": true,
+              "x": -25.000000000000007,
+              "y": -19.650020988468217
+            },
+            "13": {
+              "fixed": true,
+              "x": -25.000000000000007,
+              "y": -39.2826725108913
+            },
+            "14": {
+              "fixed": true,
+              "x": -25.000000000000007,
+              "y": -19.65002098846822
+            },
+            "15": {
+              "fixed": true,
+              "x": -25.000000000000007,
+              "y": -39.282672510891295
+            },
+            "16": {
+              "fixed": true,
+              "x": -24.999999999999993,
+              "y": 0.1895896587201227
+            },
+            "17": {
+              "fixed": true,
+              "x": -24.999999999999996,
+              "y": 14.529589658720125
+            },
+            "18": {
+              "fixed": true,
+              "x": -24.999999999999996,
+              "y": 0.1895896587201227
+            },
+            "19": {
+              "fixed": true,
+              "x": -25.000000000000004,
+              "y": 14.529589658722415
+            },
+            "20": {
+              "fixed": true,
+              "x": -25.000000000000007,
+              "y": -19.65002098846822
+            },
+            "21": {
+              "fixed": true,
+              "x": -25.000000000000004,
+              "y": -39.2826725108913
+            },
+            "22": {
+              "fixed": true,
+              "x": -25.000000000000007,
+              "y": -19.65002098846822
+            },
+            "23": {
+              "fixed": true,
+              "x": -25.000000000000007,
+              "y": -39.2826725108913
+            },
+            "36": {
+              "x": -25.000000000000007,
+              "y": -32.334324294150846
+            },
+            "38": {
+              "x": -31.449918152972153,
+              "y": -32.334324294150846
+            },
+            "41": {
+              "x": -31.449918152972153,
+              "y": -46.91384390236995
+            },
+            "44": {
+              "x": -25.000000000000004,
+              "y": -46.91384390236995
+            },
+            "51": {
+              "x": -31.449918152972174,
+              "y": -39.62408409826043
+            }
+          }
+        }
+      }
+    },
+    {
+      "id": "extrude6",
+      "operation": "extrude",
+      "args": {
+        "extent": {
+          "reversed": false,
+          "side1": {
+            "blind": 5
+          },
+          "symmetric": false
+        },
+        "output": {
+          "solid": {
+            "mode": "with",
+            "op": "union",
+            "target": "mirror(mirror1)"
+          }
+        },
+        "sketch": {
+          "target": "/:sketch:sketch6"
+        }
+      }
+    },
+    {
+      "id": "mirror2",
+      "operation": "mirror",
+      "args": {
+        "bodies": [],
+        "combine": {
+          "mode": "new_body"
+        },
+        "features": [
+          "extrude6"
+        ],
+        "plane": {
+          "datum": "origin:yz"
+        }
+      }
+    },
+    {
+      "id": "sketch7",
+      "operation": "add_sketch",
+      "args": {
+        "plane": {
+          "face": "extrude(extrude3,end)"
+        },
+        "references": [
+          {
+            "curves": {
+              "x": 3,
+              "y": 4
+            },
+            "points": {
+              "origin": 0,
+              "x": 1,
+              "y": 2
+            },
+            "type": "frame"
+          }
+        ],
+        "sketch": {
+          "constraints": {
+            "6": {
+              "curve": 4,
+              "point": 5,
+              "type": "PointOnCurve"
+            }
+          },
+          "curves": {
+            "3": {
+              "construction": true,
+              "end": 1,
+              "fixed": true,
+              "start": 0,
+              "type": "Line"
+            },
+            "4": {
+              "construction": true,
+              "end": 2,
+              "fixed": true,
+              "start": 0,
+              "type": "Line"
+            },
+            "7": {
+              "center": 5,
+              "construction": false,
+              "radius": 10.29875544529466,
+              "type": "Circle"
+            }
+          },
+          "next_id": 8,
+          "points": {
+            "0": {
+              "fixed": true,
+              "x": 0,
+              "y": 0
+            },
+            "1": {
+              "fixed": true,
+              "x": 1,
+              "y": 0
+            },
+            "2": {
+              "fixed": true,
+              "x": 0,
+              "y": 1
+            },
+            "5": {
+              "x": 0,
+              "y": -8.566429773244813
+            }
+          }
+        }
+      }
+    },
+    {
+      "id": "extrude7",
+      "operation": "extrude",
+      "args": {
+        "extent": {
+          "reversed": false,
+          "side1": {
+            "blind": 10
+          },
+          "symmetric": false
+        },
+        "output": {
+          "solid": {
+            "mode": "with",
+            "op": "union",
+            "target": "mirror(mirror2)"
+          }
+        },
+        "sketch": {
+          "target": "/:sketch:sketch7"
+        }
+      }
+    }
+  ],
+  "state": {
+    "part1.pose": {
+      "position": [
+        2.2166952558162564e-12,
+        -15.575638576165511,
+        -29.466346749685034
+      ],
+      "rotation": [
+        0.9998498283860742,
+        0.01732976274089354,
+        -9.475005256506382e-15,
+        1.1669070524560169e-14
+      ]
+    }
+  }
+}

@@ -169,8 +169,12 @@ pub(crate) fn bounds(curve: &NurbCurve2D) -> [f64; 4] {
     ]
 }
 
+/// Whether two boxes on the paper, `[x_lo, y_lo, x_hi, y_hi]`, could come
+/// within the sheet's resolution ([`COARSE_SUBDIVISION`]) of each other:
+/// what lies that close is one line there (see [`meetings`]).
 pub(crate) fn boxes_meet(a: &[f64; 4], b: &[f64; 4]) -> bool {
-    a[0] <= b[2] && b[0] <= a[2] && a[1] <= b[3] && b[1] <= a[3]
+    let r = COARSE_SUBDIVISION;
+    a[0] <= b[2] + r && b[0] <= a[2] + r && a[1] <= b[3] + r && b[1] <= a[3] + r
 }
 
 /// Whether `curve` projects to a single point: a line along the line of
@@ -289,19 +293,37 @@ pub(crate) fn seen(
 ) -> GeopResult<bool> {
     let far = point.add(&toward_eye.prod_scalar(length));
     let ray = NurbCurve3D::line(point, far)?;
+    let coarse = Scalar::from_f64(COARSE_SUBDIVISION);
     let mut behind_an_edge = false;
     for occluder in occluders.iter().filter(|o| o.could_meet(&point, &far)) {
         let (face_id, surface) = (occluder.face, &occluder.surface);
         let ctx =
             |e: GeopError| e.with_context(format!("the ray from {point:?} against face {face_id}"));
-        let overlaps = curve_surface_overlaps(&ray, surface, MAX_NODES, min_subdivision_size())
-            .with_context(&ctx)?;
+        let overlaps =
+            curve_surface_overlaps(&ray, surface, coarse, MAX_NODES, min_subdivision_size())
+                .with_context(&ctx)?;
         if !overlaps.is_empty() {
-            // The ray runs in the face's surface: the face is seen edge on
-            // here, and an edge-on face hides nothing.
+            // The ray runs in the face's surface, to what a sheet shows:
+            // the face is seen edge on here, and an edge-on face hides
+            // nothing. Edge on to within the rounding of a placed part's
+            // turn, the ray runs `1e-12` off it, and a search for where it
+            // crosses would have to cover all its length in pieces that
+            // small.
             continue;
         }
+        // A ray from a silhouette leaves its face tangent to it, and a hair
+        // off tangent in a part placed by a pose rounded in its last bits:
+        // the touch at its start no longer pins onto the start, and only
+        // the sheet's resolution, as a handoff, isolates it — a crossing
+        // that close to the start is the point itself, and not past it.
         let crossings = curve_surface_crossings(&ray, surface, MAX_NODES, min_subdivision_size())
+            .or_else(|error| {
+                curve_surface_crossings(&ray, surface, MAX_NODES, coarse).map_err(|e| {
+                    e.with_context(format!(
+                        "searched again to the sheet's resolution, after: {error}"
+                    ))
+                })
+            })
             .with_context(&ctx)?;
         for (t, uv) in crossings {
             let (t, uv) = if t.definitely_greater(Scalar::ZERO) {
@@ -525,7 +547,7 @@ pub fn project_view(
             )
             .map_err(|e| {
                 let describe = |s: &Source| match s.edge {
-                    Some(edge) => format!("{:?} of edge {edge}", s.kind),
+                    Some(edge) => format!("{:?} of edge {edge} (of faces {:?})", s.kind, s.on),
                     None => format!(
                         "{:?} of face {:?}",
                         s.kind,
@@ -533,9 +555,12 @@ pub fn project_view(
                     ),
                 };
                 e.with_context(format!(
-                    "project_view: where the {} and the {} cross on the paper",
+                    "project_view: where the {} and the {} cross on the paper, seen through \
+                     {frame:?}: on the paper {:?} and {:?}",
                     describe(&sources[i]),
-                    describe(&sources[j])
+                    describe(&sources[j]),
+                    sources[i].curve,
+                    sources[j].curve,
                 ))
             })?;
             cuts[i].extend(a_cuts);
@@ -640,14 +665,17 @@ pub fn project_view(
 }
 
 /// Where the projections of `a` and `b` cross or begin and end running
-/// along each other: the parameters to cut each at.
+/// along each other — on each other, or within `reach` of each other (see
+/// [`curve_curve_overlaps_and_crossings`]): the parameters to cut each at.
 /// `handoff` is where the search hands over (see `AGENTS.md`).
 fn search(
     a: &NurbCurve2D,
     b: &NurbCurve2D,
+    reach: Scalar,
     handoff: Scalar,
 ) -> GeopResult<(Vec<Scalar>, Vec<Scalar>)> {
-    let (overlaps, crossings) = curve_curve_overlaps_and_crossings(a, b, MAX_NODES, handoff)?;
+    let (overlaps, crossings) =
+        curve_curve_overlaps_and_crossings(a, b, reach, MAX_NODES, handoff)?;
     let (mut on_a, mut on_b) = (Vec::new(), Vec::new());
     for (s, t) in crossings {
         on_a.push(s);
@@ -664,6 +692,15 @@ fn search(
 /// be cut for each other (see [`search`]), searched with the handoff
 /// `handoff`.
 ///
+/// What a sheet shows has a resolution ([`COARSE_SUBDIVISION`]), and two
+/// lines running within it of each other along a stretch are one line
+/// there: they are cut where that stretch begins and ends (the `reach` of
+/// [`search`]), so that one of them drops the other's piece along it as
+/// drawn (see [`drop_drawn`]). The two edges of a face seen edge on in a
+/// part placed by a turn rounded in its last bits lie `1e-13` apart on the
+/// paper: the exact search finds them apart, or cannot get through them in
+/// pieces that small, and the hidden one was drawn beside the visible.
+///
 /// Two curves meeting at a common end often meet there tangentially on the
 /// paper — an edge running into another smoothly, seen from the side —
 /// and a subdivision search cannot isolate a tangency: it runs out of
@@ -676,17 +713,18 @@ fn search(
 /// Two curves touching elsewhere — a screw's head seen from above, round,
 /// touching the line a flat of the nut under it is seen as — come closer
 /// than a fine handoff along a stretch the search cannot get through
-/// either. Should all else fail, the search is run once more with a
-/// coarser handoff ([`COARSE_SUBDIVISION`]) if `handoff` is finer: the
-/// touch comes out as one wide cluster, cut at a free point inside it, and
-/// two crossings closer together than that are taken as one.
+/// either. Should all else fail, the search is run once more with the
+/// sheet's resolution as its handoff too: the touch comes out as one wide
+/// cluster, cut at a free point inside it, and two crossings closer
+/// together than that are taken as one.
 pub(crate) fn meetings(
     (a, a3): (&NurbCurve2D, &NurbCurve3D),
     (b, b3): (&NurbCurve2D, &NurbCurve3D),
     handoff: Scalar,
 ) -> GeopResult<(Vec<Scalar>, Vec<Scalar>)> {
+    let coarse = Scalar::from_f64(COARSE_SUBDIVISION);
     let fine = || -> GeopResult<(Vec<Scalar>, Vec<Scalar>)> {
-        let error = match search(a, b, handoff) {
+        let error = match search(a, b, coarse, handoff) {
             Ok(found) => return Ok(found),
             Err(e) => e,
         };
@@ -714,7 +752,7 @@ pub(crate) fn meetings(
                 if i == end_a && j == end_b {
                     continue;
                 }
-                let (x, y) = search(half_a, half_b, handoff).map_err(|e| {
+                let (x, y) = search(half_a, half_b, coarse, handoff).map_err(|e| {
                     e.with_context(format!(
                         "searched again without the common end, after: {error}"
                     ))
@@ -725,14 +763,10 @@ pub(crate) fn meetings(
         }
         Ok((on_a, on_b))
     };
-    let coarse = Scalar::from_f64(COARSE_SUBDIVISION);
     fine().or_else(|error| {
-        if !handoff.definitely_less(coarse) {
-            return Err(error);
-        }
-        search(a, b, coarse).map_err(|e| {
+        search(a, b, coarse, coarse).map_err(|e| {
             e.with_context(format!(
-                "searched again with a coarser handoff, after: {error}"
+                "searched again to the sheet's resolution, after: {error}"
             ))
         })
     })
@@ -788,8 +822,12 @@ pub(crate) fn drop_drawn(
 ) -> GeopResult<Vec<ViewLine>> {
     lines.sort_by_key(|l| !l.visible);
     let mut kept: Vec<(ViewLine, [f64; 4])> = Vec::new();
+    // On one drawn to the sheet's resolution: the edges of a face seen edge
+    // on in a part turned by a rounded pose lie `1e-13` apart, one line.
+    let reach = Scalar::from_f64(COARSE_SUBDIVISION);
+    let around = reach.neg().union(reach);
     for line in lines {
-        let mid = line.curve.evaluate(line.curve.mid_parameter()?)?;
+        let mid = (line.curve.evaluate(line.curve.mid_parameter()?)?).map(|x| x.add(around));
         let here = bounds(&line.curve);
         let mut drawn = false;
         for (other, there) in &kept {

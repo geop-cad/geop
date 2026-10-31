@@ -918,6 +918,23 @@ mod examples {
         )
     }
 
+    /// The duck, the first example a new visitor is offered, seen from the
+    /// front: its neck is placed turned about `x` by a pose rounded in its
+    /// last bits, and its side face lies `8e-15` off the line of sight. Its
+    /// edges, `1e-13` apart on the paper, ran the searches for where they
+    /// cross out of nodes (see `geop_ops_drawing`'s
+    /// `box_seen_a_hair_off_its_front`).
+    #[test]
+    fn duck_draws_from_the_front() {
+        let (_, built) = example_assembly("duck");
+        let scene = Scene::of(&built.current()).unwrap();
+        let frame = ViewKind::Front.frame().unwrap();
+        let view = scene
+            .project(&frame, &ViewOptions::default())
+            .unwrap_or_else(|e| panic!("{e}"));
+        assert!(view.lines.iter().any(|l| l.visible));
+    }
+
     /// Every example assembly draws: its default sheet with the bill of
     /// materials builds, with a balloon per line of the bill whose part has
     /// faces drawn, and in no view does a hidden piece run along a visible one.
@@ -992,11 +1009,14 @@ mod examples {
                         .find(|l| on(l, &p) && on(l, &q))
                     {
                         failures.push(format!(
-                            "{name}, {} view: the hidden {:?} of {} runs along the visible {:?} of {}",
+                            "{name}, {} view: the hidden {:?} {:?} of {} runs along the visible \
+                             {:?} {:?} of {}, through {p:?} and {q:?} on the paper",
                             kind.name(),
                             hidden.kind,
+                            hidden.edge,
                             scene.bodies[hidden.body].path,
                             visible.kind,
+                            visible.edge,
                             scene.bodies[visible.body].path,
                         ));
                     }

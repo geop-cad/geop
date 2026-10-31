@@ -1,0 +1,146 @@
+{
+  "steps": [
+    {
+      "id": "part1",
+      "operation": "add_part",
+      "args": {
+        "file": "left_hip.geop",
+        "mates": {}
+      }
+    },
+    {
+      "id": "part2",
+      "operation": "add_part",
+      "args": {
+        "file": "left_knee.geop",
+        "mates": {
+          "m1": {
+            "entities": [
+              {
+                "on": {
+                  "edge": {
+                    "name": "extrude(extrude3,sketch3,c5,end)",
+                    "target": "/part1:model"
+                  }
+                }
+              },
+              {
+                "on": {
+                  "edge": {
+                    "name": "extrude(extrude1,sketch1,c10,end)",
+                    "target": "/part2:model"
+                  }
+                }
+              }
+            ],
+            "type": "revolute"
+          }
+        }
+      }
+    },
+    {
+      "id": "part3",
+      "operation": "add_part",
+      "args": {
+        "file": "left_ankle.geop",
+        "mates": {
+          "m1": {
+            "entities": [
+              {
+                "on": {
+                  "edge": {
+                    "name": "extrude(extrude2,sketch2,c10,end)",
+                    "target": "/part2:model"
+                  }
+                }
+              },
+              {
+                "on": {
+                  "edge": {
+                    "name": "extrude(extrude2,sketch2,c31,start)",
+                    "target": "/part3:model"
+                  }
+                }
+              }
+            ],
+            "type": "revolute"
+          }
+        }
+      }
+    },
+    {
+      "id": "part4",
+      "operation": "add_part",
+      "args": {
+        "file": "foot.geop",
+        "mates": {
+          "m1": {
+            "entities": [
+              {
+                "on": {
+                  "edge": {
+                    "name": "extrude(extrude1,sketch1,c10,end)",
+                    "target": "/part3:model"
+                  }
+                }
+              },
+              {
+                "on": {
+                  "edge": {
+                    "name": "extrude(extrude1,sketch1,c9,start)",
+                    "target": "/part4:model"
+                  }
+                }
+              }
+            ],
+            "type": "revolute"
+          }
+        }
+      }
+    }
+  ],
+  "state": {
+    "add_part(part2,m1).angle": 27.084877636589777,
+    "add_part(part3,m1).angle": -14.184097591092186,
+    "add_part(part4,m1).angle": -41.26897529117251,
+    "part2.pose": {
+      "position": [
+        15.046918861957542,
+        -7.569908493561198,
+        -13.034623414902038
+      ],
+      "rotation": [
+        0.9721967413704689,
+        -0.2341655313420698,
+        -7.477375993393737e-15,
+        4.626224541715739e-15
+      ]
+    },
+    "part3.pose": {
+      "position": [
+        0.04691886195800278,
+        -41.19886766734109,
+        -9.995621645766128
+      ],
+      "rotation": [
+        0.9358475848057748,
+        -0.352405019846864,
+        -8.448397672857975e-15,
+        5.721194905903908e-15
+      ]
+    },
+    "part4.pose": {
+      "position": [
+        7.546918861958057,
+        -48.84923932212691,
+        -4.323379552461829
+      ],
+      "rotation": [
+        1.0000000000000457,
+        5.540682354776555e-10,
+        9.736895883849458e-15,
+        9.254237455475115e-15
+      ]
+    }
+  }
+}

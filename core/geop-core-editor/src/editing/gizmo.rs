@@ -353,9 +353,12 @@ impl GizmoView {
         pointer.reach_at(1.0, pointer.ray.closest_to_point(&self.at))
     }
 
-    /// The part `pointer` is over: of the cubes and the ball, then the
-    /// arrows and squares, then the rings, the one nearest the pointer on
-    /// screen.
+    /// The part `pointer` is over. One it is over as drawn comes first —
+    /// the ball, a square, a cube within its own size — before one it only
+    /// passes within a reach of: a square is hit only where it is drawn, so
+    /// a cube or a ring reaching over it by that reach must not take it.
+    /// Then of the cubes and the ball, then the arrows and squares, then
+    /// the rings, the one nearest the pointer on screen.
     pub fn hit(&self, pointer: &Pointer) -> Option<GizmoPart> {
         let ray = &pointer.ray;
         let r = self.reach(pointer);
@@ -370,27 +373,26 @@ impl GizmoView {
         (self.parts.iter().copied())
             .filter(|&part| self.shown(part, ray.dir()))
             .filter_map(|part| {
-                let (rank, dist) = match part {
-                    GizmoPart::Free => (0, near(ray.distance_to_point(&self.at).0, size::FREE)?),
-                    GizmoPart::Stretch(i) => {
-                        let at = out(i.of(&self.axes), size::CUBE_AT);
-                        (
-                            0,
-                            near(ray.distance_to_point(&at).0, size::CUBE + size::NEAR)?,
-                        )
-                    }
-                    GizmoPart::Scale => {
-                        let at = out(&self.diagonal()?, size::CUBE_AT);
-                        (
-                            0,
-                            near(ray.distance_to_point(&at).0, size::CUBE + size::NEAR)?,
-                        )
-                    }
+                // A cube, by its distance from the ray: over it within its
+                // own size, near it within a reach more.
+                let cube = |at: Vector3| {
+                    let dist = ray.distance_to_point(&at).0;
+                    let over = near(dist, size::CUBE).is_some();
+                    Some((over, 0, near(dist, size::CUBE + size::NEAR)?))
+                };
+                let (over, rank, dist) = match part {
+                    GizmoPart::Free => (
+                        true,
+                        0,
+                        near(ray.distance_to_point(&self.at).0, size::FREE)?,
+                    ),
+                    GizmoPart::Stretch(i) => cube(out(i.of(&self.axes), size::CUBE_AT))?,
+                    GizmoPart::Scale => cube(out(&self.diagonal()?, size::CUBE_AT))?,
                     GizmoPart::Move(i) => {
                         let (a, b) = size::ARROW;
                         let d = i.of(&self.axes);
                         let dist = ray.distance_to_segment(&out(d, a), &out(d, b)).0;
-                        (1, near(dist, size::NEAR)?)
+                        (false, 1, near(dist, size::NEAR)?)
                     }
                     GizmoPart::Plane(i) => {
                         let [j, k] = i.others();
@@ -403,7 +405,7 @@ impl GizmoView {
                             [(lo, lo), (hi, lo), (hi, hi), (lo, hi)].map(|(x, y)| corner(x, y));
                         let inside = ray.intersect_triangle(&p, &q, &s).is_some()
                             || ray.intersect_triangle(&p, &s, &t).is_some();
-                        (1, inside.then_some(Scalar::ZERO)?)
+                        (true, 1, inside.then_some(Scalar::ZERO)?)
                     }
                     GizmoPart::Turn(i) => {
                         let ring = self.ring(i, r);
@@ -414,13 +416,13 @@ impl GizmoView {
                                 _ => None,
                             })
                             .min_by(|&a, &b| nearer(a, b))?;
-                        (2, near(dist, size::NEAR)?)
+                        (false, 2, near(dist, size::NEAR)?)
                     }
                 };
-                Some((rank, dist, part))
+                Some((!over, rank, dist, part))
             })
-            .min_by(|a, b| a.0.cmp(&b.0).then(nearer(a.1, b.1)))
-            .map(|(_, _, part)| part)
+            .min_by(|a, b| (a.0, a.1).cmp(&(b.0, b.1)).then(nearer(a.2, b.2)))
+            .map(|(_, _, _, part)| part)
     }
 
     /// The ring about axis `i`, as a closed polyline, a reach being `r`:
@@ -692,6 +694,48 @@ mod tests {
         );
         assert_eq!(moving.hit(&down(r, r)), None);
         assert_eq!(moving.hit(&down(1.25, 0.0)), None);
+    }
+
+    /// Where a ring or a cube reaches over a square on screen, the square
+    /// is hit: they are hit within a reach of them, a square only where it
+    /// is drawn. Over the cube itself, the cube is.
+    #[test]
+    fn squares_win_over_what_only_reaches_over_them() {
+        let gizmo = every();
+        let only = |part| GizmoView {
+            parts: vec![part],
+            ..gizmo.clone()
+        };
+        // From through `from` on through `to`.
+        let through = |from: [f64; 3], to: [f64; 3]| {
+            let dir: [f64; 3] = std::array::from_fn(|k| to[k] - from[k]);
+            pointer(std::array::from_fn(|k| from[k] - 10.0 * dir[k]), dir)
+        };
+        let square = GizmoPart::Plane(Axis::Z);
+        // The middle of the xy plane's square.
+        let on_square = [0.325, 0.325, 0.0];
+        // On through the ring about `y`, which runs in the `zx` plane.
+        let a = (-0.62f64 / 0.7).asin();
+        let ring = through(on_square, [0.7 * a.cos(), 0.0, 0.7 * a.sin()]);
+        // On past the diagonal's cube, 0.14 beside its centre: further than
+        // its half size, 0.09, within a reach more.
+        let c = 1.25 / 3f64.sqrt();
+        let s = 0.14 / 2f64.sqrt();
+        let beside_cube = through(on_square, [c + s, c - s, c]);
+        for (ray, other) in [
+            (&ring, GizmoPart::Turn(Axis::Y)),
+            (&beside_cube, GizmoPart::Scale),
+        ] {
+            // Each alone is hit there.
+            assert_eq!(only(other).hit(ray), Some(other));
+            assert_eq!(only(square).hit(ray), Some(square));
+            assert_eq!(gizmo.hit(ray), Some(square), "{other:?}");
+        }
+        // Through the square and the middle of the cube, the cube.
+        assert_eq!(
+            gizmo.hit(&through(on_square, [c, c, c])),
+            Some(GizmoPart::Scale)
+        );
     }
 
     /// An arrow dragged moves along its axis only, snapped to the grid —

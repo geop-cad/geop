@@ -123,6 +123,22 @@ impl<const D: usize> NurbSurface<D> {
         self.aabb = compute_aabb(&self.control_points);
     }
 
+    /// This surface widened by `±pad` in every coordinate, everywhere: every
+    /// control point by that much (times its weight, in homogeneous form),
+    /// as [`crate::nurb_curve::NurbCurve::widen`] widens a curve — the
+    /// basis is non-negative and sums to one, so the widened patch holds
+    /// every point within `pad` of the patch along each axis.
+    pub fn widen(&mut self, pad: Scalar) {
+        for cp in &mut self.control_points {
+            let w = cp[D - 1];
+            for k in 0..D - 1 {
+                let d = pad.mul(w);
+                cp[k] = cp[k].sub(d).union(cp[k].add(d));
+            }
+        }
+        self.recompute_aabb();
+    }
+
     /// The box around the control points, and so around the patch (see
     /// [`crate::nurb_curve::NurbCurve::aabb`]).
     pub fn aabb(&self) -> &[Scalar; 3] {

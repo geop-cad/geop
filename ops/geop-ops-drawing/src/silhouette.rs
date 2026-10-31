@@ -61,7 +61,7 @@ use geop_core_topology::{
     contains::face::{PointClassification, face_contains},
 };
 
-use crate::hidden_lines::cut_points;
+use crate::hidden_lines::{COARSE_SUBDIVISION, cut_points};
 use geop_core_geometry::search::{MAX_NODES, min_subdivision_size};
 
 /// Interior grid lines per direction of the domain, besides its boundary.
@@ -920,16 +920,40 @@ fn trim(
     // trace is a cut. Cutting at the midpoint of the box found at an end
     // left a sliver beyond it, which at a cone's apex lay a hair inside the
     // face and drew a silhouette piece no longer than the rounding.
+    //
+    // A face whose boundary is its silhouette by design — a half cylinder
+    // seen from above — is seen a hair off that in a placed part turned by
+    // a pose rounded in its last bits: the trace runs `1e-14` beside the
+    // trim all along it, and the exact search could only cover that with
+    // pieces as small. Should it fail, the two are compared again to the
+    // sheet's resolution, as the lines of a view are (see
+    // `hidden_lines::meetings`): a stretch running that close is one.
+    let coarse = Scalar::from_f64(COARSE_SUBDIVISION);
     let mut meetings = Vec::new();
     for coedge_id in model.iterate_face_coedges(face_id) {
         let pcurve = &model.get_coedge(coedge_id)?.pcurve;
-        let (overlaps, crossings) =
-            curve_curve_overlaps_and_crossings(&fit, pcurve, MAX_NODES, min_subdivision_size())
-                .map_err(|e| {
+        let (overlaps, crossings) = curve_curve_overlaps_and_crossings(
+            &fit,
+            pcurve,
+            Scalar::ZERO,
+            MAX_NODES,
+            min_subdivision_size(),
+        )
+        .or_else(|error| {
+            curve_curve_overlaps_and_crossings(&fit, pcurve, coarse, MAX_NODES, coarse).map_err(
+                |e| {
                     e.with_context(format!(
-                        "where the traced silhouette {fit:?} meets the pcurve {pcurve:?} of coedge {coedge_id}"
+                        "searched again to the sheet's resolution, after: {error}"
                     ))
-                })?;
+                },
+            )
+        })
+        .map_err(|e| {
+            e.with_context(format!(
+                "where the traced silhouette {fit:?} meets the pcurve {pcurve:?} of coedge \
+                 {coedge_id}"
+            ))
+        })?;
         meetings.extend(crossings.iter().map(|(s, _)| *s));
         meetings.extend(overlaps.iter().flat_map(|o| [o.start.t, o.end.t]));
     }

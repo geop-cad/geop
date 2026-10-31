@@ -6,7 +6,10 @@ on:
     paths:
       - "homepage/**"
       - "cad/geop-cad-cli/**"
-      - "cad/geop-cad-base/src/examples.rs"
+      - "cad/geop-cad-base/src/registry.rs"
+      # The examples, in their operations' crates (see AGENTS.md).
+      - "ops/*/src/examples.rs"
+      - "ops/*/src/drawn/**"
       - "Cargo.toml"
       - "Cargo.lock"
       - ".github/workflows/deploy-landing.yml"
@@ -34,6 +37,7 @@ jobs:
       - name: Export example STLs
         run: |
           cargo run -p geop-cad-cli --release -- examples --out-dir homepage/examples \
+            --only duck \
             --only turbine_blade \
             --only cool_flange \
             --only press \

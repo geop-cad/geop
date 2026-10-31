@@ -245,3 +245,43 @@ fn iso_view_of_a_boss_with_a_bevelled_root() {
     };
     compose(&built.current(), &args, "", &[]).unwrap_or_else(|e| panic!("{e}"));
 }
+
+/// The duck's neck seen from the front: placed turned about `x` by a pose
+/// rounded in its last bits, its side face lay `8e-15` off the line of
+/// sight. Edge on to within that, the face's edges run `1e-13` apart on the
+/// paper — each piece of one along the other neither on it nor clear of
+/// it — and a ray from them runs along the face as near. The searches for
+/// where they cross could only cover that in pieces as small, and ran out
+/// of nodes; once they did not, the hidden edge was drawn beside the
+/// visible one. Seen a hair off its front, a box is still a rectangle: its
+/// edges seen end on are points, and those behind run along those in front.
+#[test]
+fn box_seen_a_hair_off_its_front() {
+    use crate::{ViewOptions, project_view, view::ViewFrame};
+    use geop_core_math::{scalars::Scalar, vector::Vector3};
+    use geop_lib_sweep::shapes::{cube_solid, v3};
+    use geop_ops_model::NamedModel;
+
+    let mut part = NamedModel::new();
+    cube_solid(&mut part, "box", v3(0.0, 0.0, 0.0), v3(20.0, 10.0, 30.0)).unwrap();
+    let model = part.topology();
+    let mut faces: Vec<_> = model.faces.keys().copied().collect();
+    faces.sort_by_key(|f| f.0);
+    let v = |x: f64, y: f64, z: f64| Vector3::from_array([x, y, z].map(Scalar::from_f64));
+    let frame = ViewFrame::looking(v(8.4e-15, 1.0, 6.0e-15), v(0.0, 0.0, 1.0)).unwrap();
+    let view = project_view(model, &faces, &frame, &ViewOptions::default())
+        .unwrap_or_else(|e| panic!("{e}"));
+    let lines: Vec<String> = (view.lines.iter())
+        .map(|l| format!("{:?} {} {:?}", l.edge, l.visible, l.curve.aabb()))
+        .collect();
+    assert_eq!(
+        view.lines.iter().filter(|l| l.visible).count(),
+        4,
+        "{lines:#?}"
+    );
+    assert_eq!(
+        view.lines.iter().filter(|l| !l.visible).count(),
+        0,
+        "{lines:#?}"
+    );
+}

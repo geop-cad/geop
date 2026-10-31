@@ -1274,6 +1274,7 @@ pub(crate) fn arc_of(curve: &NurbCurve3D) -> GeopResult<Option<Arc>> {
     let (overlaps, _) = curve_curve_overlaps_and_crossings(
         curve,
         &arc.to_curve()?,
+        Scalar::ZERO,
         MAX_NODES,
         min_subdivision_size(),
     )?;
@@ -1564,8 +1565,13 @@ fn hatch_line(boundary: &[NurbCurve2D], a: P, b: P) -> GeopResult<Option<Vec<(P,
     let line = NurbCurve2D::line(point(a), point(b))?;
     let mut ts: Vec<f64> = Vec::new();
     for curve in boundary {
-        let (overlaps, crossings) =
-            curve_curve_overlaps_and_crossings(&line, curve, MAX_NODES, min_subdivision_size())?;
+        let (overlaps, crossings) = curve_curve_overlaps_and_crossings(
+            &line,
+            curve,
+            Scalar::ZERO,
+            MAX_NODES,
+            min_subdivision_size(),
+        )?;
         if !overlaps.is_empty() {
             return Ok(None);
         }

@@ -1,0 +1,405 @@
+{
+  "steps": [
+    {
+      "id": "sketch1",
+      "operation": "add_sketch",
+      "args": {
+        "plane": {
+          "datum": "origin:yz"
+        },
+        "references": [
+          {
+            "curves": {
+              "x": 3,
+              "y": 4
+            },
+            "points": {
+              "origin": 0,
+              "x": 1,
+              "y": 2
+            },
+            "type": "frame"
+          }
+        ],
+        "sketch": {
+          "constraints": {
+            "8": {
+              "line": 7,
+              "type": "Horizontal"
+            },
+            "11": {
+              "a": 7,
+              "b": 10,
+              "type": "Tangent"
+            },
+            "14": {
+              "line": 13,
+              "type": "Horizontal"
+            },
+            "15": {
+              "a": 10,
+              "b": 13,
+              "type": "Tangent"
+            },
+            "17": {
+              "line": 16,
+              "type": "Vertical"
+            }
+          },
+          "curves": {
+            "3": {
+              "construction": true,
+              "end": 1,
+              "fixed": true,
+              "start": 0,
+              "type": "Line"
+            },
+            "4": {
+              "construction": true,
+              "end": 2,
+              "fixed": true,
+              "start": 0,
+              "type": "Line"
+            },
+            "7": {
+              "construction": false,
+              "end": 6,
+              "start": 5,
+              "type": "Line"
+            },
+            "10": {
+              "construction": false,
+              "end": 9,
+              "start": 6,
+              "sweep": 3.141592653589793,
+              "type": "Arc"
+            },
+            "13": {
+              "construction": false,
+              "end": 12,
+              "start": 9,
+              "type": "Line"
+            },
+            "16": {
+              "construction": false,
+              "end": 5,
+              "start": 12,
+              "type": "Line"
+            }
+          },
+          "next_id": 18,
+          "points": {
+            "0": {
+              "fixed": true,
+              "x": 0,
+              "y": 0
+            },
+            "1": {
+              "fixed": true,
+              "x": 1,
+              "y": 0
+            },
+            "2": {
+              "fixed": true,
+              "x": 0,
+              "y": 1
+            },
+            "5": {
+              "x": 8.48034461979147,
+              "y": 5.505495671726928
+            },
+            "6": {
+              "x": -9.491564322258277,
+              "y": 5.505495671726928
+            },
+            "9": {
+              "x": -9.491564322258277,
+              "y": -7.0710288560748715
+            },
+            "12": {
+              "x": 8.48034461979147,
+              "y": -7.0710288560748715
+            }
+          }
+        }
+      }
+    },
+    {
+      "id": "extrude1",
+      "operation": "extrude",
+      "args": {
+        "extent": {
+          "reversed": false,
+          "side1": {
+            "blind": 15
+          },
+          "symmetric": false
+        },
+        "output": {
+          "solid": {
+            "mode": "new_body"
+          }
+        },
+        "sketch": {
+          "target": "/:sketch:sketch1"
+        }
+      }
+    },
+    {
+      "id": "sketch2",
+      "operation": "add_sketch",
+      "args": {
+        "plane": {
+          "datum": "origin:yz"
+        },
+        "references": [
+          {
+            "curves": {
+              "x": 3,
+              "y": 4
+            },
+            "points": {
+              "origin": 0,
+              "x": 1,
+              "y": 2
+            },
+            "type": "frame"
+          },
+          {
+            "curves": {
+              "extrude(extrude1,sketch1,c10#1,start)": 12,
+              "extrude(extrude1,sketch1,c10,start)": 13,
+              "extrude(extrude1,sketch1,c13,start)": 14,
+              "extrude(extrude1,sketch1,c16,start)": 15,
+              "extrude(extrude1,sketch1,c7,start)": 16
+            },
+            "entity": {
+              "face": "extrude(extrude1,start)"
+            },
+            "points": {
+              "extrude(extrude1,sketch1,c10#1,start)#center": 5,
+              "extrude(extrude1,sketch1,c10,start)#center": 6,
+              "extrude(extrude1,sketch1,c10@1,start)": 7,
+              "extrude(extrude1,sketch1,p12,start)": 8,
+              "extrude(extrude1,sketch1,p5,start)": 9,
+              "extrude(extrude1,sketch1,p6,start)": 10,
+              "extrude(extrude1,sketch1,p9,start)": 11
+            },
+            "type": "projection"
+          }
+        ],
+        "sketch": {
+          "constraints": {
+            "18": {
+              "curve": 16,
+              "point": 17,
+              "type": "PointOnCurve"
+            },
+            "26": {
+              "line": 22,
+              "type": "Horizontal"
+            },
+            "28": {
+              "line": 24,
+              "type": "Horizontal"
+            },
+            "29": {
+              "line": 25,
+              "type": "Vertical"
+            },
+            "30": {
+              "curve": 14,
+              "point": 21,
+              "type": "PointOnCurve"
+            },
+            "32": {
+              "a": 22,
+              "b": 31,
+              "type": "Tangent"
+            },
+            "33": {
+              "a": 24,
+              "b": 31,
+              "type": "Tangent"
+            },
+            "34": {
+              "a": 31,
+              "b": 24,
+              "type": "Tangent"
+            }
+          },
+          "curves": {
+            "3": {
+              "construction": true,
+              "end": 1,
+              "fixed": true,
+              "start": 0,
+              "type": "Line"
+            },
+            "4": {
+              "construction": true,
+              "end": 2,
+              "fixed": true,
+              "start": 0,
+              "type": "Line"
+            },
+            "12": {
+              "construction": true,
+              "end": 7,
+              "fixed": true,
+              "start": 11,
+              "sweep": -1.5707963267948974,
+              "type": "Arc"
+            },
+            "13": {
+              "construction": true,
+              "end": 10,
+              "fixed": true,
+              "start": 7,
+              "sweep": -1.5707963267948968,
+              "type": "Arc"
+            },
+            "14": {
+              "construction": true,
+              "end": 11,
+              "fixed": true,
+              "start": 8,
+              "type": "Line"
+            },
+            "15": {
+              "construction": true,
+              "end": 8,
+              "fixed": true,
+              "start": 9,
+              "type": "Line"
+            },
+            "16": {
+              "construction": true,
+              "end": 9,
+              "fixed": true,
+              "start": 10,
+              "type": "Line"
+            },
+            "22": {
+              "construction": false,
+              "end": 20,
+              "start": 17,
+              "type": "Line"
+            },
+            "24": {
+              "construction": false,
+              "end": 21,
+              "start": 19,
+              "type": "Line"
+            },
+            "25": {
+              "construction": false,
+              "end": 17,
+              "start": 21,
+              "type": "Line"
+            },
+            "31": {
+              "construction": false,
+              "end": 19,
+              "start": 20,
+              "sweep": -3.141592653589793,
+              "type": "Arc"
+            }
+          },
+          "next_id": 35,
+          "points": {
+            "0": {
+              "fixed": true,
+              "x": 0,
+              "y": 0
+            },
+            "1": {
+              "fixed": true,
+              "x": 1,
+              "y": 0
+            },
+            "2": {
+              "fixed": true,
+              "x": 0,
+              "y": 1
+            },
+            "5": {
+              "fixed": true,
+              "x": -9.49156432225828,
+              "y": -0.7827665921739708
+            },
+            "6": {
+              "fixed": true,
+              "x": -9.491564322258279,
+              "y": -0.782766592173973
+            },
+            "7": {
+              "fixed": true,
+              "x": -15.779826586159182,
+              "y": -0.7827665921739704
+            },
+            "8": {
+              "fixed": true,
+              "x": 8.48034461979147,
+              "y": -7.071028856074872
+            },
+            "9": {
+              "fixed": true,
+              "x": 8.48034461979147,
+              "y": 5.505495671726928
+            },
+            "10": {
+              "fixed": true,
+              "x": -9.491564322258277,
+              "y": 5.505495671726928
+            },
+            "11": {
+              "fixed": true,
+              "x": -9.491564322258277,
+              "y": -7.071028856074872
+            },
+            "17": {
+              "x": -1.6223774938076436,
+              "y": 5.505495671726937
+            },
+            "19": {
+              "x": 18.04903855548166,
+              "y": -7.0710288560748715
+            },
+            "20": {
+              "x": 18.04903855548166,
+              "y": 5.505495671726937
+            },
+            "21": {
+              "x": -1.6223774938076436,
+              "y": -7.0710288560748715
+            }
+          }
+        }
+      }
+    },
+    {
+      "id": "extrude2",
+      "operation": "extrude",
+      "args": {
+        "extent": {
+          "reversed": true,
+          "side1": {
+            "blind": 3
+          },
+          "symmetric": false
+        },
+        "output": {
+          "solid": {
+            "mode": "with",
+            "op": "union",
+            "target": "extrude(extrude1)"
+          }
+        },
+        "sketch": {
+          "target": "/:sketch:sketch2"
+        }
+      }
+    }
+  ]
+}
