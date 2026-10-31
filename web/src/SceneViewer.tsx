@@ -330,6 +330,28 @@ export function SceneViewer({
       return made;
     };
     let controls = makeControls(vec(DEFAULT_POSE.target));
+    /**
+     * The camera `t` of the way (0 to 1) along the glide in progress, if
+     * any; at the end, the glide is over and the controls take over again.
+     */
+    const glide = (t: number) => {
+      const move = moveRef.current;
+      if (!move) return;
+      const k = ease(t);
+      camera.position.lerpVectors(vec(move.from.position), vec(move.to.position), k);
+      controls.target.lerpVectors(vec(move.from.target), vec(move.to.target), k);
+      const qK = move.fromQuat.clone().slerp(move.toQuat, k);
+      camera.up.set(0, 1, 0).applyQuaternion(qK).normalize();
+      camera.lookAt(controls.target);
+      if (t >= 1) {
+        moveRef.current = null;
+        controls.dispose();
+        controls = makeControls(vec(move.to.target));
+        onFocusReachedRef.current?.(pose());
+        onPoseRef.current?.(pose());
+        sendView();
+      }
+    };
     const pose = (): CameraPose => ({
       position: arr(camera.position),
       target: arr(controls.target),
@@ -582,7 +604,11 @@ export function SceneViewer({
       el.classList.toggle("crossing", box.crossing);
     };
     const onPointerDown = (e: PointerEvent) => {
-      if (moveRef.current || replaying || onOverlay(e)) return;
+      if (replaying || onOverlay(e)) return;
+      // A press while the view glides lands it first: the press is meant
+      // where the view is going, and dropping it lost the first point
+      // clicked in a sketch whose plane had just been picked.
+      if (moveRef.current) glide(1);
       // A second finger is the camera's: a pinch, or a two-finger pan.
       if (e.pointerType === "touch" && (asking != null || press != null)) {
         if (press?.grabbed) e.stopPropagation();
@@ -846,23 +872,8 @@ export function SceneViewer({
       applyProjection();
       // A focus move drives the camera itself; the controls take over again
       // the moment it lands.
-      const move = moveRef.current;
-      if (move) {
-        const t = Math.min(1, (performance.now() - move.start) / FOCUS_MS);
-        const k = ease(t);
-        camera.position.lerpVectors(vec(move.from.position), vec(move.to.position), k);
-        controls.target.lerpVectors(vec(move.from.target), vec(move.to.target), k);
-        const qK = move.fromQuat.clone().slerp(move.toQuat, k);
-        camera.up.set(0, 1, 0).applyQuaternion(qK).normalize();
-        camera.lookAt(controls.target);
-        if (t >= 1) {
-          moveRef.current = null;
-          controls.dispose();
-          controls = makeControls(vec(move.to.target));
-          onFocusReachedRef.current?.(pose());
-          onPoseRef.current?.(pose());
-          sendView();
-        }
+      if (moveRef.current) {
+        glide(Math.min(1, (performance.now() - moveRef.current.start) / FOCUS_MS));
       } else {
         // Working in a plane, the view stays head on to it: the right
         // button pans too.
