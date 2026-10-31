@@ -301,6 +301,21 @@ export function buildSceneGroup(scene: Scene, previous?: { scene: Scene; group: 
   return group;
 }
 
+/** How opaque a lit face is drawn over what lies in front of it. */
+export const LIT_FACE_OPACITY = 0.35;
+
+/** The nine coordinates of triangle `i` of `geometry`, indexed or not. */
+export function triangleCorners(geometry: THREE.BufferGeometry, i: number): number[] {
+  const position = geometry.getAttribute("position");
+  const index = geometry.getIndex();
+  const out: number[] = [];
+  for (let c = 0; c < 3; c++) {
+    const v = index ? index.getX(i * 3 + c) : i * 3 + c;
+    out.push(position.getX(v), position.getY(v), position.getZ(v));
+  }
+  return out;
+}
+
 /** Blend `colors[k..k+3]` most of the way to the highlight color. */
 export function tint(colors: Float32Array, k: number) {
   colors[k] += (HIGHLIGHT.r - colors[k]) * 0.7;
@@ -311,9 +326,10 @@ export function tint(colors: Float32Array, k: number) {
 /**
  * Draw what `lit` says is lit (the kernel's: see [[Lit]]) highlighted in
  * `group` (built by [[buildSceneGroup]] from `scene`), the sketches in
- * `hidden` not at all — unless lit — and everything else as built. Lit
- * edges and vertices are drawn again on top, so they can be seen wherever
- * they are.
+ * `hidden` not at all — unless lit — and everything else as built. What is
+ * lit is drawn again on top, ignoring depth — faces see-through, edges and
+ * vertices whole — so it can be seen wherever it is: a face picked behind
+ * another (a right click steps behind) shows through the one in front.
  */
 export function applyHighlight(group: THREE.Group, scene: Scene, lit: Lit | null, hidden: string[]) {
   /** A curve's or a point's key: its sketch and its id there. */
@@ -328,6 +344,8 @@ export function applyHighlight(group: THREE.Group, scene: Scene, lit: Lit | null
   const curves = new Set(lit?.curves.map(([sketch, id]) => curveKey(sketch, id)));
   const sketchPoints = new Set(lit?.sketch_points.map(([sketch, id]) => curveKey(sketch, id)));
   const tags = group.userData.triangles as TriangleTags | undefined;
+  /** The corners of the lit faces' triangles, to draw again on top. */
+  const litTriangles: number[] = [];
   if (tags) {
     const attribute = tags.mesh.geometry.getAttribute("color") as THREE.BufferAttribute;
     const colors = attribute.array as Float32Array;
@@ -342,6 +360,7 @@ export function applyHighlight(group: THREE.Group, scene: Scene, lit: Lit | null
         (face.feature != null && features.has(face.feature));
       if (!lit) return;
       for (let k = i * 9; k < i * 9 + 9; k += 3) tint(colors, k);
+      if (!whole) litTriangles.push(...triangleCorners(tags.mesh.geometry, i));
     });
     attribute.needsUpdate = true;
   }
@@ -363,9 +382,33 @@ export function applyHighlight(group: THREE.Group, scene: Scene, lit: Lit | null
     group.remove(old);
     disposeGroup(old as THREE.Group);
   }
-  if (edges.size === 0 && vertices.size === 0 && curves.size === 0 && sketchPoints.size === 0) return;
+  if (
+    litTriangles.length === 0 &&
+    edges.size === 0 &&
+    vertices.size === 0 &&
+    curves.size === 0 &&
+    sketchPoints.size === 0
+  )
+    return;
   const overlay = new THREE.Group();
   overlay.userData.overlay = true;
+  if (litTriangles.length) {
+    const geometry = new THREE.BufferGeometry();
+    geometry.setAttribute("position", new THREE.BufferAttribute(new Float32Array(litTriangles), 3));
+    overlay.add(
+      new THREE.Mesh(
+        geometry,
+        new THREE.MeshBasicMaterial({
+          color: HIGHLIGHT,
+          transparent: true,
+          opacity: LIT_FACE_OPACITY,
+          side: THREE.DoubleSide,
+          depthTest: false,
+          depthWrite: false,
+        }),
+      ),
+    );
+  }
   const coords: number[] = [];
   scene.lines.forEach(([x0, y0, z0, x1, y1, z1], i) => {
     const edge = scene.line_edges[i];
