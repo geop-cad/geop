@@ -27,6 +27,8 @@ interface Props {
   /** Write the part shown with the exporter `kind`, and save it. */
   onExport: (kind: string) => void;
   onLoadFile: (file: File) => void;
+  /** Open another folder to edit, where one can be (`geop app`). */
+  onOpenFolder: (() => void) | null;
   exampleNames: string[];
   onLoadExample: (name: string) => void;
   /** Examples of several files: none where the files are not the app's own (VS Code). */
@@ -77,6 +79,7 @@ export function Toolbar({
   reads,
   onExport,
   onLoadFile,
+  onOpenFolder,
   exampleNames,
   onLoadExample,
   workspaceExampleNames,
@@ -107,6 +110,9 @@ export function Toolbar({
       : ([
           { kind: "item", label: "New part", icon: "new_part", hint: "empty file", onSelect: onNewPart },
           { kind: "item", label: "Open file…", icon: "open", onSelect: () => fileInput.current?.click() },
+          ...(onOpenFolder
+            ? [{ kind: "item", label: "Open folder…", icon: "open", hint: "in its own window", onSelect: onOpenFolder }]
+            : []),
           { kind: "item", label: "Save", icon: "save", hint: "download", disabled: !hasSteps, onSelect: onSave },
         ] as MenuEntry[])),
     ...exporters.map(

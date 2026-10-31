@@ -47,6 +47,13 @@ export interface Host {
 
 export const host: Host | null = null;
 
+/**
+ * Open another folder of files to edit, where the page can: in `geop app`,
+ * whose window asks for one in the system's dialog (`backend.local.ts`).
+ * `null` where it cannot.
+ */
+export const openFolder: (() => void) | null = null;
+
 /** The files are kept in this browser (see `files.ts`). */
 export { browserStore as store } from "./files";
 

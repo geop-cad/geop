@@ -58,6 +58,9 @@ window.addEventListener("message", (e: MessageEvent<FromHost>) => {
 /** Unused: the files are VS Code's workspace's (`host`). */
 export { browserStore as store } from "./files";
 
+/** Folders are VS Code's to open. */
+export const openFolder: (() => void) | null = null;
+
 export const host: Host = {
   onDocument(callback) {
     onText = callback;
