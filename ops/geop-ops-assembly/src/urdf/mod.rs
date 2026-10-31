@@ -65,9 +65,10 @@ use geop_core_math::{
     solvers::walk::{Walked, walk},
     vector::Vector3,
 };
+use geop_core_program::placed::{instance_path, split_instance_path};
 use geop_core_rasterize::stl::StlFormat;
 use geop_core_topology::mass::MassProperties;
-use geop_ops_model::parameters::stem;
+use geop_ops_model::parameters::{Placement, stem};
 use geop_ops_model::placed::{
     drawn, placed_parts,
     solids::{Shapes, own_solids_at},
@@ -269,9 +270,12 @@ pub struct Body<'a> {
     /// Its name in the assembly: `hinge/pin`.
     pub name: String,
     /// Whether the mates may move it: it has a pose of its own to solve
-    /// for, and no fixed mate holds it. A copy of a pattern goes where the
-    /// pattern puts it, and is held to the ground like a fixed part.
+    /// for, and no fixed mate holds it.
     pub free: bool,
+    /// The body it is carried by, by index: for a copy of a pattern, the
+    /// part it copies — it goes where the pattern puts it after that part,
+    /// and moves with it as one.
+    pub carrier: Option<usize>,
     /// Where it is in the assembly.
     pub world: Pose,
     /// Its part, as placed.
@@ -331,17 +335,28 @@ impl<'a> Mechanism<'a> {
                 _ => None,
             })
             .collect();
-        let bodies: Vec<Body> = (placed.into_iter())
-            .map(|p| Body {
-                free: p.located.state.is_some() && !fixed.contains(p.name.as_str()),
-                world: p.located.world,
-                file: p.located.instance.file.clone(),
-                part: p.located.part,
-                name: p.name,
-            })
+        let index: HashMap<String, usize> = (placed.iter().enumerate())
+            .map(|(i, p)| (p.name.clone(), i))
             .collect();
-        let index: HashMap<&str, usize> = (bodies.iter().enumerate())
-            .map(|(i, b)| (b.name.as_str(), i))
+        let bodies: Vec<Body> = (placed.into_iter())
+            .map(|p| {
+                // A copy is placed after the part it copies, beside it.
+                let carrier = match &p.located.instance.placement {
+                    Placement::After { of, .. } => {
+                        let (outer, _) = split_instance_path(&p.name);
+                        index.get(&instance_path(outer, of)).copied()
+                    }
+                    Placement::State(_) => None,
+                };
+                Body {
+                    free: p.located.state.is_some() && !fixed.contains(p.name.as_str()),
+                    carrier,
+                    world: p.located.world,
+                    file: p.located.instance.file.clone(),
+                    part: p.located.part,
+                    name: p.name,
+                }
+            })
             .collect();
         let body = |name: &Option<String>| -> GeopResult<Option<usize>> {
             name.as_ref()

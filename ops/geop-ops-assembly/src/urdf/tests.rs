@@ -881,10 +881,6 @@ fn the_arm_is_exported_with_the_options_given() {
 /// pattern places it relative to the hand — so in the robot it belongs to
 /// the hand's link, carried by the wrist, not to the fixed root.
 #[test]
-#[ignore = "bug: a part pattern's copies are always merged into the root link (urdf::tree treats \
-            them as held to the ground), so the copy `part_pattern(hands,1)` of the hand, which \
-            turns with the wrist joint `add_part(hand,m1)` in geop, is exported as a visual of \
-            the fixed link `upper` and stands still in a simulator"]
 fn a_pattern_of_a_jointed_part_moves_with_its_link() {
     use crate::PartPatternArgs;
     use geop_core_math::primitives::{DatumComponent, FrameAxis};

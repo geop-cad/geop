@@ -2,6 +2,7 @@
 
 use std::{collections::BTreeMap, rc::Rc};
 
+use geop_core_math::geop_error::GeopError;
 use geop_core_program::{
     operation_registry::OperationRegistry, part::Part, program::Program, reader::Reader,
     runner::Runner, workspace::Location,
@@ -16,7 +17,7 @@ pub(super) struct Build {
     /// How many steps the last run ran.
     pub(super) ran: usize,
     /// Why each step of the last run that failed did, by its id.
-    pub(super) errors: BTreeMap<String, String>,
+    pub(super) errors: BTreeMap<String, GeopError>,
     /// Of those failed because of one of their arguments, which, and what
     /// went wrong with it, by the step's id (see
     /// [`geop_core_math::geop_error::GeopError::concerning`]).
@@ -49,9 +50,7 @@ impl Build {
                 Some((step.clone(), (key, error.root_message().to_string())))
             })
             .collect();
-        self.errors = (output.step_errors.into_iter())
-            .map(|(step, error)| (step, error.to_string()))
-            .collect();
+        self.errors = output.step_errors.into_iter().collect();
     }
 
     /// The part before the step at `index` of `steps`, as the last run left
@@ -65,16 +64,18 @@ impl Build {
     }
 
     /// Why the step `id`, at `index`, does not build, if it does not.
-    pub(super) fn step_error(&self, index: usize, id: &str) -> Option<String> {
+    pub(super) fn step_error(&self, index: usize, id: &str) -> Option<GeopError> {
         if let Some(error) = self.errors.get(id) {
             return Some(error.clone());
         }
         if index < self.ran {
             return None;
         }
-        Some(match self.errors.values().next() {
-            Some(error) => format!("an earlier step failed: {error}"),
-            None => "it did not run".into(),
+        Some(match self.errors.iter().next() {
+            Some((step, error)) => {
+                (error.clone()).with_context(format!("an earlier step, `{step}`, failed"))
+            }
+            None => GeopError::new("it did not run"),
         })
     }
 }
