@@ -327,6 +327,8 @@ export type Reach = { type: "cone"; slope: number } | { type: "tube"; radius: nu
 export interface Pointer {
   ray: { origin: Vec3; dir: Vec3 };
   reach: Reach;
+  /** Which of what lies under the pointer it means, front to back from the one a click picks first, wrapping round: a right click steps it one further behind, a move starts again at 0. */
+  cycle: number;
 }
 
 /** What a field was set to — or that it was pressed. */
@@ -373,7 +375,8 @@ export type PointerEvent_ =
   /** `shift` held turns snapping off. */
   | { type: "hover"; pointer: Pointer; shift: boolean }
   | { type: "leave" }
-  | { type: "click"; pointer: Pointer; button: "primary" | "secondary"; double: boolean; shift: boolean }
+  /** A left click: the pointer's `cycle` names which of what lies under it is picked. */
+  | { type: "click"; pointer: Pointer; double: boolean; shift: boolean }
   | { type: "drag"; from: Pointer; to: Pointer; done: boolean; shift: boolean }
   /** The view settled: `up` is the world direction pointing up the screen. */
   | { type: "view"; up: Vec3 };
@@ -621,6 +624,8 @@ export interface Presentation {
   gizmo: GizmoView | null;
   /** Solids and faces of the part, by name, the step asks not to draw while it is edited: the scene's `hidden` has them. */
   hidden: string[];
+  /** Which of what lies under the pointer is lit — the `at`-th of `of`, from 0 — while a right click steps through them; null over nothing a click takes. */
+  cycle: { at: number; of: number } | null;
 }
 
 /** A value asked for in place in the viewport — see `geop_ops::ui::Prompt`. */

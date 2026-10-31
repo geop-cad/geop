@@ -7,8 +7,11 @@
 // builds without an error; every operation opens and cancels; a part is
 // sketched and extruded by clicks; the inspect panel weighs it; a subd face
 // and a 3-D sketch point are dragged by their gizmos; every export of the
-// File menu downloads a file; and a drawing is dimensioned on its sheet and
-// downloaded from its dialog.
+// File menu downloads a file; a drawing is dimensioned on its sheet and
+// downloaded from its dialog; the view starts orthographic, the right
+// button turns it and the middle moves it; a right click lights the face
+// behind and a left click picks it; Escape cancels an edited step, which
+// undo opens again; and the view cube turns the view to the top and home.
 //
 // Flags: `--build` rebuilds even if `dist/` looks current; `--only <text>`
 // runs only the checks whose name contains the text; `--shots` saves a
@@ -544,10 +547,13 @@ await check("a pattern picks a hole as a feature by a click on its wall", async 
     picked = (await features.locator(".item-label").allInnerTexts()).join(", ");
   }
   expect(/^holes?$/.test(picked), `no hole was picked: "${picked}"`);
-  // The wall clicked is drawn lit, as a face of the feature picked.
+  // The wall clicked is drawn lit, as a face of the feature picked — at
+  // the pointer, or beside it, where a click on the hole's rim took it.
   const box = await page.locator("main.viewport canvas").first().boundingBox();
-  const [r, g, b] = await pixelAt(page, box.x + box.width / 2 + dx, box.y + box.height / 2);
-  expect(r > b + 60 && g > b, `the wall clicked is rgb(${r}, ${g}, ${b}), not lit`);
+  const near = [];
+  for (const off of [0, -2, 2, -4, 4]) near.push(await pixelAt(page, box.x + box.width / 2 + dx + off, box.y + box.height / 2));
+  const lit = near.some(([r, g, b]) => r > b + 60 && g > b);
+  expect(lit, `the wall clicked is ${near.map((c) => `rgb(${c.join(", ")})`).join(", ")}, not lit`);
   const bodies = await popup.locator(".reference[data-field='bodies'] .reference-text").innerText();
   expect(bodies.startsWith("pick"), `the bodies were not emptied: ${bodies}`);
   await popup.locator(".button-row button.primary").click();
@@ -1058,6 +1064,151 @@ await check("the wheel zooms towards the pointer: what is under it stays under i
   expect(nearer < distance * 0.8, `the view did not come nearer: ${distance} -> ${nearer}`);
   expect(Math.hypot(x1 - x, y1 - y) < 2, `what was under the pointer moved from (${x}, ${y}) to (${x1}, ${y1})`);
   return `${distance.toFixed(1)} -> ${nearer.toFixed(1)} away, the point under the pointer kept within ${Math.hypot(x1 - x, y1 - y).toFixed(2)} px`;
+});
+
+// ── the mouse and the view ──────────────────────────────────────────────
+
+/** The camera's pose, as the viewer has it. */
+const viewPose = () => page.evaluate(() => window.geopView.pose());
+const minus = (a, b) => a.map((x, k) => x - b[k]);
+const unit = (a) => {
+  const n = Math.hypot(...a);
+  return a.map((x) => x / n);
+};
+const dot = (a, b) => a.reduce((s, x, k) => s + x * b[k], 0);
+/** Which way the camera looks from: the unit direction from its target to it. */
+const lookingFrom = (pose) => unit(minus(pose.position, pose.target));
+
+/** Press `button` at `from`, move to `to` in steps, let go there, and wait for the view to come to rest. */
+async function dragWith(button, from, to) {
+  await page.mouse.move(...from);
+  await page.mouse.down({ button });
+  for (let i = 1; i <= 10; i++) await page.mouse.move(from[0] + ((to[0] - from[0]) * i) / 10, from[1] + ((to[1] - from[1]) * i) / 10);
+  await page.mouse.up({ button });
+  // A turn let go glides on: until it has died down.
+  let last = await viewPose();
+  for (let i = 0; i < 40; i++) {
+    await page.waitForTimeout(150);
+    const now = await viewPose();
+    if (JSON.stringify(now) === JSON.stringify(last)) break;
+    last = now;
+  }
+}
+
+await check("the view is orthographic at the start, and the toggle says so", async () => {
+  await fresh();
+  expect(await page.evaluate(() => window.geopView.orthographic()), "the view starts in perspective");
+  const toggle = page.locator(".view-buttons button", { hasText: /^(Orthographic|Perspective)$/ });
+  expect((await toggle.innerText()) === "Orthographic", `the toggle says ${await toggle.innerText()}`);
+  await toggle.click();
+  expect(!(await page.evaluate(() => window.geopView.orthographic())), "the toggle did not switch to perspective");
+  await toggle.click();
+});
+
+await check("the right button turns the view, the middle moves it sideways, the left does neither", async () => {
+  await fresh();
+  await fileMenu(page, "Box with drill hole");
+  await builtCleanly();
+  await page.waitForTimeout(800);
+  const view = await page.locator("main.viewport canvas").first().boundingBox();
+  const middle = [view.x + view.width / 2, view.y + view.height / 2];
+  const away = [middle[0] + 160, middle[1] + 90];
+  const before = await viewPose();
+  await dragWith("left", middle, away);
+  const left = await viewPose();
+  expect(dot(lookingFrom(left), lookingFrom(before)) > 0.99999, "a left drag turned the view");
+  expect(Math.hypot(...minus(left.target, before.target)) < 1e-9, "a left drag moved the view");
+  await dragWith("right", middle, away);
+  const turned = await viewPose();
+  const angle = (Math.acos(Math.min(1, dot(lookingFrom(turned), lookingFrom(before)))) * 180) / Math.PI;
+  expect(angle > 10, `a right drag turned the view by ${angle.toFixed(1)}° only`);
+  expect(Math.hypot(...minus(turned.target, before.target)) < 1e-6, "a right drag moved what the view turns about");
+  await dragWith("middle", middle, away);
+  const moved = await viewPose();
+  const size = Math.hypot(...minus(moved.position, moved.target));
+  expect(Math.hypot(...minus(moved.target, turned.target)) > 0.05 * size, `a middle drag did not move the view: ${JSON.stringify([turned, moved])}`);
+  const turnedBy = (Math.acos(Math.min(1, dot(lookingFrom(moved), lookingFrom(turned)))) * 180) / Math.PI;
+  expect(turnedBy < 0.5, `a middle drag turned the view by ${turnedBy.toFixed(2)}°`);
+  return `turned ${angle.toFixed(0)}°`;
+});
+
+await check("a right click lights the face behind the one in front, and a left click picks it", async () => {
+  await fresh();
+  await fileMenu(page, "Box with drill hole");
+  await builtCleanly();
+  await page.waitForTimeout(800);
+  await inspector(page, "Measure").click();
+  await settle(page);
+  // On the box's top, clear of the hole: behind it, the box's side.
+  const at = await onScreen([0.3, 0.3, 1.0]);
+  const shownCycle = async () => (await page.evaluate(async () => (await window.geopCommand({ command: "show" }))?.tool))?.cycle;
+  const picked = () => page.locator(".inspect-list li").allInnerTexts();
+  await clickAt(at);
+  const front = await picked();
+  expect(front.length === 1 && /^face /.test(front[0].trim()), `a left click picked ${front.join(", ") || "nothing"}`);
+  // Clicked again, it is taken out.
+  await clickAt(at);
+  const before = await shownCycle();
+  expect(before?.at === 0 && before.of >= 2, `under the pointer: ${JSON.stringify(before)}`);
+  await page.mouse.click(at[0], at[1], { button: "right" });
+  await settle(page);
+  const stepped = await shownCycle();
+  expect(stepped?.at === 1, `a right click lit ${JSON.stringify(stepped)}`);
+  const hint = await page.locator(".cycle-hint").innerText();
+  expect(hint.startsWith(`2/${stepped.of}`), `the hint says ${hint}`);
+  await page.mouse.click(at[0], at[1]);
+  await settle(page);
+  const behind = await picked();
+  expect(
+    behind.length === 1 && /^face /.test(behind[0].trim()) && behind[0] !== front[0],
+    `behind ${front[0]}, a left click picked ${behind.join(", ") || "nothing"}`,
+  );
+  expect((await page.locator(".cycle-hint").count()) === 0, "the hint stays after the pick");
+  await inspector(page, "Measure").click();
+  return `${front[0].trim()}, then behind it ${behind[0].trim()}`;
+});
+
+await check("Escape cancels an edited step, and undo opens it again as it was", async () => {
+  await fresh();
+  await fileMenu(page, "Box with drill hole");
+  await builtCleanly();
+  await page.locator(".timeline .step-box", { has: page.locator(".step-name", { hasText: /^hole$/ }) }).click();
+  await settle(page);
+  const field = popup.locator(".field[data-field-key='distance'] input").first();
+  await field.focus();
+  await page.keyboard.press("ArrowUp");
+  await settle(page);
+  const edited = await field.inputValue();
+  await field.evaluate((input) => input.blur());
+  await page.keyboard.press("Escape");
+  await settle(page);
+  expect((await popup.count()) === 0, "Escape did not cancel the edited step");
+  await page.keyboard.press("Control+z");
+  await settle(page);
+  expect((await popup.count()) === 1, "undo did not open the cancelled step again");
+  const again = await popup.locator(".field[data-field-key='distance'] input").first().inputValue();
+  expect(again === edited, `the step opened again with ${again}, not ${edited}`);
+  await popup.locator(".button-row button", { hasText: /^Cancel$/ }).click();
+  return builtCleanly();
+});
+
+await check("the view cube turns the view to look from the top, and its home button back", async () => {
+  await fresh();
+  await fileMenu(page, "Box with drill hole");
+  await builtCleanly();
+  await page.waitForTimeout(800);
+  const top = await page.evaluate(() => window.geopView.cube([0, 1, 0]));
+  await page.mouse.move(...top);
+  const title = await page.locator(".view-cube").getAttribute("title");
+  expect(/^Top\b/.test(title ?? ""), `over the cube's top, it says ${title}`);
+  await page.mouse.click(...top);
+  await page.waitForTimeout(900);
+  const fromTop = lookingFrom(await viewPose());
+  expect(dot(fromTop, [0, 1, 0]) > 0.9999, `the view looks from ${fromTop}, not the top`);
+  await page.locator(".view-home").click();
+  await page.waitForTimeout(900);
+  const home = lookingFrom(await viewPose());
+  expect(dot(home, unit([66, 44, 88])) > 0.9999, `home looks from ${home}`);
 });
 
 await check("a dialog's first number has the focus: the arrows step it, Enter twice commits, its label scrubs", async () => {

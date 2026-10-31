@@ -171,7 +171,9 @@ function App() {
   /** The drawing last shown, and whether the one shown now is to be framed (see [[wantsFraming]]). */
   const drawnRef = useRef<Drawn | null>(null);
   const frameRef = useRef(false);
-  const [projection, setProjection] = useState<Projection>("perspective");
+  // Orthographic, as drawings are: what is parallel stays parallel, and a
+  // size reads the same near and far.
+  const [projection, setProjection] = useState<Projection>("orthographic");
   const poseRef = useRef<CameraPose>(DEFAULT_POSE);
   /** How many commands wait for the kernel's answer: the app is busy (`aria-busy`) while any do. */
   const [pending, setPending] = useState(0);
@@ -787,10 +789,18 @@ function App() {
       run: () => void close({ command: "commit" }),
     },
     {
-      id: "edit:cancel",
-      label: "Cancel the step",
+      id: "edit:escape",
+      label: "Stop what is in progress — a tool, a pick, a drag — else cancel the step (undo opens it again)",
       group: "Edit",
-      // Whatever is in progress: Escape is the step's own first.
+      // The step's: it decides what is in progress (see the key handler).
+      shortcut: appKey("escape"),
+      disabled: step == null,
+      run: () => void event({ type: "key", key: "Escape" }),
+    },
+    {
+      id: "edit:cancel",
+      label: "Cancel the step, whatever is in progress",
+      group: "Edit",
       shortcut: appKey("cancel"),
       disabled: step == null,
       run: () => void close({ command: "cancel" }),
@@ -1145,6 +1155,9 @@ function App() {
                   setFocus(null);
                 }}
                 onPose={(pose) => (poseRef.current = pose)}
+                cycle={presentation?.cycle ?? null}
+                onHome={() => fitView(DEFAULT_POSE)}
+                homeKey={appKey("home")}
               />
             )}
             {wasmReady && program && stepCount === 0 && step == null && pending === 0 && !host && (
@@ -1177,12 +1190,6 @@ function App() {
             <div className="view-buttons">
               <button title={withShortcut("Frame the whole part in the view", appKey("fit"))} onClick={() => fitView()}>
                 Fit
-              </button>
-              <button
-                title={withShortcut("Back to the standard view of the whole part", appKey("home"))}
-                onClick={() => fitView(DEFAULT_POSE)}
-              >
-                Reset view
               </button>
               <button
                 title={withShortcut("Switch between a perspective and an orthographic view", appKey("projection"))}

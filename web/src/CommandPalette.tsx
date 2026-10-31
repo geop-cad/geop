@@ -86,7 +86,17 @@ export function CommandPalette({ entries, onClose }: Props) {
   );
 }
 
-/** The keys of the editor, grouped as the palette groups them: what `?` shows. */
+/** What the mouse does in the view (see `SceneViewer` and `docs/ux.md`): what, and how. */
+const MOUSE: [string, string][] = [
+  ["Pick, or select", "Left click"],
+  ["Light what lies behind, in turn — then pick it with a left click", "Right click"],
+  ["Turn the view", "Right drag"],
+  ["Move the view sideways", "Middle drag"],
+  ["Zoom to the pointer", "Wheel"],
+  ["Look from a face, an edge or a corner", "Click the view cube"],
+];
+
+/** The keys of the editor, grouped as the palette groups them, and what the mouse does: what `?` shows. */
 export function ShortcutsOverlay({ entries, onClose }: Props) {
   const groups = new Map<string, PaletteEntry[]>();
   for (const entry of entries) {
@@ -129,6 +139,19 @@ export function ShortcutsOverlay({ entries, onClose }: Props) {
               </dl>
             </section>
           ))}
+          <section>
+            <h3>Mouse</h3>
+            <dl>
+              {MOUSE.map(([what, how]) => (
+                <div key={what} className="shortcut-row">
+                  <dt>{what}</dt>
+                  <dd>
+                    <kbd>{how}</kbd>
+                  </dd>
+                </div>
+              ))}
+            </dl>
+          </section>
         </div>
         <p className="hint">Operations start by their key while no step is edited; a step's own tools take letters while it is.</p>
       </div>

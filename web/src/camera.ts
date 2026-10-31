@@ -98,6 +98,56 @@ export function headOnPose(frame: Frame, pose: CameraPose): CameraPose {
   };
 }
 
+/** How far in from a side of the view cube its edges and corners reach, as a share of its size. */
+export const CUBE_BAND = 0.2;
+
+/**
+ * The region of the view cube — 1 across, about the origin, its faces
+ * square to the world's axes — that its surface's point `p` lies in: a
+ * face, an edge or a corner, as the direction from the cube's centre to
+ * it, each component -1, 0 or 1. A point within [[CUBE_BAND]] of a side
+ * of the face it is on is on that side's edge; of two, on their corner.
+ */
+export function cubeRegion(p: Vec3): Vec3 {
+  const largest = Math.max(...p.map(Math.abs));
+  return p.map((x) => (Math.abs(x) === largest || Math.abs(x) > 0.5 - CUBE_BAND ? Math.sign(x) : 0)) as Vec3;
+}
+
+/** What the view cube's region `region` (see [[cubeRegion]]) is called: `Top`, `Front Right`, `Top Front Right`. */
+export function regionName(region: Vec3): string {
+  const [x, y, z] = region;
+  const named: [number, string, string][] = [
+    [y, "Top", "Bottom"],
+    [z, "Front", "Back"],
+    [x, "Right", "Left"],
+  ];
+  return named
+    .filter(([k]) => k !== 0)
+    .map(([k, plus, minus]) => (k > 0 ? plus : minus))
+    .join(" ");
+}
+
+/**
+ * The standard view along `direction` — from the side it points to,
+ * towards the target — of the camera at `pose`: the same target and
+ * distance, and the world's `y` up; looking straight down, the back
+ * (`-z`) up, so the front lies at the foot of the view, as on a drawing,
+ * and looking straight up, the front up.
+ */
+export function standardPose(direction: Vec3, pose: CameraPose): CameraPose {
+  const length = Math.hypot(...direction);
+  const d = direction.map((x) => x / length) as Vec3;
+  const distance = Math.hypot(...[0, 1, 2].map((k) => pose.position[k] - pose.target[k]));
+  const across = [0, 1, 0].map((y, k) => y - d[k] * d[1]);
+  const n = Math.hypot(...across);
+  const up: Vec3 = d[0] === 0 && d[2] === 0 ? [0, 0, -Math.sign(d[1])] : (across.map((x) => x / n) as Vec3);
+  return {
+    position: [0, 1, 2].map((k) => pose.target[k] + d[k] * distance) as Vec3,
+    target: pose.target,
+    up,
+  };
+}
+
 /**
  * The view that frames `extent` — the ball around its box — in a viewport
  * of `aspect` (width over height): looking at its centre from the

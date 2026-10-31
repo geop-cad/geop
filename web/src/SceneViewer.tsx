@@ -1,8 +1,18 @@
-import { useEffect, useMemo, useRef } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import * as THREE from "three";
 import { TrackballControls } from "three/examples/jsm/controls/TrackballControls.js";
 import { CSS2DRenderer } from "three/examples/jsm/renderers/CSS2DRenderer.js";
-import { CAMERA_FOV, DEFAULT_POSE, REACH_PX, fitPose, worldPerPixel, type CameraPose, type Projection } from "./camera";
+import {
+  CAMERA_FOV,
+  DEFAULT_POSE,
+  REACH_PX,
+  fitPose,
+  regionName,
+  standardPose,
+  worldPerPixel,
+  type CameraPose,
+  type Projection,
+} from "./camera";
 import { DatumLayer } from "./datums3d";
 import {
   litDatums,
@@ -29,6 +39,8 @@ import { PlaneGrid } from "./planeGrid";
 import { VisualLayer } from "./visuals3d";
 import { GizmoLayer } from "./gizmo3d";
 import { isDoubleClick, movedFromPress, wheelSteps, zoomToward } from "./gestures";
+import { withShortcut } from "./shortcuts";
+import { ViewCube } from "./viewCube";
 
 /** The kinds of datum a click can pick something of, picking elements of the kinds `pickable`: every kind, if it picks datums or frames on them. */
 function datumKinds(pickable: string[]): DatumKind[] {
@@ -37,6 +49,12 @@ function datumKinds(pickable: string[]): DatumKind[] {
 
 /** How long a [[Props.focus]] move takes, in milliseconds. */
 const FOCUS_MS = 550;
+
+/** How fast a drag pans, as the controls measure it: alike in either projection (see the render loop). */
+const PAN_SPEED = 0.6;
+
+/** How far the view turns per pixel the view cube is dragged, in radians. */
+const CUBE_TURN = 0.01;
 
 interface Props {
   /** The part to draw, with its datums. */
@@ -90,6 +108,12 @@ interface Props {
   onPose?: (pose: CameraPose) => void;
   /** A section view: what lies on the side the normal points to is not drawn, and cut solids are capped. */
   section?: SectionPlane | null;
+  /** Which of what lies under the pointer is lit, of how many, as the kernel says (see `Presentation.cycle`). */
+  cycle?: { at: number; of: number } | null;
+  /** The view cube's home button: back to the home view. */
+  onHome?: () => void;
+  /** The home view's key, for the button's tooltip. */
+  homeKey?: string | null;
 }
 
 const vec = (v: [number, number, number]) => new THREE.Vector3(v[0], v[1], v[2]);
@@ -160,6 +184,9 @@ export function SceneViewer({
   onFocusReached,
   onPose,
   section,
+  cycle,
+  onHome,
+  homeKey,
 }: Props) {
   const sectionRef = useRef(section ?? null);
   sectionRef.current = section ?? null;
@@ -223,6 +250,11 @@ export function SceneViewer({
   // The placed parts drawn: a layer of the three.js scene below, so gone
   // with it.
   const placedRef = useRef<PlacedLayer | null>(null);
+  // The view cube, in the corner, and where the pointer stepped behind
+  // what is in front of it last (see `Pointer.cycle`): where the hint is.
+  const cubeRef = useRef<HTMLDivElement>(null);
+  const [cubeTitle, setCubeTitle] = useState<string | null>(null);
+  const [cycling, setCycling] = useState<{ x: number; y: number } | null>(null);
 
   useEffect(() => {
     const container = containerRef.current;
@@ -262,9 +294,12 @@ export function SceneViewer({
     // for the camera itself: the controls are made for one.
     const makeControls = (target: THREE.Vector3): TrackballControls => {
       const made = new TrackballControls(camera, renderer.domElement);
+      // The left button picks: only the right turns the view, and the
+      // middle moves it sideways (see the render loop).
+      made.mouseButtons = { LEFT: null, MIDDLE: THREE.MOUSE.PAN, RIGHT: THREE.MOUSE.ROTATE };
       made.rotateSpeed = 3;
       made.zoomSpeed = 1.2;
-      made.panSpeed = 0.6;
+      made.panSpeed = PAN_SPEED;
       made.dynamicDampingFactor = 0.15;
       // The wheel zooms towards the pointer (see `onWheel`), not the target.
       made.noZoom = true;
@@ -398,9 +433,10 @@ export function SceneViewer({
     /**
      * The pointer at `(x, y)`, in client coordinates: the ray through it,
      * reaching [[REACH_PX]] pixels — a cone from the eye in perspective, a
-     * tube in an orthographic view.
+     * tube in an orthographic view — meaning the `cycle`-th of what lies
+     * under it (see `Pointer.cycle`).
      */
-    const pointerAt = (x: number, y: number): Pointer => {
+    const pointerAt = (x: number, y: number, cycle = 0): Pointer => {
       const rect = container.getBoundingClientRect();
       const ndc = new THREE.Vector2(((x - rect.left) / rect.width) * 2 - 1, -((y - rect.top) / rect.height) * 2 + 1);
       const raycaster = new THREE.Raycaster();
@@ -410,7 +446,7 @@ export function SceneViewer({
         camera instanceof THREE.OrthographicCamera
           ? { type: "tube", radius: (REACH_PX * (camera.top - camera.bottom)) / camera.zoom / height }
           : { type: "cone", slope: (REACH_PX * 2 * Math.tan(THREE.MathUtils.degToRad(CAMERA_FOV) / 2)) / height };
-      return { ray: { origin: arr(raycaster.ray.origin), dir: arr(raycaster.ray.direction) }, reach };
+      return { ray: { origin: arr(raycaster.ray.origin), dir: arr(raycaster.ray.direction) }, reach, cycle };
     };
     const send = (event: PointerEvent_) => onPointerRef.current?.(event) ?? Promise.resolve(false);
     // Which way is up on screen, for a step to name what it shows as seen:
@@ -429,8 +465,28 @@ export function SceneViewer({
       },
       reach: (p: Vec3) => worldPerPixel(camera, vec(p), Math.max(container.clientHeight, 1)) * REACH_PX,
       pose: () => pose(),
+      /** Whether the view is orthographic now. */
+      orthographic: () => camera === orthographic,
+      /** Where the view cube's region `region` (see `cubeRegion`) is on screen, in client coordinates: a point of it inside its outline. */
+      cube: (region: Vec3) => {
+        const rect = cubeRef.current?.getBoundingClientRect();
+        if (!rect) return null;
+        const many = region.filter((k) => k !== 0).length > 1;
+        const ndc = new THREE.Vector3(...region.map((k) => k * (many ? 0.45 : 0.5))).project(cube.camera);
+        return [rect.left + ((ndc.x + 1) / 2) * rect.width, rect.top + ((1 - ndc.y) / 2) * rect.height];
+      },
     };
 
+    // Which of what lies under the pointer it means (see `Pointer.cycle`):
+    // a right click steps it one further behind, a move away from where it
+    // was stepped starts again at the front.
+    let cycle = 0;
+    let cycledAt: { x: number; y: number } | null = null;
+    const frontmost = () => {
+      cycle = 0;
+      cycledAt = null;
+      setCycling(null);
+    };
     // A press: a click if it does not move, else the camera's — or, where
     // the hover offered a grab, a drag of what is under it.
     let press: {
@@ -456,8 +512,9 @@ export function SceneViewer({
     };
     window.addEventListener("keydown", onShift);
     window.addEventListener("keyup", onShift);
-    /** Whether `e` is on the input of a prompt, not the view. */
-    const inPrompt = (e: PointerEvent) => (e.target as HTMLElement | null)?.closest?.(".viewport-prompt") != null;
+    /** Whether `e` is on what is drawn over the view — a prompt's input, the view cube — not the view. */
+    const onOverlay = (e: PointerEvent) =>
+      (e.target as HTMLElement | null)?.closest?.(".viewport-prompt, .view-cube-area") != null;
     let pendingDrag: { x: number; y: number } | null = null;
     /** Whether a hover or drag is sent and not yet answered. */
     let following = false;
@@ -474,7 +531,7 @@ export function SceneViewer({
         y: e.clientY,
         button: e.button,
         grabbed,
-        from: pointerAt(e.clientX, e.clientY),
+        from: pointerAt(e.clientX, e.clientY, cycle),
         moved: false,
       };
       if (grabbed) {
@@ -484,7 +541,7 @@ export function SceneViewer({
       }
     };
     const onPointerDown = (e: PointerEvent) => {
-      if (moveRef.current || replaying || inPrompt(e)) return;
+      if (moveRef.current || replaying || onOverlay(e)) return;
       // A second finger is the camera's: a pinch, or a two-finger pan.
       if (e.pointerType === "touch" && (asking != null || press != null)) {
         if (press?.grabbed) e.stopPropagation();
@@ -519,10 +576,16 @@ export function SceneViewer({
         if (press.grabbed && press.moved) pendingDrag = { x: e.clientX, y: e.clientY };
         return;
       }
+      if (onOverlay(e)) {
+        if (lastHover) pendingHover = "leave";
+        lastHover = null;
+        return;
+      }
+      if (cycledAt && movedFromPress(cycledAt, { x: e.clientX, y: e.clientY })) frontmost();
       if (e.buttons === 0) pendingHover = lastHover = { x: e.clientX, y: e.clientY };
     };
     const onPointerUp = (e: PointerEvent) => {
-      if (inPrompt(e)) return;
+      if (onOverlay(e) && !press) return;
       if (asking === e.pointerId) {
         // Lifted before the kernel answered: a tap.
         asking = null;
@@ -540,18 +603,24 @@ export function SceneViewer({
           return;
         }
       }
-      if (done.moved || (done.button !== 0 && done.button !== 2)) return;
+      if (done.moved) return;
+      // A right click steps behind what the pointer is over: the next of
+      // what lies under it is lit, and a left click picks that one.
+      if (done.button === 2) {
+        cycle += 1;
+        cycledAt ??= { x: e.clientX, y: e.clientY };
+        const rect = container.getBoundingClientRect();
+        setCycling({ x: e.clientX - rect.left, y: e.clientY - rect.top });
+        pendingHover = lastHover = { x: e.clientX, y: e.clientY };
+        return;
+      }
+      if (done.button !== 0) return;
       const now = performance.now();
       const at = { x: e.clientX, y: e.clientY };
       const double = isDoubleClick(lastClick, at, now);
       lastClick = double ? null : { x: e.clientX, y: e.clientY, time: now };
-      send({
-        type: "click",
-        pointer: pointerAt(e.clientX, e.clientY),
-        button: done.button === 2 ? "secondary" : "primary",
-        double,
-        shift: e.shiftKey,
-      });
+      send({ type: "click", pointer: pointerAt(e.clientX, e.clientY, cycle), double, shift: e.shiftKey });
+      frontmost();
     };
     // Taken from us — by the system, say: a drag ends where it was, a
     // press is no click.
@@ -567,14 +636,20 @@ export function SceneViewer({
     const onPointerLeave = () => {
       pendingHover = "leave";
       lastHover = null;
+      frontmost();
     };
     const onContextMenu = (e: Event) => e.preventDefault();
+    // The middle button pans: not the browser's scrolling, nor pasting.
+    const onMiddle = (e: MouseEvent) => {
+      if (e.button === 1) e.preventDefault();
+    };
     // A press in the view is work in the view: a dialog's field it leaves
     // gives the keys back to the step.
     const onPress = () => {
       const focused = document.activeElement;
       if (focused instanceof HTMLInputElement || focused instanceof HTMLTextAreaElement) {
-        focused.setSelectionRange(focused.selectionEnd, focused.selectionEnd);
+        // A number's input has no selection to collapse.
+        if (focused.selectionEnd != null) focused.setSelectionRange(focused.selectionEnd, focused.selectionEnd);
         focused.blur();
       }
     };
@@ -612,6 +687,93 @@ export function SceneViewer({
     container.addEventListener("pointerleave", onPointerLeave);
     container.addEventListener("pointerenter", sendView);
     container.addEventListener("contextmenu", onContextMenu);
+    container.addEventListener("mousedown", onMiddle);
+    container.addEventListener("auxclick", onMiddle);
+
+    // The view cube: turned as the view is, drawn in its corner after the
+    // scene. A click on a face, an edge or a corner of it turns the view
+    // to look from there; a drag turns the view about its target.
+    const cube = new ViewCube();
+    const cubeEl = cubeRef.current;
+    let cubePress: { id: number; x: number; y: number; last: { x: number; y: number }; moved: boolean } | null = null;
+    /** The region of the cube at the client point `(x, y)`, if the cube is there. */
+    const cubeRegionAt = (x: number, y: number) => {
+      const rect = cubeEl?.getBoundingClientRect();
+      if (!rect) return null;
+      const ndc = new THREE.Vector2(((x - rect.left) / rect.width) * 2 - 1, -((y - rect.top) / rect.height) * 2 + 1);
+      return cube.regionAt(ndc);
+    };
+    /** Turn the view about its target as dragging the cube `dx`, `dy` pixels turns the cube. */
+    const turnBy = (dx: number, dy: number) => {
+      const target = controls.target;
+      const eye = camera.position.clone().sub(target);
+      const right = eye.clone().negate().cross(camera.up).normalize();
+      const turn = new THREE.Quaternion()
+        .setFromAxisAngle(camera.up.clone().normalize(), -dx * CUBE_TURN)
+        .multiply(new THREE.Quaternion().setFromAxisAngle(right, -dy * CUBE_TURN));
+      eye.applyQuaternion(turn);
+      camera.up.applyQuaternion(turn).normalize();
+      camera.position.copy(target).add(eye);
+      camera.lookAt(target);
+    };
+    const onCubeDown = (e: PointerEvent) => {
+      if (e.button !== 0 || moveRef.current) return;
+      e.stopPropagation();
+      cubeEl?.setPointerCapture(e.pointerId);
+      cubePress = { id: e.pointerId, x: e.clientX, y: e.clientY, last: { x: e.clientX, y: e.clientY }, moved: false };
+    };
+    const onCubeMove = (e: PointerEvent) => {
+      if (cubePress?.id === e.pointerId) {
+        if (movedFromPress(cubePress, { x: e.clientX, y: e.clientY })) cubePress.moved = true;
+        if (cubePress.moved) {
+          turnBy(e.clientX - cubePress.last.x, e.clientY - cubePress.last.y);
+          cubePress.last = { x: e.clientX, y: e.clientY };
+        }
+        return;
+      }
+      const region = cubeRegionAt(e.clientX, e.clientY);
+      cube.light(region);
+      setCubeTitle(region ? `${regionName(region)} — click to look from here, drag to turn` : null);
+    };
+    const onCubeUp = (e: PointerEvent) => {
+      const done = cubePress;
+      if (done?.id !== e.pointerId) return;
+      cubePress = null;
+      if (done.moved) {
+        onPoseRef.current?.(pose());
+        sendView();
+        return;
+      }
+      const region = cubeRegionAt(e.clientX, e.clientY);
+      if (region) glideRef.current?.(standardPose(region, pose()));
+    };
+    const onCubeLeave = () => {
+      cube.light(null);
+      setCubeTitle(null);
+    };
+    cubeEl?.addEventListener("pointerdown", onCubeDown);
+    cubeEl?.addEventListener("pointermove", onCubeMove);
+    cubeEl?.addEventListener("pointerup", onCubeUp);
+    cubeEl?.addEventListener("pointercancel", onCubeUp);
+    cubeEl?.addEventListener("pointerleave", onCubeLeave);
+    /** Draws the cube into its corner of the canvas, over the scene, turned as the camera is. */
+    const drawCube = () => {
+      const rect = cubeEl?.getBoundingClientRect();
+      if (!rect || rect.width === 0) return;
+      const canvas = renderer.domElement.getBoundingClientRect();
+      cube.orient(camera.quaternion);
+      const [x, y] = [rect.left - canvas.left, canvas.bottom - rect.bottom];
+      renderer.setScissorTest(true);
+      renderer.setViewport(x, y, rect.width, rect.height);
+      renderer.setScissor(x, y, rect.width, rect.height);
+      renderer.autoClear = false;
+      renderer.clearDepth();
+      renderer.render(cube.scene, cube.camera);
+      renderer.autoClear = true;
+      renderer.setScissorTest(false);
+      const size = renderer.getSize(new THREE.Vector2());
+      renderer.setViewport(0, 0, size.x, size.y);
+    };
 
     /** What the datums were last drawn from (see the loop below), and which of them are lit. */
     const datumsDrawn: { inputs: unknown[]; lit: string[] } = { inputs: [], lit: [] };
@@ -645,10 +807,16 @@ export function SceneViewer({
           sendView();
         }
       } else {
-        // Working in a plane, the view stays head on to it: dragging pans.
+        // Working in a plane, the view stays head on to it: the right
+        // button pans too.
         const inPlane = planeRef.current != null;
         controls.noRotate = inPlane;
-        controls.mouseButtons.LEFT = inPlane ? THREE.MOUSE.PAN : THREE.MOUSE.ROTATE;
+        controls.mouseButtons.RIGHT = inPlane ? THREE.MOUSE.PAN : THREE.MOUSE.ROTATE;
+        // The controls scale an orthographic camera's pan by its width over
+        // the viewport's, as if its size were fixed; ours is sized from its
+        // distance (see `fitOrthographic`), which they scale by already.
+        const width = orthographic.right - orthographic.left;
+        controls.panSpeed = camera === orthographic && width > 0 ? (PAN_SPEED * container.clientWidth) / width : PAN_SPEED;
         controls.update();
       }
       // Near and far follow the distance to the target and the drawing's
@@ -676,7 +844,7 @@ export function SceneViewer({
             : hover === "leave"
               ? { type: "leave" }
               : hover
-                ? { type: "hover", pointer: pointerAt(hover.x, hover.y), shift }
+                ? { type: "hover", pointer: pointerAt(hover.x, hover.y, cycle), shift }
                 : null;
         if (event) {
           following = true;
@@ -727,6 +895,7 @@ export function SceneViewer({
 
       applySection();
       renderer.render(threeScene, camera);
+      drawCube();
       labelRenderer.render(threeScene, camera);
       frame = requestAnimationFrame(animate);
     });
@@ -741,6 +910,14 @@ export function SceneViewer({
       container.removeEventListener("pointerleave", onPointerLeave);
       container.removeEventListener("pointerenter", sendView);
       container.removeEventListener("contextmenu", onContextMenu);
+      container.removeEventListener("mousedown", onMiddle);
+      container.removeEventListener("auxclick", onMiddle);
+      cubeEl?.removeEventListener("pointerdown", onCubeDown);
+      cubeEl?.removeEventListener("pointermove", onCubeMove);
+      cubeEl?.removeEventListener("pointerup", onCubeUp);
+      cubeEl?.removeEventListener("pointercancel", onCubeUp);
+      cubeEl?.removeEventListener("pointerleave", onCubeLeave);
+      cube.dispose();
       container.removeEventListener("wheel", onWheel);
       container.removeEventListener("pointerdown", onPress, { capture: true });
       if (wheelRest) clearTimeout(wheelRest);
@@ -774,6 +951,10 @@ export function SceneViewer({
       start: performance.now(),
     };
   };
+
+  // The view cube glides too: through this, made once the camera is.
+  const glideRef = useRef(glideTo);
+  glideRef.current = glideTo;
 
   // Start gliding whenever a new focus arrives.
   useEffect(() => {
@@ -866,6 +1047,28 @@ export function SceneViewer({
       ref={containerRef}
       style={{ position: "relative", width: "100%", height: "100%", minHeight: 0, touchAction: "none" }}
     >
+      <div className="view-cube-area">
+        <button
+          className="view-home"
+          title={withShortcut("Home: the whole part, from the standard corner", homeKey)}
+          aria-label="Home view"
+          onClick={() => onHome?.()}
+        >
+          ⌂
+        </button>
+        <div
+          ref={cubeRef}
+          className="view-cube"
+          role="img"
+          aria-label="View cube"
+          title={cubeTitle ?? "The view's orientation: click a face, an edge or a corner to look from there, drag to turn"}
+        />
+      </div>
+      {cycling && cycle && cycle.of > 1 && (
+        <div className="cycle-hint" style={{ left: cycling.x + 14, top: cycling.y + 14 }}>
+          {cycle.at + 1}/{cycle.of} — left click to pick
+        </div>
+      )}
       {prompt && (
         <div ref={promptElRef} className="viewport-prompt">
           <input

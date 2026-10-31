@@ -136,7 +136,7 @@ fn session(kinds: &[&str]) -> Vec<Value> {
         json!({ "command": "inspect", "inspector": "mass_properties" }),
         json!({ "command": "inspect", "inspector": "measure", "picked": [{ "target": "/:model", "kind": "face", "name": "extrude(box,end)" }] }),
         json!({ "command": "tool", "key": "pick:mass_properties" }),
-        event(json!({ "type": "click", "pointer": above, "button": "primary", "double": false, "shift": false })),
+        event(json!({ "type": "click", "pointer": above, "double": false, "shift": false })),
         json!({ "command": "tool", "key": null }),
         json!({ "command": "export", "exporter": "stl" }),
         json!({ "command": "export", "exporter": "step", "format": "step", "options": null, "date": "2026-10-16" }),

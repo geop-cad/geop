@@ -75,6 +75,12 @@ for (const doc of ["pin.geop", "hole_plate.geop"]) {
   await check(`opens ${doc}`, () => open(doc));
 }
 
+await check("the view is orthographic, with the view cube in its corner", async () => {
+  await open("pin.geop");
+  expect(await page.evaluate(() => window.geopView.orthographic()), "the view starts in perspective");
+  expect((await page.locator(".view-cube").count()) === 1, "no view cube");
+});
+
 await check("an edit is written back, and its undo", async () => {
   const doc = "hole_plate.geop";
   await open(doc);

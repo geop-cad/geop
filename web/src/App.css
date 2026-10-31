@@ -1394,6 +1394,48 @@ button.inline {
   outline: none;
 }
 
+/* The view cube, in the view's top right corner, the home button beside
+   it: drawn by the viewer's renderer into the cube's box (SceneViewer). A
+   step's dialog stands in that corner, so the cube moves out of its way. */
+.view-cube-area {
+  position: absolute;
+  top: 0.75rem;
+  right: 0.75rem;
+  z-index: 4;
+  display: flex;
+  align-items: flex-start;
+  gap: 0.3rem;
+}
+.viewport:has(> .desktop-only .popup) .view-cube-area {
+  right: calc(320px + 1.75rem);
+}
+.view-cube {
+  width: 96px;
+  height: 96px;
+  cursor: pointer;
+  touch-action: none;
+}
+.view-home {
+  font-size: 1rem;
+  line-height: 1;
+  padding: 0.3rem 0.45rem;
+  background: var(--surface);
+  border: 1px solid var(--line-strong);
+}
+/* Which of what lies under the pointer a right click lit, beside it. */
+.cycle-hint {
+  position: absolute;
+  z-index: 5;
+  pointer-events: none;
+  font: 12px system-ui, sans-serif;
+  color: #fff;
+  background: rgba(18, 20, 24, 0.85);
+  border: 1px solid #ffc94a;
+  border-radius: 4px;
+  padding: 0.15rem 0.4rem;
+  white-space: nowrap;
+}
+
 /* Where the pointer snaps to: a point, a middle, a curve. */
 .gizmo-readout {
   font: 12px system-ui, sans-serif;

@@ -10,6 +10,20 @@ agree; a front end only draws what it is sent and sends what the user did.
   told to draw it: what the scene hides (`SceneState::hidden`, a placed
   part and everything placed in it, a solid, a sketch, a datum) is neither
   hit nor hides what is behind it (`view::Visible`).
+- **Reach what is behind by stepping through it.** Everything under the
+  pointer is a candidate, front to back (`Scene::under`): first the one a
+  click picks at a glance — the smallest, in front — then the rest along
+  the ray, those hidden behind the first face included. A right click
+  (press and release without moving; a right drag turns the view) lights
+  the next one, wrapping round after the last; a left click picks the one
+  lit; any move of the pointer starts again from the front. The kernel
+  decides which, since it knows what is selectable, seen and held: the
+  pointer carries the index (`Pointer::cycle`), so a hover lights and a
+  click takes exactly that one, in every pick — a field, a selection, the
+  pick tool, an operation's own. What a field would hold alike counts
+  once: two faces of one feature are one feature. The viewer says which of
+  how many beside the pointer while stepping (`Presentation::cycle`:
+  "2/4 — left click to pick").
 - **Light what a click holds.** While a field waits for a pick, the hover
   lights and draws exactly what a click there would put in the field —
   a mate's face with the frame put on it, a pattern's whole feature — not
@@ -57,13 +71,18 @@ agree; a front end only draws what it is sent and sends what the user did.
 - **Plain letters belong to the step being edited** (its tools); the
   operations' keys work while no step is edited. Chords with Ctrl/⌘ work
   always; `Ctrl/⌘+Enter` commits from anywhere, a field included.
-- **Escape ends what is in progress, Enter finishes it.** With nothing in
-  progress (no field picking, nothing selected or dragged, no tool in
-  hand), Enter commits the step and Escape cancels it — Escape only before
-  the step was changed, so a key never throws work away
-  (`StepEditor::at_rest`). A commit by key is one edit to undo. The
-  kernel decides this, so the web app, VS Code and the desktop app agree;
-  `Ctrl/⌘+Backspace` cancels a step whatever is in progress, in both apps.
+- **Escape ends what is in progress, Enter finishes it.** Escape first
+  ends what is in progress inside the step: a field picking, a selection,
+  a drag, a value asked for in place, a tool in hand (a chain being drawn,
+  then the tool itself). With nothing in progress (`StepEditor::at_rest`),
+  Enter commits the step and Escape cancels it, edited or not. A cancel
+  throws nothing away for good: a step cancelled after it was edited is
+  one edit to undo, and undo opens it again as it was left, its own edits
+  to undo with it (`Undone::Cancelled`). That is safer than refusing the
+  key once the step is edited, and less in the way than asking to
+  confirm. A commit by key is one edit to undo too. The kernel decides
+  this, so the web app and VS Code agree; `Ctrl/⌘+Backspace` cancels a
+  step whatever is in progress.
 - Every tooltip and menu entry of something with a key says the key, as
   the platform writes it (`shortcuts.ts`: `⇧F` on a Mac, `Shift+F`
   elsewhere).
@@ -89,6 +108,22 @@ agree; a front end only draws what it is sent and sends what the user did.
 
 ## Feel
 
+- **The left button picks, the right turns, the middle moves.** A left
+  click picks or selects, and a left drag is a grab's or nothing; a right
+  drag turns the view about its target, a middle drag moves it sideways
+  (in a plane worked in, the right drag moves it too: the view stays head
+  on); a right click steps behind what is lit (see Picking). The key list
+  (`?`) says so under Mouse.
+- **Orthographic by default.** The view starts orthographic, as drawings
+  are, in the web app and VS Code alike; `O` and the button switch to
+  perspective and back, keeping what is seen at the target.
+- **The view cube shows which way the view looks.** In the view's top
+  right corner (left of a step's dialog), turned as the view is: a click
+  on a face, an edge or a corner glides to look from there (Front `+z`,
+  Right `+x`, Top `+y`; from the top the back is up, as on a drawing),
+  keeping the target and the distance; a drag on it turns the view; the
+  home button beside it frames the whole part from the home corner, as
+  `Home` does. It works in a plane worked in too.
 - **The view moves alike everywhere.** The wheel zooms towards what is
   under the pointer, which stays under it (`gestures.ts` `zoomToward`,
   the desktop app's `Camera::zoom`: 0.85 of the distance a notch). A
