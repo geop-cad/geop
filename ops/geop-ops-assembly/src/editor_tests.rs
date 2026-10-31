@@ -26,7 +26,7 @@ use geop_core_math::{
     scalars::Scalar,
     vector::Vector3,
 };
-use geop_lib_fixtures::{PrimitiveArgs, Shape, drilled_box};
+use geop_lib_fixtures::{GivenDatumArgs, PrimitiveArgs, Shape, drilled_box};
 use geop_ops_model::datums::{ORIGIN, component_name, datums};
 use geop_ops_model::mate_entity::MateEntity;
 use geop_ops_model::placed::placed_parts;
@@ -1941,4 +1941,122 @@ fn a_step_that_does_not_build_says_why_in_its_refusal() {
         root.contains("there is no file \"box.geop\""),
         "the root message is {root:?}"
     );
+}
+
+/// The first part placed is held fixed — something has to stay put — until
+/// a joint is chosen for it: placed on a body of the assembly's own, as a
+/// duck's neck is, and given a revolute joint, it is no longer held fixed,
+/// and the joint turns it. Before, the fixed mate stayed, and the joint
+/// could not turn the part until it was deleted by hand.
+#[test]
+fn choosing_a_joint_for_the_first_part_placed_frees_it() {
+    let mut editor = editor();
+    let files = BTreeMap::from([("cube.geop".to_string(), Some(cube().to_json().unwrap()))]);
+    handled(&mut editor, Command::Files { files });
+    let mut program = Program::new();
+    program.push("body", PrimitiveArgs::block([-2.0; 3], [2.0, 2.0, 0.0]));
+    program.push(
+        "hinge",
+        GivenDatumArgs::frame([0.0; 3], [1.0, 0.0, 0.0], [0.0, 0.0, 1.0]),
+    );
+    let path = Some("assembly.geop".into());
+    handled(&mut editor, Command::Load { program, path });
+
+    handled(
+        &mut editor,
+        Command::New {
+            kind: "add_part".into(),
+        },
+    );
+    handled(
+        &mut editor,
+        dialog("file", Value::Choice("cube.geop".into())),
+    );
+    let fixed = |editor: &Editor| {
+        let args: AddPartArgs = step_args(editor.editing().expect("the step is edited"));
+        args.mates.values().any(Mate::is_fixed)
+    };
+    assert!(fixed(&editor), "the first part placed is held fixed");
+    handled(
+        &mut editor,
+        dialog("add_mate", Value::Choice("revolute".into())),
+    );
+    assert!(!fixed(&editor), "the joint holds it now");
+    let hinge = MateEntity::on(Selected::Datum(ElementReference::new(datums(), "hinge")));
+    let frames = vec![hinge.picked(), origin("part1").picked()];
+    handled(
+        &mut editor,
+        dialog("mate:m1:entities", Value::Elements(frames)),
+    );
+    handled(&mut editor, Command::Commit);
+    let args: AddPartArgs = step_args(editor.program().step("part1").unwrap());
+    let kinds: Vec<&str> = args.mates.values().map(|m| m.kind.label()).collect();
+    assert_eq!(kinds, ["Revolute"]);
+
+    handled(&mut editor, set_joint("add_part(part1,m1).angle", 45.0));
+    let turned = turn_of(&editor, "part1");
+    assert!((turned - 45.0).abs() < 1e-9, "turned {turned}");
+}
+
+/// With no step edited and no tool taken, a press and a move on a placed
+/// part drag it as the drag tool does: the hover over it offers a grab,
+/// a click on it moves nothing, the drag moves it, and undo puts it back.
+/// No tool is said to be in hand: the drag tool is the idle one.
+#[test]
+fn a_placed_part_is_dragged_with_no_tool_taken() {
+    let mut editor = editor();
+    let files = BTreeMap::from([("cube.geop".to_string(), Some(cube().to_json().unwrap()))]);
+    handled(&mut editor, Command::Files { files });
+    let mut program = Program::new();
+    program.push("a", args(true, &[]));
+    program.push("b", args(false, &[]));
+    program.state = [
+        (pose_state("a"), crate::examples::pose([0.0; 3], [0.0; 3])),
+        (
+            pose_state("b"),
+            crate::examples::pose([3.0, 0.0, 0.0], [0.0; 3]),
+        ),
+    ]
+    .into_iter()
+    .map(|(name, pose)| (name, StateValue::Pose(pose)))
+    .collect();
+    let path = Some("assembly.geop".into());
+    let update = handled(&mut editor, Command::Load { program, path });
+    assert_eq!(update.program.unwrap().tool, None, "no tool is taken");
+    let at = |editor: &Editor| match editor.program().state.get(&pose_state("b")) {
+        Some(StateValue::Pose(pose)) => apply(pose, [0.0; 3]),
+        other => panic!("b has no pose: {other:?}"),
+    };
+
+    let on = down_at(3.5, 0.5, 1.0);
+    let hover = StepEditEvent::Hover {
+        pointer: on,
+        shift: false,
+    };
+    let update = handled(&mut editor, Command::Event { event: hover });
+    assert!(
+        update.tool.expect("the idle tool shows").grab,
+        "b is grabbed"
+    );
+    let click = StepEditEvent::Click {
+        pointer: on,
+        double: false,
+        shift: false,
+    };
+    handled(&mut editor, Command::Event { event: click });
+    assert_close(at(&editor), [3.0, 0.0, 0.0], 1e-9);
+
+    for (k, x) in [4.5, 5.5].into_iter().enumerate() {
+        let drag = StepEditEvent::Drag {
+            from: on,
+            to: down_at(x, 0.5, 1.0),
+            done: k == 1,
+            shift: false,
+        };
+        handled(&mut editor, Command::Event { event: drag });
+    }
+    assert_close(at(&editor), [5.0, 0.0, 0.0], 1e-6);
+    let update = handled(&mut editor, Command::Undo);
+    assert_eq!(update.program.unwrap().tool, None, "still no tool is taken");
+    assert_close(at(&editor), [3.0, 0.0, 0.0], 1e-9);
 }

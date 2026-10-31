@@ -5,7 +5,8 @@
 //! the editor settles after every edit ([`Settler`], solving the mates:
 //! [`mechanism`], [`solving`]); the step placing a part drags it as far as
 //! its mates let it (see [`editor`]), and so does the drag tool
-//! ([`DragTool`]) with no step edited. The joints panel ([`JointsPanel`])
+//! ([`DragTool`]) with no step edited — in hand by default, so a press and
+//! a move on a placed part drag it. The joints panel ([`JointsPanel`])
 //! sets a joint's coordinates, and says how free the placed parts are and
 //! which constraints conflict. [`PartPattern`] places copies of a placed
 //! part in a row or round an axis. [`Explode`] moves placed parts off
@@ -111,6 +112,8 @@ pub fn register(r: Registry) -> GeopResult<Registry> {
         .panel(JointsPanel::new(settled.clone()))?
         .panel(MotionPanel::default())?
         .tool(DragTool::INFO, DragTool::default())?
+        // A press and a move on a placed part drag it, with no step edited.
+        .idle_tool(DragTool::INFO.key)?
         .settler(Settler { settled })?;
     #[cfg(any(test, feature = "examples"))]
     let r = r.examples(examples::set())?;

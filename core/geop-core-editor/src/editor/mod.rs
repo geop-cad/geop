@@ -185,10 +185,13 @@ enum Undone {
     Cancelled(Box<Open>),
 }
 
-/// The tool in hand, and the key it was taken in hand by.
+/// The tool in hand, the key it was taken in hand by, and whether it was
+/// taken — or is the registry's idle tool, in hand while none is (see
+/// [`Registry::idle_tool`]).
 struct InHand {
     key: String,
     tool: Box<dyn Tool>,
+    taken: bool,
 }
 
 /// Which part is drawn, and without what — or, for a step edited on a
@@ -316,7 +319,7 @@ impl Editor {
     ) -> Self {
         let operations = Rc::new(registry.operations());
         let files: Box<dyn FileStoreMut> = Box::new(files);
-        Self {
+        let mut editor = Self {
             workspace: Files::with_cache(files, operations.clone(), cache),
             build: Build::new(&operations),
             registry: Rc::new(registry),
@@ -347,7 +350,21 @@ impl Editor {
             lights: Vec::new(),
             lit: None,
             listing: None,
-        }
+        };
+        editor.put_down();
+        editor
+    }
+
+    /// Puts down the tool in hand: the registry's idle tool is in hand
+    /// again, a new one — what a press and a move in the view do while no
+    /// other tool is taken and no step is edited (see
+    /// [`Registry::idle_tool`]) — or none.
+    fn put_down(&mut self) {
+        self.tool = (self.registry.idle_in_hand()).map(|(key, tool)| InHand {
+            key,
+            tool,
+            taken: false,
+        });
     }
 
     pub fn program(&self) -> &Program {
@@ -911,7 +928,7 @@ impl Editor {
             }
             Command::New { kind } => {
                 self.idle()?;
-                self.tool = None;
+                self.put_down();
                 let index = self.marker.unwrap_or(self.file.steps.len());
                 self.run_to(Some(index));
                 let label = self.label_of(&kind)?;
@@ -927,7 +944,7 @@ impl Editor {
             }
             Command::Open { id, placed: None } => {
                 self.idle()?;
-                self.tool = None;
+                self.put_down();
                 let index = self.file.index_of(&id)?;
                 self.open(self.file.clone(), index, id, false)?;
                 Changed::Run
@@ -937,13 +954,13 @@ impl Editor {
                 placed: Some(instance),
             } => {
                 self.idle()?;
-                self.tool = None;
+                self.put_down();
                 self.open_placed(instance, PlacedStep::Existing(id))?;
                 Changed::Run
             }
             Command::NewIn { kind, placed } => {
                 self.idle()?;
-                self.tool = None;
+                self.put_down();
                 self.open_placed(placed, PlacedStep::New(kind))?;
                 Changed::Run
             }
@@ -1346,13 +1363,16 @@ impl Editor {
             }
             Command::Tool { key } => {
                 self.idle()?;
-                self.tool = match key {
-                    Some(key) => Some(InHand {
-                        tool: self.registry.tool_in_hand(&key)?,
-                        key,
-                    }),
-                    None => None,
-                };
+                match key {
+                    Some(key) => {
+                        self.tool = Some(InHand {
+                            tool: self.registry.tool_in_hand(&key)?,
+                            key,
+                            taken: true,
+                        })
+                    }
+                    None => self.put_down(),
+                }
                 Changed::Run
             }
             Command::Inspect {
@@ -1424,7 +1444,7 @@ impl Editor {
                     // it is when opened.
                     Undone::Cancelled(mut open) => {
                         open.reopened = Some(open.edited()?);
-                        self.tool = None;
+                        self.put_down();
                         self.give();
                         (self.build)
                             .run(&open.program, Some(open.index + usize::from(self.preview)));
@@ -2016,7 +2036,9 @@ impl Editor {
                 Some(open) => !open.redo.is_empty(),
                 None => !self.redo.is_empty(),
             },
-            tool: self.tool.as_ref().map(|in_hand| in_hand.key.clone()),
+            tool: (self.tool.as_ref())
+                .filter(|in_hand| in_hand.taken)
+                .map(|in_hand| in_hand.key.clone()),
             tools: self.registry.tools().into_iter().cloned().collect(),
             operations,
             exporters: self.registry.outputs().exporters(),

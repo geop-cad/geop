@@ -292,6 +292,9 @@ pub struct Registry {
     outputs: Outputs,
     panels: Vec<Rc<dyn ErasedPanel>>,
     tools: Vec<(ToolInfo, MakeTool)>,
+    /// The key of the tool in hand while none is taken (see
+    /// [`Registry::idle_tool`]).
+    idle: Option<String>,
     settler: Option<Rc<dyn Settle>>,
     examples: Vec<ExampleSet>,
 }
@@ -348,6 +351,26 @@ impl Registry {
         }
         self.tools
             .push((info, Rc::new(move || Box::new(tool.clone()))));
+        Ok(self)
+    }
+
+    /// Makes the tool `key`, added before, the one in hand while no other
+    /// is taken and no step is edited: what a press and a move in the view
+    /// do by default — drag a placed part, say, where a part is placed.
+    /// Fails for a key not added, and if there is one already: two would
+    /// each take the same press their own way.
+    pub fn idle_tool(mut self, key: &str) -> GeopResult<Self> {
+        if !self.tools.iter().any(|(info, _)| info.key == key) {
+            return Err(GeopError::new(format!(
+                "the idle tool `{key}` is no tool added"
+            )));
+        }
+        if let Some(idle) = &self.idle {
+            return Err(GeopError::new(format!(
+                "the idle tool is `{idle}` already, not also `{key}`"
+            )));
+        }
+        self.idle = Some(key.to_string());
         Ok(self)
     }
 
@@ -494,6 +517,13 @@ impl Registry {
             .find(|(info, _)| info.key == key)
             .ok_or_else(|| GeopError::new(format!("there is no tool `{key}`")))?;
         Ok(make())
+    }
+
+    /// The key of the tool in hand while none is taken, and a new one of
+    /// it, if there is one (see [`Registry::idle_tool`]).
+    pub fn idle_in_hand(&self) -> Option<(String, Box<dyn Tool>)> {
+        let key = self.idle.as_ref()?;
+        Some((key.clone(), self.tool_in_hand(key).ok()?))
     }
 
     /// What settles the program's state, if anything does.
