@@ -143,7 +143,7 @@ impl ClearanceReport {
             .map(|(k, near)| {
                 let [a, b] = near.witness;
                 Visual::new(
-                    &format!("clearance-{k}"),
+                    format!("clearance-{k}"),
                     Drawn::Polyline { points: vec![a, b] },
                     Style::Selected,
                 )
@@ -176,10 +176,7 @@ pub fn clearance_report(reader: &Reader, options: ClearanceOptions) -> GeopResul
     let mut work = Work::default();
     let pairs = candidate_pairs(&boxes, &mut work.boxes_compared);
     let mut poses = LocalPoses::default();
-    let mut measured: HashMap<
-        (Shape, Shape),
-        Vec<(Option<Pose>, Result<Option<Closest>, String>)>,
-    > = HashMap::new();
+    let mut measured: HashMap<(Shape, Shape), Measured> = HashMap::new();
     let mut near = Vec::new();
     let mut unmeasured = Vec::new();
     let limit = Scalar::from_f64(clearance);
@@ -235,6 +232,10 @@ pub fn clearance_report(reader: &Reader, options: ClearanceOptions) -> GeopResul
 /// further apart than `limit`. Pairs of faces are measured nearest box first, and a pair whose
 /// boxes are definitely further apart than the least distance found, or
 /// than `limit`, is not measured.
+/// What was measured between one pair of shapes, at each relative pose
+/// tried (none: placed as they are).
+type Measured = Vec<(Option<Pose>, Result<Option<Closest>, String>)>;
+
 fn least_distance(
     a: &PlacedSolid,
     b: &PlacedSolid,
