@@ -184,10 +184,9 @@ pub fn visuals_under<'a>(
             distance(pointer, v, &instance).map(|(rank, reaches, t)| (rank, reaches, t, v))
         })
         .collect();
-    let first = (0..hits.len()).min_by(|&a, &b| {
-        let (a, b) = (&hits[a], &hits[b]);
-        a.0.cmp(&b.0).then(nearer(a.1, b.1)).then(nearer(a.2, b.2))
-    });
+    let first = (hits.iter().enumerate())
+        .min_by(|(_, a), (_, b)| a.0.cmp(&b.0).then(nearer(a.1, b.1)).then(nearer(a.2, b.2)))
+        .map(|(at, _)| at);
     let first = first.map(|at| hits.remove(at));
     hits.sort_by(|a, b| nearer(a.2, b.2));
     (first.into_iter().chain(hits))
