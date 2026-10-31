@@ -28,7 +28,7 @@ import type { SectionPlane } from "./section";
 import { PlaneGrid } from "./planeGrid";
 import { VisualLayer } from "./visuals3d";
 import { GizmoLayer } from "./gizmo3d";
-import { isDoubleClick, movedFromPress } from "./gestures";
+import { isDoubleClick, movedFromPress, wheelSteps, zoomToward } from "./gestures";
 
 /** The kinds of datum a click can pick something of, picking elements of the kinds `pickable`: every kind, if it picks datums or frames on them. */
 function datumKinds(pickable: string[]): DatumKind[] {
@@ -266,6 +266,8 @@ export function SceneViewer({
       made.zoomSpeed = 1.2;
       made.panSpeed = 0.6;
       made.dynamicDampingFactor = 0.15;
+      // The wheel zooms towards the pointer (see `onWheel`), not the target.
+      made.noZoom = true;
       // Its keys switch what a drag does — and are the sketch's tools'.
       made.keys = ["", "", ""];
       made.target.copy(target);
@@ -426,6 +428,7 @@ export function SceneViewer({
         return [rect.left + ((ndc.x + 1) / 2) * rect.width, rect.top + ((1 - ndc.y) / 2) * rect.height];
       },
       reach: (p: Vec3) => worldPerPixel(camera, vec(p), Math.max(container.clientHeight, 1)) * REACH_PX,
+      pose: () => pose(),
     };
 
     // A press: a click if it does not move, else the camera's — or, where
@@ -566,6 +569,40 @@ export function SceneViewer({
       lastHover = null;
     };
     const onContextMenu = (e: Event) => e.preventDefault();
+    // A press in the view is work in the view: a dialog's field it leaves
+    // gives the keys back to the step.
+    const onPress = () => {
+      const focused = document.activeElement;
+      if (focused instanceof HTMLInputElement || focused instanceof HTMLTextAreaElement) {
+        focused.setSelectionRange(focused.selectionEnd, focused.selectionEnd);
+        focused.blur();
+      }
+    };
+    container.addEventListener("pointerdown", onPress, { capture: true });
+    // The wheel zooms towards what is under the pointer, which stays under
+    // it — as the desktop app zooms — and the view is told once it rests.
+    let wheelRest: ReturnType<typeof setTimeout> | null = null;
+    const onWheel = (e: WheelEvent) => {
+      e.preventDefault();
+      if (moveRef.current || !controls.enabled) return;
+      const rect = container.getBoundingClientRect();
+      const ndc = new THREE.Vector2(((e.clientX - rect.left) / rect.width) * 2 - 1, -((e.clientY - rect.top) / rect.height) * 2 + 1);
+      const raycaster = new THREE.Raycaster();
+      raycaster.setFromCamera(ndc, camera);
+      const back = camera.position.clone().sub(controls.target).normalize();
+      const plane = new THREE.Plane().setFromNormalAndCoplanarPoint(back, controls.target);
+      const under = raycaster.ray.intersectPlane(plane, new THREE.Vector3()) ?? controls.target.clone();
+      const zoomed = zoomToward(arr(camera.position), arr(controls.target), arr(under), wheelSteps(e.deltaY, e.deltaMode));
+      camera.position.set(...zoomed.position);
+      controls.target.set(...zoomed.target);
+      if (wheelRest) clearTimeout(wheelRest);
+      wheelRest = setTimeout(() => {
+        wheelRest = null;
+        onPoseRef.current?.(pose());
+        sendView();
+      }, 150);
+    };
+    container.addEventListener("wheel", onWheel, { passive: false });
     // In the capture phase: a grab must be taken before the controls see
     // the press.
     container.addEventListener("pointerdown", onPointerDown, { capture: true });
@@ -578,7 +615,15 @@ export function SceneViewer({
 
     /** What the datums were last drawn from (see the loop below), and which of them are lit. */
     const datumsDrawn: { inputs: unknown[]; lit: string[] } = { inputs: [], lit: [] };
+    let lastFrame = performance.now();
     let frame = requestAnimationFrame(function animate() {
+      const now = performance.now();
+      // Momentum keeps 0.85 of itself per sixtieth of a second, whatever
+      // the display's rate: a tumble let go glides as far at 120 Hz as at
+      // 60, and as far as in the desktop app.
+      const dt = Math.min(0.1, (now - lastFrame) / 1000);
+      lastFrame = now;
+      controls.dynamicDampingFactor = 1 - Math.pow(0.85, dt * 60);
       applyProjection();
       // A focus move drives the camera itself; the controls take over again
       // the moment it lands.
@@ -696,6 +741,9 @@ export function SceneViewer({
       container.removeEventListener("pointerleave", onPointerLeave);
       container.removeEventListener("pointerenter", sendView);
       container.removeEventListener("contextmenu", onContextMenu);
+      container.removeEventListener("wheel", onWheel);
+      container.removeEventListener("pointerdown", onPress, { capture: true });
+      if (wheelRest) clearTimeout(wheelRest);
       window.removeEventListener("keydown", onShift);
       window.removeEventListener("keyup", onShift);
       controls.dispose();

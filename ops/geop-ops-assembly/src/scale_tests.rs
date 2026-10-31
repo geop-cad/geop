@@ -928,3 +928,81 @@ fn robot_arm_timings() {
         );
     }
 }
+
+/// The latency budget's kernel side on the 2000-part robot arm (see
+/// `docs/ux.md`): what the editor spends answering what the user does — a
+/// hover and a click of the drag tool, a step of the arm opened, a number
+/// of its dialog typed, the step committed — with the size of what it
+/// sends. Measured, not asserted: the large-assembly work owns the solve.
+#[test]
+#[ignore = "slow: timings of the 2000-part robot arm — run with `cargo test --release -- --ignored latency_on_the_robot_arm --nocapture`"]
+fn latency_on_the_robot_arm() {
+    let arm = RobotArm {
+        screws_per_bracket: 80,
+        ..RobotArm::default()
+    };
+    let (load, mut editor) = timed(|| arm_editor(&arm));
+    println!("robot arm of {} parts: load {load:.3} s", arm.parts());
+    editor.handle(Command::Tool {
+        key: Some("drag".into()),
+    });
+    let (here, there) = (
+        onto_wrist(&editor, &arm, [0.0, 0.0]),
+        onto_wrist(&editor, &arm, [1.0, 0.0]),
+    );
+    let (hover, update) = timed(|| {
+        editor.handle(Command::Event {
+            event: StepEditEvent::Hover {
+                pointer: here,
+                shift: false,
+            },
+        })
+    });
+    println!("  hover {:.1} ms, {}", hover * 1e3, size(&update));
+    let (moved, update) = timed(|| {
+        editor.handle(Command::Event {
+            event: StepEditEvent::Hover {
+                pointer: there,
+                shift: false,
+            },
+        })
+    });
+    println!("  hover moved {:.1} ms, {}", moved * 1e3, size(&update));
+    let (click, update) = timed(|| {
+        editor.handle(Command::Event {
+            event: StepEditEvent::Click {
+                pointer: there,
+                button: geop_core_editor::editing::Button::Primary,
+                double: false,
+                shift: false,
+            },
+        })
+    });
+    println!("  click {:.1} ms, {}", click * 1e3, size(&update));
+    editor.handle(Command::Tool { key: None });
+
+    let last = editor.program().steps.last().unwrap().id.clone();
+    let open = || Command::Open {
+        id: last.clone(),
+        placed: None,
+    };
+    let (opened, update) = timed(|| editor.handle(open()));
+    println!("  open {last} {:.1} ms, {}", opened * 1e3, size(&update));
+    let number = (update.step.as_ref().unwrap().presentation.dialog.0.iter()).find_map(|f| {
+        match &f.control {
+            geop_core_editor::editing::Control::Number(n) => Some((f.key.clone(), n.value)),
+            _ => None,
+        }
+    });
+    if let Some((key, value)) = number {
+        let (typed, update) = timed(|| {
+            editor.handle(geop_core_editor::testing::dialog(
+                &key,
+                geop_core_editor::editing::Value::Number(value + 1.0),
+            ))
+        });
+        println!("  type {key} {:.1} ms, {}", typed * 1e3, size(&update));
+    }
+    let (commit, update) = timed(|| editor.handle(Command::Commit));
+    println!("  commit {:.1} ms, {}", commit * 1e3, size(&update));
+}

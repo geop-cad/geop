@@ -54,7 +54,7 @@ import { AssistantPanel } from "./Assistant";
 import { ASSISTANT_CONFIGURED, useAssistant } from "./useAssistant";
 import type { ToolResult } from "./agent";
 import { CommandPalette, ShortcutsOverlay } from "./CommandPalette";
-import { matches, parseChord, pressed, type PaletteEntry } from "./shortcuts";
+import { matches, parseChord, pressed, withShortcut, type PaletteEntry } from "./shortcuts";
 
 /** What the pointer sends as it moves: answered as often as it moves, never "busy". */
 function following(command: Command): boolean {
@@ -226,6 +226,9 @@ function App() {
     setStep((shown) => same(shown, update.step));
     setTool((shown) => same(shown, update.tool));
     if (update.lit) setLit(update.lit);
+    // How many updates were shown: what the latency checks (`e2e/perf.mjs`) wait for.
+    const counted = window as unknown as { geopUpdates?: number };
+    counted.geopUpdates = (counted.geopUpdates ?? 0) + 1;
     if (kind === "agent") return;
     // An answer asked for is kept; the pick tool's comes with every update.
     const inspection = update.inspection;
@@ -1002,6 +1005,7 @@ function App() {
       onCommit={() => void close({ command: "commit" })}
       onCancel={() => void close({ command: "cancel" })}
       onDownload={(exporter, format) => void exportWith(exporter, format)}
+      onEnter={() => void event({ type: "key", key: "Enter" })}
     />
   );
 
@@ -1021,6 +1025,8 @@ function App() {
         onLoadExample={(name) => void loadExample(name)}
         workspaceExampleNames={host ? [] : (program?.workspace_examples ?? [])}
         onLoadWorkspaceExample={(name) => void loadWorkspaceExample(name)}
+        undoKey={appKey("undo")}
+        redoKey={appKey("redo")}
         canUndo={step ? step.can_undo : (program?.can_undo ?? false)}
         onUndo={() => dispatch({ command: "undo" })}
         canRedo={step ? step.can_redo : (program?.can_redo ?? false)}
@@ -1107,6 +1113,9 @@ function App() {
                 workspaceExamples={program.workspace_examples}
                 onExample={(name) => void loadExample(name)}
                 onWorkspaceExample={(name) => void loadWorkspaceExample(name)}
+                keyOf={(kind) =>
+                  program.operations.find((o) => o.kind === kind)?.shortcut ?? appKey(kind)
+                }
               />
             )}
             {(!wasmReady || pending > 0) && !wasmError && (
@@ -1126,14 +1135,17 @@ function App() {
               </span>
             )}
             <div className="view-buttons">
-              <button title="Frame the whole part in the view (F)" onClick={() => fitView()}>
+              <button title={withShortcut("Frame the whole part in the view", appKey("fit"))} onClick={() => fitView()}>
                 Fit
               </button>
-              <button title="Back to the standard view of the whole part (Home)" onClick={() => fitView(DEFAULT_POSE)}>
+              <button
+                title={withShortcut("Back to the standard view of the whole part", appKey("home"))}
+                onClick={() => fitView(DEFAULT_POSE)}
+              >
                 Reset view
               </button>
               <button
-                title="Switch between a perspective and an orthographic view"
+                title={withShortcut("Switch between a perspective and an orthographic view", appKey("projection"))}
                 onClick={() => setProjection(projection === "perspective" ? "orthographic" : "perspective")}
               >
                 {projection === "perspective" ? "Perspective" : "Orthographic"}

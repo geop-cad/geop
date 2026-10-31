@@ -290,3 +290,36 @@ fn the_view_draws_placed_parts_and_the_light_theme() {
         shot(&mut harness, "light-datum");
     }
 }
+
+/// A step opened with nothing to pick puts its first number in the focus:
+/// the arrow keys step it, as in the web app, and Enter — the number
+/// changed nothing more — commits the step.
+#[test]
+fn a_dialogs_first_number_is_stepped_by_the_arrows_and_enter_commits() {
+    let mut harness = window("ui-nudge", false);
+    harness.state_mut().act(
+        &egui::Context::default(),
+        Action::LoadExample("box_with_drill_hole".into()),
+    );
+    idle(&mut harness);
+    harness.state_mut().app.open_step("hole", None);
+    idle(&mut harness);
+    let distance = |h: &Harness<'_, GeopApp>| -> f64 {
+        let step = h.state().app.step.as_ref().expect("the hole is edited");
+        let field = (step.presentation.dialog.0.iter())
+            .find(|f| f.key == "distance")
+            .expect("a distance");
+        match &field.control {
+            geop_core_editor::editing::Control::Number(n) => n.value,
+            other => panic!("{other:?}"),
+        }
+    };
+    let before = distance(&harness);
+    harness.key_press(egui::Key::ArrowUp);
+    idle(&mut harness);
+    let after = distance(&harness);
+    assert!(after > before, "{before} to {after}: the arrow stepped nothing");
+    harness.key_press(egui::Key::Enter);
+    idle(&mut harness);
+    assert!(harness.state().app.step.is_none(), "Enter did not commit");
+}

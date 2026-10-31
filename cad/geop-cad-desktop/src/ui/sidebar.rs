@@ -38,7 +38,10 @@ fn structure(window: &mut GeopApp, ui: &mut Ui, lights: &mut Option<Vec<PickedEl
     let no_details = Default::default();
     let details = (window.app.program.as_ref()).map_or(&no_details, |p| &p.details);
     if items.is_empty() {
-        ui.label(RichText::new("Nothing yet.").color(theme.weak()));
+        ui.label(
+            RichText::new("Nothing yet: what the steps build is listed here, to show or hide.")
+                .color(theme.weak()),
+        );
         return;
     }
     let mut groups: Vec<(String, Vec<&geop_core_editor::registry::StructureItem>)> = Vec::new();

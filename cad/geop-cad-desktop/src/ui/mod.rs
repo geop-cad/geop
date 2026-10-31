@@ -552,6 +552,8 @@ impl eframe::App for GeopApp {
             });
         if sidebar_dialog || self.app.step.is_some() {
             self.app.light(Vec::new());
+        } else {
+            dialog::closed(ui.ctx());
         }
         egui::CentralPanel::default()
             .frame(egui::Frame::new())

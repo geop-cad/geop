@@ -26,6 +26,8 @@ enum Act {
     Preview(bool),
     Commit,
     Cancel,
+    /// A key for the step: Enter in a field that changed nothing.
+    Key(String),
 }
 
 /// How an element held is shown: its name — a whole sketch's, its
@@ -108,6 +110,7 @@ fn apply(window: &mut GeopApp, acts: Vec<Act>) {
                 .command(geop_core_editor::editor::Command::Preview { preview }),
             Act::Commit => window.app.commit(),
             Act::Cancel => window.app.cancel(),
+            Act::Key(key) => window.app.key(&key),
         }
     }
 }
@@ -207,6 +210,16 @@ fn fields(window: &GeopApp, ui: &mut Ui, step: &StepState) -> Vec<Act> {
     ui.set_max_width(ui.available_width());
     let theme = window.theme;
     let busy = window.app.busy();
+    // Opened with nothing to pick and no plane to work in, the first field
+    // typed into takes the focus (see `typed_number`), once per step.
+    let opened = format!("{}:{}", step.kind, step.id.as_deref().unwrap_or_default());
+    let typeable = step.missing.is_empty() && step.presentation.focus.is_none();
+    if ui.data(|d| d.get_temp::<String>(egui::Id::new(OPENED))) != Some(opened.clone()) {
+        ui.data_mut(|d| {
+            d.insert_temp(egui::Id::new(OPENED), opened);
+            d.insert_temp(egui::Id::new(FOCUS_FIRST), typeable);
+        });
+    }
     for field in &step.presentation.dialog.0 {
         let key = field.key.as_str();
         ui.push_id(key, |ui| {
@@ -239,6 +252,37 @@ fn labelled<R>(ui: &mut Ui, label: &str, unit: &str, add: impl FnOnce(&mut Ui) -
             },
         );
         add(ui)
+    })
+    .inner
+}
+
+/// [`labelled`], for a number: its label is dragged to scrub it (see
+/// [`scrubbed`]), and the label's response is given with what `add` gave.
+fn labelled_number<R>(
+    ui: &mut Ui,
+    label: &str,
+    unit: &str,
+    add: impl FnOnce(&mut Ui) -> R,
+) -> (R, egui::Response) {
+    ui.horizontal(|ui| {
+        let width = (ui.available_width() * 0.4).clamp(70.0, 140.0);
+        let label = ui
+            .allocate_ui_with_layout(
+                egui::vec2(width, ui.spacing().interact_size.y),
+                egui::Layout::left_to_right(egui::Align::Center),
+                |ui| {
+                    ui.set_min_width(width);
+                    let text = ui.add(egui::Label::new(label).truncate().sense(egui::Sense::drag()));
+                    if !unit.is_empty() {
+                        ui.label(RichText::new(unit).small().weak());
+                    }
+                    text
+                },
+            )
+            .inner
+            .on_hover_text(format!("{label} · drag sideways to change it"))
+            .on_hover_cursor(egui::CursorIcon::ResizeHorizontal);
+        (add(ui), label)
     })
     .inner
 }
@@ -280,6 +324,107 @@ pub fn typed(
     (given, response)
 }
 
+/// Set while the first number field of a dialog just opened is to take the
+/// focus.
+const FOCUS_FIRST: &str = "geop dialog focus first";
+
+/// The step whose dialog is shown, `kind:id`: forgotten once none is
+/// ([`closed`]), so a step opened again takes the focus again.
+const OPENED: &str = "geop dialog opened";
+
+/// No dialog is shown: the next one opened is opened afresh.
+pub fn closed(ctx: &egui::Context) {
+    ctx.data_mut(|d| d.remove::<String>(egui::Id::new(OPENED)));
+}
+
+/// How many steps one press moves a number: ten with Shift, a tenth with
+/// Alt.
+fn steps_per_press(modifiers: egui::Modifiers) -> f64 {
+    if modifiers.shift {
+        10.0
+    } else if modifiers.alt {
+        0.1
+    } else {
+        1.0
+    }
+}
+
+/// `text`, a field's number, moved by `steps` of `step`, rounded to the
+/// digits that step is given in, or `None` for a formula, which is
+/// followed, not moved: as the web app moves its fields (`web/src/nudge.ts`).
+pub fn nudge(text: &str, step: f64, steps: f64) -> Option<String> {
+    let value: f64 = text.trim().parse().ok()?;
+    if !value.is_finite() || step.is_nan() || step <= 0.0 {
+        return None;
+    }
+    let by = step * steps;
+    let digits = ((-by.abs().log10() - 1e-9).ceil().max(0.0) as usize + 1).min(12);
+    let moved: f64 = format!("{:.*}", digits, value + by).parse().ok()?;
+    Some(shown_number(moved))
+}
+
+/// How many pixels of a drag along a number's label move it one step.
+const SCRUB_PX: f32 = 4.0;
+
+/// A number's text typed in place, as [`typed`] — Enter applies it, or,
+/// changing nothing, is the step's Enter — stepped by the arrow keys
+/// (Shift ten, Alt a tenth) while it is a plain number, and taking the
+/// focus if it is the first of a dialog just opened.
+fn typed_number(
+    ui: &mut Ui,
+    id: egui::Id,
+    value: &str,
+    step: f64,
+    acts: &mut Vec<Act>,
+    edit: impl FnOnce(&mut String) -> egui::TextEdit,
+) -> Option<String> {
+    let (given, response) = typed(ui, id, value, edit);
+    if ui.data_mut(|d| std::mem::take(d.get_temp_mut_or_default::<bool>(egui::Id::new(FOCUS_FIRST)))) {
+        response.request_focus();
+    }
+    if let Some(text) = &given
+        && text.trim() == value.trim()
+    {
+        acts.push(Act::Key("Enter".into()));
+        return None;
+    }
+    if given.is_some() || !response.has_focus() {
+        return given;
+    }
+    let pressed = ui.input_mut(|i| {
+        let up = i.consume_key(egui::Modifiers::NONE, egui::Key::ArrowUp);
+        let down = i.consume_key(egui::Modifiers::NONE, egui::Key::ArrowDown);
+        (up || down).then(|| (if up { 1.0 } else { -1.0 }) * steps_per_press(i.modifiers))
+    });
+    let held: (String, String) = ui.data_mut(|d| d.get_temp(id)).unwrap_or_default();
+    let next = nudge(&held.1, step, pressed?)?;
+    ui.data_mut(|d| d.insert_temp(id, (held.0, next.clone())));
+    Some(next)
+}
+
+/// A number's label dragged sideways: the value it scrubs to, a step per
+/// [`SCRUB_PX`] (Shift ten, Alt a tenth), from `value` where the drag
+/// began — given only when it changed, and not while the kernel is busy
+/// (the next frame gives the newest), so a drag never queues edits.
+fn scrubbed(ui: &Ui, response: &egui::Response, value: f64, step: f64, busy: bool) -> Option<f64> {
+    let id = response.id.with("scrub");
+    if response.drag_started() {
+        ui.data_mut(|d| d.insert_temp(id, (value, value)));
+    }
+    if !response.dragged() {
+        return None;
+    }
+    let (from, sent): (f64, f64) = ui.data(|d| d.get_temp(id))?;
+    let dx = response.total_drag_delta()?.x;
+    let steps = (dx / SCRUB_PX).round() as f64 * steps_per_press(ui.input(|i| i.modifiers));
+    let next: f64 = nudge(&shown_number(from), step, steps)?.parse().ok()?;
+    if busy || next == sent {
+        return None;
+    }
+    ui.data_mut(|d| d.insert_temp(id, (from, next)));
+    Some(next)
+}
+
 fn shown_number(value: f64) -> String {
     let rounded = (value * 1e6).round() / 1e6;
     if rounded == 0.0 {
@@ -293,12 +438,11 @@ fn shown_number(value: f64) -> String {
 fn number_input(ui: &mut Ui, id: egui::Id, value: f64, step: f64, acts: &mut Vec<Act>, key: &str) {
     ui.spacing_mut().item_spacing.x = 2.0;
     let width = (ui.available_width() - 44.0).max(50.0);
-    let (given, response) = typed(ui, id, &shown_number(value), |text| {
+    let given = typed_number(ui, id, &shown_number(value), step, acts, |text| {
         egui::TextEdit::singleline(text)
             .desired_width(width)
             .horizontal_align(egui::Align::RIGHT)
     });
-    response.on_hover_text("Enter applies · the arrows step it");
     if let Some(text) = given
         && let Ok(v) = text.trim().parse::<f64>()
     {
@@ -379,7 +523,7 @@ fn control(
                 send(acts, Value::Bool(checked));
             }
         }),
-        Control::Number(number) => self::number(ui, theme, id, key, number, acts),
+        Control::Number(number) => self::number(ui, theme, busy, id, key, number, acts),
         Control::Select {
             label,
             value,
@@ -586,6 +730,7 @@ fn control(
 fn number(
     ui: &mut Ui,
     theme: Theme,
+    busy: bool,
     id: egui::Id,
     key: &str,
     number: &Number,
@@ -594,11 +739,11 @@ fn number(
     match &number.text {
         Some(text) => {
             let formula = !text.trim().is_empty() && text.trim().parse::<f64>().is_err();
-            labelled(ui, &number.label, unit(number.unit), |ui| {
+            let (_, label) = labelled_number(ui, &number.label, unit(number.unit), |ui| {
                 ui.label(RichText::new("ƒ").italics().color(theme.accent()))
-                    .on_hover_text("A number, or a formula of the parameters: width / 2, screw.d · Enter applies");
+                    .on_hover_text("A number, or a formula of the parameters: width / 2, screw.d · Enter applies · ↑↓ step a number");
                 let width = ui.available_width();
-                let (given, _) = typed(ui, id, text, |t| {
+                let given = typed_number(ui, id, text, number.step, acts, |t| {
                     egui::TextEdit::singleline(t)
                         .desired_width(width)
                         .font(egui::TextStyle::Monospace)
@@ -607,6 +752,10 @@ fn number(
                     acts.push(Act::Dialog(key.to_string(), Value::Text(text)));
                 }
             });
+            // A plain number scrubs; a formula is followed, not moved.
+            if !formula && let Some(v) = scrubbed(ui, &label, number.value, number.step, busy) {
+                acts.push(Act::Dialog(key.to_string(), Value::Text(shown_number(v))));
+            }
             if formula && number.error.is_none() {
                 ui.label(
                     RichText::new(format!("= {}", shown_number(number.value)))
@@ -618,9 +767,14 @@ fn number(
                 ui.label(RichText::new(error).small().color(theme.error()));
             }
         }
-        None => labelled(ui, &number.label, unit(number.unit), |ui| {
-            number_input(ui, id, number.value, number.step, acts, key);
-        }),
+        None => {
+            let (_, label) = labelled_number(ui, &number.label, unit(number.unit), |ui| {
+                number_input(ui, id, number.value, number.step, acts, key);
+            });
+            if let Some(v) = scrubbed(ui, &label, number.value, number.step, busy) {
+                acts.push(Act::Dialog(key.to_string(), Value::Number(v)));
+            }
+        }
     }
 }
 
@@ -948,6 +1102,19 @@ fn table(ui: &mut Ui, theme: Theme, id: egui::Id, table: &Table, send: &mut dyn 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The same cases as the web app's (`web/test/nudge.test.ts`).
+    #[test]
+    fn a_number_is_nudged_by_its_step() {
+        assert_eq!(nudge("0.2", 0.1, 1.0).as_deref(), Some("0.3"));
+        assert_eq!(nudge("1", 0.1, -1.0).as_deref(), Some("0.9"));
+        assert_eq!(nudge("1", 0.1, 10.0).as_deref(), Some("2"));
+        assert_eq!(nudge("1", 0.1, 0.1).as_deref(), Some("1.01"));
+        assert_eq!(nudge("5", 1.0, -1.0).as_deref(), Some("4"));
+        assert_eq!(nudge("0", 0.05, 3.0).as_deref(), Some("0.15"));
+        assert_eq!(nudge("width / 2", 0.1, 1.0), None);
+        assert_eq!(nudge("", 0.1, 1.0), None);
+    }
 
     #[test]
     fn a_block_is_split_into_rows_of_cells() {

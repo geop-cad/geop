@@ -309,6 +309,12 @@ button.small {
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
 }
 /* Said under a field, aligned with its control. */
+/* A number's label: dragged sideways, it scrubs the number. */
+.popup .field-label.scrubbable {
+  cursor: ew-resize;
+  user-select: none;
+  touch-action: none;
+}
 .popup .field-note {
   margin: -0.15rem 0 0;
   padding-left: calc(36% + 0.5rem);
@@ -2710,4 +2716,22 @@ button.danger:hover:not(:disabled) {
 .popup .field-failed .reference-box {
   border-color: #ff8080;
   box-shadow: 0 0 0 1px rgba(255, 128, 128, 0.35);
+}
+
+/* The keys a first visit needs, said quietly under how to start. */
+.welcome-card .welcome-keys {
+  font-size: 0.75rem;
+  color: var(--text-dim);
+}
+kbd {
+  display: inline-block;
+  padding: 0 0.3em;
+  border: 1px solid var(--line);
+  border-bottom-width: 2px;
+  border-radius: 4px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 0.85em;
+  line-height: 1.35;
+  color: var(--text-2);
+  background: var(--surface-2);
 }

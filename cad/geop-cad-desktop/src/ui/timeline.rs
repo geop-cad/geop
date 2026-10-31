@@ -274,8 +274,11 @@ pub fn program(window: &mut GeopApp, ui: &mut Ui) {
             }
             if steps.is_empty() {
                 ui.label(
-                    RichText::new("No steps yet: pick an operation above, or Ctrl+K.")
-                        .color(theme.weak()),
+                    RichText::new(format!(
+                        "No steps yet: start one from the ribbon, or press {} and type what to do.",
+                        super::shortcut_text(ui.ctx(), &super::actions::Action::Palette)
+                    ))
+                    .color(theme.weak()),
                 );
             }
         });

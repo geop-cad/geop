@@ -87,11 +87,44 @@ agree; a front end only draws what it is sent and sends what the user did.
 - Send each thing once: a placed part's component and a face's mesh are
   sent once, by key (`editor::kept`).
 
+## Feel
+
+- **The view moves alike everywhere.** The wheel zooms towards what is
+  under the pointer, which stays under it (`gestures.ts` `zoomToward`,
+  the desktop app's `Camera::zoom`: 0.85 of the distance a notch). A
+  tumble or a pan let go keeps 0.85 of its momentum per sixtieth of a
+  second, whatever the display's rate. A focus move eases in and out over
+  0.55 s (smoothstep) in both apps.
+- **Hover and selection look alike everywhere**: lit faces tinted 70 %
+  towards `#ffc94a`, lit edges and points drawn over everything in it;
+  visuals hovered `#ffe0a0`, selected `#ffd84a`, a point three pixels
+  larger.
+
+## Dialogs
+
+- **Type, Enter, Enter.** A dialog opened with nothing to pick and no
+  plane to work in puts its first number or text in the focus, selected.
+  Enter applies what was typed; Enter in a field that changes nothing is
+  the step's Enter, which (nothing in progress) commits.
+- **Numbers move without typing.** Up and down arrows step a plain number
+  by its field's step (Shift ten steps, Alt a tenth), applied at once;
+  dragging a number's label sideways scrubs it, a step per 4 px, the
+  newest value sent once the last is answered. A formula is followed,
+  never moved. Web (`nudge.ts`) and desktop (`dialog.rs` `nudge`) round
+  alike, tested with the same cases.
+- A field keeps what is typed while it has the focus; the kernel's value
+  shows once it has not.
+
 ## Layout and words
 
 - A placed part is listed by its name, the file it is from said beside it,
   quieter; a step by its id, its tooltip saying what it is.
-- An empty panel says what to do next, naming the key.
+- An empty panel says what to do next, naming the key. An empty part
+  shows how to start (Sketch, then Extrude, with their keys), the keys
+  of the palette, the key list and fit, and examples to open, in both
+  apps.
+- Every tooltip of something with a key says the key from where the
+  kernel names it, never a key written into the front end.
 - A refusal names what to do: "pick the face first", not "invalid".
 
 ## Checking it

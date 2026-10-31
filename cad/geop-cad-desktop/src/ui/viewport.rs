@@ -553,13 +553,32 @@ fn welcome_card(window: &GeopApp, ctx: &egui::Context, rect: Rect, acted: &mut O
             theme.card().inner_margin(16).show(ui, |ui| {
                 ui.set_max_width(460.0);
                 ui.heading("Start a part");
+                // As the web app's welcome says it, with the kernel's keys.
+                let key = |kind: &str| {
+                    let listed = program.operations.iter().find(|l| l.kind == kind);
+                    let action = Action::NewStep(kind.into(), listed.and_then(|l| l.info.shortcut));
+                    match super::shortcut_text(ctx, &action) {
+                        k if k.is_empty() => String::new(),
+                        k => format!(" ({k})"),
+                    }
+                };
+                ui.label(format!(
+                    "Pick Sketch{} in the ribbon and click a plane of the origin, then Extrude{} \
+                     what you drew. Every step stays editable: change a dimension and the part rebuilds.",
+                    key("add_sketch"),
+                    key("extrude"),
+                ));
                 ui.label(
-                    RichText::new(
-                        "Pick an operation in the ribbon — a sketch first — or open an example. \
-                     Ctrl+K lists everything the app does.",
-                    )
+                    RichText::new(format!(
+                        "{} finds any command · {} lists the keys · {} frames the part",
+                        super::shortcut_text(ctx, &Action::Palette),
+                        super::shortcut_text(ctx, &Action::Shortcuts),
+                        super::shortcut_text(ctx, &Action::Fit),
+                    ))
                     .color(theme.weak()),
                 );
+                ui.add_space(4.0);
+                ui.label(RichText::new("Or open an example").strong());
                 ui.add_space(6.0);
                 egui::ScrollArea::vertical()
                     .max_height(260.0)
