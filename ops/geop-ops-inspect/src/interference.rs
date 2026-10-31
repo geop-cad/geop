@@ -392,7 +392,11 @@ type Meeting = Option<(Contact, Option<Bounded>)>;
 /// Poses are compared exactly, bound for bound: a pose equal only to
 /// within its width is another pose.
 #[derive(Default)]
-struct Checked(HashMap<(Shape, Shape), Vec<(Option<Pose>, Result<Meeting, String>)>>);
+struct Checked(HashMap<(Shape, Shape), ByPose<Meeting>>);
+
+/// What was found of a pair of shapes at each pose of one relative to the
+/// other it was asked at (none: as placed), or why it could not be.
+pub(crate) type ByPose<T> = Vec<(Option<Pose>, Result<T, String>)>;
 
 impl Checked {
     /// How `a` and `b` meet: checked, counting the boolean in `booleans`,

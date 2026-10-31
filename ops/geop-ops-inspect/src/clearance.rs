@@ -27,7 +27,7 @@ use geop_ops_model::placed::solids::{PlacedSolid, placed_solids};
 use serde::{Deserialize, Serialize};
 
 use crate::interference::{
-    Box3, LocalBoxes, LocalPoses, Shape, Work, bounding_box, candidate_pairs, corners, hull,
+    Box3, ByPose, LocalBoxes, LocalPoses, Shape, Work, bounding_box, candidate_pairs, corners, hull,
 };
 use crate::mass::drawn;
 
@@ -143,7 +143,7 @@ impl ClearanceReport {
             .map(|(k, near)| {
                 let [a, b] = near.witness;
                 Visual::new(
-                    &format!("clearance-{k}"),
+                    format!("clearance-{k}"),
                     Drawn::Polyline { points: vec![a, b] },
                     Style::Selected,
                 )
@@ -176,10 +176,7 @@ pub fn clearance_report(reader: &Reader, options: ClearanceOptions) -> GeopResul
     let mut work = Work::default();
     let pairs = candidate_pairs(&boxes, &mut work.boxes_compared);
     let mut poses = LocalPoses::default();
-    let mut measured: HashMap<
-        (Shape, Shape),
-        Vec<(Option<Pose>, Result<Option<Closest>, String>)>,
-    > = HashMap::new();
+    let mut measured: HashMap<(Shape, Shape), ByPose<Option<Closest>>> = HashMap::new();
     let mut near = Vec::new();
     let mut unmeasured = Vec::new();
     let limit = Scalar::from_f64(clearance);
