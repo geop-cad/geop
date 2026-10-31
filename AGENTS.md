@@ -1372,6 +1372,26 @@ was fitted. A trace that records its widest marched point and its widest
 true point between them (see the context in `trace_one_side`) tells where a
 wide curve got wide.
 
+## Past a face is not off its surface
+
+A blend run on past the third face it leaves through was let follow the
+ball loosely there: what it does in the air decides nothing. But a
+contact past the face can still lie on the face's *surface*, which runs
+on past its trim: round a hole breaking out through a block's bottom, the
+wall's quarter goes on below the block to the circle's lowest point.
+Unenclosed, the contact ran a hair off that surface, neither on it nor
+clear of it, and the boolean's search for crossings never ended. A curve
+a boolean meets with a surface must enclose the truth wherever it could
+touch that surface, not only where the face is.
+
+The same part showed two other ways of reading a whole from a point. A
+patch's side was judged within reach by the speed at the vertex, and a
+quarter arc, faster in its middle, was not carried on past its end: take
+the least the surface runs on the way. And a traced edge carried on past
+its end drifts off its faces (`5e-4` a fifth of the way round a rim): the
+edge carried on is where the faces carried on meet, not the cubic's
+continuation (`where_faces_meet`).
+
 ## A pole is one vertex at many `(u, v)`
 
 A face's loop passes a pole once at each corner of its collapsed row, and
