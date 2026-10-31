@@ -418,6 +418,11 @@ fn oriented(sketch: &Sketch, curve: CurveId, reversed: bool, d: f64) -> GeopResu
                 to: 1.0,
             });
         }
+        CurveKind::Text { .. } => {
+            return Err(GeopError::new(format!(
+                "text {curve} cannot be offset: its outlines are the font's, set again where it is placed"
+            )));
+        }
     };
     if d == 0.0 {
         return Ok(Shape::Plain(plain));
@@ -754,8 +759,8 @@ impl Sketch {
                 Chain {
                     edges: (chain.edges.into_iter().rev())
                         .map(|e| ProfileEdge {
-                            curve: e.curve,
                             reversed: !e.reversed,
+                            ..e
                         })
                         .collect(),
                     closed: chain.closed,

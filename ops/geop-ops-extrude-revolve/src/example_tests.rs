@@ -30,7 +30,8 @@ use crate::{
     Extents, ExtrudeArgs,
     examples::{
         box_with_drill_hole, bracket, cross_drilled_shaft, edge_part, handle_with_hole, horn,
-        luggage_tag, motor_flange, parametric_plate, pipe, pipe_route, revolved_cone_on_box,
+        luggage_tag, motor_flange, name_plate, parametric_plate, pipe, pipe_route,
+        revolved_cone_on_box,
     },
 };
 
@@ -190,6 +191,31 @@ fn edge_part_round_trips() {
 #[test]
 fn edge_part_builds_incrementally() {
     assert_edits_incremental(&edge_part());
+}
+
+/// The word stands on the plate as one solid: each letter's top a face of
+/// its own, the first named for the end cap, every other for the cap and
+/// its letter's outline, and the holes of the `O` and the `P` walled down
+/// to the plate.
+#[test]
+fn name_plate_round_trips() {
+    let part = build_and_round_trip("name_plate", &name_plate());
+    let description = PartDescription::of(&part).unwrap();
+    assert_eq!(
+        description.solids.keys().collect::<Vec<_>>(),
+        ["extrude(letters)"]
+    );
+    let tops: Vec<&String> = (description.faces.keys())
+        .filter(|name| name.starts_with("extrude(letters,end"))
+        .collect();
+    assert_eq!(tops.len(), 4, "{tops:?}");
+    let holes: usize = tops.iter().map(|t| description.faces[*t].holes.len()).sum();
+    assert_eq!(holes, 2, "{tops:?}");
+}
+
+#[test]
+fn name_plate_builds_incrementally() {
+    assert_edits_incremental(&name_plate());
 }
 
 #[test]

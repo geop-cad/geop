@@ -63,12 +63,12 @@ impl Output {
     }
 
     /// What of `sketch` it sweeps: as faces, what the sketch draws — its
-    /// one area, or the one chain of curves enclosing nothing (see
-    /// [`Sketch::shape`]); as a solid, its one area.
+    /// areas, or the one chain of curves enclosing nothing (see
+    /// [`Sketch::shape`]); as a solid, its areas, each a lump of it.
     pub fn shape(&self, sketch: &Sketch) -> GeopResult<Shape> {
         match self {
             Output::Faces { .. } => sketch.shape(),
-            Output::Solid(_) => sketch.region().map(Shape::Region),
+            Output::Solid(_) => sketch.regions().map(Shape::Regions),
         }
     }
 
@@ -183,6 +183,24 @@ impl Extents {
             symmetric: false,
             side2: None,
             reversed: false,
+        }
+    }
+
+    /// Refuses to sweep `shape` of several areas up to the next face: each
+    /// area would go as far as a face of its own, and is swept up to it in a
+    /// sketch of its own. Blind and through all, the areas go together.
+    pub(crate) fn sweeps(&self, shape: &Shape) -> GeopResult<()> {
+        let next = |e: &Extent| matches!(e, Extent::UpToNext);
+        let up_to_next =
+            next(&self.side1) || (!self.symmetric && self.side2.as_ref().is_some_and(next));
+        match shape {
+            Shape::Regions(regions) if regions.len() > 1 && up_to_next => {
+                Err(GeopError::new(format!(
+                    "the sketch has {} areas apart, and up to next goes as far as one area meets a face: sweep them blind or through all, or each up to next in a sketch of its own",
+                    regions.len()
+                )))
+            }
+            _ => Ok(()),
         }
     }
 

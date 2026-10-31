@@ -28,6 +28,7 @@ use geop_ops_model::{
 use geop_ops_sketch::AddSketchArgs;
 use std::f64::consts::PI;
 
+use geop_core_geometry::nurb_curve::loop_signed_area;
 use geop_core_math::{geop_error::GeopResult, primitives::FrameAxis, scalars::Scalar};
 use geop_core_sketch::PointId;
 use geop_core_topology::validation::{ValidationParameters, validate};
@@ -1739,19 +1740,32 @@ fn revolve_with_a_hole() {
     assert_eq!(quarter.topology().faces.len(), 4 + 4 + 2);
 }
 
-/// One sketch is one area: a sketch of two separate ones is refused.
+/// A sketch of two areas apart extrudes into one solid of two lumps, each
+/// closed off by caps of its own: the first area's named for the ends, the
+/// other's for the ends and the least name of its outline's curves.
 #[test]
-fn a_sketch_of_two_areas_is_refused() {
+fn a_sketch_of_two_areas_is_a_solid_of_two_lumps() {
     let mut s = Sketch::new();
     polygon(&mut s, &[[0.0, 0.0], [1.0, 0.0], [1.0, 1.0], [0.0, 1.0]]);
     polygon(&mut s, &[[2.0, 0.0], [3.0, 0.0], [3.0, 1.0], [2.0, 1.0]]);
+    let second = s.regions().unwrap().remove(1).outer;
+    let curve = (second.edges.iter())
+        .map(|e| e.curve.to_string())
+        .min()
+        .unwrap();
     let mut program = Program::new();
     program.push("squares", AddSketchArgs::on(on_origin(FrameAxis::Z), s));
     program.push("slabs", extrude("squares", 1.0, false));
-    let Err(error) = program.build_model(registry) else {
-        panic!("extruded");
-    };
-    assert!(error.root_message().contains("separate areas"), "{error:?}");
+    let part = program.build_model(registry).unwrap();
+    assert_valid(&part);
+    let solid = part.solid_id("extrude(slabs)").unwrap();
+    assert_eq!(part.topology().get_solid(solid).unwrap().shells.len(), 2);
+    assert_volume(&part, "extrude(slabs)", 2.0, 1e-6);
+    for end in ["start", "end"] {
+        part.face_id(&format!("extrude(slabs,{end})")).unwrap();
+        part.face_id(&format!("extrude(slabs,{end},squares,{curve})"))
+            .unwrap();
+    }
 }
 
 /// A unit square on the Z plane, and `step` built on it.
@@ -2286,4 +2300,120 @@ fn assert_exact_volume(part: &NamedModel, expected: f64, width: f64) {
             && volume.width().to_f64() <= width * expected,
         "encloses {volume:?}, expected {expected}"
     );
+}
+
+// ── Text ────────────────────────────────────────────────────────────────────
+
+/// A sketch on `on` of `text`, its capitals `height` tall, its baseline
+/// from a point fixed at `at`.
+fn lettering(on: SketchPlane, text: &str, at: [f64; 2], height: f64) -> AddSketchArgs {
+    let mut s = Sketch::new();
+    let anchor = s.new_point_at(at);
+    s.constrain(Constraint::Fix {
+        point: anchor,
+        x: n(at[0]),
+        y: n(at[1]),
+    });
+    s.add_text(anchor, text, n(height), n(0.0));
+    s.solve().unwrap();
+    AddSketchArgs::on(on, s)
+}
+
+/// The area `sketch` encloses: its areas' outer loops, less their holes,
+/// each loop's signed area integrated from its curves.
+fn enclosed_area(sketch: &Sketch) -> Scalar {
+    let geometry = sketch.enclose().unwrap();
+    let mut area = Scalar::ZERO;
+    for region in sketch.regions().unwrap() {
+        for lp in std::iter::once(&region.outer).chain(&region.holes) {
+            let pieces = lp.to_nurbs(sketch, &geometry).unwrap();
+            area = area.add(loop_signed_area(pieces.iter().map(|p| &p.curve)).unwrap());
+        }
+    }
+    area
+}
+
+/// A 30 x 10 x 2 plate on the Z plane, `plate`.
+fn plate(program: &mut Program) {
+    program.push(
+        "outline",
+        AddSketchArgs::on(
+            on_origin(FrameAxis::Z),
+            outline(&[[0.0, 0.0], [30.0, 0.0], [30.0, 10.0], [0.0, 10.0]]),
+        ),
+    );
+    program.push("plate", extrude("outline", 2.0, false));
+}
+
+/// A word engraved half a unit into a plate: each letter a pocket, the
+/// islands inside the `o` and the `b` left standing — what is cut is the
+/// letters' area, holes and all, half a unit deep.
+#[test]
+fn text_engraved_into_a_plate() {
+    let mut program = Program::new();
+    plate(&mut program);
+    let text = lettering(on_face("extrude(plate,end)"), "Hob", [3.0, 2.5], 5.0);
+    let area = enclosed_area(&text.sketch);
+    program.push("engraving_sketch", text);
+    program.push(
+        "engraving",
+        extrusion(
+            "engraving_sketch",
+            Extents::blind(-0.5),
+            Combine::cut("extrude(plate)"),
+        ),
+    );
+    let part = program.build_model(registry).unwrap();
+    assert_valid(&part);
+    let solid = part.solid_id("extrude(engraving)").unwrap();
+    let volume = part.topology().mass_properties(solid).unwrap().volume;
+    let expected = Scalar::from_f64(600.0).sub(area.mul(Scalar::from_f64(0.5)));
+    assert!(
+        volume.could_be_equal(expected) && volume.width().to_f64() < 1e-4 * 600.0,
+        "encloses {volume:?}, expected {expected:?}"
+    );
+}
+
+/// Extruded on its own, a word is one solid of a lump per letter — an `i`
+/// two, its stem and its dot — each with the holes its letter has.
+#[test]
+fn text_extruded_alone_is_a_lump_per_letter() {
+    let mut program = Program::new();
+    program.push(
+        "word",
+        lettering(on_origin(FrameAxis::Z), "Hip", [0.0, 0.0], 4.0),
+    );
+    program.push("letters", extrude("word", 1.0, false));
+    let part = program.build_model(registry).unwrap();
+    assert_valid(&part);
+    let solid = part.solid_id("extrude(letters)").unwrap();
+    let lumps = part.topology().get_solid(solid).unwrap().shells.len();
+    assert_eq!(lumps, 4);
+}
+
+/// Up to the next face each letter would stop at a face of its own:
+/// refused, saying so.
+#[test]
+fn text_up_to_the_next_face_is_refused() {
+    let mut program = Program::new();
+    plate(&mut program);
+    program.push(
+        "word",
+        lettering(on_face("extrude(plate,end)"), "ab", [3.0, 2.5], 5.0),
+    );
+    program.push(
+        "letters",
+        extrusion(
+            "word",
+            Extents {
+                reversed: true,
+                ..one_way(Extent::UpToNext)
+            },
+            Combine::cut("extrude(plate)"),
+        ),
+    );
+    let Err(error) = program.build_model(registry) else {
+        panic!("built");
+    };
+    assert!(error.root_message().contains("areas apart"), "{error:?}");
 }

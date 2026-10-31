@@ -1,5 +1,5 @@
 //! Extrude, revolve, sweep and loft as operations of a program: a sketch's
-//! one area swept into a solid — along its plane's normal, around an axis,
+//! areas swept into a solid — along its plane's normal, around an axis,
 //! along another sketch's curves, or through other sketches' profiles —
 //! kept as a new body or combined with one the model has; or its curves
 //! swept into a sheet, faces standing on their own. Which of these, each

@@ -22,6 +22,11 @@ point and stay connected by construction:
 - `Spline { control_points, shape }` — a clamped, uniform B-spline of
   degree up to 3 as drawn; with a `SplineShape` (degree, knots, weights),
   any clamped NURBS — what an edge of the part projects to
+- `Text { anchor, text, height, angle }` — the outlines of the string's
+  glyphs, its first baseline from `anchor`, its capitals `height` tall,
+  turned by `angle` radians. Only the anchor is solved for: a text is
+  placed by constraining that point and takes no constraint itself
+  (`text`)
 
 A curve marked `construction` takes part in constraints but not in profiles,
 e.g. a revolve axis or a symmetry line.
@@ -122,11 +127,11 @@ sweep tells a major arc from the minor arc with the same curvature
 
 ## Profiles
 
-`Sketch::region` turns a solved sketch into its one `Region` — a sketch is
-one area to sweep, and one of several separate areas is an error — and
-`Sketch::shape` into that, or, if its curves enclose nothing, the one open
-chain they form. `Sketch::regions` finds every `Region`: a counter-clockwise
-outer `ProfileLoop` and its clockwise holes. `ProfileLoop::to_nurbs` turns a
+`Sketch::regions` finds every `Region` of a solved sketch: a
+counter-clockwise outer `ProfileLoop` and its clockwise holes. A sketch may
+enclose several areas apart — the letters of a text do — and an extrusion
+makes each a lump of one solid. `Sketch::shape` is its regions or, if its
+curves enclose nothing, the one open chain they form. `ProfileLoop::to_nurbs` turns a
 loop into `ProfilePiece`s, 2-D NURBS curves that extrude and revolve consume,
 each recording which sketch curve it came from so that the faces built from
 it can be named after it. Arcs are split into pieces of at most a quarter
@@ -138,6 +143,20 @@ through the same conversion.
   are ignored; three or more curves meeting at a point is an error, since
   the regions they bound would be ambiguous.
 - **Nesting and orientation use the real curves.** Which loop lies inside
-  which, and which way a loop winds, are decided by casting a ray and
-  counting crossings with the kernel's `curve_curve_intersect`, the same way
-  a face's trim is tested. Polylines are only used for drawing.
+  which is decided by casting a ray and counting crossings with the
+  kernel's `curve_curve_intersect`, the same way a face's trim is tested,
+  after the box round the loop's control points has ruled most loops out;
+  which way a loop winds by its signed area, integrated from its curves
+  (`loop_signed_area`). Polylines are only used for drawing.
+
+## Text
+
+A `Text` is set in one embedded font, a subset of Noto Sans Regular (SIL
+Open Font License 1.1, `fonts/OFL.txt`), read with `ttf-parser`. A
+TrueType outline is lines and quadratic Béziers between points of whole
+font units, so it is a NURBS exactly; a run of quadratics joined at the
+"implied" points halfway between their control points is one quadratic
+B-spline on uniform knots, and one piece of the profile. Each closed
+contour of a glyph is a loop: its pieces are the text's, numbered on from
+one contour to the next (`c5#3`, its joints `c5@3`), so every face an
+extrusion makes of a letter has a name of its own.

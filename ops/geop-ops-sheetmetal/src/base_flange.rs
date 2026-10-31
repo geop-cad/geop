@@ -76,7 +76,13 @@ impl SheetStep for BaseFlange {
         args.rules.check().with_context(ctx)?;
         let placed = reader.retrieve_element(&args.sketch).with_context(ctx)?;
         let sheet = match placed.sketch.shape().with_context(ctx)? {
-            Shape::Region(region) => plate(&namer, placed, Shape::Region(region), args),
+            Shape::Regions(regions) if regions.len() == 1 => {
+                plate(&namer, placed, Shape::Regions(regions), args)
+            }
+            Shape::Regions(regions) => Err(GeopError::new(format!(
+                "the sketch has {} areas apart, and a base flange is one sheet: draw each in a sketch of its own",
+                regions.len()
+            ))),
             Shape::Chain(chain) => {
                 let depth = args.depth.resolve(reader).with_context(ctx)?;
                 strip(&namer, placed, &chain, depth, args)

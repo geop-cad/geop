@@ -53,7 +53,7 @@ use geop_core_sketch::{ConstraintId, CurveId, PointId, offset::Corners};
 use crate::{
     AddSketchArgs,
     constraints::{self, ConstraintTool, Pick},
-    geometry::{P2, add, distance, loop_polyline, of, polyline, sub, xy},
+    geometry::{P2, add, distance, loop_polyline, of, polyline, polylines, sub, xy},
 };
 use geop_ops_model::sketch::{Constraint, CurveKind, Sketch};
 
@@ -76,6 +76,7 @@ pub enum DrawTool {
     ArcSlot,
     Spline,
     Point,
+    Text,
     Fillet,
     Chamfer,
 }
@@ -91,7 +92,7 @@ pub struct DrawInfo<T = DrawTool> {
 }
 
 impl DrawTool {
-    pub const ALL: [DrawInfo; 16] = {
+    pub const ALL: [DrawInfo; 17] = {
         use DrawTool::*;
         const fn t(
             tool: DrawTool,
@@ -141,6 +142,7 @@ impl DrawTool {
             t(ArcSlot, "arc_slot", "Arc slot", None),
             t(Spline, "spline", "Spline", Some("s")),
             t(Point, "point", "Point", Some("p")),
+            t(Text, "text", "Text", Some("w")),
             t(Fillet, "fillet", "Fillet a corner", Some("f")),
             t(Chamfer, "chamfer", "Chamfer a corner", None),
         ]
@@ -155,7 +157,7 @@ impl DrawTool {
     fn needs(self) -> Option<usize> {
         use DrawTool::*;
         match self {
-            Point | Fillet | Chamfer => Some(1),
+            Point | Text | Fillet | Chamfer => Some(1),
             Line | Rectangle | CenterRectangle | Circle | TangentArc | Polygon => Some(2),
             ThreePointRectangle | ThreePointCircle | Arc | CenterArc | Slot => Some(3),
             ArcSlot => Some(4),
@@ -344,6 +346,46 @@ pub struct SketchSession {
     /// screen: then what is horizontal on screen is its `y` (see
     /// [`constraints::as_seen`]).
     turned: bool,
+    /// What the text tool places.
+    text: TextOptions,
+}
+
+/// What the text tool places: the string, how tall its capitals are, and
+/// how far it is turned, in degrees.
+#[derive(Clone, Debug, PartialEq)]
+pub(crate) struct TextOptions {
+    pub text: String,
+    pub height: f64,
+    pub angle: f64,
+}
+
+impl Default for TextOptions {
+    fn default() -> Self {
+        Self {
+            text: "Text".into(),
+            height: 5.0,
+            angle: 0.0,
+        }
+    }
+}
+
+impl TextOptions {
+    /// What the text `curve` of `sketch` is set to, if it is a text.
+    fn of(sketch: &Sketch, curve: CurveId) -> Option<Self> {
+        match &sketch.curves.get(&curve)?.kind {
+            CurveKind::Text {
+                text,
+                height,
+                angle,
+                ..
+            } => Some(Self {
+                text: text.clone(),
+                height: height.to_f64(),
+                angle: angle.to_f64().to_degrees(),
+            }),
+            _ => None,
+        }
+    }
 }
 
 /// What mirror, patterns and offset are set to make.
@@ -394,6 +436,7 @@ impl Default for SketchSession {
             circumscribed: false,
             turned: false,
             modify: ModifyOptions::default(),
+            text: TextOptions::default(),
         }
     }
 }

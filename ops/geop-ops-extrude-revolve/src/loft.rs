@@ -288,10 +288,12 @@ fn section(
     let geometry = sketch.enclose().with_context(ctx)?;
     let shape = output.shape(sketch).with_context(ctx)?;
     let (lp, closed) = match shape {
-        Shape::Region(region) if region.holes.is_empty() => (region.outer, true),
-        Shape::Region(_) => {
+        Shape::Regions(mut regions) if regions.len() == 1 && regions[0].holes.is_empty() => {
+            (regions.remove(0).outer, true)
+        }
+        Shape::Regions(_) => {
             return Err(GeopError::new(format!(
-                "loft: the profile {name:?} has holes, but a loft runs through single loops"
+                "loft: the profile {name:?} has holes or several areas, but a loft runs through single loops"
             )));
         }
         Shape::Chain(chain) => (chain, false),

@@ -127,6 +127,19 @@ impl Sketch {
                 control_points: control_points.iter().map(|&p| point(p)).collect(),
                 shape,
             },
+            // A text is read, not mirrored or turned: its copy is the same
+            // text, placed where its anchor's copy is.
+            CurveKind::Text {
+                anchor,
+                text,
+                height,
+                angle,
+            } => CurveKind::Text {
+                anchor: point(anchor),
+                text,
+                height,
+                angle,
+            },
         };
         let copy = self.add_curve(kind);
         self.set_construction(copy, construction);

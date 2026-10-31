@@ -37,6 +37,8 @@ pub(super) struct Hints {
     /// The smallest size worth drawing, in the plane: what is smaller is a
     /// click on the same spot.
     pub min_size: f64,
+    /// What a text says, how tall and how turned.
+    pub text: TextOptions,
 }
 
 /// What a construction built.
@@ -110,7 +112,7 @@ pub(super) fn leaving_tangent(sketch: &Sketch, curve: CurveId, p: PointId) -> Op
                 xy(sketch, control_points[n - 2]),
             )
         }
-        CurveKind::Circle { .. } => return None,
+        CurveKind::Circle { .. } | CurveKind::Text { .. } => return None,
     };
     // Leaving from the start runs against the curve's own direction.
     unit(if at_end {
@@ -610,6 +612,21 @@ fn build(
                 last: Some(spline),
                 ..Built::default()
             })
+        }
+        (Text, [at]) => {
+            let t = &hints.text;
+            if t.text.trim().is_empty()
+                || t.height.is_nan()
+                || t.height <= 0.0
+                || !t.angle.is_finite()
+            {
+                return None;
+            }
+            let anchor = at.materialize(sketch);
+            let height = Scalar::from_f64(t.height);
+            let angle = Scalar::from_f64(t.angle).degrees_to_radians().ok()?;
+            sketch.add_text(anchor, t.text.clone(), height, angle);
+            Some(Built::default())
         }
         (Fillet, [corner]) => cut_corner(sketch, corner.existing()?, true),
         (Chamfer, [corner]) => cut_corner(sketch, corner.existing()?, false),

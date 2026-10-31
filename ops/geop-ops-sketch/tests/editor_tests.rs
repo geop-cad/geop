@@ -2561,3 +2561,137 @@ fn horizontal_and_vertical_are_named_as_seen() {
     });
     assert!(glyphs(&e).contains(&"H".to_string()), "{:?}", glyphs(&e));
 }
+
+/// The text `e`'s sketch holds, and what it says, how tall and how turned.
+fn the_text(e: &Editor) -> (CurveId, PointId, String, f64, f64) {
+    let texts: Vec<_> = (e.drawn_curves().into_iter())
+        .filter_map(|(id, kind)| match kind {
+            CurveKind::Text {
+                anchor,
+                text,
+                height,
+                angle,
+            } => Some((id, *anchor, text.clone(), height.to_f64(), angle.to_f64())),
+            _ => None,
+        })
+        .collect();
+    let [text] = &texts[..] else {
+        panic!("{texts:?}");
+    };
+    text.clone()
+}
+
+/// The point of the text `curve`'s outline furthest from its anchor
+/// `anchor`: where a click picks the text, not the point.
+fn on_outline(e: &Editor, curve: CurveId, anchor: PointId) -> P2 {
+    let from = xy(e.sketch(), anchor);
+    let lines = geop_core_sketch::profile::curve_polylines(e.sketch(), curve).unwrap();
+    (lines.iter().flatten().map(|&p| plain(p)))
+        .max_by(|a, b| distance(*a, from).total_cmp(&distance(*b, from)))
+        .unwrap()
+}
+
+/// The text tool, taken up by its key, shows the text it places where the
+/// pointer is, and places it with a click, its baseline from there: what
+/// it says, how tall and how turned set in the dialog first. Each letter is
+/// an area, a hole in the `A`. Selected afterwards, the text is edited in
+/// the same fields — only what is changed changes — and dragged by its
+/// anchor.
+#[test]
+fn a_text_is_placed_and_edited() {
+    let mut e = drawing();
+    e.key("w");
+    assert_eq!(e.tool().as_deref(), Some("text"));
+    e.dialog("text", Value::Text("Ab".into()));
+    e.dialog("text_height", Value::Number(2.0));
+    e.hover(1.0, 1.0);
+    let previews = (e.presentation.visuals.iter())
+        .filter(|v| v.style == Style::Draft)
+        .count();
+    assert_eq!(previews, 4, "the A's and the b's outlines and holes");
+    e.click(1.0, 1.0);
+    let (curve, anchor, text, height, angle) = the_text(&e);
+    assert_eq!((text.as_str(), height, angle), ("Ab", 2.0, 0.0));
+    assert!(close(xy(e.sketch(), anchor), [1.0, 1.0]));
+    let regions = e.sketch().regions().unwrap();
+    let mut holes: Vec<usize> = regions.iter().map(|r| r.holes.len()).collect();
+    holes.sort();
+    assert_eq!(holes, [1, 1]);
+    e.report();
+
+    // Put down, picked, and changed.
+    e.key("Escape");
+    assert_eq!(e.tool(), None);
+    let at = on_outline(&e, curve, anchor);
+    e.click(at[0], at[1]);
+    assert_eq!(e.selection(), [curve.to_string()]);
+    match e.presentation.dialog.get("text") {
+        Some(Control::Input { value, .. }) => assert_eq!(value, "Ab"),
+        other => panic!("{other:?}"),
+    }
+    let before = e.sketch().curves[&curve].clone();
+    e.dialog("text", Value::Text("Hi".into()));
+    e.dialog("text_angle", Value::Number(90.0));
+    let (_, _, text, height, angle) = the_text(&e);
+    assert_eq!((text.as_str(), height), ("Hi", 2.0));
+    assert!(
+        (angle - std::f64::consts::FRAC_PI_2).abs() < 1e-12,
+        "{angle}"
+    );
+    let CurveKind::Text { height: was, .. } = before.kind else {
+        panic!("{before:?}");
+    };
+    let CurveKind::Text { height: is, .. } = &e.sketch().curves[&curve].kind else {
+        panic!("no text");
+    };
+    assert_eq!(was, *is, "the height is kept as it was");
+
+    // Dragged by its outline, it moves with its anchor.
+    let at = on_outline(&e, curve, anchor);
+    e.drag(at, add(at, [0.5, -0.25]), true);
+    assert!(
+        close(xy(e.sketch(), anchor), [1.5, 0.75]),
+        "{:?}",
+        xy(e.sketch(), anchor)
+    );
+}
+
+/// A text drawn in the editor extrudes, from the editor, into a solid of a
+/// lump per letter.
+#[test]
+fn a_text_drawn_in_the_editor_extrudes() {
+    let mut editor = editor();
+    let event = |editor: &mut geop_core_editor::editor::Editor, event: StepEditEvent| {
+        handled(editor, Command::Event { event })
+    };
+    editor.handle(Command::New {
+        kind: "add_sketch".into(),
+    });
+    let pick_plane = StepEditEvent::Click {
+        pointer: from_above(0.04, 0.04),
+        double: false,
+        shift: false,
+    };
+    event(&mut editor, pick_plane);
+    editor.handle(dialog("tool", Value::Choice("text".into())));
+    editor.handle(dialog("text", Value::Text("Te".into())));
+    editor.handle(dialog("text_height", Value::Number(1.5)));
+    let place = StepEditEvent::Click {
+        pointer: from_above(0.5, 0.5),
+        double: false,
+        shift: false,
+    };
+    event(&mut editor, place);
+    handled(&mut editor, Command::Commit);
+    editor.handle(Command::New {
+        kind: "extrude".into(),
+    });
+    editor.handle(dialog("distance", Value::Number(0.3)));
+    handled(&mut editor, Command::Commit);
+    let part = model_of(&built(&editor).unwrap());
+    if let Err(e) = check_valid(&part) {
+        panic!("{e}");
+    }
+    let solid = part.solid_id(&part.solid_names()[0]).unwrap();
+    assert_eq!(part.topology().get_solid(solid).unwrap().shells.len(), 2);
+}

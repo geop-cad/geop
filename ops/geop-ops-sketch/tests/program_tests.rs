@@ -337,6 +337,7 @@ fn kinds(sketch: &Sketch) -> Vec<&'static str> {
             CurveKind::Arc { .. } => "arc",
             CurveKind::Circle { .. } => "circle",
             CurveKind::Spline { .. } => "spline",
+            CurveKind::Text { .. } => "text",
         })
         .collect();
     kinds.sort();

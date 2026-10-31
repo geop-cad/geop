@@ -14,6 +14,7 @@ pub(crate) const SLOT: &str = r#"<path d="M6 6.5 L14 6.5 A3.5 3.5 0 0 1 14 13.5 
 pub(crate) const ARC_SLOT: &str = r#"<path d="M3.5 14 A6.5 6.5 0 0 1 16.5 14 A1.75 1.75 0 0 1 13 14 A3 3 0 0 0 7 14 A1.75 1.75 0 0 1 3.5 14 Z"/><circle cx="10" cy="14" r="1.2" fill="currentColor" stroke="none"/>"#;
 pub(crate) const TRIM: &str = r#"<path d="M3 10 L17 10" stroke-dasharray="1.5 1.5"/><path d="M7 3 L7 17 M13 3 L13 17"/><path d="M8.5 6 L11.5 14 M11.5 6 L8.5 14" stroke-width="1.2"/>"#;
 pub(crate) const CONSTRUCTION: &str = r#"<path d="M3 17 L17 3" stroke-dasharray="2.5 2"/>"#;
+pub(crate) const TEXT: &str = r#"<path d="M4.5 4.5 L15.5 4.5 M10 4.5 L10 15.5"/><path d="M3 15.5 L17 15.5" stroke-dasharray="1.5 1.5" stroke-width="1"/><circle cx="3.5" cy="15.5" r="1.6" fill="currentColor" stroke="none"/>"#;
 pub(crate) const OFFSET: &str = r#"<path d="M4 16 L4 9 A5 5 0 0 1 9 4 L16 4"/><path d="M7.5 16 L7.5 9.5 A2 2 0 0 1 9.5 7.5 L16 7.5" stroke-dasharray="1.5 1.5"/>"#;
 pub(crate) const COINCIDENT: &str = r#"<circle cx="10" cy="10" r="4"/><circle cx="10" cy="10" r="1.6" fill="currentColor" stroke="none"/>"#;
 pub(crate) const HORIZONTAL: &str =
@@ -52,6 +53,7 @@ pub(crate) fn named(name: &str) -> Option<&'static str> {
         "trim" => TRIM,
         "construction" => CONSTRUCTION,
         "offset" => OFFSET,
+        "text" => TEXT,
         "coincident" => COINCIDENT,
         "horizontal" => HORIZONTAL,
         "vertical" => VERTICAL,

@@ -7,7 +7,10 @@
 //! its solver.
 
 use geop_core_math::{geop_error::GeopResult, vector::Vector2};
-use geop_core_sketch::{ProfileLoop, Sketch, profile::curve_polyline};
+use geop_core_sketch::{
+    ProfileLoop, Sketch,
+    profile::{curve_polyline, curve_polylines},
+};
 
 pub use geop_core_sketch::plain::{
     P2, Plain, add, angle_between, bounds, cross, distance, dot, of, perp, rotate, scale,
@@ -21,9 +24,20 @@ fn plain(points: GeopResult<Vec<Vector2>>) -> Vec<P2> {
         .unwrap_or_default()
 }
 
-/// The polyline a curve is drawn as (empty where it cannot be drawn).
+/// The polyline a curve is drawn as (empty where it cannot be drawn, as a
+/// text, which is no one line).
 pub fn polyline(sketch: &Sketch, curve: geop_core_sketch::CurveId) -> Vec<P2> {
     plain(curve_polyline(sketch, curve))
+}
+
+/// The polylines a curve is drawn as: a text's one for each contour, any
+/// other curve's its one (none where it cannot be drawn).
+pub fn polylines(sketch: &Sketch, curve: geop_core_sketch::CurveId) -> Vec<Vec<P2>> {
+    (curve_polylines(sketch, curve)
+        .unwrap_or_default()
+        .into_iter())
+    .map(|line| plain(Ok(line)))
+    .collect()
 }
 
 /// The polyline a loop is drawn as (empty where it cannot be drawn).

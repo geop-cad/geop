@@ -10,24 +10,26 @@
 //! error, since the regions they bound are ambiguous.
 //!
 //! **Nesting and orientation are answered on the real curves.** Which loop
-//! lies inside which, and which way a loop winds, both come from casting a
-//! ray and counting crossings with the kernel's own
-//! [`curve_curve_intersect`] — the same thing
+//! lies inside which comes from casting a ray and counting crossings with
+//! the kernel's own [`curve_curve_intersect`] — the same thing
 //! `geop_core_topology::contains::face::loops_contain` does for a face's
-//! trim, on the same NURBS curves the profile is made of. Polylines are
-//! sampled from those curves too, for drawing.
+//! trim, on the same NURBS curves the profile is made of — and which way a
+//! loop winds from its signed area, integrated from those curves
+//! ([`loop_signed_area`]). Polylines are sampled from them too, for
+//! drawing.
 
 use crate::sketch::{CurveId, CurveKind, Enclosure, PointId, Sketch, SplineShape};
+use crate::text;
 use geop_core_geometry::{
     aabb::union_aabb,
     intersection::curve_curve_intersect,
-    nurb_curve::{NurbCurve, NurbCurve2D},
+    nurb_curve::{NurbCurve, NurbCurve2D, loop_signed_area},
 };
 use geop_core_math::{
     geop_error::{GeopError, GeopResult, WithContext},
     scalars::Scalar,
     solvers::{
-        probe::{Probe, attempts, halve},
+        probe::{Probe, attempts},
         repeat,
         walk::walk_by,
     },
@@ -46,11 +48,15 @@ const MIN_SUBDIVISION: i64 = 1_000_000;
 /// How many directions a ray cast tries before giving up on a probe point.
 const MAX_RAY_ATTEMPTS: usize = 32;
 
-/// One curve of a loop, traversed forwards or backwards.
+/// One curve of a loop, traversed forwards or backwards — of a text, one
+/// of its contours.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct ProfileEdge {
     pub curve: CurveId,
     pub reversed: bool,
+    /// Which of the curve's closed contours: of a text, one of its glyphs'
+    /// (see [`text::outlines`]); of any other curve, its only one, `0`.
+    pub contour: usize,
 }
 
 /// A closed chain of curves, each ending where the next starts.
@@ -75,12 +81,12 @@ pub struct Region {
     pub holes: Vec<ProfileLoop>,
 }
 
-/// What a sketch draws to sweep: the one area its curves enclose, or — for
-/// a sweep into a sheet only — the one open chain they form, enclosing
-/// nothing.
+/// What a sketch draws to sweep: the areas its curves enclose — one, or
+/// several apart, as the letters of a text are — or, for a sweep into a
+/// sheet only, the one open chain they form, enclosing nothing.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Shape {
-    Region(Region),
+    Regions(Vec<Region>),
     Chain(ProfileLoop),
 }
 
@@ -88,29 +94,14 @@ pub enum Shape {
 const SAMPLES: usize = 16;
 
 impl Sketch {
-    /// The one area the sketch's curves enclose, with its holes.
-    ///
-    /// One sketch is one area to extrude or revolve: a sketch of several
-    /// separate areas is an error — each would be a body of its own, so each
-    /// belongs in a sketch of its own.
-    pub fn region(&self) -> GeopResult<Region> {
-        let mut regions = self.regions()?;
-        match regions.len() {
-            1 => Ok(regions.remove(0)),
-            n => Err(GeopError::new(format!(
-                "sketch has {n} separate areas, but one sketch is one area to sweep: draw each in a sketch of its own"
-            ))),
-        }
-    }
-
-    /// What the sketch draws to sweep (see [`Shape`]): its one area, or, if
+    /// What the sketch draws to sweep (see [`Shape`]): its areas, or, if
     /// its curves enclose nothing, the one chain they form.
     pub fn shape(&self) -> GeopResult<Shape> {
         self.validate()?;
         if self.loops()?.is_empty() {
             Ok(Shape::Chain(self.sweep_chain()?))
         } else {
-            Ok(Shape::Region(self.region()?))
+            Ok(Shape::Regions(self.regions()?))
         }
     }
 
@@ -161,6 +152,7 @@ impl Sketch {
                 edges: vec![ProfileEdge {
                     curve: circle,
                     reversed: false,
+                    contour: 0,
                 }],
                 closed: true,
             });
@@ -192,7 +184,11 @@ impl Sketch {
         // On from each curve's end to the other curve there, until there is
         // none, or it is one already in the chain.
         let edges = walk_by(
-            ProfileEdge { curve: c, reversed },
+            ProfileEdge {
+                curve: c,
+                reversed,
+                contour: 0,
+            },
             |edge| edge.curve,
             |edge| {
                 let (s, e) = ends(edge.curve);
@@ -201,6 +197,7 @@ impl Sketch {
                     ProfileEdge {
                         curve: next,
                         reversed: ends(next).1 == end,
+                        contour: 0,
                     }
                 }))
             },
@@ -283,20 +280,25 @@ impl Sketch {
             })
             .collect::<GeopResult<_>>()?;
         let extent = extent_of(&curves)?;
-        let counter_clockwise: Vec<bool> = curves
-            .iter()
-            .map(|c| turns_counter_clockwise(c, extent))
+        let counter_clockwise: Vec<bool> = (loops.iter().zip(&curves))
+            .map(|(l, c)| winds_counter_clockwise(l, c))
             .collect::<GeopResult<_>>()?;
+        let bounds: Vec<Option<[Scalar; 3]>> = (curves.iter())
+            .map(|c| union_aabb(c.iter().map(NurbCurve::aabb)))
+            .collect();
 
         // containers[i]: the loops loop `i` lies inside. A point of loop `i`
         // serves as the probe — loops of one profile never cross, so a point
-        // on one is either inside another or outside it.
+        // on one is either inside another or outside it — and one outside
+        // the box round another loop's control points is outside that loop.
         let mut containers: Vec<Vec<usize>> = Vec::with_capacity(loops.len());
         for i in 0..loops.len() {
             let probe = midpoint(&curves[i][0])?;
             let mut inside = Vec::new();
             for (j, other) in curves.iter().enumerate() {
-                if j != i && loop_contains(other, &probe, extent)? {
+                let boxed =
+                    bounds[j].is_some_and(|b| (0..2).all(|k| b[k].could_be_equal(probe[k])));
+                if j != i && boxed && loop_contains(other, &probe, extent)? {
                     inside.push(j);
                 }
             }
@@ -358,11 +360,23 @@ impl Sketch {
                         "curve {id} starts and ends at the same point"
                     )));
                 }
+                // A text is a loop for each contour of its glyphs.
+                None if let CurveKind::Text { text, .. } = &curve.kind => {
+                    let contours = text::outlines(text)?.len();
+                    loops.extend((0..contours).map(|contour| ProfileLoop {
+                        edges: vec![ProfileEdge {
+                            curve: id,
+                            reversed: false,
+                            contour,
+                        }],
+                    }));
+                }
                 // A closed curve is a loop by itself.
                 _ => loops.push(ProfileLoop {
                     edges: vec![ProfileEdge {
                         curve: id,
                         reversed: false,
+                        contour: 0,
                     }],
                 }),
             }
@@ -420,6 +434,7 @@ impl Sketch {
                 .map(|&(k, at_end)| ProfileEdge {
                     curve: edges[k].0,
                     reversed: at_end,
+                    contour: 0,
                 })
                 .collect();
             loops.push(ProfileLoop { edges: lp });
@@ -492,8 +507,8 @@ impl ProfileLoop {
                 .iter()
                 .rev()
                 .map(|e| ProfileEdge {
-                    curve: e.curve,
                     reversed: !e.reversed,
+                    ..*e
                 })
                 .collect(),
         }
@@ -519,26 +534,45 @@ impl ProfileLoop {
         for edge in &self.edges {
             let curve = edge.curve;
             let ctx = with_context!("converting sketch curve {curve} to NURBS");
-            let pieces = curve_nurbs(sketch, geometry, curve).with_context(ctx)?;
-            let (first, last) = curve_joints(sketch, curve).with_context(ctx)?;
+            // The pieces, the index of the first among the curve's, and the
+            // joints at its ends: a text's contour starts and ends where its
+            // first piece starts.
+            let (pieces, offset, (first, last)) = match &sketch.curve(curve)?.kind {
+                CurveKind::Text { .. } => {
+                    let contours = text_contours(sketch, geometry, curve).with_context(ctx)?;
+                    let offset = contours.iter().take(edge.contour).map(Vec::len).sum();
+                    let pieces = (contours.into_iter().nth(edge.contour)).ok_or_else(|| {
+                        GeopError::new(format!("text {curve} has no contour {}", edge.contour))
+                    })?;
+                    let seam = ProfileJoint::Split {
+                        curve,
+                        index: offset,
+                    };
+                    (pieces, offset, (seam, seam))
+                }
+                _ => {
+                    let pieces = curve_nurbs(sketch, geometry, curve).with_context(ctx)?;
+                    (pieces, 0, curve_joints(sketch, curve).with_context(ctx)?)
+                }
+            };
             let n = pieces.len();
             // Joint `j`, in the curve's own direction: where piece `j` starts
             // (`j = n` is the curve's end).
             let joint = |j: usize| match j {
                 0 => first,
                 j if j == n => last,
-                index => ProfileJoint::Split { curve, index },
+                j => ProfileJoint::Split {
+                    curve,
+                    index: offset + j,
+                },
             };
-            let pieces = pieces
-                .into_iter()
-                .enumerate()
-                .map(|(index, c)| ProfilePiece {
-                    curve: c,
-                    source: curve,
-                    index,
-                    start: joint(index),
-                    end: joint(index + 1),
-                });
+            let pieces = pieces.into_iter().enumerate().map(|(j, c)| ProfilePiece {
+                curve: c,
+                source: curve,
+                index: offset + j,
+                start: joint(j),
+                end: joint(j + 1),
+            });
             if edge.reversed {
                 out.extend(pieces.rev().map(|p| ProfilePiece {
                     curve: p.curve.reverse(),
@@ -591,7 +625,19 @@ impl ProfileLoop {
     pub fn polyline(&self, sketch: &Sketch) -> GeopResult<Vec<Vector2>> {
         let mut out = Vec::new();
         for edge in &self.edges {
-            let mut pts = curve_polyline(sketch, edge.curve)?;
+            let mut pts = match &sketch.curve(edge.curve)?.kind {
+                CurveKind::Text { .. } => {
+                    let mut contours = curve_polylines(sketch, edge.curve)?;
+                    if edge.contour >= contours.len() {
+                        return Err(GeopError::new(format!(
+                            "text {} has no contour {}",
+                            edge.curve, edge.contour
+                        )));
+                    }
+                    contours.swap_remove(edge.contour)
+                }
+                _ => curve_polyline(sketch, edge.curve)?,
+            };
             if edge.reversed {
                 pts.reverse();
             }
@@ -617,10 +663,52 @@ fn curve_joints(sketch: &Sketch, curve: CurveId) -> GeopResult<(ProfileJoint, Pr
 
 /// Points along a curve as drawn, from its start to its end (a circle
 /// starts and ends at angle 0) — sampled from its NURBS pieces, dense enough
-/// for drawing.
+/// for drawing. A text is no one line: it is drawn contour by contour (see
+/// [`curve_polylines`]).
 pub fn curve_polyline(sketch: &Sketch, curve: CurveId) -> GeopResult<Vec<Vector2>> {
+    if let CurveKind::Text { .. } = sketch.curve(curve)?.kind {
+        return Err(GeopError::new(format!(
+            "text {curve} is drawn contour by contour, not as one line"
+        )));
+    }
     let pieces = curve_nurbs(sketch, &Enclosure::as_drawn(sketch), curve)?;
     polyline(&pieces, NurbCurve2D::evaluate)
+}
+
+/// The lines a curve is drawn as: a text one for each contour of its
+/// glyphs, closed, any other curve its one line (see [`curve_polyline`]).
+pub fn curve_polylines(sketch: &Sketch, curve: CurveId) -> GeopResult<Vec<Vec<Vector2>>> {
+    match sketch.curve(curve)?.kind {
+        CurveKind::Text { .. } => (text_contours(sketch, &Enclosure::as_drawn(sketch), curve)?)
+            .iter()
+            .map(|contour| polyline(contour, NurbCurve2D::evaluate))
+            .collect(),
+        _ => Ok(vec![curve_polyline(sketch, curve)?]),
+    }
+}
+
+/// The contours of the text `curve`, built from `geometry`: each a loop of
+/// NURBS pieces (see [`text::place`]).
+pub fn text_contours(
+    sketch: &Sketch,
+    geometry: &Enclosure,
+    curve: CurveId,
+) -> GeopResult<Vec<Vec<NurbCurve2D>>> {
+    let CurveKind::Text {
+        anchor,
+        text,
+        height,
+        angle,
+    } = &sketch.curve(curve)?.kind
+    else {
+        return Err(GeopError::new(format!("curve {curve} is no text")));
+    };
+    text::place(
+        &text::outlines(text)?,
+        geometry.points[anchor],
+        *height,
+        *angle,
+    )
 }
 
 /// Points along `pieces`, a chain of curves on `[0, 1]` each starting where
@@ -656,7 +744,7 @@ fn spline_degree(n: usize) -> usize {
 }
 
 /// Clamped uniform knot vector on `[0, 1]`.
-fn spline_knots(n: usize, degree: usize) -> GeopResult<Vec<Scalar>> {
+pub(crate) fn spline_knots(n: usize, degree: usize) -> GeopResult<Vec<Scalar>> {
     let spans = n - degree;
     let mut knots = vec![Scalar::ZERO; degree + 1];
     for i in 1..spans {
@@ -669,7 +757,8 @@ fn spline_knots(n: usize, degree: usize) -> GeopResult<Vec<Scalar>> {
 /// One sketch curve as NURBS pieces from its start to its end, built from
 /// `geometry` — how many pieces, from the sketch as drawn, which is design
 /// data, so the pieces and their names do not depend on how precisely the
-/// geometry is known.
+/// geometry is known. A text's are its contours' pieces, one contour after
+/// the other (see [`text_contours`]).
 pub fn curve_nurbs(
     sketch: &Sketch,
     geometry: &Enclosure,
@@ -763,6 +852,10 @@ pub fn curve_nurbs(
             let points: Vec<Vector2> = control_points.iter().map(at).collect();
             Ok(vec![spline_nurbs(&points, shape.as_ref())?])
         }
+        CurveKind::Text { .. } => Ok(text_contours(sketch, geometry, curve)?
+            .into_iter()
+            .flatten()
+            .collect()),
     }
 }
 
@@ -932,37 +1025,18 @@ fn loop_contains(curves: &[NurbCurve2D], probe: &Vector2, extent: Scalar) -> Geo
     )))
 }
 
-/// Does `curves` wind counter-clockwise (material on its left)?
-///
-/// Asked the same way as everything else here: step off the loop's first
-/// curve to either side of its midpoint and see which side is inside. The
-/// step starts at a fraction of the profile's extent and halves until the
-/// two sides genuinely disagree — that disagreement is the property the
-/// answer rests on, so it is verified rather than assumed, and a loop with a
-/// feature narrower than the first step simply takes another halving.
-fn turns_counter_clockwise(curves: &[NurbCurve2D], extent: Scalar) -> GeopResult<bool> {
-    let curve = &curves[0];
-    let mid = curve.mid_parameter()?;
-    let point = curve.evaluate(mid)?;
-    let tangent = curve.tangent(mid)?;
-    let left = tangent.perp();
-    let found = halve(
-        extent.div(Scalar::from_i64(64))?,
-        24,
-        |&step| -> GeopResult<_> {
-            let at = |sign: Scalar| point.add(&left.prod_scalar(step.mul(sign))).sharpen();
-            let inside_left = loop_contains(curves, &at(Scalar::ONE), extent)?;
-            let inside_right = loop_contains(curves, &at(Scalar::ONE.neg()), extent)?;
-            Ok(if inside_left != inside_right {
-                Probe::Found(inside_left)
-            } else {
-                Probe::Next
-            })
-        },
-    )?;
-    found.ok_or_else(|| {
-        GeopError::new(format!(
-            "could not tell which way {curve:?} winds: both sides of it classify the same way"
-        ))
-    })
+/// Does the loop `lp`, whose pieces are `curves`, wind counter-clockwise
+/// (material on its left)? Its signed area says, integrated from the
+/// curves themselves ([`loop_signed_area`]).
+fn winds_counter_clockwise(lp: &ProfileLoop, curves: &[NurbCurve2D]) -> GeopResult<bool> {
+    let area = loop_signed_area(curves)?;
+    if area.definitely_greater(Scalar::ZERO) {
+        Ok(true)
+    } else if area.definitely_less(Scalar::ZERO) {
+        Ok(false)
+    } else {
+        Err(GeopError::new(format!(
+            "could not tell which way the loop {lp:?} winds: its area {area:?} could be zero"
+        )))
+    }
 }

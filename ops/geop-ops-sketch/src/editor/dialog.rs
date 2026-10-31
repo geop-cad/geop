@@ -85,6 +85,9 @@ fn tool_hint(s: &SketchSession) -> String {
             (DrawTool::ArcSlot, _) => "Click to give the width",
             (DrawTool::Spline, _) => "Click control points · double-click or Enter finishes",
             (DrawTool::Point, _) => "Click to place a point",
+            (DrawTool::Text, _) => {
+                "Click where the text's baseline starts · set what it says, its height and angle below"
+            }
             (DrawTool::Fillet | DrawTool::Chamfer, _) => "Click the corner where two lines meet",
         },
     };
@@ -117,6 +120,9 @@ fn tool_options(d: &mut EditForm<'_, AddSketchArgs, SketchSession>, s: &SketchSe
                 s.circumscribed,
                 |edit, b| edit.session.circumscribed = b,
             );
+        }
+        Tool::Draw(DrawTool::Text) => {
+            text_fields(d, &s.text, |edit, set| set(&mut edit.session.text));
         }
         Tool::Modify(ModifyTool::LinearPattern) => {
             count(d);
@@ -163,6 +169,40 @@ fn tool_options(d: &mut EditForm<'_, AddSketchArgs, SketchSession>, s: &SketchSe
         }
         _ => {}
     }
+}
+
+/// The fields of a text, `text` as it is: what it says, how tall its
+/// capitals are, how far it is turned, in degrees. `change(edit, set)`
+/// applies `set` to the text being edited.
+fn text_fields<'a>(
+    d: &mut EditForm<'a, AddSketchArgs, SketchSession>,
+    text: &TextOptions,
+    change: impl Fn(Edit<'_, AddSketchArgs, SketchSession>, &dyn Fn(&mut TextOptions)) + Clone + 'a,
+) {
+    let (said, tall, turned) = (change.clone(), change.clone(), change);
+    d.input(
+        "text",
+        "text",
+        text.text.clone(),
+        Some("what it says"),
+        move |edit, value| {
+            if !value.trim().is_empty() {
+                said(edit, &|t| t.text = value.to_string());
+            }
+        },
+    );
+    let height = Number::new("height", text.height, Unit::Length).range(0.5, 50.0);
+    d.number("text_height", height, move |edit, v| {
+        if v > 0.0 {
+            tall(edit, &|t| t.height = v);
+        }
+    });
+    let angle = Number::new("angle", text.angle, Unit::Angle).range(-180.0, 180.0);
+    d.number("text_angle", angle, move |edit, v| {
+        if v.is_finite() {
+            turned(edit, &|t| t.angle = v);
+        }
+    });
 }
 
 /// How the sketch stands: solved or not, how free it still is, how many
@@ -263,6 +303,15 @@ pub(super) fn draw_dialog<'a>(
         });
     });
     tool_options(d, s);
+    // A text selected, with no tool in hand, is edited in place.
+    if let ([Pick::Curve(curve)], Tool::Select) = (&picks[..], s.tool)
+        && let Some(text) = TextOptions::of(sketch, *curve)
+    {
+        let curve = *curve;
+        text_fields(d, &text, move |edit, set| {
+            editing(view, edit, |e| e.set_text(curve, set))
+        });
+    }
     if let [Pick::Curve(by)] = picks[..]
         && let Some(count) = sketch.pattern_count(by)
     {

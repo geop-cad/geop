@@ -29,6 +29,8 @@ const LINE: u8 = 2;
 const ARC: u8 = 4;
 const CIRCLE: u8 = 8;
 const SPLINE: u8 = 16;
+/// A text takes no constraint: no slot allows it.
+const TEXT: u8 = 32;
 const ROUND: u8 = ARC | CIRCLE;
 const CURVE: u8 = LINE | ARC | CIRCLE | SPLINE;
 
@@ -40,6 +42,7 @@ fn kind_bit(sketch: &Sketch, pick: Pick) -> u8 {
             CurveKind::Arc { .. } => ARC,
             CurveKind::Circle { .. } => CIRCLE,
             CurveKind::Spline { .. } => SPLINE,
+            CurveKind::Text { .. } => TEXT,
         },
     }
 }
