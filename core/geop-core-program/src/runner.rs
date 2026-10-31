@@ -145,8 +145,11 @@ impl Runner {
             .unwrap_or(steps.len());
         // Nothing changed since it last ran: every step would reuse what
         // it made, and walking them all to find that is a run's cost — an
-        // editor runs its program several times an event of a drag.
+        // editor runs its program several times an event of a drag. Not for
+        // a part that read the part placing it (`..`), which may have
+        // changed since.
         if part.ran_as(steps, end, inputs, state)
+            && part.outside_read.is_empty()
             && (part.files_read.iter()).all(|(path, read)| self.revision(path) == *read)
         {
             return RunOutput {
