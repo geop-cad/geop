@@ -1239,3 +1239,31 @@ fn copying_the_step_being_edited_copies_it_as_edited() {
     let extrusion: ExtrudeArgs = args(&excerpt.steps[0]);
     assert_eq!(extrusion.extent, crate::Extents::blind(3.0));
 }
+
+/// Why a step does not build is said beside the field it does not build
+/// with — a draft past square, at the draft — and in the step's error.
+#[test]
+fn an_error_is_said_beside_the_field_it_concerns() {
+    let (mut editor, _) = editor();
+    handled(&mut editor, open("hole"));
+    let update = editor.handle(dialog("draft", Value::Number(95.0)));
+    let step = update.step.expect("the step is edited");
+    assert!(step.error.is_some(), "a draft of 95 degrees builds");
+    let errors: Vec<(&str, &str)> = (step.presentation.dialog.0.iter())
+        .filter_map(|f| Some((f.key.as_str(), f.failure.as_deref()?)))
+        .collect();
+    assert_eq!(errors.len(), 1, "{errors:?}");
+    assert_eq!(errors[0].0, "draft");
+    assert!(errors[0].1.contains("less than 90 degrees"), "{errors:?}");
+
+    let update = editor.handle(dialog("draft", Value::Number(5.0)));
+    let step = update.step.expect("the step is edited");
+    assert!(step.error.is_none(), "{:?}", step.error);
+    assert!(
+        step.presentation
+            .dialog
+            .0
+            .iter()
+            .all(|f| f.failure.is_none())
+    );
+}

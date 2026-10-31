@@ -24,6 +24,8 @@ export interface TimelineStep {
   error: string | null;
   /** Past where the program currently runs to. */
   dim: boolean;
+  /** Suppressed: it builds nothing, in the configuration built. */
+  suppressed: boolean;
   /** Being written by the open form. */
   editing: boolean;
   /** The parts it placed, with their programs' steps: each to edit where it is placed. */
@@ -45,9 +47,17 @@ interface Props {
   onEdit: (index: number) => void;
   /** Edit the step `id` of the part placed as `instance`, where it is placed. */
   onEditPlaced: (instance: string, id: string) => void;
+  /** The placed part new steps go into, built in context, if one is chosen. */
+  context: string | null;
+  /** New steps go into the part placed as `instance`, built in context — or, none, into the program. */
+  onContext: (instance: string | null) => void;
   onRemove: (index: number) => void;
   /** Copy step `index` to the clipboard, to paste with Ctrl+V. */
   onCopy: (index: number) => void;
+  /** Suppress step `index`, or run it again, in the configuration built. */
+  onSuppress: (index: number) => void;
+  /** The step under the pointer, which Ctrl+E suppresses: its index, or none. */
+  onHover: (index: number | null) => void;
   /** Move step `index` to `to` among the other steps. */
   onMove: (index: number, to: number) => void;
   onSeek: (slot: number) => void;
@@ -66,7 +76,21 @@ interface Press {
   moved: boolean;
 }
 
-export function Timeline({ steps, seeker, enabled, onEdit, onEditPlaced, onRemove, onCopy, onMove, onSeek }: Props) {
+export function Timeline({
+  steps,
+  seeker,
+  enabled,
+  onEdit,
+  onEditPlaced,
+  context,
+  onContext,
+  onRemove,
+  onCopy,
+  onSuppress,
+  onHover,
+  onMove,
+  onSeek,
+}: Props) {
   /** The steps whose placed parts' steps are listed — and any with one being edited. */
   const [unfolded, setUnfolded] = useState<Set<string>>(new Set());
   const listed = (step: TimelineStep) =>
@@ -164,12 +188,17 @@ export function Timeline({ steps, seeker, enabled, onEdit, onEditPlaced, onRemov
           "step-box",
           step.error ? "op-error" : "",
           step.dim ? "step-dim" : "",
+          step.suppressed ? "step-suppressed" : "",
           step.editing ? "step-editing" : "",
           dragged ? "dragging" : "",
           enabled ? "" : "disabled",
         ].join(" ")}
-        title={step.error ? `${step.title}\n\n${step.error}` : step.title}
+        title={[step.title, step.suppressed ? "Suppressed: it builds nothing (Ctrl+E runs it again)" : null, step.error]
+          .filter((line) => line)
+          .join("\n\n")}
         onPointerDown={(e) => onPointerDown(e, { what: "step", index: i })}
+        onPointerEnter={() => onHover(i)}
+        onPointerLeave={() => onHover(null)}
       >
         {step.icon && (
           <span className="step-icon">
@@ -188,6 +217,17 @@ export function Timeline({ steps, seeker, enabled, onEdit, onEditPlaced, onRemov
           </button>
         )}
         <span className="step-name">{step.name}</span>
+        <button
+          className={`step-suppress${step.suppressed ? " on" : ""}`}
+          disabled={!enabled}
+          title={step.suppressed ? "Run this step again (Ctrl+E)" : "Suppress this step: build without it (Ctrl+E)"}
+          aria-label={step.suppressed ? "Run this step again" : "Suppress this step"}
+          aria-pressed={step.suppressed}
+          onPointerDown={(e) => e.stopPropagation()}
+          onClick={() => onSuppress(i)}
+        >
+          ⊘
+        </button>
         <button
           className="step-copy"
           disabled={!enabled}
@@ -221,6 +261,7 @@ export function Timeline({ steps, seeker, enabled, onEdit, onEditPlaced, onRemov
                 "step-box",
                 "step-placed",
                 inner.error ? "op-error" : "",
+                inner.suppressed ? "step-suppressed" : "",
                 inner.editing ? "step-editing" : "",
                 enabled ? "" : "disabled",
               ].join(" ")}
@@ -236,6 +277,21 @@ export function Timeline({ steps, seeker, enabled, onEdit, onEditPlaced, onRemov
             </li>,
           );
         }
+        const here = context === placed.instance;
+        rows.push(
+          <li
+            key={`${step.id}/${placed.instance}/+`}
+            className={["step-box", "step-placed", "step-context", here ? "step-editing" : "", enabled ? "" : "disabled"].join(" ")}
+            title={
+              here
+                ? "New steps go into this part, built against the parts placed before it here. Click to put them into the program again."
+                : "Put new steps into this part, where it is placed: built against the parts placed before it here, in context."
+            }
+            onClick={() => enabled && onContext(here ? null : placed.instance)}
+          >
+            <span className="step-name">{here ? `New steps go into ${placed.instance} ✕` : `＋ New step in ${placed.instance}`}</span>
+          </li>,
+        );
       }
     }
   });

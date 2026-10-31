@@ -19,6 +19,7 @@ use serde::{Deserialize, Serialize};
 use crate::{
     element::{ElementReference, HasElements, Kind},
     kept::Keeper,
+    numeric::{ParameterValue, parameter},
     operation::Operation,
     part::StepContext,
     target::{Target, TargetReference},
@@ -177,6 +178,32 @@ impl Operation for InputFrameOperation {
             Ok(Frame {
                 data: Vector3::from_array([x, Scalar::ZERO, Scalar::ZERO]),
             })
+        })
+    }
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+pub struct NumberArgs {
+    pub name: String,
+    pub value: f64,
+}
+
+/// Defines the parameter `name` (see [`crate::numeric::parameter`]): the
+/// run's input of its name, given a number, else `value`.
+pub struct NumberOperation;
+
+impl Operation for NumberOperation {
+    const KIND: &'static str = "number";
+    type Args = NumberArgs;
+
+    fn run(ctx: &mut StepContext, args: &Self::Args) -> GeopResult<()> {
+        ctx.produce(&parameter(&args.name), args, |part, args| {
+            Ok(ParameterValue::Number(
+                match part.retrieve_input(&args.name) {
+                    Some(Setting::Number(value)) => value,
+                    _ => args.value,
+                },
+            ))
         })
     }
 }

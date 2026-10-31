@@ -66,13 +66,9 @@ export function located(e: PickedElement): { instance: string; target: string } 
   return { instance, target: name };
 }
 
-/** The datums `elements` light of `view`, the view of the placed part `instance` (`""` for the part's own): by name as drawn — `origin:x` an axis — behind the instance's path (see [[locatedKey]]). */
-export function litDatums(view: PartView, instance: string, elements: PickedElement[]): string[] {
-  return elements.flatMap((e) => {
-    const at = located(e);
-    if (at.instance !== instance || at.target !== view.datum_target) return [];
-    return [locatedKey(instance, e.name)];
-  });
+/** The datums lit, by name as drawn — `origin:x` an axis — behind their placed part's path (see [[locatedKey]]). */
+export function litDatums(lighting: Lighting): string[] {
+  return Object.entries(lighting).flatMap(([instance, lit]) => lit.datums.map((d) => locatedKey(instance, d)));
 }
 
 /** Whether two elements are the same one. */
@@ -252,6 +248,8 @@ export interface Step {
   id: string;
   operation: string;
   args: unknown;
+  /** Whether it runs, a formula of the parameters: where it is 0 it is suppressed. Always, if none. */
+  active?: string;
 }
 
 /** A pose, as a file has it: a position and a rotation quaternion `[w, x, y, z]`. */
@@ -303,6 +301,15 @@ export type ParamValue = number | Pose | string;
 export interface Program {
   steps: Step[];
   state?: Record<string, ParamValue>;
+  /** How it is shown, saved with it — see `geop_core_program::program::Display`. */
+  display?: Display;
+}
+
+/** What is shown or hidden, the colours placed parts are drawn in, and the placed parts shown alone, by name. */
+export interface Display {
+  visibility?: Record<string, boolean>;
+  colors?: Record<string, string>;
+  isolated?: string[];
 }
 
 // ── editing ──────────────────────────────────────────────────────────────────
@@ -538,7 +545,8 @@ export type Control =
   | ({ type: "table" } & Table);
 
 /** A control, under the key the events it sends carry. */
-export type Field = { key: string } & Control;
+/** A control, the key its events carry, and — where the step does not build with its value — why, said beside it. */
+export type Field = { key: string; failure?: string } & Control;
 
 export type Shape =
   | { shape: "point"; at: Vec3 }
@@ -599,8 +607,6 @@ export interface Presentation {
   /** Where the dialog is shown. */
   layout: Layout;
   visuals: Visual[];
-  /** Elements of the part to draw lit. */
-  highlights: PickedElement[];
   /** What a click picks right now: elements of these kinds as drawn (`face`, `datum`, `sketch_curve`). */
   pickable: string[];
   /** A plane to work in, head on. */
@@ -631,6 +637,8 @@ export type Command =
   | { command: "new"; kind: string }
   /** Open the step `id` — of the part placed as `placed`, if given, where it is placed. */
   | { command: "open"; id: string; placed?: string }
+  /** A new step of `kind` after the steps of the part placed as `placed`, edited where it is placed: built against the parts placed beside it, in context. */
+  | { command: "new_in"; kind: string; placed: string }
   | { command: "event"; event: EditEvent }
   | { command: "commit" }
   | { command: "cancel" }
@@ -655,6 +663,8 @@ export type Command =
   | { command: "visibility"; name: string; visible: boolean }
   | { command: "appearance"; name: string; color: string | null }
   | { command: "isolate"; names: string[] }
+  /** Light `elements` too — what a list item or an answer's row points at — until lit otherwise; `[]` once it leaves. */
+  | { command: "light"; elements: PickedElement[] }
   /** Something the user did in the panel `key` (see [[ProgramState]] `panels`), which it reads as `payload`. */
   | { command: "panel"; key: string; payload: unknown }
   /**
@@ -725,6 +735,8 @@ export interface StepInfo {
   error: string | null;
   /** Whether it runs: it is before where the program runs to. */
   runs: boolean;
+  /** Whether it is suppressed: it ran, and found it was not to, so it built nothing. */
+  suppressed: boolean;
   editing: boolean;
   /** The parts it placed, each with its program's steps, to edit where it is placed. */
   placed: PlacedSteps[];
@@ -736,6 +748,13 @@ export interface PlacedSteps {
   /** The file it is placed from, as the workspace names it. */
   file: string;
   steps: StepInfo[];
+}
+
+/** Something every front end offers, and its key (`geop_core_editor::keys`): `Mod+K`, `?`, `F`. */
+export interface AppKey {
+  action: string;
+  key: string;
+  label: string;
 }
 
 export interface ProgramState {
@@ -767,6 +786,8 @@ export interface ProgramState {
   panels: Record<string, unknown>;
   /** What the part's structure says beside its items, by their names, from what the panels show: how free a placed part is. */
   details: Record<string, string>;
+  /** The keys of what every front end offers besides the operations. */
+  keys: AppKey[];
 }
 
 /**
@@ -867,7 +888,34 @@ export interface Update {
   export: ExportedFile | null;
   /** The pick tool's inspector's answer about its picks, while it is in hand — or the answer to an `inspect` command. */
   inspection: Inspection | null;
+  /** What to draw lit, when it changed: kept until sent again (see [[Lighting]]). */
+  lit: Lighting | null;
 }
+
+/**
+ * What the kernel says is lit of one drawn part (`geop_core_editor::view::lit::Lit`):
+ * its elements by name, a sketch's curves and points by the sketch's name
+ * and their id. A front end draws it, and decides nothing of it.
+ */
+export interface Lit {
+  /** All of it: a placed part hovered or selected whole. */
+  whole: boolean;
+  faces: string[];
+  edges: string[];
+  vertices: string[];
+  solids: string[];
+  /** Steps whose faces are lit. */
+  features: string[];
+  /** Whole sketches, by name. */
+  sketches: string[];
+  curves: [string, string][];
+  sketch_points: [string, string][];
+  /** Datums, by name as drawn. */
+  datums: string[];
+}
+
+/** What is lit, of the part drawn (`""`) and of each part placed in it by its name: only those of which something is. */
+export type Lighting = Record<string, Lit>;
 
 // ── inspecting — see `geop_ops::output::Answer` ───────────────────────────────
 

@@ -1033,6 +1033,64 @@ await check("the command palette finds and runs an operation, a step and an acti
   return builtCleanly();
 });
 
+await check("the wheel zooms towards the pointer: what is under it stays under it", async () => {
+  await fresh();
+  await fileMenu(page, "Box with drill hole");
+  await builtCleanly();
+  // The view framed the part, gliding there: once it is at rest.
+  await page.waitForTimeout(800);
+  const before = await page.evaluate(() => window.geopView.pose());
+  const sub = (a, b) => a.map((x, k) => x - b[k]);
+  const cross = (a, b) => [a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0]];
+  const back = sub(before.position, before.target);
+  const distance = Math.hypot(...back);
+  const right = cross(before.up, back);
+  const r = Math.hypot(...right);
+  // A point of the target's plane, off to the right of the middle.
+  const p = before.target.map((t, k) => t + (right[k] / r) * distance * 0.15);
+  const [x, y] = await page.evaluate((p) => window.geopView.project(p), p);
+  await page.mouse.move(x, y);
+  await page.mouse.wheel(0, -300);
+  await settle(page);
+  const after = await page.evaluate(() => window.geopView.pose());
+  const [x1, y1] = await page.evaluate((p) => window.geopView.project(p), p);
+  const nearer = Math.hypot(...sub(after.position, after.target));
+  expect(nearer < distance * 0.8, `the view did not come nearer: ${distance} -> ${nearer}`);
+  expect(Math.hypot(x1 - x, y1 - y) < 2, `what was under the pointer moved from (${x}, ${y}) to (${x1}, ${y1})`);
+  return `${distance.toFixed(1)} -> ${nearer.toFixed(1)} away, the point under the pointer kept within ${Math.hypot(x1 - x, y1 - y).toFixed(2)} px`;
+});
+
+await check("a dialog's first number has the focus: the arrows step it, Enter twice commits, its label scrubs", async () => {
+  await fresh();
+  await fileMenu(page, "Box with drill hole");
+  await builtCleanly();
+  await page.locator(".timeline .step-box", { has: page.locator(".step-name", { hasText: /^hole$/ }) }).click();
+  await settle(page);
+  const field = popup.locator(".field[data-field-key='distance'] input").first();
+  const focused = await field.evaluate((input) => document.activeElement === input);
+  expect(focused, "the distance does not have the focus");
+  const before = Number(await field.inputValue());
+  await page.keyboard.press("ArrowUp");
+  await settle(page);
+  const after = Number(await field.inputValue());
+  expect(after > before, `the arrow moved ${before} to ${after}`);
+  // Scrubbed by its label, sideways.
+  const label = popup.locator(".field[data-field-key='distance'] .field-label").first();
+  const box = await label.boundingBox();
+  await page.mouse.move(box.x + 5, box.y + box.height / 2);
+  await page.mouse.down();
+  await page.mouse.move(box.x + 45, box.y + box.height / 2, { steps: 5 });
+  await page.mouse.up();
+  await settle(page);
+  const scrubbed = Number(await field.inputValue());
+  expect(scrubbed > after, `scrubbing moved ${after} to ${scrubbed}`);
+  await field.focus();
+  await page.keyboard.press("Enter");
+  await settle(page);
+  expect((await popup.count()) === 0, "Enter in the field, changing nothing, did not commit");
+  return `${before} → ${after} by the arrow, → ${scrubbed} scrubbed; ${await builtCleanly()}`;
+});
+
 checks.report();
 await browser.close();
 server.stop();

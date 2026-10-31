@@ -1,10 +1,11 @@
 // A part as three.js draws it: flattened into buffers tagged with the names
 // of what they draw ([[flatten]]), built into meshes, lines and points
-// ([[buildSceneGroup]]), and highlighted by name ([[applyHighlight]]) —
+// ([[buildSceneGroup]]), and highlighted by name as the kernel says
+// ([[applyHighlight]]) —
 // shared by the part drawn and the parts placed in it (see `placed3d.ts`).
 
 import * as THREE from "three";
-import { locate, located, type Frame, type PartView, type PickedElement, type Vec3 } from "./geop";
+import type { Frame, Lit, PartView, Vec3 } from "./geop";
 
 const vec = (v: [number, number, number]) => new THREE.Vector3(v[0], v[1], v[2]);
 
@@ -23,9 +24,6 @@ const ANNOTATION_COLOR = 0x2a2a2a;
  * what it draws — what three.js takes, and what highlighting by name needs.
  */
 export interface Scene {
-  /** The target the part's vertices, edges and faces are of, and each sketch's name by its target: what lit elements name (see [[applyHighlight]]). */
-  model: string;
-  sketch_targets: Record<string, string>;
   /** `[x, y, z, colorHex]` per point, and the name of the vertex each draws. */
   points: [number, number, number, number][];
   point_names: string[];
@@ -69,8 +67,6 @@ export function flatten(part: PartView, hidden: string[] = []): Scene {
     (solid == null || !hidden.includes(solid)) &&
     (solid != null || faces.length === 0 || faces.some((f) => !hidden.includes(f)));
   const scene: Scene = {
-    model: part.model,
-    sketch_targets: Object.fromEntries(part.sketches.map((s) => [s.target, s.name])),
     points: [],
     point_names: [],
     lines: [],
@@ -313,36 +309,24 @@ export function tint(colors: Float32Array, k: number) {
 }
 
 /**
- * Draw `highlights` highlighted in `group` (built by [[buildSceneGroup]]
- * from `scene`), the sketches in `hidden` not at all — unless lit — and
- * everything else as built. Lit edges and vertices are drawn again on top,
- * so they can be seen wherever they are.
+ * Draw what `lit` says is lit (the kernel's: see [[Lit]]) highlighted in
+ * `group` (built by [[buildSceneGroup]] from `scene`), the sketches in
+ * `hidden` not at all — unless lit — and everything else as built. Lit
+ * edges and vertices are drawn again on top, so they can be seen wherever
+ * they are.
  */
-export function applyHighlight(group: THREE.Group, scene: Scene, highlights: PickedElement[], hidden: string[]) {
+export function applyHighlight(group: THREE.Group, scene: Scene, lit: Lit | null, hidden: string[]) {
   /** A curve's or a point's key: its sketch and its id there. */
   const curveKey = (sketch: string, id: string) => `${sketch}\u0000${id}`;
-  const [faces, solids, sketches, edges, vertices, features, curves, sketchPoints] = Array.from(
-    { length: 8 },
-    () => new Set<string>(),
-  );
-  // What each element lights, by the target it is of and its kind: of the
-  // model, its faces, edges, vertices and solids — the faces a plane or a
-  // round is of, the edges a line or a curve is — of a sketch, it or its
-  // curves and points; a feature, the faces it made, wherever it is.
-  for (const h of highlights) {
-    const { instance, target } = located(h);
-    if (instance) continue;
-    const sketch = scene.sketch_targets[target];
-    if (h.kind === "feature") features.add(h.name);
-    else if (sketch != null && h.kind === "sketch_curve") curves.add(curveKey(sketch, h.name));
-    else if (sketch != null && h.kind === "sketch_point") sketchPoints.add(curveKey(sketch, h.name));
-    else if (sketch != null) sketches.add(sketch);
-    else if (target !== scene.model) continue;
-    else if (["face", "plane", "round"].includes(h.kind)) faces.add(h.name);
-    else if (["edge", "line", "curve", "circle", "path"].includes(h.kind)) edges.add(h.name);
-    else if (["vertex", "point"].includes(h.kind)) vertices.add(h.name);
-    else if (["solid", "body"].includes(h.kind)) solids.add(h.name);
-  }
+  const whole = lit?.whole ?? false;
+  const faces = new Set(lit?.faces);
+  const solids = new Set(lit?.solids);
+  const features = new Set(lit?.features);
+  const sketches = new Set(lit?.sketches);
+  const edges = new Set(lit?.edges);
+  const vertices = new Set(lit?.vertices);
+  const curves = new Set(lit?.curves.map(([sketch, id]) => curveKey(sketch, id)));
+  const sketchPoints = new Set(lit?.sketch_points.map(([sketch, id]) => curveKey(sketch, id)));
   const tags = group.userData.triangles as TriangleTags | undefined;
   if (tags) {
     const attribute = tags.mesh.geometry.getAttribute("color") as THREE.BufferAttribute;
@@ -352,6 +336,7 @@ export function applyHighlight(group: THREE.Group, scene: Scene, highlights: Pic
       const face = tags.faces[f];
       if (!face) return;
       const lit =
+        whole ||
         faces.has(face.name) ||
         (face.solid != null && solids.has(face.solid)) ||
         (face.feature != null && features.has(face.feature));
@@ -413,14 +398,6 @@ export function applyHighlight(group: THREE.Group, scene: Scene, highlights: Pic
 /** Where `frame` puts what is drawn in its own coordinates. */
 export function frameMatrix(frame: Frame): THREE.Matrix4 {
   return new THREE.Matrix4().makeBasis(vec(frame.u), vec(frame.v), vec(frame.w)).setPosition(vec(frame.origin));
-}
-
-/** The elements of `elements` that lie in the placed part `instance`, as it names them. */
-export function localTo(instance: string, elements: PickedElement[]): PickedElement[] {
-  return elements.flatMap((e) => {
-    const at = located(e);
-    return at.instance === instance ? [{ ...e, target: locate("", at.target) }] : [];
-  });
 }
 
 /** Free every geometry and material a group owns. */

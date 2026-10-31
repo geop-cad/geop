@@ -13,9 +13,11 @@ use geop_core_editor::{
     testing::handled,
 };
 use geop_core_program::{
+    cache::Cache,
     part::Part,
     placed::Located,
     program::Program,
+    testing::Shelf,
     values::{StateValue, StateValues, pose_state},
     workspace::{FileStore, FileStoreMut},
 };
@@ -640,10 +642,16 @@ fn dragging_one_of_many_placed_parts_sends_only_it() {
 /// The editor editing the robot arm `arm` (see
 /// [`crate::testing::robot_arm`]), with every file sent, its mates holding
 /// where its state has the parts.
-fn arm_editor(arm: &RobotArm) -> Editor {
+pub(crate) fn arm_editor(arm: &RobotArm) -> Editor {
+    arm_editor_in(arm, Cache::new())
+}
+
+/// [`arm_editor`], what its files are made into kept in `cache`: a
+/// process's, kept on its shelf, which a second editor reopens from.
+fn arm_editor_in(arm: &RobotArm, cache: Cache) -> Editor {
     let mut files = robot_arm(arm);
     let top = Program::from_json(&files.remove(ARM).unwrap()).unwrap();
-    let mut editor = editor();
+    let mut editor = Editor::with_cache(registry(), WithStandardParts(BTreeMap::new()), cache);
     handled(
         &mut editor,
         Command::Files {
@@ -703,6 +711,12 @@ fn pose_of_state(editor: &Editor, state: &str) -> Pose {
 #[derive(Debug)]
 struct DragCost {
     runs: usize,
+    /// The steps whose constraints were made again for a state tried.
+    made: usize,
+    /// The forms made for the list of steps.
+    forms: usize,
+    /// The steps run, of every program run.
+    steps: usize,
     resolved: usize,
     work: u64,
     report: Report,
@@ -730,7 +744,13 @@ fn drag_wrist(editor: &mut Editor, arm: &RobotArm, by: &[[f64; 2]]) -> Vec<DragC
     let targets: Vec<Pointer> = by.iter().map(|&by| onto_wrist(editor, arm, by)).collect();
     let mut costs = Vec::new();
     for (k, &to) in targets.iter().enumerate() {
-        let before = (crate::mates_resolved(), geop_lib_constraints::solve::runs());
+        let before = (
+            crate::mates_resolved(),
+            geop_lib_constraints::solve::runs(),
+            geop_lib_constraints::constraint::made_again(),
+            geop_core_editor::editable::forms_listed(),
+            geop_core_program::runner::steps_run(),
+        );
         handled(
             editor,
             Command::Event {
@@ -748,12 +768,35 @@ fn drag_wrist(editor: &mut Editor, arm: &RobotArm, by: &[[f64; 2]]) -> Vec<DragC
             .expect("the drag solved");
         costs.push(DragCost {
             runs: geop_lib_constraints::solve::runs() - before.1,
+            made: geop_lib_constraints::constraint::made_again() - before.2,
+            forms: geop_core_editor::editable::forms_listed() - before.3,
+            steps: geop_core_program::runner::steps_run() - before.4,
             resolved: crate::mates_resolved() - before.0,
             work: report.work,
             report,
         });
     }
     costs
+}
+
+/// The arm reopened from what an editor that had it open kept builds the
+/// same arm and meshes no face: its standard parts — motors, pulleys,
+/// whose sketches and booleans are most of a load — are read back, not
+/// made again.
+#[test]
+fn the_arm_reopened_meshes_no_face() {
+    let arm = RobotArm {
+        axes: 2,
+        brackets_per_link: 1,
+        screws_per_bracket: 2,
+    };
+    let shelf = Shelf::of("arm");
+    let meshed = geop_core_rasterize::faces_meshed();
+    drop(arm_editor_in(&arm, shelf.cache()));
+    assert!(geop_core_rasterize::faces_meshed() > meshed);
+    let meshed = geop_core_rasterize::faces_meshed();
+    drop(arm_editor_in(&arm, shelf.cache()));
+    assert_eq!(geop_core_rasterize::faces_meshed(), meshed);
 }
 
 /// A short drag of the wrist: three events, a few millimetres each.
@@ -774,7 +817,9 @@ fn small_arm(screws: usize) -> RobotArm {
 /// they are mated to, and are solved after it, alone (see
 /// [`geop_core_math::solvers::system::Structure`]). Before, every part
 /// mated to a moving part was one group with it: the whole arm one dense
-/// system, a drag of 101 parts — 600 variables — taking minutes.
+/// system, a drag of 101 parts — 600 variables — taking minutes. Where it
+/// is let go, a true solution near there is proven for every part it moved;
+/// the events before, solved again at the next, are not proven.
 #[test]
 fn the_arm_solves_its_links_not_its_screws() {
     let mut largest = Vec::new();
@@ -787,11 +832,12 @@ fn the_arm_solves_its_links_not_its_screws() {
         let costs = drag_wrist(&mut editor, &arm, &DRAG);
         for cost in &costs {
             assert!(cost.report.converged, "{:?}", cost.report.failed);
-            assert!(
-                cost.report.unproven.is_empty(),
-                "{:?}",
-                cost.report.unproven
-            );
+        }
+        let released = &costs.last().unwrap().report;
+        assert!(released.enclosed.is_some(), "the drag let go is proven");
+        assert!(released.unproven.is_empty(), "{:?}", released.unproven);
+        for cost in &costs[..costs.len() - 1] {
+            assert_eq!(cost.report.enclosed, None, "an event of a drag is not");
         }
         assert_ne!(before, pose_of_state(&editor, &wrist), "the wrist moved");
         largest.push(costs.iter().map(|c| c.report.largest).max().unwrap());
@@ -811,10 +857,13 @@ fn the_arm_solves_its_links_not_its_screws() {
     );
 }
 
-/// A drag of the wrist costs as many program runs, and resolves as many
-/// mates — none — however many screws the brackets carry; its dense
-/// linear algebra grows with them no faster than they do: each screw is
-/// enclosed on its own, a system of six variables.
+/// A drag of the wrist costs as many program runs — one, which finds the
+/// part built already; at every state it tries, it makes only the
+/// constraints it asks again — and resolves as many mates — none —
+/// however many screws the brackets carry; its dense linear algebra grows
+/// with them no faster than they do: each screw is enclosed on its own, a
+/// system of six variables. Before, every state tried ran the program
+/// again, 96 runs an event, each walking every step.
 #[test]
 fn drag_work_grows_with_the_moving_links_not_the_screws() {
     let costs: Vec<Vec<DragCost>> = [5, 20]
@@ -822,7 +871,25 @@ fn drag_work_grows_with_the_moving_links_not_the_screws() {
         .map(|screws| {
             let arm = small_arm(screws);
             let mut editor = arm_editor(&arm);
-            drag_wrist(&mut editor, &arm, &DRAG)
+            let costs = drag_wrist(&mut editor, &arm, &DRAG);
+            // The steps of the parts placed are listed as they were kept:
+            // a drag builds none of them again. And the program is run
+            // once, at the state found: no run of one that did not change
+            // walks its steps.
+            let steps = editor.program().steps.len();
+            for (k, cost) in costs.iter().enumerate() {
+                assert!(
+                    cost.forms <= steps,
+                    "event {k}: {} forms listed, of {steps} steps",
+                    cost.forms
+                );
+                assert!(
+                    cost.steps <= steps,
+                    "event {k}: {} steps run, of {steps} steps",
+                    cost.steps
+                );
+            }
+            costs
         })
         .collect();
     let [few, many] = &costs[..] else {
@@ -831,6 +898,7 @@ fn drag_work_grows_with_the_moving_links_not_the_screws() {
     println!("{few:?}\n{many:?}");
     for (k, (few, many)) in few.iter().zip(many).enumerate() {
         assert_eq!((few.resolved, many.resolved), (0, 0), "event {k}");
+        assert!(few.runs <= 1, "event {k}: {} program runs", few.runs);
         assert!(
             many.runs <= few.runs,
             "event {k}: {} program runs with 20 screws a bracket, {} with 5",
@@ -877,12 +945,20 @@ fn robot_arm_timings() {
             screws_per_bracket: screws,
             ..RobotArm::default()
         };
+        let shelf = Shelf::of("arm");
         let runs = geop_lib_constraints::solve::runs();
-        let (load, mut editor) = cpu_timed(|| arm_editor(&arm));
+        let (load, editor) = cpu_timed(|| arm_editor_in(&arm, shelf.cache()));
         println!(
             "robot arm of {} parts: load {load:.2} s, {} program runs",
             arm.parts(),
             geop_lib_constraints::solve::runs() - runs
+        );
+        drop(editor);
+        let meshed = geop_core_rasterize::faces_meshed();
+        let (reopen, mut editor) = cpu_timed(|| arm_editor_in(&arm, shelf.cache()));
+        println!(
+            "  reopened from what the load kept {reopen:.2} s, {} faces meshed",
+            geop_core_rasterize::faces_meshed() - meshed
         );
         let drags = [[2.0, 1.0], [4.0, 3.0], [6.0, 4.0], [9.0, 5.0], [12.0, 5.0]];
         let start = cpu_seconds();
@@ -891,8 +967,11 @@ fn robot_arm_timings() {
         for (k, cost) in costs.iter().enumerate() {
             assert!(cost.report.converged, "{:?}", cost.report.failed);
             println!(
-                "  drag event {k}: {} program runs, {} mates resolved, work {}, largest group {} variables, {} solve and {} enclosure evaluations",
+                "  drag event {k}: {} program runs, {} constraint steps made again, {} forms listed, {} steps run, {} mates resolved, work {}, largest group {} variables, {} solve and {} enclosure evaluations",
                 cost.runs,
+                cost.made,
+                cost.forms,
+                cost.steps,
                 cost.resolved,
                 cost.work,
                 cost.report.largest,
@@ -980,4 +1059,83 @@ fn a_drag_event_sends_what_moved_however_large_the_assembly() {
         many < 2 * few,
         "a move of one screw sent {few} bytes with 20 screws, {many} with 80"
     );
+}
+
+/// The latency budget's kernel side on the 2000-part robot arm (see
+/// `docs/ux.md`): what the editor spends answering what the user does — a
+/// hover and a click of the drag tool, a step of the arm opened, a number
+/// of its dialog typed, the step committed — with the size of what it
+/// sends. Measured, not asserted: the large-assembly work owns the solve.
+#[test]
+#[ignore = "slow: timings of the 2000-part robot arm — run with `cargo test --release -- --ignored latency_on_the_robot_arm --nocapture`"]
+fn latency_on_the_robot_arm() {
+    let arm = RobotArm {
+        screws_per_bracket: 80,
+        ..RobotArm::default()
+    };
+    let (load, mut editor) = timed(|| arm_editor(&arm));
+    println!("robot arm of {} parts: load {load:.3} s", arm.parts());
+    editor.handle(Command::Tool {
+        key: Some("drag".into()),
+    });
+    let (here, there) = (
+        onto_wrist(&editor, &arm, [0.0, 0.0]),
+        onto_wrist(&editor, &arm, [1.0, 0.0]),
+    );
+    let (hover, update) = timed(|| {
+        editor.handle(Command::Event {
+            event: StepEditEvent::Hover {
+                pointer: here,
+                shift: false,
+            },
+        })
+    });
+    println!("  hover {:.1} ms, {}", hover * 1e3, size(&update));
+    let (moved, update) = timed(|| {
+        editor.handle(Command::Event {
+            event: StepEditEvent::Hover {
+                pointer: there,
+                shift: false,
+            },
+        })
+    });
+    println!("  hover moved {:.1} ms, {}", moved * 1e3, size(&update));
+    let (click, update) = timed(|| {
+        editor.handle(Command::Event {
+            event: StepEditEvent::Click {
+                pointer: there,
+                button: geop_core_editor::editing::Button::Primary,
+                double: false,
+                shift: false,
+            },
+        })
+    });
+    println!("  click {:.1} ms, {}", click * 1e3, size(&update));
+    editor.handle(Command::Tool { key: None });
+
+    let last = editor.program().steps.last().unwrap().id.clone();
+    let open = || Command::Open {
+        id: last.clone(),
+        placed: None,
+    };
+    let (opened, update) = timed(|| editor.handle(open()));
+    println!("  open {last} {:.1} ms, {}", opened * 1e3, size(&update));
+    let number =
+        (update.step.as_ref().unwrap().presentation.dialog.0.iter()).find_map(|f| {
+            match &f.control {
+                geop_core_editor::editing::Control::Number(n) => Some((f.key.clone(), n.value)),
+                _ => None,
+            }
+        });
+    if let Some((key, value)) = number {
+        let (typed, update) = timed(|| {
+            editor.handle(geop_core_editor::testing::dialog(
+                &key,
+                geop_core_editor::editing::Value::Number(value + 1.0),
+            ))
+        });
+        println!("  type {key} {:.1} ms, {}", typed * 1e3, size(&update));
+    }
+    let (commit, update) = timed(|| editor.handle(Command::Commit));
+    println!("  commit {:.1} ms, {}", commit * 1e3, size(&update));
 }

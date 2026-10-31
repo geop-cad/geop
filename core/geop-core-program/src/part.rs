@@ -21,12 +21,18 @@ use geop_core_math::geop_error::{GeopError, GeopResult};
 
 use crate::{
     kept::{Derivation, Digest, Hasher, Keeper, KeptRead, digest_debug},
-    placed::{PLACED, PlacedPart, placed},
+    numeric::{evaluate, read_parameter},
+    placed::{OUTSIDE, PLACED, PlacedPart, placed},
+    program::ProgramStep,
     reader::{Reader, Recording},
     runner::Runner,
     target::{Node, Provenance, Read, Target, TargetReference, next_version},
     values::{Settings, StateValues},
 };
+
+/// What the target a step's [`StepContext::active`] comes to is named, before
+/// the step's id.
+pub const ACTIVE: &str = "active:";
 
 /// What makes a node's value from its arguments and what it reads. A plain
 /// function, not a closure: what it makes may depend only on its
@@ -76,6 +82,9 @@ pub struct Part {
     pub(crate) state: StateValues,
     /// The steps of the last run that failed, with why.
     failures: Vec<(String, GeopError)>,
+    /// The steps of the run going on, or of the last, that are suppressed
+    /// (see [`crate::program::ProgramStep::active`]), in order.
+    suppressed: Vec<String>,
     /// Changes whenever a run changes any node (see [`Part::revision`]).
     revision: u64,
     changed: bool,
@@ -84,9 +93,18 @@ pub struct Part {
     pub(crate) states_read: BTreeSet<String>,
     /// The files it read, and in which revision.
     pub(crate) files_read: BTreeMap<String, u64>,
+    /// What it read of the part it was placed in, in context (see
+    /// [`crate::reader::Reader::outside`]), as read there: what the part
+    /// placing it reads for it, and what a build of it is shared by.
+    pub(crate) outside_read: Vec<Read>,
     /// What was made of it whole, once for every reader of it (see
     /// [`Reader::shared`]).
     pub(crate) shared: Shared,
+    /// The steps its last run ran, and up to where, if it ran them all
+    /// without a failure: what a run of the same, with the same inputs and
+    /// state and every file as it read it, finds nothing to do for
+    /// ([`Part::ran_as`]).
+    ran_steps: Option<(Vec<ProgramStep>, usize)>,
 }
 
 /// What was made of a part whole, by what made it, with what that read
@@ -163,13 +181,33 @@ impl Part {
         &self.failures
     }
 
+    /// The steps of the last run that are suppressed — that ran, and found
+    /// they were not to — in order (see
+    /// [`crate::program::ProgramStep::active`]).
+    pub fn suppressed(&self) -> &[String] {
+        &self.suppressed
+    }
+
+    /// The steps suppressed before position `before`, in order.
+    pub(crate) fn suppressed_before(&self, before: usize) -> Vec<&str> {
+        (self.suppressed.iter())
+            .filter(|step| self.position(step).is_some_and(|at| at < before))
+            .map(String::as_str)
+            .collect()
+    }
+
+    /// Notes that the step running is suppressed.
+    pub(crate) fn suppress(&mut self, step: &str) {
+        self.suppressed.push(step.to_string());
+    }
+
     /// How many steps of the last run ran.
     pub(crate) fn ran(&self) -> usize {
         self.ran
     }
 
     /// The position of the step `step` in the last run.
-    fn position(&self, step: &str) -> Option<usize> {
+    pub(crate) fn position(&self, step: &str) -> Option<usize> {
         self.positions.get(step).copied()
     }
 
@@ -260,6 +298,20 @@ impl Part {
         .collect()
     }
 
+    /// The part as the step that placed `instance` in the last run left it:
+    /// what a step of the part placed, edited where it is placed, reads in
+    /// context (see [`Reader::placed_in`]) — the parts placed before it,
+    /// and where it is itself. None, for no part placed so.
+    pub fn placing(&self, instance: &str) -> Option<Reader<'_>> {
+        let reference = placed(instance);
+        let (name, nodes) = self.nodes.get_key_value(reference.name())?;
+        let at = (nodes.iter())
+            .filter_map(|node| self.position(&node.step))
+            .filter(|at| *at < self.ran)
+            .max()?;
+        Some(Reader::new(self, at + 1).for_make_of(name))
+    }
+
     /// The part placed as `instance` that a reader before `before` sees.
     pub(crate) fn placed_at(
         &self,
@@ -277,13 +329,16 @@ impl Part {
 
     /// Whether `read`, made by a reader before `before` for the node `own`,
     /// reads the same now. A file is read through a runner: without one, it
-    /// is not known to read the same.
+    /// is not known to read the same; what was read of the part it is placed
+    /// in, through `outside`, the part placing it as it reads it — without
+    /// one, neither.
     pub(crate) fn holds(
         &self,
         read: &Read,
         before: usize,
         own: Option<&str>,
         runner: Option<&Runner>,
+        outside: Option<&Reader>,
     ) -> bool {
         match read {
             Read::Target {
@@ -302,9 +357,12 @@ impl Part {
                     && (now.iter().zip(targets))
                         .all(|((name, node), (was, by))| name == was && node.step == *by)
             }
+            Read::Inside { instance, read } if instance == OUTSIDE => outside.is_some_and(|o| {
+                (o.part()).holds(read, o.position(), o.own(), runner, o.outside_reader())
+            }),
             Read::Inside { instance, read } => self
                 .placed_at(instance, before, own)
-                .is_ok_and(|inner| inner.holds(read, inner.ran, None, runner)),
+                .is_ok_and(|inner| inner.holds(read, inner.ran, None, runner, None)),
         }
     }
 
@@ -319,6 +377,9 @@ impl Part {
         match read {
             Read::State(name, _) => Some(name.clone()),
             Read::Target { name, producer, .. } => self.node(name, producer)?.state_read.clone(),
+            // What it read of the part it is placed in is no state of its
+            // own: the part placing it reads it for it.
+            Read::Inside { instance, .. } if instance == OUTSIDE => None,
             Read::Inside { instance, read } => {
                 let inner = self.placed_at(instance, before, own).ok()?;
                 let state = inner.state_read(read, inner.ran, None)?;
@@ -338,6 +399,7 @@ impl Part {
         before: usize,
         own: Option<&str>,
         runner: &Runner,
+        outside: Option<&Reader>,
     ) -> Option<(KeptRead, Digest)> {
         Some(match read {
             Read::Target { name, .. } | Read::Absent(name) => (
@@ -355,9 +417,20 @@ impl Part {
                         .map(|(name, by)| (name.as_str(), by.as_str())),
                 ),
             ),
+            Read::Inside { instance, read } if instance == OUTSIDE => {
+                let o = outside?;
+                let (read, digest) = (o.part()).read_digest(
+                    read,
+                    o.position(),
+                    o.own(),
+                    runner,
+                    o.outside_reader(),
+                )?;
+                (KeptRead::Inside(instance.clone(), Box::new(read)), digest)
+            }
             Read::Inside { instance, read } => {
                 let inner = self.placed_at(instance, before, own).ok()?;
-                let (read, digest) = inner.read_digest(read, inner.ran, None, runner)?;
+                let (read, digest) = inner.read_digest(read, inner.ran, None, runner, None)?;
                 (KeptRead::Inside(instance.clone(), Box::new(read)), digest)
             }
         })
@@ -373,6 +446,7 @@ impl Part {
         before: usize,
         own: Option<&str>,
         runner: &Runner,
+        outside: Option<&Reader>,
     ) -> Option<(Read, Digest)> {
         Some(match kept {
             KeptRead::Target(name) => {
@@ -415,8 +489,22 @@ impl Part {
                 (read, digest)
             }
             KeptRead::Inside(instance, kept) => {
-                let inner = self.placed_at(instance, before, own).ok()?;
-                let (read, digest) = inner.resolve(kept, inner.ran, None, runner)?;
+                let (read, digest) = match instance == OUTSIDE {
+                    true => {
+                        let o = outside?;
+                        (o.part()).resolve(
+                            kept,
+                            o.position(),
+                            o.own(),
+                            runner,
+                            o.outside_reader(),
+                        )?
+                    }
+                    false => {
+                        let inner = self.placed_at(instance, before, own).ok()?;
+                        inner.resolve(kept, inner.ran, None, runner, None)?
+                    }
+                };
                 let read = Read::Inside {
                     instance: instance.clone(),
                     read: Box::new(read),
@@ -453,6 +541,7 @@ impl Part {
 
     /// Starts a run of the steps `order`, given `inputs` and `state`.
     pub(crate) fn begin(&mut self, order: Vec<String>, inputs: &Settings, state: &StateValues) {
+        self.ran_steps = None;
         self.shared = Shared::default();
         self.positions.clear();
         for (at, step) in order.iter().enumerate() {
@@ -462,6 +551,7 @@ impl Part {
         self.ran = 0;
         self.running = None;
         self.run += 1;
+        self.suppressed.clear();
         self.changed = false;
         if self.inputs != *inputs {
             self.inputs = inputs.clone();
@@ -517,6 +607,27 @@ impl Part {
         self.changed |= !dropped.is_empty();
     }
 
+    /// Whether its last run ran `steps` up to `end`, with `inputs` and
+    /// `state`, and none failed: run so again, with every file it read as
+    /// it read it, every step would reuse what it made.
+    pub(crate) fn ran_as(
+        &self,
+        steps: &[ProgramStep],
+        end: usize,
+        inputs: &Settings,
+        state: &StateValues,
+    ) -> bool {
+        self.failures.is_empty()
+            && self.state == *state
+            && self.inputs == *inputs
+            && (self.ran_steps.as_ref()).is_some_and(|(ran, upto)| *upto == end && ran == steps)
+    }
+
+    /// Notes that its run ran `steps` up to `end` (see [`Part::ran_as`]).
+    pub(crate) fn ran_through(&mut self, steps: &[ProgramStep], end: usize) {
+        self.ran_steps = self.failures.is_empty().then(|| (steps.to_vec(), end));
+    }
+
     /// Ends the run: drops the nodes of steps no longer in the program —
     /// those after where it stopped stay — and notes what it read from
     /// outside and how its steps failed.
@@ -535,6 +646,8 @@ impl Part {
         self.failures = failures;
         self.states_read.clear();
         self.files_read.clear();
+        self.outside_read.clear();
+        let mut outside = std::collections::HashSet::new();
         for read in (self.nodes.values().flatten()).flat_map(|node| node.reads.iter()) {
             match read {
                 Read::State(name, _) => {
@@ -543,9 +656,16 @@ impl Part {
                 Read::File(path, revision) => {
                     self.files_read.insert(path.clone(), *revision);
                 }
+                Read::Inside { instance, read }
+                    if instance == OUTSIDE && outside.insert(read.key()) =>
+                {
+                    self.outside_read.push((**read).clone());
+                }
                 _ => {}
             }
         }
+        // In an order that is the same for every build of the same reads.
+        self.outside_read.sort_by_key(Read::key);
     }
 
     /// Stores `node` as what its step produced of `name`.
@@ -614,6 +734,8 @@ pub struct StepContext<'a> {
     part: &'a mut Part,
     step: &'a str,
     position: usize,
+    /// The part the part is placed in, while it is built there.
+    outside: Option<Rc<Reader<'a>>>,
 }
 
 impl<'a> StepContext<'a> {
@@ -622,12 +744,14 @@ impl<'a> StepContext<'a> {
         part: &'a mut Part,
         step: &'a str,
         position: usize,
+        outside: Option<Rc<Reader<'a>>>,
     ) -> Self {
         Self {
             runner,
             part,
             step,
             position,
+            outside,
         }
     }
 
@@ -645,6 +769,26 @@ impl<'a> StepContext<'a> {
     /// that declares one node per element of something asks.
     pub fn reader(&self) -> Reader<'_> {
         Reader::new(self.part, self.position)
+    }
+
+    /// Whether the step runs, as `active` says: a formula of the program's
+    /// parameters, not 0 where it does (see
+    /// [`crate::program::ProgramStep::active`]); always, for none. What the
+    /// formula comes to is a node of the step's own (`active:<step>`), so a
+    /// parameter it reads that changes runs the step again or suppresses
+    /// it, and nothing else does. Fails, naming the formula, where it does
+    /// not come to a number.
+    pub(crate) fn active(&mut self, active: Option<&str>) -> GeopResult<bool> {
+        let Some(formula) = active else {
+            return Ok(true);
+        };
+        let target = TargetReference::<bool>::new(format!("{ACTIVE}{}", self.step));
+        let ctx = |e: GeopError| e.with_context(format!("whether the step runs: {formula:?}"));
+        self.produce(&target, &formula.to_string(), |reader, formula| {
+            Ok(evaluate(formula, |name| read_parameter(reader, name))? != 0.0)
+        })
+        .map_err(ctx)?;
+        self.reader().target(&target).copied().map_err(ctx)
     }
 
     /// Produces the step's node of `target`: reused if it was made from
@@ -678,8 +822,15 @@ impl<'a> StepContext<'a> {
         }
         let reusable = old.is_some_and(|node| {
             node.made_from::<T, Args>(args)
-                && (node.reads.iter())
-                    .all(|read| part.holds(read, at, Some(name), Some(self.runner)))
+                && (node.reads.iter()).all(|read| {
+                    part.holds(
+                        read,
+                        at,
+                        Some(name),
+                        Some(self.runner),
+                        self.outside.as_deref(),
+                    )
+                })
         });
         if reusable {
             let run = self.part.run;
@@ -704,13 +855,16 @@ impl<'a> StepContext<'a> {
         self.runner.count_make(T::KEEPER.is_some());
         let part = &*self.part;
         let recording = Recording::default();
-        let reader = Reader::making(part, at, name, old, self.runner, &recording);
+        let outside = self.outside.clone();
+        let reader = Reader::making(part, at, name, old, self.runner, &recording, outside);
         let made = make(&reader, args)
             .map_err(|e| e.with_context(format!("making target `{name}` in step `{step}`")));
         let reads = recording.take();
         let state_read = (reads.iter()).find_map(|read| part.state_read(read, at, Some(name)));
         let kept = (reads.iter())
-            .map(|read| part.read_digest(read, at, Some(name), self.runner))
+            .map(|read| {
+                part.read_digest(read, at, Some(name), self.runner, self.outside.as_deref())
+            })
             .collect::<Option<Vec<_>>>()
             .map(|reads| {
                 let derivation = Derivation {
@@ -758,7 +912,8 @@ impl<'a> StepContext<'a> {
             }
             let reads = (record.derivation.reads.iter())
                 .map(|(kept, digest)| {
-                    let (read, now) = part.resolve(kept, at, Some(name), runner)?;
+                    let outside = self.outside.as_deref();
+                    let (read, now) = part.resolve(kept, at, Some(name), runner, outside)?;
                     (now == *digest).then_some(read)
                 })
                 .collect::<Option<Vec<_>>>();

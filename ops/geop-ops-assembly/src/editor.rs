@@ -28,6 +28,7 @@ use geop_core_editor::{
         Value, Visual,
     },
 };
+use geop_core_math::primitives::FrameAxis;
 use geop_core_program::{
     numeric::{ParameterValue, read_parameter_values},
     values::{Setting, Settings, StateValue, pose_state},
@@ -46,7 +47,9 @@ use geop_ops_model::parameters::{
 
 use crate::{
     AddPartArgs, Anchor, CouplingKind, Joint, JointKind, Kind, Limits, Mate, MateKind, Motion,
-    Transmission, joint_parameter,
+    Transmission,
+    add_part_derived::{plane_choices, plane_name},
+    joint_parameter,
     mechanism::mate_holds,
     solving::{SettingsState, check, settings},
 };
@@ -507,6 +510,28 @@ fn parameter_key(name: &str) -> String {
     format!("parameter:{name}")
 }
 
+/// Whether the part is placed mirrored, and in which plane of its own
+/// origin: the other hand of it.
+fn mirror(f: &mut PartForm, args: &AddPartArgs) {
+    if args.file.is_empty() {
+        return;
+    }
+    let chosen = args.mirror.map_or("", plane_name);
+    let options = (std::iter::once(Choice::new("", "Not mirrored")))
+        .chain(plane_choices())
+        .collect();
+    f.select(
+        "mirror",
+        "Mirrored",
+        chosen,
+        options,
+        false,
+        |Edit { args, .. }, plane| {
+            args.mirror = FrameAxis::ALL.into_iter().find(|n| plane_name(*n) == plane);
+        },
+    );
+}
+
 /// The placed part's own parameters, each as what it is given here: its
 /// colour picked, a number on a slider, a table's row chosen from a list
 /// to search.
@@ -632,6 +657,7 @@ pub(crate) fn form<'a>(
     );
 
     parameters(&mut f, context, args);
+    mirror(&mut f, args);
 
     // Shown as a position and angles — what people read — though a pose is
     // a quaternion: setting one angle rebuilds it from the three shown.

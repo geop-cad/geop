@@ -18,6 +18,14 @@
 //! [`crate::reader::Reader::placed_part`]), which records it as read inside
 //! the placed part: a node reading the second link of an arm is made again
 //! when that link changes, not when anything in the arm does.
+//!
+//! A part placed reads the part placing it in context, while it is built
+//! there, through the path [`OUTSIDE`]: `/../bracket:model` is the model
+//! of the part placed as `bracket` beside it — placed before it, so that no
+//! two parts read each other — and `/..:model` the placing part's own (see
+//! [`crate::reader::Reader::outside`]). What it read so is read by the
+//! placing part for it, so a change there builds it again, and a build of
+//! it is shared only where what it read there reads the same.
 
 use std::{
     collections::HashMap,
@@ -29,16 +37,20 @@ use geop_core_math::geop_error::{GeopError, GeopResult};
 
 use crate::{
     part::{Part, StepContext},
-    program::Program,
+    program::{Program, ProgramStep},
     reader::Reader,
     target::{Read, Target, TargetReference},
-    values::{Settings, StateValues},
+    values::{Settings, StateValue, StateValues},
     workspace::Location,
 };
 
 /// What separates the names of a path of instances, and begins a located
 /// name: `/asm/bolt:model`.
 pub const INSTANCE_SEPARATOR: char = '/';
+
+/// The name of the part a part is placed in, in a path of instances: the
+/// part placing it, read in context — `/../bracket:model`.
+pub const OUTSIDE: &str = "..";
 
 /// What separates a located name's instance path from the name in that
 /// instance: `/asm/bolt:model`. A name is split at the first one after the
@@ -47,11 +59,27 @@ pub const TARGET_SEPARATOR: char = ':';
 
 /// The path of the instance `name` of the instance at `outer`: `asm/bolt`
 /// — `name` itself, for none. A path is held without the leading
-/// [`INSTANCE_SEPARATOR`] its located names are spelled with.
+/// [`INSTANCE_SEPARATOR`] its located names are spelled with. A `name`
+/// through the part `outer` is placed in ([`OUTSIDE`]) goes up out of it:
+/// `../bracket` of `asm/p` is `asm/bracket`.
 pub fn instance_path(outer: &str, name: &str) -> String {
-    match outer.is_empty() {
-        true => name.to_string(),
-        false => format!("{outer}{INSTANCE_SEPARATOR}{name}"),
+    let (mut outer, mut name) = (outer, name);
+    while !outer.is_empty() {
+        let up = match name.strip_prefix(OUTSIDE) {
+            Some("") => "",
+            Some(rest) => match rest.strip_prefix(INSTANCE_SEPARATOR) {
+                Some(rest) => rest,
+                None => break,
+            },
+            None => break,
+        };
+        outer = split_instance_path(outer).0;
+        name = up;
+    }
+    match (outer.is_empty(), name.is_empty()) {
+        (true, _) => name.to_string(),
+        (false, true) => outer.to_string(),
+        (false, false) => format!("{outer}{INSTANCE_SEPARATOR}{name}"),
     }
 }
 
@@ -226,12 +254,15 @@ pub fn outermost_instance(key: &str) -> Option<(&str, &str)> {
     Some((instance, key_inside(instance, key)?))
 }
 
-/// Checks that `name` can name an instance: not empty, and neither a path
-/// nor a located name.
+/// Checks that `name` can name an instance: not empty, neither a path nor
+/// a located name, and not [`OUTSIDE`].
 fn check_name(name: &str) -> GeopResult<()> {
-    match name.is_empty() || name.contains([INSTANCE_SEPARATOR, TARGET_SEPARATOR]) {
+    match name.is_empty()
+        || name == OUTSIDE
+        || name.contains([INSTANCE_SEPARATOR, TARGET_SEPARATOR])
+    {
         true => Err(GeopError::new(format!(
-            "{name:?} cannot name an instance: it is empty or contains \
+            "{name:?} cannot name an instance: it is empty, {OUTSIDE:?}, or contains \
              {INSTANCE_SEPARATOR:?} or {TARGET_SEPARATOR:?}"
         ))),
         false => Ok(()),
@@ -274,11 +305,14 @@ impl PartialEq for PlacedPart {
 impl Target for PlacedPart {}
 
 /// What a part is placed from: the program file, as the placing program
-/// names it, and what its parameters are set to.
+/// names it, what its parameters are set to, and the steps run after its
+/// own — none, for the part as its file builds it: a part derived from it,
+/// mirrored, say, otherwise.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct PlacedArgs {
     pub file: String,
     pub inputs: Settings,
+    pub then: Vec<ProgramStep>,
 }
 
 /// Places the part the program in `args.file` builds as `instance`, its
@@ -303,8 +337,9 @@ pub fn place(ctx: &mut StepContext, instance: &str, args: &PlacedArgs) -> GeopRe
 /// gives under the instance's name, the program's own where it gives none.
 /// Taken from the runner's build cache where an equal build is there; else
 /// built from the part the instance had before, if it had one, so that
-/// only what reads what changed is made again. Records the file and every
-/// state and file the part placed read.
+/// only what reads what changed is made again — placed in the part
+/// `reader` reads, which it reads in context. Records the file and every
+/// state and file the part placed read, and what it read in context.
 pub fn build_placed(reader: &Reader, args: &PlacedArgs) -> GeopResult<PlacedPart> {
     let own = reader.own().unwrap_or_default();
     let instance = own.strip_prefix(PLACED).ok_or_else(|| {
@@ -313,19 +348,46 @@ pub fn build_placed(reader: &Reader, args: &PlacedArgs) -> GeopResult<PlacedPart
         ))
     })?;
     check_name(instance)?;
+    build(reader, args, Some(instance))
+}
+
+/// The part the program `args` places builds on its own — with its own
+/// state, placed nowhere: what a step deriving a part from another reads
+/// the bodies of. Shared with every build alike, a placed one's too.
+/// Records the file and every file the part read.
+pub fn build_derived(reader: &Reader, args: &PlacedArgs) -> GeopResult<PlacedPart> {
+    build(reader, args, None)
+}
+
+/// The part the program `args` places builds — placed as `instance` of the
+/// part `reader` reads, with the slice of its state under the instance's
+/// name and reading it in context, or on its own (see [`build_placed`],
+/// [`build_derived`]).
+fn build(reader: &Reader, args: &PlacedArgs, instance: Option<&str>) -> GeopResult<PlacedPart> {
     let runner = reader.runner()?;
-    let (program, location) = reader.program(&args.file)?;
+    let (loaded, location) = reader.program(&args.file)?;
+    let program = match args.then.is_empty() {
+        true => loaded,
+        false => Rc::new(Program {
+            steps: (loaded.steps.iter()).chain(&args.then).cloned().collect(),
+            ..(*loaded).clone()
+        }),
+    };
     let given = &reader.part().state;
     // The values the part gives under the instance's name, each with its
     // name in the placed part: `/bolt:b.pose` is its `b.pose`.
-    let prefix = format!("{INSTANCE_SEPARATOR}{instance}");
-    let slice = || {
-        (given.range(prefix.clone()..))
-            .take_while(|(name, _)| name.starts_with(&prefix))
-            .filter_map(|(name, value)| Some((name, key_inside(instance, name)?, value)))
+    let slice: Vec<(&String, &str, &StateValue)> = match instance {
+        Some(instance) => {
+            let prefix = format!("{INSTANCE_SEPARATOR}{instance}");
+            (given.range(prefix.clone()..))
+                .take_while(|(name, _)| name.starts_with(&prefix))
+                .filter_map(|(name, value)| Some((name, key_inside(instance, name)?, value)))
+                .collect()
+        }
+        None => Vec::new(),
     };
     let mut state = program.state.clone();
-    state.extend(slice().map(|(_, inside, value)| (inside.to_string(), value.clone())));
+    state.extend((slice.iter()).map(|(_, inside, value)| (inside.to_string(), (*value).clone())));
     let key = BuildKey {
         revision: runner.revision(&location.file),
         path: location.file.clone(),
@@ -333,7 +395,16 @@ pub fn build_placed(reader: &Reader, args: &PlacedArgs) -> GeopResult<PlacedPart
         inputs: args.inputs.clone(),
         state,
     };
-    let part = match runner.cached(&key) {
+    let holds = |read: &Read| {
+        (reader.part()).holds(
+            read,
+            reader.position(),
+            reader.own(),
+            Some(runner),
+            reader.outside_reader(),
+        )
+    };
+    let part = match runner.cached(&key, holds) {
         Some(part) => part,
         None => {
             let last = (reader.last())
@@ -341,7 +412,14 @@ pub fn build_placed(reader: &Reader, args: &PlacedArgs) -> GeopResult<PlacedPart
                 .and_then(|value| value.downcast_ref::<PlacedPart>());
             let mut part = last.map(|last| (*last.part).clone()).unwrap_or_default();
             let nested = runner.nested(location.clone());
-            nested.build(&mut part, &program.steps, &key.inputs, &key.state, None);
+            nested.build(
+                &mut part,
+                &program.steps,
+                &key.inputs,
+                &key.state,
+                None,
+                instance.map(|_| Rc::new(reader.clone())),
+            );
             let part = Rc::new(part);
             runner.cache(key, part.clone());
             part
@@ -350,16 +428,21 @@ pub fn build_placed(reader: &Reader, args: &PlacedArgs) -> GeopResult<PlacedPart
     // The slice it is given, and what it read besides: a value of the slice
     // that changes or goes, or one it read that comes, builds it again, so
     // its state is always the one it is placed with.
-    for (name, _, value) in slice() {
-        reader.record_raw(Read::State(name.clone(), Some(value.clone())));
+    for (name, _, value) in &slice {
+        reader.record_raw(Read::State((*name).clone(), Some((*value).clone())));
     }
-    for name in &part.states_read {
-        let name = key_behind(instance, name);
+    for name in instance
+        .iter()
+        .flat_map(|instance| (part.states_read.iter()).map(move |name| key_behind(instance, name)))
+    {
         let value = given.get(&name).cloned();
         reader.record_raw(Read::State(name, value));
     }
     for (path, revision) in &part.files_read {
         reader.record_raw(Read::File(path.clone(), *revision));
+    }
+    for read in &part.outside_read {
+        reader.record_raw(read.clone());
     }
     Ok(PlacedPart { part, location })
 }
@@ -448,20 +531,31 @@ impl BuildKey {
 pub(crate) struct BuildCache(HashMap<u64, Vec<(BuildKey, Rc<Part>)>>);
 
 impl BuildCache {
-    /// The part built from `key`, if one is, and every file it read is as
-    /// it read it — `revision` saying how each is now.
-    pub(crate) fn get(&self, key: &BuildKey, revision: impl Fn(&str) -> u64) -> Option<Rc<Part>> {
+    /// The part built from `key`, if one is, every file it read is as it
+    /// read it — `revision` saying how each is now — and every read of the
+    /// part it is placed in `holds`.
+    pub(crate) fn get(
+        &self,
+        key: &BuildKey,
+        revision: impl Fn(&str) -> u64,
+        holds: impl Fn(&Read) -> bool,
+    ) -> Option<Rc<Part>> {
         let builds = self.0.get(&key.hash())?;
         (builds.iter())
             .find(|(built, part)| {
-                built == key && (part.files_read.iter()).all(|(path, read)| revision(path) == *read)
+                built == key
+                    && (part.files_read.iter()).all(|(path, read)| revision(path) == *read)
+                    && part.outside_read.iter().all(&holds)
             })
             .map(|(_, part)| part.clone())
     }
 
+    /// Keeps `part`, built from `key`, in place of a build of the same key
+    /// that read the same of the part it is placed in: builds of one part
+    /// placed in two contexts are two.
     pub(crate) fn insert(&mut self, key: BuildKey, part: Rc<Part>) {
         let builds = self.0.entry(key.hash()).or_default();
-        builds.retain(|(built, _)| *built != key);
+        builds.retain(|(built, kept)| *built != key || kept.outside_read != part.outside_read);
         builds.push((key, part));
     }
 
@@ -554,6 +648,16 @@ mod tests {
         assert_eq!(key_inside("bolt", "/bolt:b.pose"), Some("b.pose"));
         assert_eq!(key_inside("bolt", "/bolt2:b.pose"), None);
         assert_eq!(key_inside("bolt", "b.pose"), None);
+        // Up out of a part, through the part it is placed in.
+        assert_eq!(instance_path("asm/p", "../bracket"), "asm/bracket");
+        assert_eq!(instance_path("p", "../bracket"), "bracket");
+        assert_eq!(instance_path("p", ".."), "");
+        assert_eq!(instance_path("", "../bracket"), "../bracket");
+        assert_eq!(instance_path("a/p", "../../x"), "x");
+        assert_eq!(
+            Located::parse("/../bracket:model").unwrap().behind("p"),
+            Located::new("model").behind("bracket")
+        );
         assert_eq!(
             outermost_instance("/asm/bolt:b.pose"),
             Some(("asm", "/bolt:b.pose"))
@@ -569,7 +673,7 @@ mod tests {
     #[test]
     fn an_instance_name_holds_no_separator() {
         assert!(check_name("bolt").is_ok());
-        for name in ["", "a/b", "a:b"] {
+        for name in ["", "a/b", "a:b", ".."] {
             assert!(check_name(name).is_err(), "{name:?}");
         }
     }

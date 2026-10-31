@@ -10,10 +10,11 @@ use serde::{Deserialize, Serialize};
 use crate::{
     editable::Listed,
     editing::{Presentation, StepEditEvent},
+    keys::AppKey,
     output::{Export, ExporterInfo, Inspection, InspectorInfo},
     registry::{Panel, StructureItem},
     tools::ToolInfo,
-    view::{FaceMesh, PartView, ViewInstance},
+    view::{FaceMesh, PartView, ViewInstance, lit::Lighting},
 };
 
 /// Something the user did.
@@ -25,6 +26,15 @@ pub enum Command {
     /// Start a new step of the operation `kind`, where the program runs to.
     New {
         kind: String,
+    },
+    /// Start a new step of the operation `kind` after the steps of the
+    /// part placed as `placed`, edited where it is placed: built against
+    /// the parts placed beside it, which it reads in context (see
+    /// [`geop_core_program::placed::OUTSIDE`]). Committed, it is written to
+    /// that part's file.
+    NewIn {
+        kind: String,
+        placed: String,
     },
     /// Start editing the step `id` — of the program, or, given `placed`,
     /// of the part placed as that instance, where it is placed (see
@@ -111,16 +121,16 @@ pub enum Command {
         payload: serde_json::Value,
     },
     /// Show the datum, sketch, solid or placed part `name` of the part
-    /// drawn, or hide it — whatever the editor would do by itself — for as
-    /// long as the same file is edited.
+    /// drawn, or hide it — whatever the editor would do by itself: a
+    /// display setting, saved with the program
+    /// ([`geop_core_program::program::Display`]), not a step.
     Visibility {
         name: String,
         visible: bool,
     },
     /// Draw the placed part `name` — `bolt`, `asm/bolt` — in the colour
-    /// `color`, `#rrggbb`, over its own, or — `None` — in its own again,
-    /// for as long as the same file is edited: a display setting, as the
-    /// camera is, not a step.
+    /// `color`, `#rrggbb`, over its own, or — `None` — in its own again:
+    /// a display setting, saved with the program, not a step.
     Appearance {
         name: String,
         #[serde(default)]
@@ -128,7 +138,7 @@ pub enum Command {
     },
     /// Show only the placed parts `names` — with the parts placed in them
     /// and those they are placed in — of the parts placed, or every one
-    /// again for none, for as long as the same file is edited.
+    /// again for none: a display setting, saved with the program.
     Isolate {
         names: Vec<String>,
     },
@@ -166,6 +176,13 @@ pub enum Command {
         #[serde(default)]
         date: String,
     },
+    /// Light `elements` too, beside what the step or the tool lights — what
+    /// an item of the structure or a row of an answer points at, while the
+    /// pointer is on it — until lit otherwise: none, once it leaves.
+    /// Changes nothing else (see [`Update::lit`]).
+    Light {
+        elements: Vec<PickedElement>,
+    },
     /// Panic, on purpose: how the front ends' recovery from a kernel that
     /// crashed is checked (`web/e2e/`). A panic anywhere else is a bug;
     /// this one stands in for it.
@@ -200,6 +217,10 @@ pub struct StepInfo {
     pub error: Option<String>,
     /// Whether it runs: it is before where the program runs to.
     pub runs: bool,
+    /// Whether it is suppressed: it ran, and found it was not to (see
+    /// [`geop_core_program::program::ProgramStep::active`]), so it built
+    /// nothing.
+    pub suppressed: bool,
     /// Whether it is the step being edited.
     pub editing: bool,
     /// The parts it placed, each with its program's steps, to edit where
@@ -256,6 +277,9 @@ pub struct ProgramState {
     /// from what the panels show (see [`crate::registry::Panel::details`]):
     /// how free a placed part is.
     pub details: BTreeMap<String, String>,
+    /// The keys of what every front end offers besides the operations
+    /// (see [`crate::keys`]).
+    pub keys: &'static [AppKey],
 }
 
 /// What is drawn: a part, and which of its sketches and datums not to.
@@ -362,4 +386,9 @@ pub struct Update {
     /// The answer of the tool in hand about the part — the pick tool's
     /// inspector's about its picks — or the answer to [`Command::Inspect`].
     pub inspection: Option<Inspection>,
+    /// What to draw lit, of the part drawn and of its placed parts, when
+    /// it changed (see [`crate::view::lit::Lighting`]): what the step or
+    /// the tool lights and what [`Command::Light`] does. A viewer keeps it
+    /// until it is sent again.
+    pub lit: Option<Lighting>,
 }

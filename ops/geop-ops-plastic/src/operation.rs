@@ -10,7 +10,7 @@ use geop_core_editor::{
 };
 use geop_core_geometry::shape::Plane;
 use geop_core_math::{
-    geop_error::{GeopError, GeopResult},
+    geop_error::{GeopError, GeopResult, WithContext},
     scalars::Scalar,
 };
 use geop_core_program::{element::ElementReference, part::StepContext, reader::Reader};
@@ -566,7 +566,7 @@ impl ModelOperation for Rib {
         args: &RibArgs,
     ) -> GeopResult<()> {
         let namer = Namer::new("rib", step)?;
-        let placed = reader.retrieve_element(&args.sketch)?;
+        let placed = reader.retrieve_element(&args.sketch).concerning("sketch")?;
         let target = model.solid_id(args.solid.name())?;
         let sketch = &placed.sketch;
         let geometry = sketch.enclose()?;

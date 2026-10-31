@@ -19,17 +19,20 @@
 //! computed in dual numbers, one state at a time.
 //!
 //! The editor solves ([`crate::solving::solve`]): the solve moves the state
-//! until the constraints hold, running the program again for every state it
-//! tries — what read no state that changed is reused — and the editor runs
-//! the program once more with the state found.
+//! until the constraints hold, making only the constraints it asks again
+//! at every state it tries, of the part as built (see
+//! [`geop_lib_constraints::constraint::Remade`]) — which is why a
+//! constraint reads only the state and what reads none — and the editor
+//! runs the program once more with the state found.
 //!
 //! The constraints of one step's mates are defined together, and so are
 //! their unknowns (see [`define`]).
 
 use geop_core_program::{
-    element::ElementReference, part::StepContext, reader::Reader, values::StateValue,
+    element::ElementReference, part::StepContext, placed::instance_path, reader::Reader,
+    values::StateValue,
 };
-use std::collections::BTreeMap;
+use std::{cell::RefCell, collections::BTreeMap, rc::Rc};
 
 use geop_core_math::{
     geop_error::{GeopError, GeopResult, WithContext},
@@ -44,7 +47,7 @@ use geop_lib_constraints::{
     constraint::define_constraints,
     unknown::{Unknown, declare_unknowns},
 };
-use geop_ops_model::parameters::{compose, placement};
+use geop_ops_model::parameters::{Factor, compose, placement};
 use geop_ops_model::selection::Selected;
 
 use geop_ops_model::placed::{drawn, locate, moved_by};
@@ -71,8 +74,21 @@ pub fn mates_resolved() -> usize {
 
 /// The size of the placed parts `bodies` — at least one: what a mate
 /// between them turns a turn into a length by.
+///
+/// A part made of parts placed in it — a sub-assembly — is as large as
+/// the largest of them, however deep: drawn whole, it is drawn where its
+/// state puts them, and a constraint reads no target that reads the state.
 fn size(reader: &Reader, bodies: &[&Option<String>]) -> GeopResult<Scalar> {
-    largest((bodies.iter().copied().flatten()).map(|body| drawn(reader, body)))
+    let mut pieces: Vec<String> = (bodies.iter().copied().flatten()).cloned().collect();
+    let mut rigid = Vec::new();
+    while let Some(body) = pieces.pop() {
+        let inside = reader.placed_part(&body)?.instances();
+        match inside.is_empty() {
+            true => rigid.push(body),
+            false => pieces.extend(inside.into_iter().map(|name| instance_path(&body, name))),
+        }
+    }
+    largest(rigid.iter().map(|body| drawn(reader, body)))
 }
 
 /// The geometry `entity`, the `k`th of `mate`, a constraint of `kind`, is
@@ -209,6 +225,16 @@ struct Reading<'a> {
     read: BTreeMap<String, Read>,
     by: Option<&'a str>,
     twist: Pose<D>,
+    known: &'a Known,
+}
+
+/// What a constraint's evaluations — one where the state is, one for each
+/// state it is differentiated by — read alike, read once: where each body
+/// is placed, as factors, and the bodies' sizes.
+#[derive(Default)]
+struct Known {
+    placements: RefCell<BTreeMap<String, Rc<Vec<Factor>>>>,
+    sizes: RefCell<BTreeMap<[Option<String>; 2], Scalar>>,
 }
 
 impl Reading<'_> {
@@ -218,8 +244,21 @@ impl Reading<'_> {
         let Some(body) = body else {
             return Ok(None);
         };
-        let Reading { read, by, twist } = self;
-        let placement = placement(reader, body)?;
+        let Reading {
+            read,
+            by,
+            twist,
+            known,
+        } = self;
+        let kept = known.placements.borrow().get(body).cloned();
+        let placement = match kept {
+            Some(kept) => kept,
+            None => {
+                let made = Rc::new(placement(reader, body)?);
+                (known.placements.borrow_mut()).insert(body.clone(), made.clone());
+                made
+            }
+        };
         Ok(Some(compose(&placement, &mut |state, pose| {
             read.insert(state.to_string(), Read::Pose);
             let pose = pose.map(D::cst);
@@ -268,7 +307,17 @@ impl Reading<'_> {
         a: &On<T>,
         b: &On<T>,
     ) -> GeopResult<(D, [Option<Pose<D>>; 2])> {
-        let scale = D::cst(size(reader, &[&a.body, &b.body])?);
+        let bodies = [a.body.clone(), b.body.clone()];
+        let kept = self.known.sizes.borrow().get(&bodies).copied();
+        let scale = match kept {
+            Some(kept) => kept,
+            None => {
+                let made = size(reader, &[&a.body, &b.body])?;
+                self.known.sizes.borrow_mut().insert(bodies, made);
+                made
+            }
+        };
+        let scale = D::cst(scale);
         let poses = [self.pose(reader, &a.body)?, self.pose(reader, &b.body)?];
         Ok((scale, poses))
     }
@@ -339,10 +388,12 @@ fn differentiated(
 ) -> GeopResult<Constraint> {
     // The step of a pose by its six variables, in its own frame.
     let twist = Pose::exp_with_derivatives(&Vector3::zero(), &Vector3::zero())?;
+    let known = Known::default();
     let mut plain = Reading {
         read: BTreeMap::new(),
         by: None,
         twist,
+        known: &known,
     };
     let values = evaluate(reader, &mut plain)?;
     let mut jacobian = BTreeMap::new();
@@ -356,6 +407,7 @@ fn differentiated(
             read: BTreeMap::new(),
             by: Some(&state),
             twist,
+            known: &known,
         };
         let rows = (evaluate(reader, &mut by)?.into_iter())
             .map(|r| r.d.into_iter().take(dimension).collect())

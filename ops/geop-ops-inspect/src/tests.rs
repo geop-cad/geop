@@ -23,6 +23,7 @@ use geop_ops_model::selection::Selected;
 use geop_ops_model::{NamedModel, model};
 
 use crate::{
+    ClearanceOptions, clearance_report,
     interference::Contact,
     interference_report,
     mass::{Known, MassSummary},
@@ -583,4 +584,74 @@ fn placed_parts_are_measured_where_they_are() {
             .all(|face| face.target.to_string() == "/p:model")
     );
     assert_eq!(body.drawn.len(), 6, "{body:?}");
+}
+
+/// Thirty copies of one block with a pin through it, placed in a row: the
+/// sweep compares each box only with those beside it, never every pair,
+/// and the pin and its block — the same two shapes at the same relative
+/// pose in every copy — are intersected once, every copy reported.
+#[test]
+fn copies_of_one_pair_are_checked_once() {
+    use geop_core_math::primitives::Quaternion;
+    use geop_ops_assembly::testing::{Shelf, given_model, place, runner};
+    let mut pinned = NamedModel::new();
+    cube_solid(&mut pinned, "block", v3(0.0, 0.0, 0.0), v3(4.0, 4.0, 4.0)).unwrap();
+    cube_solid(&mut pinned, "pin", v3(1.0, 1.0, -1.0), v3(2.0, 2.0, 5.0)).unwrap();
+    let copies = 30;
+    let mut top = Program::default();
+    for k in 0..copies {
+        let id = format!("p{k}");
+        top.steps.push(place(&id, "pinned.geop", &Settings::new()));
+        let at = v3(10.0 * k as f64, 0.0, 0.0);
+        let pose = Pose::new(at, Quaternion::identity()).unwrap();
+        top.state.insert(pose_state(&id), StateValue::Pose(pose));
+    }
+    let pinned = Program {
+        steps: vec![given_model("model", pinned, None)],
+        ..Program::default()
+    };
+    let shelf = Shelf::default()
+        .with("pinned.geop", pinned)
+        .with("top.geop", top.clone());
+    let runner = runner(shelf, "top.geop");
+    let mut part = Part::default();
+    top.run(&runner, &mut part).unwrap();
+    let report = interference_report(&part.current()).unwrap();
+    assert!(report.unchecked.is_empty(), "{report:?}");
+    assert_eq!(report.solids, 2 * copies);
+    assert_eq!(report.found.len(), copies, "{report:?}");
+    for found in &report.found {
+        assert_eq!(found.contact, Contact::Overlap);
+        assert_near("overlap", found.volume.unwrap(), 4.0, 1e-8);
+    }
+    let work = report.work;
+    assert_eq!(work.candidates, copies, "{work:?}");
+    assert_eq!(work.booleans, 1, "{work:?}");
+    // Each box meets the sweep beside its own copy's and its neighbours'.
+    assert!(work.boxes_compared <= 3 * copies, "{work:?}");
+}
+
+/// Two boxes half a unit apart are nearer than a clearance of one, at their
+/// facing sides, and not nearer than a quarter; a box ten away is never
+/// measured, its box further off than the clearance.
+#[test]
+fn boxes_nearer_than_a_clearance() {
+    let mut part = NamedModel::new();
+    cube_solid(&mut part, "a", v3(0.0, 0.0, 0.0), v3(2.0, 2.0, 2.0)).unwrap();
+    cube_solid(&mut part, "b", v3(2.5, 0.0, 0.0), v3(3.5, 1.0, 1.0)).unwrap();
+    cube_solid(&mut part, "c", v3(13.5, 0.0, 0.0), v3(14.5, 1.0, 1.0)).unwrap();
+    let part = built(&part, None);
+    let report = clearance_report(&part.current(), ClearanceOptions { clearance: 1.0 }).unwrap();
+    assert!(report.unmeasured.is_empty(), "{report:?}");
+    assert_eq!(report.near.len(), 1, "{report:?}");
+    let near = &report.near[0];
+    assert_eq!((near.a.as_str(), near.b.as_str()), ("cube(a)", "cube(b)"));
+    assert_near("distance", near.distance, 0.5, 1e-9);
+    let [from, to] = near.witness;
+    assert_near("from x", Bounded::of(from[0]), 2.0, 1e-9);
+    assert_near("to x", Bounded::of(to[0]), 2.5, 1e-9);
+    assert_eq!(report.work.candidates, 1, "{:?}", report.work);
+    let report = clearance_report(&part.current(), ClearanceOptions { clearance: 0.25 }).unwrap();
+    assert!(report.near.is_empty(), "{report:?}");
+    assert_eq!(report.work.candidates, 0, "{:?}", report.work);
 }

@@ -28,14 +28,14 @@ use geop_lib_constraints::Constraints;
 use geop_lib_sweep::shapes::{block_part, v3};
 use geop_ops_model::datums::{ORIGIN, component_name, datums, origin_axis, read_datums};
 use geop_ops_model::selection::Selected;
-use geop_ops_model::spacing::Spacing;
+use geop_ops_model::spacing::{Direction, Frames, PatternDirection, Spacing};
 use geop_ops_model::{read_model, testing::assert_close};
 
 use super::*;
 use geop_ops_model::placed::{locate, placed_parts};
 
 use crate::{
-    Kind, MateKind, PatternAxis,
+    Kind, MateKind,
     editor::PART,
     solving::{self, check as check_mates, solve, solved_states},
     testing::{Shelf, given_model},
@@ -229,7 +229,7 @@ impl Assembly {
     /// near where it ended.
     fn solve(&mut self, pulls: &[Pull]) -> solving::Report {
         let state = self.state.clone();
-        let (moved, report) = solve(&mut self.rerun(), &state, pulls, None).unwrap();
+        let (moved, report) = solve(&mut self.rerun(), &state, pulls, None, true, None).unwrap();
         if report.converged {
             assert!(report.unproven.is_empty(), "{:?}", report.unproven);
         }
@@ -328,7 +328,7 @@ fn solving_the_mates_moves_a_part_onto_the_part_before() {
     let mut assembly = Assembly::on_a(&[("b", mates)], state);
     assert!(!check_mates(&assembly.reader()).unwrap().converged);
     let state = assembly.state.clone();
-    let (moved, _) = solve(&mut assembly.rerun(), &state, &[], None).unwrap();
+    let (moved, _) = solve(&mut assembly.rerun(), &state, &[], None, true, None).unwrap();
     assert_eq!(moved.keys().collect::<Vec<_>>(), ["b.pose"], "a is fixed");
     assembly.run();
     let report = assembly.solve(&[]);
@@ -414,7 +414,7 @@ fn a_drag_pulls_the_point_grabbed() {
         pulls
     };
     let state = assembly.state.clone();
-    let (moved, report) = solve(&mut assembly.rerun(), &state, &pulls, None).unwrap();
+    let (moved, report) = solve(&mut assembly.rerun(), &state, &pulls, None, true, None).unwrap();
     assert!(report.converged);
     let corner = apply(&moved_to(&moved, "b"), [1.0, 0.0, 0.0]);
     assert_close(corner, [0.0, 1.0, 0.0], 1e-2);
@@ -437,12 +437,15 @@ fn a_part_needs_a_file() {
 fn a_pattern_places_copies_after_the_part() {
     let pattern = crate::PartPatternArgs {
         part: "a".into(),
-        axis: Some(PatternAxis::Datum(origin_axis(FrameAxis::X))),
-        reversed: false,
-        layout: crate::Layout::Linear {
-            spacing: Spacing::step(2.0),
+        frames: Frames::Linear {
+            first: Direction {
+                along: Some(PatternDirection::Datum(origin_axis(FrameAxis::X))),
+                reversed: false,
+                count: 3.0.into(),
+                spacing: Spacing::step(2.0),
+            },
+            second: None,
         },
-        count: 3.0.into(),
     };
     let steps = vec![
         ProgramStep::of("a", &args(false, &[])).unwrap(),
@@ -470,6 +473,7 @@ fn with_pair(pair: Assembly) -> Shelf {
     let pair = Program {
         steps: pair.program.steps,
         state: pair.state,
+        ..Program::default()
     };
     shelf().with("pair.geop", pair)
 }

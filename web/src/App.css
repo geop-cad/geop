@@ -309,6 +309,12 @@ button.small {
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
 }
 /* Said under a field, aligned with its control. */
+/* A number's label: dragged sideways, it scrubs the number. */
+.popup .field-label.scrubbable {
+  cursor: ew-resize;
+  user-select: none;
+  touch-action: none;
+}
 .popup .field-note {
   margin: -0.15rem 0 0;
   padding-left: calc(36% + 0.5rem);
@@ -801,6 +807,7 @@ button.inline {
 }
 
 .timeline .step-copy,
+.timeline .step-suppress,
 .timeline .step-remove {
   flex-shrink: 0;
   padding: 0 6px;
@@ -817,15 +824,61 @@ button.inline {
 /* Shown on the box under the pointer only, where there is one: a list of
    them is noise. */
 @media (hover: hover) {
-  .timeline .step-copy {
+  .timeline .step-copy,
+  .timeline .step-suppress:not(.on) {
     visibility: hidden;
   }
-  .timeline li.step-box:hover .step-copy {
+  .timeline li.step-box:hover .step-copy,
+  .timeline li.step-box:hover .step-suppress {
     visibility: visible;
   }
 }
-.timeline .step-copy:hover:not(:disabled) {
+.timeline .step-copy:hover:not(:disabled),
+.timeline .step-suppress:hover:not(:disabled) {
   color: #7ec9ff;
+}
+/* Where new steps go into a placed part, built in context. */
+.timeline li.step-box.step-context {
+  color: var(--text-dim);
+  font-style: italic;
+}
+
+/* A suppressed step builds nothing: struck through, its button lit. */
+.timeline li.step-box.step-suppressed {
+  opacity: 0.55;
+}
+.timeline li.step-box.step-suppressed .step-name {
+  text-decoration: line-through;
+}
+.timeline .step-suppress.on {
+  color: #ffa040;
+}
+
+/* The configuration built, and the other tables a part is looked up in. */
+.configurations {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 8px;
+}
+.configurations .configuration {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+.configurations .configuration span {
+  color: var(--text-dim);
+  font-size: 0.85rem;
+}
+.configurations select {
+  min-width: 0;
+  max-width: 12rem;
+}
+.configurations .configuration-add {
+  padding: 1px 8px;
+  font-size: 0.85rem;
 }
 
 /* Where a dragged step would land. Takes no room, so the boxes stay put. */
@@ -2716,4 +2769,30 @@ button.danger:hover:not(:disabled) {
 /* An entry of a menu in columns stays whole in its column. */
 .dropdown-menu > * {
   break-inside: avoid;
+}
+
+/* A field the step does not build with: its control outlined, why said under it. */
+.popup .field-failed input,
+.popup .field-failed select,
+.popup .field-failed .reference-box {
+  border-color: #ff8080;
+  box-shadow: 0 0 0 1px rgba(255, 128, 128, 0.35);
+}
+
+/* The keys a first visit needs, said quietly under how to start. */
+.welcome-card .welcome-keys {
+  font-size: 0.75rem;
+  color: var(--text-dim);
+}
+kbd {
+  display: inline-block;
+  padding: 0 0.3em;
+  border: 1px solid var(--line);
+  border-bottom-width: 2px;
+  border-radius: 4px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 0.85em;
+  line-height: 1.35;
+  color: var(--text-2);
+  background: var(--surface-2);
 }

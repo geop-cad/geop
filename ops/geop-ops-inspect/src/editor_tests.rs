@@ -52,15 +52,25 @@ fn workspace(name: &str) -> Editor {
 /// The answer of the inspector `kind`, asked of the part as drawn the way
 /// the inspect panel asks: as the front end reads it.
 fn ask(editor: &mut Editor, kind: &str) -> serde_json::Value {
+    ask_with(editor, kind, serde_json::Value::Null).report
+}
+
+/// The inspection of the inspector `kind`, asked as a button of its answer
+/// asks it: told `options`.
+fn ask_with(
+    editor: &mut Editor,
+    kind: &str,
+    options: serde_json::Value,
+) -> geop_core_editor::output::Inspection {
     let update = editor.handle(Command::Inspect {
         inspector: kind.into(),
-        options: serde_json::Value::Null,
+        options,
         picked: Vec::new(),
     });
     assert!(update.error.is_none(), "{kind}: {:?}", update.error);
     let inspection = update.inspection.expect("an answer");
     assert_eq!(inspection.kind, kind);
-    inspection.report
+    inspection
 }
 
 /// `json` as a number shown with its bounds.
@@ -114,6 +124,47 @@ fn an_assembly_weighs_its_placed_parts() {
     assert_eq!(report["unchecked"], serde_json::json!([]), "{report}");
     let found = report["found"].as_array().unwrap();
     assert!(found.iter().all(|f| f["contact"] != "overlap"), "{report}");
+}
+
+/// The two plates, placed a millimetre apart, keep half a millimetre's
+/// clearance; asked with the button for five, they are listed with the
+/// least distance between them — that button lit — and a line drawn
+/// between the points attaining it.
+#[test]
+fn clearance_is_asked_with_the_answers_buttons() {
+    let mut editor = workspace("parametric_plates");
+    let report = ask(&mut editor, "clearance");
+    assert_eq!(report["clearance"], 1.0);
+    let half = ask_with(
+        &mut editor,
+        "clearance",
+        serde_json::json!({ "clearance": 0.5 }),
+    );
+    assert_eq!(
+        half.report["near"],
+        serde_json::json!([]),
+        "{}",
+        half.report
+    );
+    let wide = ask_with(
+        &mut editor,
+        "clearance",
+        serde_json::json!({ "clearance": 5.0 }),
+    );
+    let shown = serde_json::to_value(&wide.shown).unwrap();
+    let chosen: Vec<_> = (shown["blocks"][0]["actions"].as_array().unwrap().iter())
+        .filter(|a| a["chosen"] == true)
+        .map(|a| a["label"].clone())
+        .collect();
+    assert_eq!(chosen, vec![serde_json::json!("5 mm")], "{shown}");
+    let near = wide.report["near"].as_array().unwrap();
+    assert_eq!(near.len(), 1, "{}", wide.report);
+    assert!(
+        bounded(&near[0]["distance"]).contains(1.0),
+        "{}",
+        wide.report
+    );
+    assert_eq!(wide.visuals.len(), 1);
 }
 
 /// The linkages' bars, stacked each on the one it is pinned to, touch but

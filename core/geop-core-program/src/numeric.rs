@@ -253,16 +253,18 @@ fn function(name: &str) -> Option<Function> {
 
 /// The value of the formula `expression`, with `lookup` the value of each
 /// parameter it names: numbers, `+ - * / ^`, parentheses, `pi`, and the
-/// functions of [`FUNCTION_NAMES`], with angles in degrees. Fails for
-/// anything else, for a name `lookup` does not know, and for a value that
-/// is no finite number.
+/// functions of [`FUNCTION_NAMES`], with angles in degrees — and, last, one
+/// comparison of two of those, `< <= > >= == !=`, 1 where it holds and 0
+/// where not: what says whether a step runs, `length > 40`
+/// ([`crate::program::ProgramStep::active`]). Fails for anything else, for
+/// a name `lookup` does not know, and for a value that is no finite number.
 pub fn evaluate(expression: &str, lookup: impl FnMut(&str) -> Option<f64>) -> GeopResult<f64> {
     let mut parser = Parser {
         rest: expression,
         lookup,
     };
     let ctx = |e: GeopError| e.with_context(format!("evaluating {expression:?}"));
-    let value = parser.sum().map_err(ctx)?;
+    let value = parser.comparison().map_err(ctx)?;
     parser.skip_space();
     if !parser.rest.is_empty() {
         return Err(ctx(GeopError::new(format!("unexpected {:?}", parser.rest))));
@@ -272,6 +274,10 @@ pub fn evaluate(expression: &str, lookup: impl FnMut(&str) -> Option<f64>) -> Ge
     }
     Ok(value)
 }
+
+/// A comparison a formula may end in: how it is spelled, and whether it
+/// holds of two numbers.
+type Comparison = (&'static str, fn(f64, f64) -> bool);
 
 /// A recursive-descent reader of a formula: what is left of it to read.
 struct Parser<'t, F> {
@@ -301,6 +307,27 @@ impl<'t, F: FnMut(&str) -> Option<f64>> Parser<'t, F> {
             }
             None => false,
         }
+    }
+
+    /// A sum, or two compared: 1 where the comparison holds, 0 where not.
+    fn comparison(&mut self) -> GeopResult<f64> {
+        let a = self.sum()?;
+        self.skip_space();
+        let comparisons: [Comparison; 6] = [
+            ("<=", |a, b| a <= b),
+            (">=", |a, b| a >= b),
+            ("==", |a, b| a == b),
+            ("!=", |a, b| a != b),
+            ("<", |a, b| a < b),
+            (">", |a, b| a > b),
+        ];
+        let Some((op, holds)) = (comparisons.into_iter()).find(|(op, _)| self.rest.starts_with(op))
+        else {
+            return Ok(a);
+        };
+        self.take(op.len());
+        let b = self.sum()?;
+        Ok(f64::from(u8::from(holds(a, b))))
     }
 
     fn sum(&mut self) -> GeopResult<f64> {
@@ -346,7 +373,7 @@ impl<'t, F: FnMut(&str) -> Option<f64>> Parser<'t, F> {
     fn atom(&mut self) -> GeopResult<f64> {
         self.skip_space();
         if self.eat('(') {
-            let v = self.sum()?;
+            let v = self.comparison()?;
             if !self.eat(')') {
                 return Err(GeopError::new("a ( is not closed"));
             }
@@ -439,6 +466,15 @@ mod tests {
             assert!(eval(bad).is_err(), "{bad:?}");
         }
         assert_eq!(names_in("width * screw.d + width"), ["width", "screw.d"]);
+        // A comparison is 1 where it holds, 0 where not, after the sums.
+        assert_eq!(eval("width > 5").unwrap(), 1.0);
+        assert_eq!(eval("width + 1 <= 5 * 2").unwrap(), 0.0);
+        assert_eq!(eval("screw.d == 5").unwrap(), 1.0);
+        assert_eq!(eval("screw.d != 5").unwrap(), 0.0);
+        assert_eq!(eval("(width >= 10) + (width < 3)").unwrap(), 1.0);
+        for bad in ["1 <", "1 < 2 < 3", "1 = 2"] {
+            assert!(eval(bad).is_err(), "{bad:?}");
+        }
     }
 
     /// A formula typed is plain if it is a number, and saves as one; any

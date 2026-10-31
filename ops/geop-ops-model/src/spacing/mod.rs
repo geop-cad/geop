@@ -1,7 +1,10 @@
-//! How the instances of a pattern are spaced — the bodies of a linear or
-//! circular pattern, the copies of a placed part — and the fields that set
-//! it: [`Spacing`], the [`Row`] of instances it lays out, and the count
-//! ([`count_field`], [`whole_count`]).
+//! Where the instances of a pattern go — the bodies or features of a
+//! pattern, the copies of a placed part, fasteners in holes — and the
+//! fields that set it: [`Frames`], every way of laying instances out, each
+//! the motions from the seed to its instances; [`Spacing`], the [`Row`]
+//! of instances in a line or round an axis, and the count
+//! ([`count_field`], [`whole_count`]); what they are laid out along, round
+//! or at ([`references`]); and where a part's holes are ([`holes`]).
 //!
 //! Every number here is a [`NumericInput`]: plain, or a formula of the
 //! part's parameters, resolved through whatever reader the step or its
@@ -19,6 +22,14 @@ use geop_core_math::{
 };
 use geop_core_program::{numeric::NumericInput, reader::Reader};
 use serde::{Deserialize, Serialize};
+
+mod frames;
+pub mod holes;
+pub mod references;
+
+pub use frames::{Direction, Frames, Offset, track};
+pub use holes::{HoleFit, HoleSite, HoleSites, hole_sites, holes_of, pose_of, read_hole_sites};
+pub use references::{PatternDirection, PointsRef, TurnAxis, resolve_points};
 
 /// How far apart the instances of a pattern are: each `Step` from the
 /// last, or spread evenly over the `Extent` from the first to the last —
@@ -178,7 +189,7 @@ impl Row {
 
     /// How far instance `k` is from the first, `value * k / divisor`
     /// enclosed in one go rather than accumulated step by step.
-    fn distance(&self, k: usize) -> GeopResult<Scalar> {
+    pub fn distance(&self, k: usize) -> GeopResult<Scalar> {
         let distance = Scalar::from_f64(self.value).mul(Scalar::from_i64(k as i64));
         if self.divisor == 1 {
             Ok(distance)

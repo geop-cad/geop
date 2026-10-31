@@ -99,7 +99,8 @@ fn build(files: BTreeMap<String, String>, path: &str, program: &Program) -> Buil
         part: &mut part,
         program: &program,
     };
-    let (moved, report) = solving::solve(&mut rerun, &program.state, &[], None).unwrap();
+    let (moved, report) =
+        solving::solve(&mut rerun, &program.state, &[], None, true, None).unwrap();
     assert!(report.converged, "{report:?}");
     program.state.extend(moved);
     program.run(&runner, &mut part).unwrap();
@@ -885,26 +886,29 @@ fn the_arm_is_exported_with_the_options_given() {
             turns with the wrist joint `add_part(hand,m1)` in geop, is exported as a visual of \
             the fixed link `upper` and stands still in a simulator"]
 fn a_pattern_of_a_jointed_part_moves_with_its_link() {
-    use crate::{Layout, PartPatternArgs, PatternAxis};
+    use crate::PartPatternArgs;
     use geop_core_math::primitives::{DatumComponent, FrameAxis};
     use geop_ops_model::{
         datums::{ORIGIN, component_name, datum},
-        spacing::Spacing,
+        spacing::{Direction, Frames, PatternDirection, Spacing},
     };
     let (files, mut program) = workspace_example("arm");
     program.push(
         "hands",
         PartPatternArgs {
             part: "hand".into(),
-            axis: Some(PatternAxis::Datum(datum(component_name(
-                ORIGIN,
-                DatumComponent::Axis(FrameAxis::Z),
-            )))),
-            reversed: false,
-            layout: Layout::Linear {
-                spacing: Spacing::step(1.0),
+            frames: Frames::Linear {
+                first: Direction {
+                    along: Some(PatternDirection::Datum(datum(component_name(
+                        ORIGIN,
+                        DatumComponent::Axis(FrameAxis::Z),
+                    )))),
+                    reversed: false,
+                    count: 2.0.into(),
+                    spacing: Spacing::step(1.0),
+                },
+                second: None,
             },
-            count: 2.0.into(),
         },
     );
     let mut part = build(files, "arm.geop", &program);

@@ -372,6 +372,24 @@ pub fn resolve_bodies(
     Ok(resolved)
 }
 
+geop_core_editor::one_of! {
+    /// Curves a sweep runs along, a rail or a guide follows, or a pattern
+    /// lays its instances along: a sketch's or a 3-D sketch's one chain of
+    /// curves, or one loop, or an edge of a face.
+    pub enum PathRef -> Chain<NurbCurve3D> {
+        Sketch(ElementReference<crate::sketch::PlacedSketch, Path>),
+        Sketch3d(ElementReference<crate::sketch3d::PlacedSketch3d, Path>),
+        Edge(ElementReference<NamedModel, Path>),
+    }
+}
+
+impl PathRef {
+    /// Whether it is the sketch `sketch`, as a path.
+    pub fn is_sketch(&self, sketch: &crate::sketch::SketchRef) -> bool {
+        matches!(self, PathRef::Sketch(path) if path.target() == sketch.target())
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use geop_core_editor::selectable::{Selectable, selected};

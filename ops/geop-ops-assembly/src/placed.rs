@@ -15,7 +15,6 @@ use geop_core_program::{
     part::StepContext,
     placed::{PlacedArgs, place},
     reader::Reader,
-    values::Settings,
 };
 use std::{
     hash::{Hash, Hasher},
@@ -58,29 +57,28 @@ pub(crate) fn draw(reader: &Reader) -> GeopResult<PartView> {
     Ok(view.finish())
 }
 
-/// Places the part the program in `file` builds as the instance `name`,
-/// its parameters set to `inputs`, at `placement` (see
+/// Places the part `placed` says — the program in its file, its
+/// parameters set to its inputs, the steps after its own run after — as the
+/// instance `name`, at `placement` (see
 /// [`geop_core_program::placed::place`]), and draws it ([`draw`]): again
 /// only when what it is drawn from changed. A step of the part placed that
 /// fails fails this, after it is placed and drawn as far as it builds.
 pub fn define_placed(
     ctx: &mut StepContext,
     name: &str,
-    file: &str,
-    inputs: &Settings,
+    placed: &PlacedArgs,
     placement: Placement,
 ) -> GeopResult<()> {
-    let placed = PlacedArgs {
-        file: file.to_string(),
-        inputs: inputs.clone(),
-    };
-    let loaded = place(ctx, name, &placed);
+    // Where it is before it is built: a part reading the parts beside it in
+    // context reads where it is itself.
     let instance = Instance {
         placement,
-        file: file.to_string(),
-        inputs: inputs.clone(),
+        file: placed.file.clone(),
+        inputs: placed.inputs.clone(),
+        then: placed.then.clone(),
     };
     define_instance(ctx, name, &instance)?;
+    let loaded = place(ctx, name, placed);
     let drawn = ctx.produce(&drawn_target(name), &name.to_string(), |reader, name| {
         // Drawn once for every instance of one build: every screw of a size.
         let inside = reader.placed_part(name)?;

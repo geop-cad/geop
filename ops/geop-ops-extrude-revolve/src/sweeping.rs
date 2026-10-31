@@ -3,13 +3,12 @@
 //! and how both are built from them by `build_extents`, each sweeping its
 //! own way (see `Sweeping`); and the curves a sweep runs along, [`PathRef`].
 
-use geop_core_program::{element::ElementReference, numeric::NumericInput, reader::Reader};
+use geop_core_program::{numeric::NumericInput, reader::Reader};
 use std::collections::HashSet;
 
 use geop_core_editor::{
     edit_form::{Edit, EditForm},
     editing::Number,
-    one_of,
 };
 use geop_core_math::{
     geop_error::{GeopError, GeopResult},
@@ -21,30 +20,12 @@ use geop_lib_booleans::{Reach, RemeshParams, boolean, combine_tools, trim_up_to_
 use geop_ops_model::{BooleanOp, Combine, End, Extent, SolidRef, Tool, hull};
 use serde::{Deserialize, Serialize};
 
-use geop_core_geometry::nurb_curve::NurbCurve3D;
-use geop_ops_model::sketch::{PlacedSketch, SketchRef};
-use geop_ops_model::sketch3d::PlacedSketch3d;
-use geop_ops_model::{Chain, NamedModel, Namer, Path, ToolReach, read_model};
+use geop_ops_model::{NamedModel, Namer, ToolReach, read_model};
 
 use geop_lib_sweep::SweepLoop;
 
-one_of! {
-    /// Curves a sweep runs along, or a rail or a guide follows: a sketch's
-    /// or a 3-D sketch's one chain of curves, or one loop, or an edge of a
-    /// face.
-    pub enum PathRef -> Chain<NurbCurve3D> {
-        Sketch(ElementReference<PlacedSketch, Path>),
-        Sketch3d(ElementReference<PlacedSketch3d, Path>),
-        Edge(ElementReference<NamedModel, Path>),
-    }
-}
-
-impl PathRef {
-    /// Whether it is the sketch `sketch`, as a path.
-    pub fn is_sketch(&self, sketch: &SketchRef) -> bool {
-        matches!(self, PathRef::Sketch(path) if path.target() == sketch.target())
-    }
-}
+/// Curves a sweep runs along: the model's (see [`geop_ops_model::PathRef`]).
+pub use geop_ops_model::PathRef;
 
 /// What a step sweeping a profile makes of it: a solid — kept as a new
 /// body, or combined with another solid as [`Combine`] says — or faces

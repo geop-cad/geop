@@ -561,6 +561,13 @@ impl Exporter for MotionExport {
                     break;
                 }
             }
+            // A solve leaves the part as it was: built at the frame's state.
+            let frame = Program {
+                steps: output.file.steps.clone(),
+                state: state.clone(),
+                display: output.file.display.clone(),
+            };
+            (output.runner).run_with(output.part, &frame, &Default::default(), None);
             let reader = output.part.current();
             let poses = (placed_parts(&reader)?.into_iter())
                 .map(|placed| {

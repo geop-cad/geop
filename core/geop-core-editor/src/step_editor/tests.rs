@@ -196,7 +196,7 @@ impl Editor {
         let editing = Editing {
             editors: &self.editors,
             runner: &self.runner,
-            part: &self.part,
+            part: (&self.part).into(),
             program: &mut self.program,
             scene: &OneFace,
         };

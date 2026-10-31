@@ -11,10 +11,11 @@ use crate::{
     element::{ElementReference, HasElements, Kind},
     part::Part,
     placed::{
-        INSTANCE_SEPARATOR, InInstance, Located, PLACED, PlacedPart, key_behind, outermost_instance,
+        INSTANCE_SEPARATOR, InInstance, Located, OUTSIDE, PLACED, PlacedPart, key_behind,
+        outermost_instance,
     },
     program::Program,
-    runner::Runner,
+    runner::{Runner, quoted},
     target::{Node, Read, TargetReference},
     values::{Setting, Settings, StateValue, StateValues},
     workspace::Location,
@@ -52,7 +53,10 @@ impl Recording {
 ///
 /// A part placed in it is read by a reader of its own
 /// ([`Reader::placed_part`]), which records what it reads as read inside
-/// the placed part ([`Read::Inside`]).
+/// the placed part ([`Read::Inside`]). So is the part it is itself placed
+/// in, while it is built there — the path [`OUTSIDE`], `..`: a step of a
+/// part placed in an assembly reads a part placed beside it there as
+/// `../bracket`, in context.
 #[derive(Clone)]
 pub struct Reader<'a> {
     part: &'a Part,
@@ -69,6 +73,15 @@ pub struct Reader<'a> {
     /// The path of the part it reads in the part of the node being made:
     /// empty for that part itself.
     path: Vec<String>,
+    /// The part the part it reads is placed in, as the step placing it
+    /// reads it, while it is built there: what `..` reads. None for a part
+    /// built on its own, and for a part placed in the part read.
+    outside: Option<Rc<Reader<'a>>>,
+    /// The state it reads in place of its part's, where that gives a value
+    /// — a state a solve tries ([`Reader::trying`]) — by the names of the
+    /// part it was given for, and the path of the part it reads in that
+    /// part.
+    trying: Option<(&'a StateValues, String)>,
 }
 
 impl<'a> Reader<'a> {
@@ -83,11 +96,41 @@ impl<'a> Reader<'a> {
             runner: None,
             recording: None,
             path: Vec::new(),
+            outside: None,
+            trying: None,
+        }
+    }
+
+    /// It as if its part were run at the state `state`, where that gives a
+    /// value — `/bolt:b.pose` the state `b.pose` of the part placed as
+    /// `bolt` — every target as its part built it: what a solve reads at
+    /// every state it tries, without running the program again.
+    ///
+    /// Only for what reads no target that itself read the state, which
+    /// would be as built at the part's own: a constraint's make, which
+    /// refuses any such read (see [`Reader::targets_reading_state`]).
+    pub fn trying(&self, state: &'a StateValues) -> Reader<'a> {
+        Reader {
+            trying: Some((state, String::new())),
+            ..self.clone()
+        }
+    }
+
+    /// The same part after the step `step` of its last run, with what that
+    /// step produced: what the step's make read, as of the end of the
+    /// step. The finished part for a step that did not run.
+    pub fn after_step(&self, step: &str) -> Reader<'a> {
+        Reader {
+            before: (self.part.position(step)).map_or(self.part.ran(), |at| at + 1),
+            own: None,
+            last: None,
+            ..self.clone()
         }
     }
 
     /// The reader of the make of `own`, by the step at position `before`,
-    /// recording into `recording`. `last` is what the step made of it last.
+    /// recording into `recording`. `last` is what the step made of it last;
+    /// `outside`, the part the part is placed in, if it is built placed.
     pub(crate) fn making(
         part: &'a Part,
         before: usize,
@@ -95,6 +138,7 @@ impl<'a> Reader<'a> {
         last: Option<&'a Node>,
         runner: &'a Runner,
         recording: &'a Recording,
+        outside: Option<Rc<Reader<'a>>>,
     ) -> Self {
         Self {
             part,
@@ -104,6 +148,8 @@ impl<'a> Reader<'a> {
             runner: Some(runner),
             recording: Some(recording),
             path: Vec::new(),
+            outside,
+            trying: None,
         }
     }
 
@@ -158,7 +204,15 @@ impl<'a> Reader<'a> {
     /// Whether everything `reads` read ([`Reader::recorded`]) reads the
     /// same through it.
     pub fn reads_same(&self, reads: &Reads) -> bool {
-        (reads.0.iter()).all(|read| (self.part).holds(read, self.before, self.own, self.runner))
+        (reads.0.iter()).all(|read| {
+            (self.part).holds(
+                read,
+                self.before,
+                self.own,
+                self.runner,
+                self.outside_reader(),
+            )
+        })
     }
 
     /// The target being made, if it reads for a make of its own part.
@@ -166,9 +220,30 @@ impl<'a> Reader<'a> {
         self.own
     }
 
+    /// The same, as of the make of `own`, recording nothing: what reads a
+    /// placed part's step, `placed:<instance>`, as its make did.
+    pub(crate) fn for_make_of(mut self, own: &'a str) -> Self {
+        self.own = Some(own);
+        self
+    }
+
     /// What the step being run made of the target being made last.
     pub(crate) fn last(&self) -> Option<&'a Node> {
         self.last
+    }
+
+    /// The part the part it reads is placed in, while it is built there.
+    pub(crate) fn outside_reader(&self) -> Option<&Reader<'a>> {
+        self.outside.as_deref()
+    }
+
+    /// The same, of a part placed in the part `outside` reads — as the
+    /// step placing it reads that part ([`Part::placing`]): what it reads
+    /// in context, through `..`, is read there. What an editor edits a step
+    /// of a placed part against, where it is placed.
+    pub fn placed_in(mut self, outside: Reader<'a>) -> Self {
+        self.outside = Some(Rc::new(outside));
+        self
     }
 
     /// The runner of the step being run: an error for a reader of an
@@ -210,8 +285,14 @@ impl<'a> Reader<'a> {
                     true => "none".to_string(),
                     false => seen.join(", "),
                 };
+                let suppressed = self.part.suppressed_before(self.before);
+                let suppressed = match suppressed.is_empty() {
+                    true => String::new(),
+                    false => format!("; suppressed before here: {}", quoted(&suppressed)),
+                };
                 Err(GeopError::new(format!(
-                    "no step before here produces target `{name}` (the targets before here: {seen})"
+                    "no step before here produces target `{name}` (the targets before here: \
+                     {seen}{suppressed})"
                 )))
             }
         }
@@ -289,20 +370,62 @@ impl<'a> Reader<'a> {
     }
 
     /// The part placed at `path` — `bolt`, or `asm/bolt` — as it was built,
-    /// every read of it recorded as read inside it.
+    /// every read of it recorded as read inside it. `..` ([`OUTSIDE`]) is
+    /// the part it is placed in — `../bracket` a part placed beside it —
+    /// as the step placing it sees that part: only parts placed before it,
+    /// so that no two parts read each other.
     pub fn placed_part(&self, path: &str) -> GeopResult<Reader<'a>> {
+        let ctx = |e: GeopError| e.with_context(format!("the placed part {path:?}"));
         let mut level = self.clone();
         for name in path.split(INSTANCE_SEPARATOR) {
-            let inner = (level.part.placed_at(name, level.before, level.own))
-                .map_err(|e| e.with_context(format!("the placed part {path:?}")))?;
+            if name == OUTSIDE {
+                level = level.outside().map_err(ctx)?.0;
+                continue;
+            }
+            let inner = level.part.placed_at(name, level.before, level.own);
+            let inner = match (inner, level.path.last()) {
+                (Ok(inner), _) => inner,
+                (Err(e), Some(last)) if last == OUTSIDE => {
+                    let me = (level.own.and_then(|own| own.strip_prefix(PLACED))).unwrap_or("");
+                    return Err(ctx(e.with_context(format!(
+                        "`{me}` reads `{name}` placed beside it in context: a part reads only \
+                         the parts placed before it, so that no two parts read each other, \
+                         and `{name}` is placed after `{me}`, or not at all"
+                    ))));
+                }
+                (Err(e), _) => return Err(ctx(e)),
+            };
             let mut inside = Reader::new(inner, inner.ran());
             inside.runner = level.runner;
             inside.recording = level.recording;
             inside.path = level.path.clone();
             inside.path.push(name.to_string());
+            inside.trying = (level.trying.as_ref())
+                .map(|(state, at)| (*state, crate::placed::instance_path(at, name)));
             level = inside;
         }
         Ok(level)
+    }
+
+    /// The part the part it reads is placed in, as the step placing it
+    /// reads it — every read of it recorded as read there, through `..` —
+    /// and the instance that step places it as. An error for a part built
+    /// on its own, which no part places.
+    pub fn outside(&self) -> GeopResult<(Reader<'a>, &'a str)> {
+        let outside = self.outside.as_deref().ok_or_else(|| {
+            GeopError::new(format!(
+                "`{OUTSIDE}` is the part this one is placed in, read in context: this one is \
+                 built on its own, placed in none — open the part that places it"
+            ))
+        })?;
+        let me = (outside.own.and_then(|own| own.strip_prefix(PLACED)))
+            .ok_or_else(|| GeopError::new("the part this one is placed in places no part here"))?;
+        let mut level = outside.clone();
+        level.recording = self.recording;
+        level.runner = self.runner.or(outside.runner);
+        level.path = self.path.clone();
+        level.path.push(OUTSIDE.to_string());
+        Ok((level, me))
     }
 
     /// The name of every part placed in the part it reads — not in those —
@@ -337,7 +460,7 @@ impl<'a> Reader<'a> {
     /// with. Else it is read inside the placed part — the placed program's
     /// own, or none before a step placed it.
     pub fn given_state(&self, name: &str) -> Option<StateValue> {
-        let value = self.part.state.get(name).cloned();
+        let value = self.own_state(name);
         self.record(Read::State(name.to_string(), value.clone()));
         match (value, outermost_instance(name)) {
             (Some(value), _) => Some(value),
@@ -345,6 +468,37 @@ impl<'a> Reader<'a> {
             (None, Some((instance, inside))) => {
                 self.placed_part(instance).ok()?.given_state(inside)
             }
+        }
+    }
+
+    /// The value of the state `name` its part has itself — at the state it
+    /// tries, where that gives one ([`Reader::trying`]): what
+    /// [`Reader::given_state`] reads first, and records.
+    fn own_state(&self, name: &str) -> Option<StateValue> {
+        let tried = (self.trying.as_ref()).and_then(|(state, at)| match at.is_empty() {
+            true => state.get(name),
+            false => state.get(&key_behind(at, name)),
+        });
+        tried.or_else(|| self.part.state.get(name)).cloned()
+    }
+
+    /// Whether every state `reads` read ([`Reader::recorded`]) reads the
+    /// same through it — at the state it tries, if it tries one — in its
+    /// part and in the parts placed in it. Only the state: of the same
+    /// part, built once, as a solve reads it at every state it tries,
+    /// nothing else read can have changed.
+    pub fn reads_same_state(&self, reads: &Reads) -> bool {
+        (reads.0.iter()).all(|read| self.state_holds(read))
+    }
+
+    /// Whether `read`, if of a state, reads the same through it.
+    fn state_holds(&self, read: &Read) -> bool {
+        match read {
+            Read::State(name, value) => self.own_state(name) == *value,
+            Read::Inside { instance, read } => {
+                (self.placed_part(instance)).is_ok_and(|inside| inside.state_holds(read))
+            }
+            _ => true,
         }
     }
 

@@ -13,7 +13,8 @@ use geop_core_math::{
 use geop_core_program::{
     element::{ElementReference, HasElements, Kind, whole},
     part::StepContext,
-    placed::{INSTANCE_SEPARATOR, Located, instance_path},
+    placed::{INSTANCE_SEPARATOR, Located, OUTSIDE, instance_path},
+    program::ProgramStep,
     reader::Reader,
     target::{Target, TargetReference},
     values::{Settings, StateValue, pose_in},
@@ -31,16 +32,19 @@ pub enum Placement {
     After { of: String, motion: Pose },
 }
 
-/// An instance placed, as its target holds it: where it is, and the file
-/// and the inputs its part was placed from — what a copy of it places
-/// again, and what a list of the parts tells them apart by. What is in it
-/// is its placed part (see [`geop_core_program::placed::PlacedPart`]).
+/// An instance placed, as its target holds it: where it is, and the file,
+/// the inputs and the steps after the file's own its part was placed from
+/// — what a copy of it places again, and what a list of the parts tells
+/// them apart by. What is in it is its placed part (see
+/// [`geop_core_program::placed::PlacedPart`]).
 #[derive(Clone, Debug, PartialEq)]
 pub struct Instance {
     pub placement: Placement,
     /// The file, as the program placing it names it.
     pub file: String,
     pub inputs: Settings,
+    /// The steps run after the file's own: a mirrored part's mirror.
+    pub then: Vec<ProgramStep>,
 }
 
 /// Defined once, by the step placing it.
@@ -115,15 +119,34 @@ const COPIES: usize = 1 << 16;
 /// of an instance's own — what places a part in it — is named as the part
 /// names it, behind the instance's path, and read so ([`Reader::given_state`]):
 /// the part's value where it gives one.
+///
+/// A path through the part `reader`'s part is placed in, read in context
+/// — `../bracket`, a part placed beside it, or `..` itself — is where that
+/// part has it, seen from where it has this one: fixed here, since nothing
+/// this part solves moves it (see [`Reader::outside`]).
 pub fn placement(reader: &Reader, path: &str) -> GeopResult<Vec<Factor>> {
     let ctx = |e: GeopError| e.with_context(format!("where the placed part {path:?} is"));
+    let outside = (path.strip_prefix(OUTSIDE))
+        .filter(|rest| rest.is_empty() || rest.starts_with(INSTANCE_SEPARATOR));
+    if let Some(rest) = outside {
+        let (outside, me) = reader.outside().map_err(ctx)?;
+        let rest = rest.strip_prefix(INSTANCE_SEPARATOR).unwrap_or(rest);
+        let here = located(&outside, me).map_err(ctx)?;
+        let there = located(&outside, rest).map_err(ctx)?;
+        return Ok(vec![Factor::Fixed(here.inverse().compose(&there))]);
+    }
     let mut factors = Vec::new();
     let mut level = reader.clone();
     let mut outer = String::new();
-    for name in path.split(INSTANCE_SEPARATOR) {
+    let mut names = path.split(INSTANCE_SEPARATOR).peekable();
+    while let Some(name) = names.next() {
         factors.append(&mut placed(reader, &level, name, &outer, 0).map_err(ctx)?);
         outer = instance_path(&outer, name);
-        level = level.placed_part(name).map_err(ctx)?;
+        // Into the part placed, for what is placed in it: where the last
+        // is needs nothing of its own part.
+        if names.peek().is_some() {
+            level = level.placed_part(name).map_err(ctx)?;
+        }
     }
     Ok(factors)
 }

@@ -6,7 +6,9 @@ use geop_core_editor::{
     editor::{Changed, EditorContext},
     tools::{Tool, ToolInfo},
 };
-use geop_core_math::{geop_error::GeopResult, primitives::Pose, vector::Vector3};
+use geop_core_math::{
+    geop_error::GeopResult, primitives::Pose, solvers::system::Structure, vector::Vector3,
+};
 use geop_core_program::program::Program;
 use geop_ops_model::placed::locate;
 
@@ -43,6 +45,9 @@ struct Grabbed {
     drawn_off: Option<Pose>,
     /// The program when it was grabbed: what undoing the drag goes back to.
     before: Program,
+    /// The groups the last event of the drag was solved in: the next is
+    /// solved in them too, a hair away (see [`solving::solve`]).
+    structure: Option<Structure>,
 }
 
 impl DragTool {
@@ -107,6 +112,7 @@ impl Tool for DragTool {
                         plane: (at, *from.ray.dir()),
                         drawn_off,
                         before: ctx.program().clone(),
+                        structure: None,
                     });
                 }
                 let Some(grab) = &self.grab else {
@@ -124,10 +130,16 @@ impl Tool for DragTool {
                         local: grab.local,
                         target: target.sharpen(),
                     };
+                    let known = grab.structure.clone();
                     let mut rerun = ctx.rerun();
                     let state = rerun.program.state.clone();
-                    if let Ok((moved, report)) = solving::solve(&mut rerun, &state, &[pull], None) {
+                    let solved =
+                        solving::solve(&mut rerun, &state, &[pull], None, *done, known.as_ref());
+                    if let Ok((moved, report)) = solved {
                         ctx.move_state(moved);
+                        if let Some(grab) = &mut self.grab {
+                            grab.structure = Some(report.structure.clone());
+                        }
                         self.dragged = Some(report);
                     }
                 }

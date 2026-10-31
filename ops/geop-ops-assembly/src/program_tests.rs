@@ -46,7 +46,7 @@ use geop_ops_model::sketch::{
     figures::{n, on_origin, rectangle_outline},
     sketch_element, whole_sketch,
 };
-use geop_ops_model::spacing::Spacing;
+use geop_ops_model::spacing::{Frames, Spacing, TurnAxis};
 use geop_ops_model::{
     Combine, Point, element, read_model,
     testing::{Built as _, assert_close, face_towards, model_of},
@@ -57,7 +57,7 @@ use geop_ops_sketch::AddSketchArgs;
 use geop_ops_model::placed::{Placed, locate, placed_parts};
 
 use crate::{
-    AddPartArgs, DragTool, PartPatternArgs, PatternAxis, Resolved,
+    AddPartArgs, DragTool, PartPatternArgs, Resolved,
     examples::{self, pose},
     mate_name,
     solving::{self, Freedom, Report, SettingsState},
@@ -181,12 +181,15 @@ impl Built {
     /// cost.
     fn solve_mates(&mut self, pull: Pull) -> GeopResult<(StateValues, Report)> {
         let state = self.program.state.clone();
-        let (moved, report) = solving::solve(&mut self.rerun(), &state, &[pull], None)?;
+        let (moved, report) = solving::solve(&mut self.rerun(), &state, &[pull], None, true, None)?;
         if report.converged {
             assert!(report.unproven.is_empty(), "{:?}", report.unproven);
             for name in moved.keys() {
                 assert!(
-                    report.enclosed.contains_key(name),
+                    report
+                        .enclosed
+                        .as_ref()
+                        .is_some_and(|e| e.contains_key(name)),
                     "{name} moved, not enclosed"
                 );
             }
@@ -989,7 +992,8 @@ fn a_mate_on_a_part_of_a_sub_assembly_is_solved() {
     );
     let report = built.check_mates().unwrap();
     assert!(!report.converged, "the pin is not up yet");
-    let (moved, report) = solving::solve(&mut built.rerun(), &top.state, &[], None).unwrap();
+    let (moved, report) =
+        solving::solve(&mut built.rerun(), &top.state, &[], None, true, None).unwrap();
     assert!(report.converged, "{report:?}");
     let pin = match moved.get(&key_behind("hinge", &pose_state("pin"))) {
         Some(StateValue::Pose(pose)) => *pose,
@@ -1564,14 +1568,14 @@ fn six_pins_are_patterned_round_a_hole() {
         PartPatternArgs {
             part: "pin".into(),
             // The plate's hole, round about (1, 1) in it.
-            axis: Some(PatternAxis::Round(
-                element("extrude(hole,hole_sketch,c1)").behind("plate"),
-            )),
-            reversed: false,
-            layout: crate::Layout::Circular {
+            frames: Frames::Circular {
+                axis: Some(TurnAxis::Round(
+                    element("extrude(hole,hole_sketch,c1)").behind("plate"),
+                )),
+                reversed: false,
+                count: 6.0.into(),
                 angle: Spacing::step(60.0),
             },
-            count: 6.0.into(),
         },
     );
     program.state = BTreeMap::from([
@@ -1623,7 +1627,9 @@ fn six_pins_are_patterned_round_a_hole() {
     assert!(err.contains("no part placed so far"), "{err}");
     edit_args(&mut program.steps[2], |pattern: &mut PartPatternArgs| {
         pattern.part = "pin".into();
-        pattern.count = 1.0.into();
+        if let Frames::Circular { count, .. } = &mut pattern.frames {
+            *count = 1.0.into();
+        }
     });
     let err = build(&program, &library).err().unwrap().to_string();
     assert!(err.contains("needs 2 or more"), "{err}");
@@ -1657,14 +1663,14 @@ fn a_part_pattern_is_made_again_only_when_what_it_reads_changes() {
         "pins",
         PartPatternArgs {
             part: "pin".into(),
-            axis: Some(PatternAxis::Round(
-                element("extrude(hole,hole_sketch,c1)").behind("plate"),
-            )),
-            reversed: false,
-            layout: crate::Layout::Circular {
+            frames: Frames::Circular {
+                axis: Some(TurnAxis::Round(
+                    element("extrude(hole,hole_sketch,c1)").behind("plate"),
+                )),
+                reversed: false,
+                count: 6.0.into(),
                 angle: Spacing::step(60.0),
             },
-            count: 6.0.into(),
         },
     );
     program.state = BTreeMap::from([
@@ -2300,7 +2306,7 @@ fn an_assembly_is_meshed_from_its_files() {
         part: &mut part,
         program: &stale,
     };
-    let (moved, report) = solving::solve(&mut rerun, &stale.state, &[], None).unwrap();
+    let (moved, report) = solving::solve(&mut rerun, &stale.state, &[], None, true, None).unwrap();
     assert!(report.converged, "{report:?}");
     stale.state.extend(moved);
     stale.run(&runner, &mut part).unwrap();
@@ -2410,7 +2416,7 @@ fn the_cam_drives_its_follower_round() {
     // Settled as the editor settles it: the foot point on the cam started
     // where it is nearest the follower.
     let state = part.program.state.clone();
-    let (moved, report) = solving::solve(&mut part.rerun(), &state, &[], None).unwrap();
+    let (moved, report) = solving::solve(&mut part.rerun(), &state, &[], None, true, None).unwrap();
     assert!(report.converged, "{report:?}");
     part.program.state.extend(moved);
     // The cam's side closes round on itself: its foot point runs on round

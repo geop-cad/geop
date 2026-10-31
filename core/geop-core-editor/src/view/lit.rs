@@ -1,13 +1,17 @@
 //! [`Lit`]: what of a drawn part a set of elements lights — the faces,
 //! edges, vertices, solids, sketches and datums a viewer draws lit for the
 //! highlights of a [`crate::editing::Presentation`], or for what an answer
-//! points at — so that every front end lights the same things.
+//! or an item of the structure points at — and [`Lighting`], what of the
+//! part drawn and of each part placed in it is lit. The editor sends the
+//! lighting ([`crate::editor::Update::lit`]); a front end only draws it,
+//! so that every front end lights the same things.
 
 use std::collections::{BTreeMap, BTreeSet};
 
 use geop_core_program::element::PickedElement;
+use serde::Serialize;
 
-use super::drawn;
+use super::{PartView, drawn};
 
 /// What a drawn part's elements are named in: the targets a lit element
 /// is of, which tell what it lights.
@@ -22,8 +26,10 @@ pub struct Targets {
 }
 
 /// What a set of elements lights of one drawn part (see the module docs).
-#[derive(Clone, Debug, Default, PartialEq)]
+#[derive(Clone, Debug, Default, PartialEq, Eq, Hash, Serialize)]
 pub struct Lit {
+    /// Whether all of it is lit: a placed part hovered or selected whole.
+    pub whole: bool,
     pub faces: BTreeSet<String>,
     pub edges: BTreeSet<String>,
     pub vertices: BTreeSet<String>,
@@ -40,6 +46,19 @@ pub struct Lit {
     pub datums: BTreeSet<String>,
 }
 
+impl Targets {
+    /// The targets the elements of `view` are named in.
+    pub fn of(view: &PartView) -> Self {
+        Self {
+            model: view.model.clone(),
+            datum_target: view.datum_target.clone(),
+            sketches: (view.sketches.iter())
+                .map(|s| (s.target.clone(), s.name.clone()))
+                .collect(),
+        }
+    }
+}
+
 impl Lit {
     /// What `elements` light of the part named in `targets`, drawn as the
     /// placed part `instance` — `""` for the part itself: those of the
@@ -48,7 +67,11 @@ impl Lit {
     /// face is, the line an edge runs along); those of a sketch, it, or
     /// its curves and points; those of its datums, them; a feature, the
     /// faces it made.
-    pub fn of(targets: &Targets, instance: &str, elements: &[PickedElement]) -> Self {
+    pub fn of<'e>(
+        targets: &Targets,
+        instance: &str,
+        elements: impl IntoIterator<Item = &'e PickedElement>,
+    ) -> Self {
         let mut lit = Self::default();
         for e in elements {
             if e.target.path() != instance {
@@ -81,7 +104,8 @@ impl Lit {
 
     /// Whether the face `name`, of `solid`, made by `feature`, is lit.
     pub fn face(&self, name: &str, solid: Option<&str>, feature: Option<&str>) -> bool {
-        self.faces.contains(name)
+        self.whole
+            || self.faces.contains(name)
             || solid.is_some_and(|s| self.solids.contains(s))
             || feature.is_some_and(|f| self.features.contains(f))
     }
@@ -89,6 +113,44 @@ impl Lit {
     pub fn is_empty(&self) -> bool {
         *self == Self::default()
     }
+}
+
+/// What is lit of the part drawn — under `""` — and of each part placed in
+/// it, by its name (`bolt`, `asm/bolt`): only those of which something is.
+pub type Lighting = BTreeMap<String, Lit>;
+
+/// What `elements` light of `part` and the parts placed in it, the placed
+/// parts `whole` lit whole. Only the parts an element is of are looked at,
+/// so lighting one face of an assembly of thousands of parts is cheap.
+pub fn lighting(part: &PartView, elements: &[PickedElement], whole: &BTreeSet<&str>) -> Lighting {
+    let mut by_part: BTreeMap<&str, Vec<&PickedElement>> = BTreeMap::new();
+    for e in elements {
+        by_part.entry(e.target.path()).or_default().push(e);
+    }
+    let mut lighting = Lighting::new();
+    let mut light = |name: &str, view: &PartView, whole: bool| {
+        let mut lit = Lit::of(
+            &Targets::of(view),
+            name,
+            by_part.get(name).into_iter().flatten().copied(),
+        );
+        lit.whole = whole;
+        if !lit.is_empty() {
+            lighting.insert(name.to_string(), lit);
+        }
+    };
+    if by_part.contains_key("") {
+        light("", part, false);
+    }
+    if by_part.keys().any(|path| !path.is_empty()) || !whole.is_empty() {
+        for instance in &part.instances {
+            let name = instance.name.as_str();
+            if by_part.contains_key(name) || whole.contains(name) {
+                light(name, &instance.view, whole.contains(name));
+            }
+        }
+    }
+    lighting
 }
 
 #[cfg(test)]

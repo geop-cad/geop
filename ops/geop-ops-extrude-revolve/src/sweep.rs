@@ -8,7 +8,7 @@ use geop_core_editor::{
     part_operation,
     part_operation::PartOperation,
 };
-use geop_core_math::geop_error::{GeopError, GeopResult};
+use geop_core_math::geop_error::{GeopError, GeopResult, WithContext};
 use geop_core_program::{element::ElementReference, part::StepContext, reader::Reader};
 use geop_ops_model::sketch::{PlacedSketch, SketchRef, shape_profiles};
 use geop_ops_model::sketch3d::PlacedSketch3d;
@@ -224,7 +224,9 @@ impl ModelOperation for Sweep {
                 "sweep: the profile and the path are two different sketches",
             ));
         }
-        let placed = reader.retrieve_element(&args.profile)?;
+        let placed = reader
+            .retrieve_element(&args.profile)
+            .concerning("profile")?;
         let sketch = &placed.sketch;
         let geometry = sketch.enclose()?;
         let shape = args.output.shape(sketch)?;

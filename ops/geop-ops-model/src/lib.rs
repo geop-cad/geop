@@ -93,9 +93,11 @@ pub use draw::ModelDrawer;
 pub use edit::BodyNames;
 pub use elements::{ChainElement, Edge, EdgeChain, Face, ModelElement, Solid, Vertex, read_model};
 pub use extent::{End, Extent, face_hull, hull, reach_past, spread_along};
-pub use feature::{BooleanOp, Feature, FeatureFaces, FeatureTool, ToolReach};
+pub use feature::{
+    BooleanOp, Feature, FeatureElement, FeatureFaces, FeatureRef, FeatureTool, ToolReach, feature,
+};
 pub use geometry::{
-    Body, Circle, Curve, Line, Path, Plane, Point, Round, frame_along, resolve_bodies,
+    Body, Circle, Curve, Line, Path, PathRef, Plane, Point, Round, frame_along, resolve_bodies,
 };
 pub use ids::RefId;
 pub use mesh::{STL_QUALITY, SolidMeshes, stl_bytes};
@@ -113,7 +115,8 @@ use geop_core_math::geop_error::GeopResult;
 /// listed ([`datums::DatumsDrawer`]); its sketches drawn and listed
 /// ([`sketch::SketchDrawer`]); the steps defining its parameters,
 /// tables and properties, and the part drawn in its colour (see
-/// [`parameters`]).
+/// [`parameters`]), and the panel switching its configurations
+/// ([`parameters::ConfigurationsPanel`]).
 pub fn register(r: Registry) -> GeopResult<Registry> {
     r.drawer(ModelDrawer::default())?
         .drawer(datums::DatumsDrawer)?
@@ -121,5 +124,6 @@ pub fn register(r: Registry) -> GeopResult<Registry> {
         .operation(parameters::DefineParameters)?
         .operation(parameters::LookupTable)?
         .operation(parameters::PartProperties)?
-        .drawer(parameters::PartColor)
+        .drawer(parameters::PartColor)?
+        .panel(parameters::ConfigurationsPanel)
 }

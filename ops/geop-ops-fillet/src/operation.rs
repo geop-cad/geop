@@ -9,7 +9,7 @@ use geop_core_editor::{
     part_operation,
     part_operation::PartOperation,
 };
-use geop_core_math::geop_error::GeopResult;
+use geop_core_math::geop_error::{GeopResult, WithContext};
 use geop_core_program::{
     element::ElementReference, numeric::NumericInput, part::StepContext, reader::Reader,
 };
@@ -93,7 +93,7 @@ impl FilletArgs {
     /// The radii, as `reader` reads the parameters.
     fn radii(&self, reader: &Reader) -> GeopResult<Radii> {
         Ok(Radii {
-            radius: self.radius.resolve(reader)?,
+            radius: self.radius.resolve(reader).concerning("radius")?,
             end_radius: match &self.end_radius {
                 Some(r) => Some(r.resolve(reader)?),
                 None => None,

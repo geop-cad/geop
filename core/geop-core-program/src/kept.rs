@@ -71,7 +71,8 @@ pub fn made_kept<T: 'static>(
         }
         let reads = (record.derivation.reads.iter())
             .map(|(kept, digest)| {
-                let (read, now) = part.resolve(kept, before, own, runner)?;
+                let (read, now) =
+                    part.resolve(kept, before, own, runner, reader.outside_reader())?;
                 (now == *digest).then_some(read)
             })
             .collect::<Option<Vec<_>>>();
@@ -87,7 +88,7 @@ pub fn made_kept<T: 'static>(
     let (made, reads) = reader.recorded(make);
     let made = made.map(Rc::new);
     let derivation = (reads.0.iter())
-        .map(|read| part.read_digest(read, before, own, runner))
+        .map(|read| part.read_digest(read, before, own, runner, reader.outside_reader()))
         .collect::<Option<Vec<_>>>()
         .map(|reads| Derivation { args, reads });
     if let (Ok(value), Some(derivation)) = (&made, derivation) {
@@ -406,9 +407,14 @@ pub(crate) struct Builds {
     records: BTreeMap<(String, String), Vec<Rc<Record>>>,
     pool: Pool,
     made: Vec<Made>,
-    /// The steps of the program, as its last run had them: a record of a
-    /// step no longer in it is not kept.
+    /// The steps of the program, as its runs since the file was read or
+    /// written had them — a program placed with steps after its own, a
+    /// mirrored part, has those too: a record of a step none had is not
+    /// kept.
     order: Option<BTreeSet<String>>,
+    /// Whether `order` was noted since the file was read or written: what
+    /// the next run's steps are added to, not put in place of.
+    ordered: bool,
     changed: bool,
 }
 
@@ -494,9 +500,15 @@ impl Builds {
         self.changed = true;
     }
 
-    /// Notes the steps of the program, as its last run had them.
+    /// Notes the steps of the program, as a run had them: with those of
+    /// the runs since the file was read or written.
     pub(crate) fn order(&mut self, order: &[String]) {
-        let order: BTreeSet<String> = order.iter().cloned().collect();
+        let mut order: BTreeSet<String> = order.iter().cloned().collect();
+        if std::mem::replace(&mut self.ordered, true)
+            && let Some(noted) = &self.order
+        {
+            order.extend(noted.iter().cloned());
+        }
         if self.order.as_ref() != Some(&order) {
             self.changed = true;
             self.order = Some(order);
@@ -512,6 +524,7 @@ impl Builds {
         if !std::mem::take(&mut self.changed) {
             return None;
         }
+        self.ordered = false;
         for made in std::mem::take(&mut self.made) {
             let key = (made.step.clone(), made.target.clone());
             let records = self.records.entry(key).or_default();

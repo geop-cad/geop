@@ -6,6 +6,7 @@ import { Icon } from "./icons";
 import { Menu, type MenuEntry } from "./Menu";
 import { Privacy } from "./Privacy";
 import { title } from "./examples";
+import { withShortcut } from "./shortcuts";
 import logo from "./assets/logo.svg";
 
 /** The community's Discord server. */
@@ -31,6 +32,9 @@ interface Props {
   /** Examples of several files: none where the files are not the app's own (VS Code). */
   workspaceExampleNames: string[];
   onLoadWorkspaceExample: (name: string) => void;
+  /** The keys of undo and redo, as the kernel names them. */
+  undoKey: string | null;
+  redoKey: string | null;
   canUndo: boolean;
   onUndo: () => void;
   canRedo: boolean;
@@ -62,6 +66,8 @@ interface Props {
  * the editor is in the middle of, and Help.
  */
 export function Toolbar({
+  undoKey,
+  redoKey,
   busy,
   hosted,
   hasSteps,
@@ -177,14 +183,14 @@ export function Toolbar({
         }}
       />
       <div className="toolbar-group" role="group" aria-label="History">
-        <button className="tool-icon" disabled={busy || !canUndo} onClick={onUndo} title="Undo (Ctrl+Z)" aria-label="Undo">
+        <button className="tool-icon" disabled={busy || !canUndo} onClick={onUndo} title={withShortcut("Undo", undoKey)} aria-label="Undo">
           <Icon name="undo" />
         </button>
         <button
           className="tool-icon"
           disabled={busy || !canRedo}
           onClick={onRedo}
-          title="Redo (Ctrl+Shift+Z)"
+          title={withShortcut("Redo", redoKey)}
           aria-label="Redo"
         >
           <Icon name="redo" />

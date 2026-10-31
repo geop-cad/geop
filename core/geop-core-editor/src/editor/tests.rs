@@ -9,9 +9,10 @@ use geop_core_math::{
     vector::Vector3,
 };
 use geop_core_program::{
-    element::{ElementReference, HasElements, Kind, whole},
+    element::{ElementReference, HasElements, Kind, PickedElement, whole},
     operation::Operation,
     part::StepContext,
+    placed::Located,
     reader::Reader,
     target::{Target, TargetReference},
 };
@@ -350,5 +351,50 @@ fn enter_commits_and_escape_cancels_a_step_at_rest() -> Result<(), GeopError> {
     assert_eq!(editor.program().steps.len(), 1);
     let update = handled(&mut editor, Command::Undo);
     assert!(update.program.is_some_and(|p| p.program.steps.is_empty()));
+    Ok(())
+}
+
+/// What is lit is the editor's to say: what [`Command::Light`] points at
+/// is sent as what it lights, once, and again only when it changes.
+#[test]
+fn the_editor_sends_what_is_lit_when_it_changes() -> Result<(), GeopError> {
+    let registry = (Registry::default().operation(Place)).and_then(|r| r.drawer(Points))?;
+    let mut editor = editor_with(registry, Default::default());
+    let update = put(&mut editor, "place", 2.0, 3.0);
+    let datums = update.scene.as_ref().map_or_else(
+        || {
+            handled(&mut editor, Command::Show)
+                .scene
+                .expect("a scene")
+                .part
+                .datum_target
+                .clone()
+        },
+        |s| s.part.datum_target.clone(),
+    );
+    let point = PickedElement {
+        target: Located::in_instance("", &datums),
+        kind: "datum".into(),
+        name: "place1".into(),
+    };
+    let light = |elements: Vec<PickedElement>| Command::Light { elements };
+
+    let update = handled(&mut editor, light(vec![point.clone()]));
+    let lit = update.lit.expect("what is lit changed");
+    assert_eq!(lit.keys().collect::<Vec<_>>(), [""]);
+    assert!(lit[""].datums.contains("place1"), "{lit:?}");
+    assert!(
+        update.scene.is_none() && update.program.is_none(),
+        "lighting changes nothing else"
+    );
+
+    let again = handled(&mut editor, light(vec![point]));
+    assert!(again.lit.is_none(), "the same lighting is not sent again");
+    let off = handled(&mut editor, light(Vec::new()));
+    assert_eq!(
+        off.lit,
+        Some(Default::default()),
+        "nothing is lit once it leaves"
+    );
     Ok(())
 }

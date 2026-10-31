@@ -3,9 +3,11 @@
 //! what a step sees of the steps before it, and how a program is checked,
 //! saved and read.
 
+mod in_context;
 pub(crate) mod instances;
 mod kept;
 mod operations;
+mod suppress;
 
 use std::{cell::RefCell, collections::BTreeMap, rc::Rc};
 
@@ -28,7 +30,8 @@ use crate::{
 pub(crate) use operations::{
     AddTwoDatums, AddTwoDatumsArgs, AddTwoFrameArgs, AddTwoFrameOperation, Datum, Datums, Frame,
     InputFrameArgs, InputFrameOperation, MiddleDatum, MiddleDatumArgs, MiddleFrameArgs,
-    MiddleFrameOperation, ShiftFrameArgs, ShiftFrameOperation, StateFrameArgs, StateFrameOperation,
+    MiddleFrameOperation, NumberArgs, NumberOperation, ShiftFrameArgs, ShiftFrameOperation,
+    StateFrameArgs, StateFrameOperation,
 };
 
 /// The state of a body at `position`, unturned.
@@ -91,6 +94,7 @@ pub(crate) fn registry() -> OperationRegistry {
         .and_then(|o| o.with(MiddleDatum))
         .and_then(|o| o.with(instances::LoadOperation))
         .and_then(|o| o.with(instances::CountOperation))
+        .and_then(|o| o.with(NumberOperation))
         .unwrap()
 }
 
@@ -122,6 +126,7 @@ impl Running {
         let program = Program {
             steps: program.steps.clone(),
             state: state.clone(),
+            ..Program::default()
         };
         let upto = program.steps.get(end).map(|step| step.id.clone());
         (self.runner).run_with(&mut self.part, &program, inputs, upto.as_deref())
@@ -169,6 +174,15 @@ pub(crate) fn shift_frame(id: &str, target: &str, x: f64) -> ProgramStep {
     ProgramStep::new::<ShiftFrameOperation>(id, &args).unwrap()
 }
 
+/// The parameter `name`, `value` unless the run's input sets it.
+pub(crate) fn number(id: &str, name: &str, value: f64) -> ProgramStep {
+    let args = NumberArgs {
+        name: name.to_string(),
+        value,
+    };
+    ProgramStep::new::<NumberOperation>(id, &args).unwrap()
+}
+
 pub(crate) fn add_two_datums(id: &str, data1: [f64; 3], data2: [f64; 3]) -> ProgramStep {
     let args = AddTwoDatumsArgs {
         data1: vector(data1),
@@ -214,7 +228,7 @@ fn datum_at(runner: &Running, name: &str) -> Vector3 {
 }
 
 /// The failed steps and what went wrong at the root.
-fn errors(output: &RunOutput) -> Vec<(String, String)> {
+pub(crate) fn errors(output: &RunOutput) -> Vec<(String, String)> {
     output
         .step_errors
         .iter()
