@@ -665,6 +665,26 @@ fn fits(
 /// and the tool's spans need not break there — a station there would put
 /// its corner on the vertex. A position past the chain's end is a fraction
 /// of the end link past it, as along the link.
+/// What a blend's sections across its chain are: the ball's great arc, of
+/// signed radius `sr` (see [`section`]), or a chamfer's chord, its
+/// distances into the faces on the chain's left and right (see [`chord`]).
+#[derive(Clone, Copy, Debug)]
+pub(crate) enum Across {
+    Ball(Scalar),
+    Chord([f64; 2]),
+}
+
+impl Across {
+    /// How far across the faces the section reaches: the radius, or the
+    /// greater distance.
+    fn size(&self) -> f64 {
+        match self {
+            Across::Ball(sr) => sr.abs().upper().to_f64(),
+            Across::Chord([a, b]) => a.max(*b),
+        }
+    }
+}
+
 #[derive(Clone, Debug)]
 pub(crate) struct RunOn {
     /// The third face's tangent plane at the vertex, `(point, normal)`, the
@@ -735,10 +755,16 @@ impl RunOn {
         })
     }
 
-    /// The ball `fraction` of the way along the end link — past its end,
-    /// above one, or before its start, below zero — of signed radius `sr`,
-    /// from the station before, `previous` (see [`place`]).
-    fn place(&self, fraction: f64, sr: Scalar, previous: Option<&Station>) -> GeopResult<Station> {
+    /// The section `fraction` of the way along the end link — past its
+    /// end, above one, or before its start, below zero — as `across` says,
+    /// from the station before, `previous`: the ball (see [`place`]), or the
+    /// chamfer's chord (see [`chamfer_station`]).
+    fn place(
+        &self,
+        fraction: f64,
+        across: Across,
+        previous: Option<&Station>,
+    ) -> GeopResult<Station> {
         let t = self.at(fraction);
         let ctx = with_context!(
             "edge {} (forward {}), its domain {:?} carried on to {:?}, at {t:?}",
@@ -757,16 +783,48 @@ impl RunOn {
         let faces = self.link.faces;
         let surfaces = [&self.surfaces[0], &self.surfaces[1]];
         let mut seeds = [(Scalar::ZERO, Scalar::ZERO); 2];
-        let mut normals = [Vector3::zero(); 2];
         for k in 0..2 {
             seeds[k] = match previous {
                 Some(prev) if prev.faces[k] == faces[k] => sharp_in(surfaces[k], prev.uv[k]),
                 _ => seed_on(surfaces[k], &p)?,
             };
+        }
+        // Carried on, a traced edge's fitted cubic drifts off both faces —
+        // `5e-4` off a hole's wall a fifth of the way round its rim.
+        let p = where_faces_meet(surfaces, seeds, &p, &along)
+            .with_context(with_context!(
+                "the edge carried on to {p:?}, onto faces {} and {} carried on",
+                faces[0],
+                faces[1]
+            ))
+            .with_context(ctx)?;
+        let mut normals = [Vector3::zero(); 2];
+        for k in 0..2 {
             let (u, v) = foot(surfaces[k], &p, seeds[k])?;
             normals[k] = surfaces[k].normal(u, v)?;
         }
         let tangent = self.link.tangent(normals, &along, &p)?;
+        let sr = match across {
+            Across::Ball(sr) => sr,
+            Across::Chord(distances) => {
+                let mut uv = seeds;
+                let mut contact = [Vector3::zero(); 2];
+                let mut normals = [Vector3::zero(); 2];
+                for k in 0..2 {
+                    let seed = match previous {
+                        Some(prev) if prev.faces[k] == faces[k] => seeds[k],
+                        _ => seed_into(surfaces[k], &p, &tangent, seeds[k], k, distances[k])?,
+                    };
+                    let ctx = with_context!("on face {} carried on", faces[k]);
+                    (uv[k], contact[k], normals[k]) =
+                        chamfer_point(surfaces[k], &p, &tangent, distances[k], seed)
+                            .with_context(ctx)?;
+                }
+                let mut station = chord(&p, contact, normals, faces, uv)?;
+                station.aloof = self.clear_of_past(&station);
+                return Ok(station);
+            }
+        };
         let (center, uv) = roll(surfaces, seeds, &p, &tangent, sr)?;
         let mut contact = [Vector3::zero(); 2];
         let mut normals = [Vector3::zero(); 2];
@@ -846,11 +904,23 @@ pub(crate) fn carried_on_past(
         let by = width
             .mul(Scalar::from_f64(carried_fraction(fraction)))
             .sharpen();
-        // Every side nearer `at` than `reach`, at the speed there: the
-        // side `at` lies on, and one a face trimmed short of its surface's
-        // end has beyond its boundary — a free choice, only ever farther.
+        // Every side that could lie nearer `at` than `reach`: the side `at`
+        // lies on, and one a face trimmed short of its surface's end has
+        // beyond its boundary — a free choice, only ever farther. How far
+        // a side is, at the least the surface runs on the way there: the
+        // speed at `at` alone says nothing of the rest of the way, and a
+        // quarter arc, faster in its middle than at its ends, was taken
+        // for farther from a point near its end than it is, and not
+        // carried on past it.
         for (at_end, side) in [(false, t0), (true, t1)] {
-            let gap = side.sub(t).abs().mul(speed.norm()).lower().to_f64();
+            let stretch = t.sharpen().union(side);
+            let on_the_way = if along_u {
+                surface.partials(stretch, v.sharpen(), 1)?[1][0]
+            } else {
+                surface.partials(u.sharpen(), stretch, 1)?[0][1]
+            };
+            let least = on_the_way.norm().lower().max(Scalar::ZERO);
+            let gap = side.sub(t).abs().mul(least).lower().to_f64();
             if t.could_be_equal(side) || gap < reach {
                 carried = carried.extended(along_u, at_end, by)?;
             }
@@ -1072,12 +1142,30 @@ fn section_points(station: &Station) -> [Vector4; 4] {
     ]
 }
 
+/// The point where the faces of `surfaces` meet nearest `p`, in the plane
+/// through `p` square to `along`, sharp: where a chain's point is, from
+/// which a chamfer's distances are measured. The edge lies there, but a
+/// traced one only as well as its fitted cubic follows the faces, and its
+/// chamfer would follow the cubic's wiggles; past the edge's end, carried
+/// on, the cubic drifts off them (see [`RunOn`]). Where along the edge the
+/// point is is a free choice, the plane square to it states which. `seeds`
+/// are foot points on each to start from.
+fn where_faces_meet(
+    surfaces: [&NurbSurface3D; 2],
+    seeds: Feet,
+    p: &Vector3,
+    along: &Vector3,
+) -> GeopResult<Vector3> {
+    let mut on_both = [0, 1].map(|k| Offset::new(surfaces[k], seeds[k], Scalar::ZERO));
+    Ok(meet(*p, &mut on_both, &[(along.normalize()?, *p)])?.sharpen())
+}
+
 /// Where a chamfer's section is taken at the point `fraction` of the way
-/// along link `link` of `chain`: the edge's point there — one point of its
-/// enclosure, which is a free choice, as is where along the edge the
-/// section is — and the unit tangent, stated by the faces' normals there as
-/// in [`place`]; and the foot points' `(u, v)` on the link's faces, from the
-/// section before, `previous`.
+/// along link `link` of `chain`: where its faces meet at the edge's point
+/// there (see [`where_faces_meet`]) — where along the edge the section is
+/// is a free choice — and the unit tangent, stated by the faces' normals
+/// there as in [`place`]; and the foot points' `(u, v)` on the link's
+/// faces, from the section before, `previous`.
 fn chamfer_frame(
     model: &Model,
     chain: &Chain,
@@ -1088,15 +1176,24 @@ fn chamfer_frame(
     let own = &chain.links[link];
     let (p, along) = own.at(model, fraction)?;
     let p = p.sharpen();
+    let surfaces = [
+        &model.get_face(own.faces[0])?.surface,
+        &model.get_face(own.faces[1])?.surface,
+    ];
+    let mut seeds = [(Scalar::ZERO, Scalar::ZERO); 2];
+    for k in 0..2 {
+        seeds[k] = match previous {
+            Some(prev) if prev.faces[k] == own.faces[k] => prev.uv[k],
+            _ => seed_on(surfaces[k], &p)?,
+        };
+    }
+    let p = where_faces_meet(surfaces, seeds, &p, &along)
+        .with_context(with_context!("the edge's point {p:?} onto its faces"))?;
     let mut normals = Vec::new();
     let mut feet = [(Scalar::ZERO, Scalar::ZERO); 2];
     for (k, at) in feet.iter_mut().enumerate() {
-        let surface = &model.get_face(own.faces[k])?.surface;
-        let seed = match previous {
-            Some(prev) if prev.faces[k] == own.faces[k] => prev.uv[k],
-            _ => seed_on(surface, &p)?,
-        };
-        let (u, v) = foot(surface, &p, seed)?;
+        let surface = surfaces[k];
+        let (u, v) = foot(surface, &p, seeds[k])?;
         normals.extend(surface.normal(u, v));
         *at = sharp_in(surface, (u, v));
     }
@@ -1111,52 +1208,79 @@ fn chamfer_frame(
 }
 
 /// The point of `surface` in the plane through `p` square to the unit
-/// `tangent`, `d` from `p`, Newton's method from `seed`: its `(u, v)`.
-/// Every iterate is sharpened — where a chamfer meets a face is its shape,
-/// chosen — and the answer checked against both conditions, to within how
-/// far the chamfer may stray from them anywhere.
+/// `tangent`, `d` from `p`, Newton's method from `seed`: its `(u, v)`, the
+/// point and the unit normal there. Every iterate is sharpened — where a
+/// chamfer meets a face is its shape, chosen — and the answer checked
+/// against both conditions, to within how far the chamfer may stray from
+/// them anywhere.
+///
+/// Where the face's surface ends short of that point — the chamfer's side
+/// running off the face over an edge, as round a hole that breaks out
+/// through the face it ends at — the point is found on the surface carried
+/// on past where it stopped (see [`carried_on_past`]), as a ball's contact
+/// is in [`place`]: the side runs on into the air there, and the boolean
+/// cuts the chamfer off where it leaves the face. Its `(u, v)` are then of
+/// the surface carried on, which keeps the face's own as they were.
 fn chamfer_point(
     surface: &NurbSurface3D,
     p: &Vector3,
     tangent: &Vector3,
     d: f64,
     seed: (Scalar, Scalar),
-) -> GeopResult<(Scalar, Scalar)> {
+) -> GeopResult<((Scalar, Scalar), Vector3, Vector3)> {
     let dd = Scalar::from_f64(d);
-    let at = iterate(
-        seed,
-        seed,
-        PROJECT_ITERATIONS,
-        Repeat::FixedPoint,
-        |&next| (sharp_in(surface, next), next),
-        |&at| -> GeopResult<Step<(Scalar, Scalar)>> {
-            let x = surface.evaluate(at.0, at.1)?;
-            let (su, sv) = surface.derivatives(at.0, at.1)?;
-            let off = x.sub(p);
-            let residual =
-                Vector2::from_array([off.prod_dot(tangent), off.prod_dot(&off).sub(dd.mul(dd))]);
-            let jacobian = Matrix::from_rows([
-                [su.prod_dot(tangent), sv.prod_dot(tangent)],
-                [
-                    Scalar::TWO.mul(off.prod_dot(&su)),
-                    Scalar::TWO.mul(off.prod_dot(&sv)),
-                ],
-            ]);
-            let step = solve_linear_system(&jacobian, &residual)?;
-            Ok(Step::Next((at.0.sub(step[0]), at.1.sub(step[1]))))
-        },
-    )?
-    .seed;
-    let x = surface.evaluate(at.0, at.1)?;
-    let off = x.sub(p);
-    let square = off.prod_dot(tangent).abs().upper().to_f64();
-    let far = off.norm().sub(dd).abs().upper().to_f64();
-    if square.max(far) > DEVIATION * d {
+    let meet = |surface: &NurbSurface3D| -> GeopResult<((Scalar, Scalar), Vector3, bool)> {
+        // A seed from a section before met on the surface carried on may lie
+        // past the face's own: from the nearest of its own.
+        let start = sharp_in(surface, seed);
+        let at = iterate(
+            start,
+            start,
+            PROJECT_ITERATIONS,
+            Repeat::FixedPoint,
+            |&next| (sharp_in(surface, next), next),
+            |&at| -> GeopResult<Step<(Scalar, Scalar)>> {
+                let x = surface.evaluate(at.0, at.1)?;
+                let (su, sv) = surface.derivatives(at.0, at.1)?;
+                let off = x.sub(p);
+                let residual = Vector2::from_array([
+                    off.prod_dot(tangent),
+                    off.prod_dot(&off).sub(dd.mul(dd)),
+                ]);
+                let jacobian = Matrix::from_rows([
+                    [su.prod_dot(tangent), sv.prod_dot(tangent)],
+                    [
+                        Scalar::TWO.mul(off.prod_dot(&su)),
+                        Scalar::TWO.mul(off.prod_dot(&sv)),
+                    ],
+                ]);
+                let step = solve_linear_system(&jacobian, &residual)?;
+                Ok(Step::Next((at.0.sub(step[0]), at.1.sub(step[1]))))
+            },
+        )?
+        .seed;
+        let x = surface.evaluate(at.0, at.1)?;
+        let off = x.sub(p);
+        let square = off.prod_dot(tangent).abs().upper().to_f64();
+        let far = off.norm().sub(dd).abs().upper().to_f64();
+        Ok((at, x, square.max(far) <= DEVIATION * d))
+    };
+    let (mut at, mut x, mut met) = meet(surface)?;
+    let carried;
+    let mut on = surface;
+    if !met {
+        carried = carried_on_past(surface, &x, 2.0 * d)
+            .with_context(with_context!("carrying the face on past {x:?}"))?;
+        on = &carried;
+        (at, x, met) = meet(on)?;
+    }
+    if !met {
         return Err(GeopError::new(format!(
-            "the chamfer cannot meet the face {d} from the edge at {p:?}: the nearest it comes is {x:?}, beyond the face's surface"
+            "the chamfer cannot meet the face {d} from the edge at {p:?}: the nearest it comes is {x:?}, beyond the face's surface carried on"
         )));
     }
-    Ok(at)
+    let normal = on.normal(at.0, at.1)?.normalize()?;
+    Ok((at, x, normal))
 }
 
 /// A seed for the point a chamfer meets `surface`, on side `k` of the
@@ -1282,9 +1406,8 @@ fn chamfer_station(
             _ => seed_into(surface, &p, &tangent, feet[k], k, distances[k])?,
         };
         let ctx = with_context!("on face {}", own.faces[k]);
-        uv[k] = chamfer_point(surface, &p, &tangent, distances[k], seed).with_context(ctx)?;
-        contact[k] = surface.evaluate(uv[k].0, uv[k].1)?;
-        normals[k] = surface.normal(uv[k].0, uv[k].1)?.normalize()?;
+        (uv[k], contact[k], normals[k]) =
+            chamfer_point(surface, &p, &tangent, distances[k], seed).with_context(ctx)?;
     }
     chord(&p, contact, normals, own.faces, uv)
 }
@@ -1400,9 +1523,8 @@ fn chamfer_crossing(
         ))?
     };
     let ctx = with_context!("on face {}", faces[o]);
-    uv[o] = chamfer_point(other, &p, &tangent, distances[o], seed).with_context(ctx)?;
-    contact[o] = other.evaluate(uv[o].0, uv[o].1)?;
-    normals[o] = other.normal(uv[o].0, uv[o].1)?.normalize()?;
+    (uv[o], contact[o], normals[o]) =
+        chamfer_point(other, &p, &tangent, distances[o], seed).with_context(ctx)?;
     Ok((
         (c - from) / (to - from),
         chord(&p, contact, normals, faces, uv)?,
@@ -2094,7 +2216,7 @@ fn fillet_placing<'a>(
                 "rolling the ball on to {fraction} of the way along edge {}, past the chain's end",
                 on.link.edge
             );
-            return on.place(fraction, radius_at(c), previous).with_context(ctx);
+            return (on.place(fraction, Across::Ball(radius_at(c)), previous)).with_context(ctx);
         }
         let (link, x) = locate(chain, c);
         let ctx = with_context!(
@@ -2125,7 +2247,9 @@ fn fillet_placing<'a>(
         };
         match (placed, near_end) {
             (Ok(station), Some(_)) if station.faces == chain.links[link].faces => Ok(station),
-            (_, Some((on, _))) => on.place(x, radius_at(c), previous).with_context(ctx),
+            (_, Some((on, _))) => {
+                (on.place(x, Across::Ball(radius_at(c)), previous)).with_context(ctx)
+            }
             (placed, None) => placed,
         }
     };
@@ -2205,9 +2329,25 @@ fn chamfer_placing<'a>(
     model: &'a NamedModel,
     chain: &'a Chain,
     distances: [f64; 2],
+    run_on: &'a [Option<(RunOn, f64)>; 2],
 ) -> Placing<'a> {
     let topology = model.topology();
+    let links = chain.links.len() as f64;
     let place_at = move |c: f64, previous: Option<&Station>| -> GeopResult<Station> {
+        let past = if c < 0.0 {
+            run_on[0].as_ref().map(|(on, _)| (on, c))
+        } else if c > links {
+            run_on[1].as_ref().map(|(on, _)| (on, c - (links - 1.0)))
+        } else {
+            None
+        };
+        if let Some((on, fraction)) = past {
+            let ctx = with_context!(
+                "chamfering on to {fraction} of the way along edge {}, past the chain's end",
+                on.link.edge
+            );
+            return (on.place(fraction, Across::Chord(distances), previous)).with_context(ctx);
+        }
         let (link, x) = locate(chain, c);
         let ctx = with_context!(
             "chamfering {x} of the way along edge {}",
@@ -2247,8 +2387,10 @@ fn chamfer_placing<'a>(
         cross: Box::new(cross),
         merge: Box::new(merge),
         kinks: Vec::new(),
-        weigh: Box::new(move |c, before| along_weight(topology, chain, &[None, None], c, before)),
-        reach: [0.0; 2],
+        weigh: Box::new(move |c, before| along_weight(topology, chain, run_on, c, before)),
+        reach: run_on
+            .each_ref()
+            .map(|r| r.as_ref().map_or(0.0, |(_, reach)| *reach)),
         halve: None,
         pinch: false,
     }
@@ -2595,20 +2737,26 @@ fn span_of(curves: &[NurbCurve3D; 4], name: Option<String>) -> ToolSpan {
 
 /// The contact checks of the span `span`: every station's contact point at
 /// its parameter, and every ball between, for the contact row `k` (0 or 2).
+///
+/// Past the third face a blend runs on through too (see
+/// [`Station::aloof`]): how closely the blend follows the ball there
+/// decides nothing, but where it touches the faces carried on may still
+/// lie on a face's own surface, which reaches past the face's trim — a
+/// hole's wall below the block it runs through, down to the quarter's end
+/// — and a boolean meets the contact against that surface. A contact that
+/// does not enclose the true one there runs a hair off the surface it
+/// touches, neither on it nor clear of it: no overlap was found, and the
+/// search for crossings along it never ended.
 fn contact_checks(rolling: &Rolling, span: (usize, usize), k: usize) -> Vec<(Scalar, Vector3)> {
     let params = rolling.params(span);
     let stations = params.into_iter().zip(&rolling.stations[span.0..=span.1]);
     let between = rolling.between(span);
-    // Past the third face a blend runs on through, where it touches the
-    // faces carried on bounds no face (see [`Station::aloof`]).
     stations
-        .filter(|(_, station)| !station.aloof)
         .map(|(s, station)| (s, station.contact[k / 2]))
         .chain(
             between
                 .iter()
                 .flatten()
-                .filter(|(_, station)| !station.aloof)
                 .map(|(s, station)| (*s, station.contact[k / 2])),
         )
         .collect()
@@ -2906,7 +3054,12 @@ pub(crate) fn plan_rolled(
             pinch = true;
         }
     }
-    let (run_on, trims) = run_ons(model, &chain, &law, side, &decided_ends)?;
+    let (run_on, trims) = {
+        let none = [None, None];
+        let placing = fillet_placing(model, &chain, &law, side, &none);
+        let across = [0, 1].map(|k| Across::Ball(side.mul(Scalar::from_f64(law.at_end(k)))));
+        run_ons(model, &chain, across, &placing, &decided_ends)?
+    };
     let halve = halving(topology, &chain, &corners)?;
     let (rolling, curves) = {
         let mut placing = fillet_placing(model, &chain, &law, side, &run_on);
@@ -2978,22 +3131,24 @@ fn halving(
     Ok(Some(longest.0 as f64 + 0.5))
 }
 
-/// Where the fillet of `chain` runs on, rolled, past its start and its end
-/// (see [`RunOn`]), through the third face there, and is cut off by it:
-/// where its section at the vertex does not lie in that face — a curved
-/// face, or a plane standing at an angle to the faces either side. A cut
-/// running out of the solid through it ends in the air, past it; any other
-/// end is cut off by the face itself (see [`Trim`]). With each, how far, in
-/// positions: as far again as the tool is wide, over how squarely the
-/// chain crosses the face, as a straight blend runs out — doubled until
-/// the last section is clear of the face's tangent plane at the vertex, its
-/// control polygon, which holds it, wholly past it. And the trims.
+/// Where the blend of `chain` runs on past its start and its end (see
+/// [`RunOn`]), its sections at each end as `across` says, through the third
+/// face there, and is cut off by it: where its section at the vertex does
+/// not lie in that face — a curved face, or a plane standing at an angle to
+/// the faces either side. A cut running out of the solid through it ends in
+/// the air, past it; any other end is cut off by the face itself (see
+/// [`Trim`]). With each, how far, in positions: as far again as the tool is
+/// wide, over how squarely the chain crosses the face, as a straight blend
+/// runs out — doubled until the last section is clear of the face's
+/// tangent plane at the vertex, its control polygon, which holds it, wholly
+/// past it. And the trims. `placing` places the sections along the chain,
+/// up to its ends, running on past neither.
 #[allow(clippy::type_complexity)]
 fn run_ons(
     model: &NamedModel,
     chain: &Chain,
-    law: &RadiusLaw,
-    side: Scalar,
+    across: [Across; 2],
+    placing: &Placing,
     ends: &Option<[ChainEnd; 2]>,
 ) -> GeopResult<([Option<(RunOn, f64)>; 2], [Option<NurbSurface3D>; 2])> {
     let mut run_on = [None, None];
@@ -3003,8 +3158,6 @@ fn run_ons(
     };
     let topology = model.topology();
     let links = chain.links.len() as f64;
-    let none = [None, None];
-    let placing = fillet_placing(model, chain, law, side, &none);
     for (k, (vertex, kind, face, out)) in ends.iter().enumerate() {
         let (Some(face), trimmed) = (
             face,
@@ -3021,7 +3174,6 @@ fn run_ons(
         };
         let ctx = with_context!("the blend's end through face {face} at vertex {vertex}");
         let at = if k == 0 { 0.0 } else { links };
-        let sr = side.mul(Scalar::from_f64(law.at_end(k)));
         let surface = &topology.get_face(*face)?.surface;
         let point = topology.get_vertex(*vertex)?.point;
         let mut normal = surface.normal_at(&point, MAX_NODES, min_subdivision_size())?;
@@ -3033,11 +3185,11 @@ fn run_ons(
         let station = match (placing.place)(at, None) {
             Ok(station) => station,
             Err(_) => {
-                let reach = 4.0 * law.at_end(k);
+                let reach = 4.0 * across[k].size();
                 let on = RunOn::new(topology, chain, k == 1, *vertex, reach, (point, normal))
                     .with_context(ctx)?;
                 let fraction = if k == 0 { 0.0 } else { 1.0 };
-                on.place(fraction, sr, None).with_context(ctx)?
+                on.place(fraction, across[k], None).with_context(ctx)?
             }
         };
         if !trimmed
@@ -3086,11 +3238,27 @@ fn run_ons(
                 "{ctx_name}, rolled on {length} (past the face's tangent plane by {tried:?} before)",
                 ctx_name = format!("the blend's end through face {face} at vertex {vertex}")
             );
-            let on = RunOn::new(topology, chain, k == 1, *vertex, length, (point, normal))
-                .with_context(ctx)?;
-            let reach = length / on.scale;
-            let fraction = if k == 0 { -reach } else { 1.0 + reach };
-            let last = on.place(fraction, sr, Some(&station)).with_context(ctx)?;
+            // Rolled on far, past where the faces' surfaces can be carried
+            // on — a quarter circle carried on runs off to infinity — the
+            // blend has no section to end in: it is too large to run on
+            // through the face there, as a smaller one does.
+            let placed = (RunOn::new(topology, chain, k == 1, *vertex, length, (point, normal)))
+                .and_then(|on| {
+                    let reach = length / on.scale;
+                    let fraction = if k == 0 { -reach } else { 1.0 + reach };
+                    let last = on.place(fraction, across[k], Some(&station))?;
+                    Ok((on, reach, last))
+                });
+            let (on, reach, last) = match placed {
+                Ok(placed) => placed,
+                Err(e) => {
+                    return Err(GeopError::new(format!(
+                        "the blend is too large to run on through face {face} at vertex {vertex}: rolled on {length} past it — its section not clear of the face before (past its tangent plane by {tried:?}) — it has no section where its faces are carried on to ({})",
+                        e.root_message()
+                    )))
+                    .with_context(ctx);
+                }
+            };
             let past = [last.contact[0], last.corner, last.contact[1], last.apex]
                 .iter()
                 .map(|p| p.sub(&point).prod_dot(&normal))
@@ -3107,7 +3275,7 @@ fn run_ons(
         }
         let Some(found) = found else {
             return Err(GeopError::new(format!(
-                "the blend runs on through face {face} at vertex {vertex}, but rolled on {length} past it its section is still not clear of the face (past its tangent plane by {tried:?}): the face turns back across it"
+                "the blend is too large to run on through face {face} at vertex {vertex}: rolled on {length} past it, its section is still not clear of the face (past its tangent plane by {tried:?}) — the edge carried on turns back across the face, or the face across it"
             )))
             .with_context(ctx);
         };
@@ -3179,15 +3347,22 @@ pub(crate) fn plan_chamfer(
             )));
         }
     }
+    let (run_on, trims) = {
+        let none = [None, None];
+        let placing = chamfer_placing(model, &chain, distances, &none);
+        let across = [Across::Chord(distances); 2];
+        run_ons(model, &chain, across, &placing, &decided_ends)?
+    };
     let halve = halving(topology, &chain, &[None, None])?;
     let smallest = distances[0].min(distances[1]);
     let (rolling, curves) = {
-        let mut placing = chamfer_placing(model, &chain, distances);
+        let mut placing = chamfer_placing(model, &chain, distances, &run_on);
         placing.kinks = turns(&chain);
         placing.halve = halve;
         refined(smallest, |n| roll_chain(&chain, n, &[None, None], &placing))?
     };
     let halved_at = halved_at(&rolling, halve)?;
+    let rolled_on = run_on.each_ref().map(Option::is_some);
     let mut rolled = assemble(
         topology,
         chain,
@@ -3195,8 +3370,9 @@ pub(crate) fn plan_chamfer(
         rolling,
         curves,
         decided_ends,
-        [false; 2],
+        rolled_on,
     )?;
+    rolled.trims = trims;
     rolled.halved_at = halved_at;
     Ok(rolled)
 }

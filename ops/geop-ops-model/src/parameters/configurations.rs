@@ -217,7 +217,9 @@ fn runs(program: &Program, part: &Reader, id: &str) -> GeopResult<bool> {
         .map_err(|e| e.with_context("suppressing a step: commit it first"))?;
     Ok(match &step.active {
         None => true,
-        Some(formula) => evaluate(formula, |name| read_parameter(part, name)) != Ok(0.0),
+        Some(formula) => {
+            !matches!(evaluate(formula, |name| read_parameter(part, name)), Ok(value) if value == 0.0)
+        }
     })
 }
 

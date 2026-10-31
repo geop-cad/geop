@@ -27,7 +27,7 @@ use geop_ops_model::placed::solids::{PlacedSolid, placed_solids};
 use serde::{Deserialize, Serialize};
 
 use crate::interference::{
-    Box3, ByPose, LocalBoxes, LocalPoses, Shape, Work, bounding_box, candidate_pairs, corners, hull,
+    Box3, LocalBoxes, LocalPoses, Shape, Work, bounding_box, candidate_pairs, corners, hull,
 };
 use crate::mass::drawn;
 
@@ -176,7 +176,7 @@ pub fn clearance_report(reader: &Reader, options: ClearanceOptions) -> GeopResul
     let mut work = Work::default();
     let pairs = candidate_pairs(&boxes, &mut work.boxes_compared);
     let mut poses = LocalPoses::default();
-    let mut measured: HashMap<(Shape, Shape), ByPose<Option<Closest>>> = HashMap::new();
+    let mut measured: HashMap<(Shape, Shape), Measured> = HashMap::new();
     let mut near = Vec::new();
     let mut unmeasured = Vec::new();
     let limit = Scalar::from_f64(clearance);
@@ -232,6 +232,10 @@ pub fn clearance_report(reader: &Reader, options: ClearanceOptions) -> GeopResul
 /// further apart than `limit`. Pairs of faces are measured nearest box first, and a pair whose
 /// boxes are definitely further apart than the least distance found, or
 /// than `limit`, is not measured.
+/// What was measured between one pair of shapes, at each relative pose
+/// tried (none: placed as they are).
+type Measured = Vec<(Option<Pose>, Result<Option<Closest>, String>)>;
+
 fn least_distance(
     a: &PlacedSolid,
     b: &PlacedSolid,

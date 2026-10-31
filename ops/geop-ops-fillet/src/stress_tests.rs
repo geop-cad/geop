@@ -33,7 +33,7 @@ use crate::{Chamfer, ChamferArgs, Fillet, FilletArgs};
 
 /// Whether an error's root message is a blend refusing what it does not
 /// support, rather than failing at what it does.
-fn is_refusal(message: &str) -> bool {
+pub(crate) fn is_refusal(message: &str) -> bool {
     [
         "not supported",
         "only ",

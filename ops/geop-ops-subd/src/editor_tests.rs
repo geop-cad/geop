@@ -6,7 +6,7 @@ use std::collections::BTreeMap;
 
 use geop_core_editor::{
     editing::{Button, Control, GizmoPart, Shape, StepEditEvent, Style, Value},
-    editor::{Command, Editor},
+    editor::{Command, Editor, Update},
     registry::Registry,
     testing::{dialog, drag_gizmo, event, from_above, pointer},
 };
@@ -19,6 +19,106 @@ fn registry() -> Registry {
         .expect("the operations each have a name of their own")
 }
 
+/// A new SubD step, its box cage typed 2 a side in its dialog: what the
+/// tests below shape, each at the scale of the views it is seen from. The
+/// update of the last dimension typed.
+fn new_box(editor: &mut Editor) -> Update {
+    let update = editor.handle(Command::New {
+        kind: "subd".into(),
+    });
+    assert!(update.error.is_none(), "{:?}", update.error);
+    let mut last = update;
+    for key in ["shape_width", "shape_depth", "shape_height"] {
+        last = editor.handle(dialog(key, Value::Number(2.0)));
+        assert!(last.error.is_none(), "{:?}", last.error);
+    }
+    last
+}
+
+/// How far the cage `args` reaches along each axis.
+fn extent(args: &crate::SubdArgs) -> [f64; 3] {
+    let cage = &args.cage;
+    [0, 1, 2].map(|k| {
+        let along = cage.vertices.iter().map(|v| v.at[k]);
+        along.clone().fold(f64::NEG_INFINITY, f64::max) - along.fold(f64::INFINITY, f64::min)
+    })
+}
+
+/// A new SubD step's box cage is 100 a side, its width, depth and height
+/// in its dialog; typed there, they are the cage's extent. Started from a
+/// cylinder instead, the dialog offers its radius and height; once the
+/// cage is edited, it is no longer the shape, and they are not offered.
+/// Committed, the program saves and loads as it was.
+#[test]
+fn subd_basic_shape_dimensions_are_typed_in_the_dialog() {
+    let mut editor = Editor::new(registry(), BTreeMap::new());
+    let update = editor.handle(Command::New {
+        kind: "subd".into(),
+    });
+    let number = |update: &Update, key: &str| match update
+        .step
+        .as_ref()
+        .expect("the subd is edited")
+        .presentation
+        .dialog
+        .get(key)
+    {
+        Some(Control::Number(n)) => Some(n.value),
+        _ => None,
+    };
+    assert_eq!(extent(&editing_args(&editor)), [100.0; 3]);
+    for key in ["shape_width", "shape_depth", "shape_height"] {
+        assert_eq!(number(&update, key), Some(100.0), "{key}");
+    }
+    assert_eq!(number(&update, "shape_radius"), None);
+
+    editor.handle(dialog("shape_width", Value::Number(30.0)));
+    editor.handle(dialog("shape_depth", Value::Number(40.0)));
+    let update = editor.handle(dialog("shape_height", Value::Number(50.0)));
+    assert_eq!(extent(&editing_args(&editor)), [30.0, 40.0, 50.0]);
+    assert_eq!(number(&update, "shape_depth"), Some(40.0));
+    // Not a size at all: refused, the cage as it was.
+    let update = editor.handle(dialog("shape_width", Value::Number(0.0)));
+    let step = update.step.as_ref().expect("the subd is edited");
+    assert!(
+        matches!(step.presentation.dialog.get("problem"), Some(Control::Text { text, .. }) if text.contains("width")),
+        "{:?}",
+        step.presentation.dialog.get("problem")
+    );
+    assert_eq!(extent(&editing_args(&editor)), [30.0, 40.0, 50.0]);
+
+    let update = editor.handle(dialog("start", Value::Choice("cylinder".into())));
+    assert_eq!(number(&update, "shape_radius"), Some(50.0));
+    assert_eq!(number(&update, "shape_height"), Some(100.0));
+    assert_eq!(number(&update, "shape_width"), None);
+    editor.handle(dialog("shape_radius", Value::Number(20.0)));
+    let update = editor.handle(dialog("shape_height", Value::Number(60.0)));
+    assert_eq!(extent(&editing_args(&editor)), [40.0, 40.0, 60.0]);
+    assert_eq!(number(&update, "shape_radius"), Some(20.0));
+
+    let update = editor.handle(dialog("start", Value::Choice("sphere".into())));
+    assert_eq!(number(&update, "shape_radius"), Some(50.0));
+    let update = editor.handle(dialog("shape_radius", Value::Number(5.0)));
+    assert_eq!(extent(&editing_args(&editor)), [10.0; 3]);
+    assert_eq!(number(&update, "shape_height"), None);
+
+    // A face pulled out: the cage is no basic shape any more.
+    editor.handle(dialog("start", Value::Choice("box".into())));
+    event(&mut editor, click(from_above(3.0, 2.0), false, false));
+    let update = editor.handle(dialog("edit", Value::Choice("extrude".into())));
+    assert_eq!(extent(&editing_args(&editor)), [100.0, 100.0, 125.0]);
+    assert_eq!(number(&update, "shape_width"), None);
+
+    let update = editor.handle(Command::Commit);
+    assert!(update.error.is_none(), "{:?}", update.error);
+    let operations = std::rc::Rc::new(
+        geop_core_program::operation_registry::OperationRegistry::default()
+            .with(crate::Subd)
+            .unwrap(),
+    );
+    geop_core_program::testing::assert_round_trips(operations, None, editor.program());
+}
+
 /// A new SubD step starts from a box cage, its vertices, edges and faces
 /// drawn to click. Clicked from above, the cage's top face is selected —
 /// not the bottom one behind it — and its centre's coordinates shown;
@@ -28,10 +128,7 @@ fn registry() -> Registry {
 #[test]
 fn subd_cage_is_shaped_in_the_viewport() {
     let mut editor = Editor::new(registry(), BTreeMap::new());
-    let update = editor.handle(Command::New {
-        kind: "subd".into(),
-    });
-    assert!(update.error.is_none(), "{:?}", update.error);
+    let update = new_box(&mut editor);
     let step = update.step.expect("the subd is edited");
     for key in ["f9", "e4-5", "v6"] {
         assert!(
@@ -68,6 +165,7 @@ fn subd_cage_is_shaped_in_the_viewport() {
     assert_eq!(style(&step, "f8"), Some(Style::Region));
     assert_eq!(number(&step, "z"), 1.0);
 
+    editor.handle(dialog("distance", Value::Number(0.5)));
     let update = editor.handle(dialog("edit", Value::Choice("extrude".into())));
     let step = update.step.expect("the subd is edited");
     assert_eq!(step.error, None);
@@ -143,10 +241,7 @@ fn subd_cage_is_shaped_in_the_viewport() {
 #[test]
 fn subd_drag_without_a_release_is_not_undone_by_the_next() {
     let mut editor = Editor::new(registry(), BTreeMap::new());
-    let update = editor.handle(Command::New {
-        kind: "subd".into(),
-    });
-    assert!(update.error.is_none(), "{:?}", update.error);
+    new_box(&mut editor);
     // Looking down at 45 degrees, at `x` across: moving the eye up by `d`
     // moves the face by `d / 2` up and `d / 2` back.
     let slanted = |x: f64, dz: f64| pointer([x, -10.0, 11.75 + dz], [0.0, 1.0, -1.0]);
@@ -189,9 +284,7 @@ fn subd_drag_without_a_release_is_not_undone_by_the_next() {
 #[test]
 fn subd_faces_are_moved_turned_and_scaled_by_the_gizmo() {
     let mut editor = Editor::new(registry(), BTreeMap::new());
-    editor.handle(Command::New {
-        kind: "subd".into(),
-    });
+    new_box(&mut editor);
     let step = event(
         &mut editor,
         StepEditEvent::Click {
@@ -331,9 +424,7 @@ fn selection(step: &geop_core_editor::editor::StepState) -> Vec<String> {
 #[test]
 fn subd_loops_and_rings_are_selected_by_double_click() {
     let mut editor = Editor::new(registry(), BTreeMap::new());
-    editor.handle(Command::New {
-        kind: "subd".into(),
-    });
+    new_box(&mut editor);
     // From the front, at the box's left front vertical edge.
     let side = pointer([-1.0, -10.0, 0.0], [0.0, 1.0, 0.0]);
     let step = event(&mut editor, click(side, false, false));
@@ -389,9 +480,7 @@ fn subd_loops_and_rings_are_selected_by_double_click() {
 #[test]
 fn subd_box_select_takes_what_is_within_the_window() {
     let mut editor = Editor::new(registry(), BTreeMap::new());
-    editor.handle(Command::New {
-        kind: "subd".into(),
-    });
+    new_box(&mut editor);
     let step = event(&mut editor, StepEditEvent::Key { key: "b".into() });
     assert!(step.presentation.grab, "box select grabs anywhere");
     let step = event(
@@ -448,9 +537,7 @@ fn subd_box_select_takes_what_is_within_the_window() {
 #[test]
 fn subd_edits_are_made_from_the_dialog_with_typed_amounts() {
     let mut editor = Editor::new(registry(), BTreeMap::new());
-    editor.handle(Command::New {
-        kind: "subd".into(),
-    });
+    new_box(&mut editor);
     let step = event(&mut editor, click(from_above(0.3, 0.2), false, false));
     assert_eq!(selection(&step), ["f9"]);
     let step = event(
@@ -531,9 +618,7 @@ fn subd_edits_are_made_from_the_dialog_with_typed_amounts() {
 #[test]
 fn subd_cage_only_hides_the_limit_surface() {
     let mut editor = Editor::new(registry(), BTreeMap::new());
-    let update = editor.handle(Command::New {
-        kind: "subd".into(),
-    });
+    let update = new_box(&mut editor);
     let id = editor.editing().expect("a step is edited").id.clone();
     let solid = format!("subd({id})");
     let scene = update.scene.expect("the new step is drawn");

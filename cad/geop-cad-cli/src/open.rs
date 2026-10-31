@@ -11,6 +11,9 @@
 //! - `GET /api/files`: the folder's program and data files, by their paths
 //!   relative to it, with the one to edit first, if one was named.
 //! - `PUT /api/file?path=…` writes a file, `DELETE` removes one.
+//! - `POST /api/raise` brings the window showing the page to the front:
+//!   only in `geop app`, where it is how a second `geop app` of the same
+//!   folder hands over to the first (see `app.rs`).
 //! - Anything else is a file of the page itself.
 //!
 //! What can reach 127.0.0.1 is more than the user: every page the browser
@@ -32,7 +35,11 @@
 use crate::session::Session;
 use geop_cad_base::disk::{Folder, MOST_BYTES, extensions, workspace_of};
 use geop_core_math::geop_error::{GeopError, GeopResult};
-use std::{io::Read, path::PathBuf, sync::mpsc};
+use std::{
+    io::Read,
+    path::{Path, PathBuf},
+    sync::mpsc,
+};
 
 #[derive(clap::Args)]
 pub struct OpenArgs {
@@ -92,6 +99,7 @@ pub fn media_type(path: &str) -> &'static str {
 
 /// Who this server answers: requests naming it as their host, from its own
 /// pages, and — for the editor and the files — knowing the token.
+#[derive(Clone)]
 pub struct Access {
     pub port: u16,
     pub token: String,
@@ -237,6 +245,10 @@ impl SessionHandle {
 
 // ── serving ────────────────────────────────────────────────────────────
 
+/// What a `POST /api/raise` does: bring the window showing the page to
+/// the front (`geop app`, asked by another `geop app` of the same folder).
+pub type Raise = Box<dyn Fn() + Send + Sync>;
+
 /// What every request is answered with.
 struct Server {
     access: Access,
@@ -244,6 +256,7 @@ struct Server {
     /// The program to edit first, if one was named.
     active: Option<String>,
     session: SessionHandle,
+    raise: Option<Raise>,
 }
 
 type Response = tiny_http::Response<std::io::Cursor<Vec<u8>>>;
@@ -353,6 +366,10 @@ impl Server {
                     Err(e) => text(400, e.root_message()),
                 }
             }
+            (Route::Api, Post, "/api/raise") if self.raise.is_some() => {
+                (self.raise.as_ref().expect("checked"))();
+                text(200, "raised")
+            }
             (Route::Api, _, _) => text(404, "no such call"),
             (Route::Page, Get | Head, _) => {
                 let file = path.trim_start_matches('/');
@@ -393,7 +410,7 @@ fn socket(stream: Box<dyn tiny_http::ReadWrite + Send>, session: &SessionHandle)
 }
 
 /// Open the default browser at `url`.
-fn open_browser(url: &str) -> std::io::Result<()> {
+pub fn open_browser(url: &str) -> std::io::Result<()> {
     let mut command = if cfg!(target_os = "macos") {
         std::process::Command::new("open")
     } else if cfg!(windows) {
@@ -411,39 +428,92 @@ fn open_browser(url: &str) -> std::io::Result<()> {
         .map(drop)
 }
 
-pub fn open(args: &OpenArgs) -> GeopResult<()> {
-    if page_file("index.html").is_none() {
-        return Err(GeopError::new(
+/// Why this `geop` cannot serve the editor's page, if it cannot: it was
+/// built without it.
+pub fn page_missing() -> Option<GeopError> {
+    page_file("index.html").is_none().then(|| {
+        GeopError::new(
             "this geop was built without the editor's page. Build it with the page in: \
              `npm --prefix web run build:open`, then \
              `cargo build --release -p geop-cad-cli --features frontend`",
-        ));
-    }
-    let (dir, active) = workspace_of(&args.path)?;
-    let folder = Folder::new(&dir, extensions(&geop_cad_base::registry()?))?;
+        )
+    })
+}
 
-    let http = tiny_http::Server::http(("127.0.0.1", args.port.unwrap_or(0)))
-        .map_err(|e| GeopError::new(format!("serving on 127.0.0.1: {e}")))?;
-    let port = (http.server_addr().to_ip())
-        .map(|a| a.port())
-        .ok_or_else(|| GeopError::new("serving on no port"))?;
-    let server = std::sync::Arc::new(Server {
-        access: Access::new(port)?,
-        session: SessionHandle::start(folder.root().to_path_buf()),
-        folder,
-        active,
-    });
-    let url = server.access.url();
-    eprintln!("geop is editing {}", server.folder.root().display());
+/// The folder `path` names — or the one a program `path` is in — with
+/// the program to edit first, if one was named.
+pub fn folder_of(path: &Path) -> GeopResult<(Folder, Option<String>)> {
+    let (dir, active) = workspace_of(path)?;
+    let folder = Folder::new(&dir, extensions(&geop_cad_base::registry()?))?;
+    Ok((folder, active))
+}
+
+/// The editor of a folder, served on 127.0.0.1: bound, and answering
+/// once [`Serving::run`] is.
+pub struct Serving {
+    http: tiny_http::Server,
+    server: std::sync::Arc<Server>,
+}
+
+impl Serving {
+    /// Serve `folder` on `port`, a free one if `None`, `active` the
+    /// program to edit first; `raise` answers `POST /api/raise`, which
+    /// is no call without it.
+    pub fn start(
+        folder: Folder,
+        active: Option<String>,
+        port: Option<u16>,
+        raise: Option<Raise>,
+    ) -> GeopResult<Self> {
+        let http = tiny_http::Server::http(("127.0.0.1", port.unwrap_or(0)))
+            .map_err(|e| GeopError::new(format!("serving on 127.0.0.1: {e}")))?;
+        let port = (http.server_addr().to_ip())
+            .map(|a| a.port())
+            .ok_or_else(|| GeopError::new("serving on no port"))?;
+        let server = std::sync::Arc::new(Server {
+            access: Access::new(port)?,
+            session: SessionHandle::start(folder.root().to_path_buf()),
+            folder,
+            active,
+            raise,
+        });
+        Ok(Self { http, server })
+    }
+
+    /// Who may ask: the port, and the token the page is given.
+    pub fn access(&self) -> &Access {
+        &self.server.access
+    }
+
+    /// The folder edited, as its canonical path.
+    pub fn root(&self) -> &Path {
+        self.server.folder.root()
+    }
+
+    /// Answer every request, each on a thread of its own, for as long as
+    /// the process runs.
+    pub fn run(self) {
+        for request in self.http.incoming_requests() {
+            let server = self.server.clone();
+            std::thread::spawn(move || server.handle(request));
+        }
+    }
+}
+
+pub fn open(args: &OpenArgs) -> GeopResult<()> {
+    if let Some(missing) = page_missing() {
+        return Err(missing);
+    }
+    let (folder, active) = folder_of(&args.path)?;
+    let serving = Serving::start(folder, active, args.port, None)?;
+    let url = serving.access().url();
+    eprintln!("geop is editing {}", serving.root().display());
     eprintln!("open the editor at {url}");
     eprintln!("(Ctrl+C stops it)");
     if !args.no_browser && open_browser(&url).is_err() {
         eprintln!("could not open a browser: open the URL above yourself");
     }
-    for request in http.incoming_requests() {
-        let server = server.clone();
-        std::thread::spawn(move || server.handle(request));
-    }
+    serving.run();
     Ok(())
 }
 
