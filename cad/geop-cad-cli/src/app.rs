@@ -21,9 +21,10 @@
 //! - one app edits a folder: a second `geop app` of the same folder
 //!   brings the first to the front and ends ([`Claim`]).
 //!
-//! What runs without a window — the server, and how one app finds the one
-//! already editing its folder — is here, built in every `geop`; the window
-//! needs the feature `app`.
+//! What needs no window — how one app finds the one already editing its
+//! folder, what it keeps between runs — is built in every `geop`, and the
+//! tests drive the app's server ([`crate::open::Serving`]) without one;
+//! the window needs the feature `app`.
 
 // Built without the window, what it would run is only the tests'.
 #![cfg_attr(not(feature = "app"), allow(dead_code, unused_imports))]
