@@ -320,8 +320,8 @@ fn key(key: &str) -> Command {
 }
 
 /// With nothing in progress in the step, Enter commits it — one edit to
-/// undo — and Escape cancels a step not edited yet; once edited, Escape
-/// leaves it open, so no edit is lost to a key.
+/// undo — and Escape cancels it; a step cancelled once edited is no edit
+/// lost: undo opens it again, as it was left.
 #[test]
 fn enter_commits_and_escape_cancels_a_step_at_rest() -> Result<(), GeopError> {
     let registry = (Registry::default().operation(Place)).and_then(|r| r.drawer(Points))?;
@@ -336,6 +336,11 @@ fn enter_commits_and_escape_cancels_a_step_at_rest() -> Result<(), GeopError> {
     let update = handled(&mut editor, key("Escape"));
     assert!(update.step.is_none(), "Escape cancels a step not edited");
     assert!(editor.program().steps.is_empty());
+    let update = handled(&mut editor, Command::Undo);
+    assert!(
+        update.step.is_none(),
+        "an untouched step is not opened again"
+    );
 
     handled(
         &mut editor,
@@ -345,10 +350,22 @@ fn enter_commits_and_escape_cancels_a_step_at_rest() -> Result<(), GeopError> {
     );
     handled(&mut editor, click_at(from_above(2.0, 3.0)));
     let update = handled(&mut editor, key("Escape"));
-    assert!(update.step.is_some(), "an edited step stays open on Escape");
+    assert!(update.step.is_none(), "Escape cancels an edited step too");
+    assert!(editor.program().steps.is_empty());
+    assert!(
+        update.program.is_some_and(|p| p.can_undo),
+        "the cancel is undone"
+    );
+    let update = handled(&mut editor, Command::Undo);
+    let step = update.step.expect("undo opens the step cancelled again");
+    assert!(step.can_undo, "with its own edit to undo");
     let update = handled(&mut editor, key("Enter"));
     assert!(update.step.is_none(), "Enter commits");
-    assert_eq!(editor.program().steps.len(), 1);
+    assert_eq!(
+        editor.program().steps.len(),
+        1,
+        "the click it was cancelled with"
+    );
     let update = handled(&mut editor, Command::Undo);
     assert!(update.program.is_some_and(|p| p.program.steps.is_empty()));
     Ok(())

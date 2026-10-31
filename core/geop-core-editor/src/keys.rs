@@ -1,15 +1,16 @@
 //! The keys of what every front end offers besides the operations — the
 //! command palette, the key list, committing and cancelling a step,
-//! undoing, framing the view — named once, here, so that the web app, VS
-//! Code and the desktop app press the same keys for the same things (see
-//! `docs/ux.md`). An operation's key is its own
+//! undoing, framing the view — named once, here, so that the web app and
+//! VS Code press the same keys for the same things (see `docs/ux.md`). An operation's key is its own
 //! ([`crate::editable::OperationInfo::shortcut`]).
 //!
 //! A key is written as the front ends read it: modifiers before the key,
 //! joined by `+` — `Mod` is Ctrl, or ⌘ on a Mac — `Mod+K`, `Shift+F`, `?`.
 //! Plain keys belong to the step being edited (its tools), so the view's
 //! plain keys (`F`, `Home`, `O`) work only while no step is; the key
-//! list's (`?`) and those with `Mod` always.
+//! list's (`?`) and those with `Mod` always. Escape is the step's while
+//! one is edited: it ends what is in progress in it first, and with
+//! nothing in progress cancels it (see [`crate::editor::Editor::handle`]).
 
 use serde::Serialize;
 
@@ -42,9 +43,14 @@ pub const APP_KEYS: &[AppKey] = &[
         label: "OK: put the step into the program",
     },
     AppKey {
+        action: "escape",
+        key: "Escape",
+        label: "Stop what is in progress, else cancel the step",
+    },
+    AppKey {
         action: "cancel",
         key: "Mod+Backspace",
-        label: "Cancel the step",
+        label: "Cancel the step, whatever is in progress",
     },
     AppKey {
         action: "undo",

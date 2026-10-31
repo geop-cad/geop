@@ -95,6 +95,15 @@ type EditorFiles = Files<Box<dyn FileStoreMut>>;
 /// program's state.
 type Edited = (serde_json::Value, StateValues);
 
+/// What a program-level undo goes back to.
+enum Undone {
+    /// The program as it was before an edit.
+    Program(Program),
+    /// A step cancelled after it was edited: undoing the cancel opens it
+    /// again as it was left, with its own edits to undo.
+    Cancelled(Box<Open>),
+}
+
 /// The step being edited.
 struct Open {
     /// Where it is, or goes.
@@ -211,8 +220,8 @@ pub struct Editor {
     path: Option<String>,
     /// The other program files, which it places parts from.
     workspace: Rc<EditorFiles>,
-    undo: Vec<Program>,
-    redo: Vec<Program>,
+    undo: Vec<Undone>,
+    redo: Vec<Undone>,
     marker: Option<usize>,
     open: Option<Open>,
     preview: bool,
@@ -491,7 +500,7 @@ impl Editor {
             && path == self.path
             && self.file != before
         {
-            self.undo.push(before);
+            self.undo.push(Undone::Program(before));
             self.redo.clear();
         }
         if !matches!(result, Ok(Changed::Nothing | Changed::Display)) {
@@ -864,8 +873,9 @@ impl Editor {
             }
             Command::Event { event } => {
                 // With nothing in progress in the step, Enter commits it, and
-                // Escape — before it was edited, so nothing is lost — cancels
-                // it: what every front end's keys do.
+                // Escape cancels it — an edited one so that undo opens it
+                // again (see `Command::Cancel`): what every front end's keys
+                // do.
                 if let Some(open) = &self.open
                     && let StepEditEvent::Key { key } = &event
                     && matches!(key.as_str(), "Enter" | "Escape")
@@ -874,11 +884,10 @@ impl Editor {
                     let editors = self.registry.editors();
                     let form = (open.editor).form(editors, runner, part, &open.program)?;
                     if open.editor.at_rest(&form) {
-                        match key.as_str() {
-                            "Enter" => return self.apply(Command::Commit),
-                            _ if open.undo.is_empty() => return self.apply(Command::Cancel),
-                            _ => {}
-                        }
+                        return match key.as_str() {
+                            "Enter" => self.apply(Command::Commit),
+                            _ => self.apply(Command::Cancel),
+                        };
                     }
                 }
                 let Some(open) = &mut self.open else {
@@ -1007,9 +1016,20 @@ impl Editor {
                 Changed::Program
             }
             Command::Cancel => {
-                // A placed part's file goes back to what it was.
-                if let Some(within) = self.open.take().and_then(|open| open.within) {
-                    (self.workspace).write(&within.location.file, Some(within.text));
+                match self.open.take() {
+                    // A placed part's file goes back to what it was.
+                    Some(Open {
+                        within: Some(within),
+                        ..
+                    }) => {
+                        (self.workspace).write(&within.location.file, Some(within.text));
+                    }
+                    // What was edited is not lost: undo opens it again.
+                    Some(open) if !open.undo.is_empty() => {
+                        self.undo.push(Undone::Cancelled(Box::new(open)));
+                        self.redo.clear();
+                    }
+                    _ => {}
                 }
                 Changed::Run
             }
@@ -1257,11 +1277,22 @@ impl Editor {
                     Command::Undo => (&mut self.undo, &mut self.redo),
                     _ => (&mut self.redo, &mut self.undo),
                 };
-                let Some(program) = from.pop() else {
-                    return Ok(Changed::Nothing);
-                };
-                to.push(std::mem::replace(&mut self.file, program));
-                self.marker = None;
+                match from.pop() {
+                    None => return Ok(Changed::Nothing),
+                    Some(Undone::Program(program)) => {
+                        to.push(Undone::Program(std::mem::replace(&mut self.file, program)));
+                        self.marker = None;
+                    }
+                    // The cancel undone: the step is edited again, built as
+                    // it is when opened.
+                    Some(Undone::Cancelled(open)) => {
+                        self.tool = None;
+                        self.give();
+                        (self.build)
+                            .run(&open.program, Some(open.index + usize::from(self.preview)));
+                        self.open = Some(*open);
+                    }
+                }
                 // Undoing is not itself an edit to undo.
                 Changed::Run
             }
