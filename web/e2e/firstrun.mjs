@@ -1,9 +1,11 @@
 // The first visit, as a new visitor makes it: a browser profile that has
 // never seen the app (a fresh context is an incognito window: no storage,
-// no cache), the page loaded once, nothing reloaded or cleared. The origin's
-// coordinate system must be drawn — in what the view holds and in the
-// canvas's pixels where its axes project — with the welcome open, and after
-// it is closed.
+// no cache), the page loaded once, nothing reloaded or cleared, in several
+// windows. The origin's coordinate system must be held by the view, drawn —
+// in the canvas's pixels where its axes project — and seen, in the page's
+// pixels there, with the welcome open, and after it is closed. The welcome
+// must show each example with its preview, its name and what it is, and
+// the keys must open one.
 //
 // Part of `npm run e2e` (it runs first), and on its own: `npm run
 // e2e:first-run`, which CI runs on every push.
@@ -11,6 +13,7 @@
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { Checks, expect, launch, pixelAt, preview, run, settle, stale, watchErrors, WEB } from "./lib.mjs";
+import { previewsStale, renderPreviews } from "./previews.mjs";
 
 /** The datums of the origin every part has: its coordinate system. */
 const ORIGIN = "origin";
@@ -140,6 +143,8 @@ const WINDOWS = [
  * Returns the results, as `Checks` keeps them.
  */
 export async function firstRunChecks(browser, url) {
+  // The welcome shows the examples' previews, rendered from this build.
+  if (previewsStale()) await renderPreviews(browser, url);
   const results = [];
   for (const { name: window, ...options } of WINDOWS) {
     const context = await browser.newContext(options);
@@ -159,6 +164,38 @@ export async function firstRunChecks(browser, url) {
       await settle(page);
       return expectOriginDrawn(page);
     });
+    if (!options.isMobile) {
+      await checks.check(`a first visit in ${window}: the welcome shows each example's preview, name and what it is, and the keys open one`, async () => {
+        // The welcome stays closed only for the page that closed it.
+        await page.reload();
+        await settle(page);
+        const cards = page.locator(".welcome-example");
+        const n = await cards.count();
+        expect(n >= 3, `${n} examples in the welcome`);
+        const shown = await cards.evaluateAll((els) =>
+          els.map((el) => {
+            const img = el.querySelector("img");
+            return {
+              name: el.querySelector(".welcome-example-name")?.textContent ?? "",
+              about: el.querySelector(".welcome-example-about")?.textContent ?? "",
+              loaded: img != null && img.complete && img.naturalWidth > 0,
+            };
+          }),
+        );
+        const bad = shown.filter((s) => !s.name || !s.about || !s.loaded);
+        expect(bad.length === 0, `examples without a name, a description or a loaded preview: ${JSON.stringify(bad)}`);
+        // The first example has the focus, the arrows move it, Enter opens it.
+        await page.keyboard.press("ArrowRight");
+        const focused = await page.evaluate(() => document.activeElement?.querySelector(".welcome-example-name")?.textContent ?? null);
+        expect(focused === shown[1].name, `the arrow moved the focus to ${focused}, not ${shown[1].name}`);
+        await page.keyboard.press("Enter");
+        await settle(page);
+        const steps = await page.locator(".timeline .step-box").count();
+        expect(steps > 0, `Enter on ${focused} opened no example`);
+        expect((await page.locator(".welcome-card").count()) === 0, "the welcome is still open over the example");
+        return `${n} examples: ${shown.map((s) => s.name).join(", ")}; Enter opened ${focused} (${steps} steps)`;
+      });
+    }
     results.push(...checks.results);
     await context.close();
   }

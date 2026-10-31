@@ -1,5 +1,5 @@
-import { useEffect, useRef, type KeyboardEvent } from "react";
-import { FEATURED, title } from "./examples";
+import { useEffect, useRef, useState, type KeyboardEvent } from "react";
+import { FEATURED, preview, title } from "./examples";
 import { formatShortcut } from "./shortcuts";
 
 interface Props {
@@ -16,10 +16,22 @@ interface Props {
   onCover: (pixels: number) => void;
 }
 
+/** An example's preview: its picture, rendered from what it builds (see `e2e/previews.mjs`), or its name's initial where there is none. */
+function Preview({ name }: { name: string }) {
+  const [missing, setMissing] = useState(false);
+  return missing ? (
+    <span className="welcome-example-preview welcome-example-blank" aria-hidden="true">
+      {title(name).charAt(0)}
+    </span>
+  ) : (
+    <img className="welcome-example-preview" src={preview(name)} alt="" loading="lazy" onError={() => setMissing(true)} />
+  );
+}
+
 /**
  * What an empty part shows over the view: how to start, and examples to
- * open — the arrows move between them, Enter opens one, Escape closes
- * the welcome.
+ * open, each with a preview — the arrows move between them, Enter opens
+ * one, Escape closes the welcome.
  */
 export function Welcome({ examples, workspaceExamples, onExample, onWorkspaceExample, keyOf, onClose, onCover }: Props) {
   /** ` (S)`: the key of `kind`, as the platform writes it. */
@@ -27,11 +39,11 @@ export function Welcome({ examples, workspaceExamples, onExample, onWorkspaceExa
     const k = keyOf(kind);
     return k ? <kbd>{formatShortcut(k)}</kbd> : null;
   };
-  const featured = FEATURED.flatMap((name) =>
+  const featured = FEATURED.flatMap(({ name, about }) =>
     examples.includes(name)
-      ? [{ name, open: () => onExample(name) }]
+      ? [{ name, about, open: () => onExample(name) }]
       : workspaceExamples.includes(name)
-        ? [{ name, open: () => onWorkspaceExample(name) }]
+        ? [{ name, about, open: () => onWorkspaceExample(name) }]
         : [],
   );
   const list = useRef<HTMLDivElement>(null);
@@ -94,9 +106,11 @@ export function Welcome({ examples, workspaceExamples, onExample, onWorkspaceExa
         </p>
         {featured.length > 0 && (
           <div className="welcome-examples" ref={list}>
-            {featured.map(({ name, open }) => (
-              <button key={name} className="welcome-example" onClick={open}>
+            {featured.map(({ name, about, open }) => (
+              <button key={name} className="welcome-example" onClick={open} title={`${title(name)}: ${about}`}>
+                <Preview name={name} />
                 <span className="welcome-example-name">{title(name)}</span>
+                <span className="welcome-example-about">{about}</span>
               </button>
             ))}
           </div>

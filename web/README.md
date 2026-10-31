@@ -62,17 +62,33 @@ operations it is sent lack the tier they are shown at.
 `web/e2e/` drives the real app in a headless Chrome through
 `playwright-core`, which downloads no browser: it uses `$CHROME`, or a
 Google Chrome or Chromium installed in the usual places, and skips (exit
-code 0, with a message) if there is none. WebGL is rendered in software.
+code 0, with a message) if there is none — except in CI (`$CI`), where a
+skipped check fails. WebGL is rendered in software.
 Cap their memory with a cgroup (`systemd-run --user --scope -p
 MemoryMax=20G npm run e2e`): Chrome reserves far more address space than
 it uses, so `prlimit --as` kills it.
 
 ```sh
 npm run e2e          # the web app
+npm run e2e:first-run  # a first visit, from a fresh profile (CI, every push)
+npm run build:previews # the welcome's previews of the examples, into dist/examples/
 npm run e2e:vscode   # the VS Code extension's page against a real `geop serve`
 npm run demo         # records the README's docs/demo.gif (needs ffmpeg)
 ```
 
+- `npm run e2e:first-run` (`e2e/firstrun.mjs`, also the first checks of
+  `npm run e2e`) opens the app once in browser contexts made afresh — an
+  incognito window: no storage, no cache — at 1400×900, 1280×720,
+  1024×640 and as a phone, and checks that the origin's coordinate system
+  is held by the view (`window.geopView.datums`), drawn in the canvas's
+  own pixels where its axes project, and seen in the page's, with the
+  welcome open and after it is closed; and that the welcome shows each
+  featured example with its preview, name and line, the arrows move
+  between them and Enter opens one. On the way it renders the previews
+  (`e2e/previews.mjs`: each example opened as `?example=<name>`, the
+  view's canvas saved as `dist/examples/<name>.webp`, 240×150, at most
+  20 kB) where they are missing or older than the build: they are never
+  committed, and always of what the examples build now.
 - `npm run e2e` rebuilds `dist/` if any source is newer (`npm run build`),
   serves it with `vite preview` on a free port, and checks that every
   operation is in reach of the toolbar — a button, or an entry of a menu of

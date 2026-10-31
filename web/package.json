@@ -14,6 +14,7 @@
     "preview": "vite preview",
     "build:vscode": "vite build --mode vscode",
     "build:open": "vite build --mode open",
+    "build:previews": "node e2e/previews.mjs",
     "e2e": "node e2e/web.mjs",
     "e2e:first-run": "node e2e/firstrun.mjs",
     "e2e:vscode": "node e2e/vscode.mjs",
