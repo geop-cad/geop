@@ -134,7 +134,7 @@ impl<'a> EditorContext<'a> {
     /// drag of many events is — if it changed since.
     pub fn undoable(&mut self, before: Program) {
         if before != self.editor.file {
-            self.editor.undo.push(before);
+            self.editor.undo.push(super::Undone::Program(before));
             self.editor.redo.clear();
         }
     }

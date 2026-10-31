@@ -441,3 +441,41 @@ fn rename_in_args(args: &mut serde_json::Value, renamed: &HashMap<String, String
 fn no_step(id: &str) -> GeopError {
     GeopError::new(format!("the program has no step `{id}`"))
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A step renamed is renamed wherever a name of the part names it — a
+    /// target of its own, an instance, an element built from it, a key of
+    /// its state — and nowhere a name is the part placed's or merely
+    /// begins like it.
+    #[test]
+    fn a_step_renamed_is_renamed_in_every_name_of_it() {
+        let renamed = HashMap::from([("hand".to_string(), "part1".to_string())]);
+        let name = |text: &str| rename_steps(text, &renamed, false);
+        assert_eq!(name("/:sketch:hand"), "/:sketch:part1");
+        assert_eq!(name("/hand:model"), "/part1:model");
+        assert_eq!(name("/hand/hand:model"), "/part1/hand:model");
+        assert_eq!(name("/fore:hand"), "/fore:hand");
+        assert_eq!(name("extrude(hand,end)"), "extrude(part1,end)");
+        assert_eq!(name("hand.geop"), "hand.geop");
+        assert_eq!(name("handle"), "handle");
+        let key = |text: &str| rename_steps(text, &renamed, true);
+        assert_eq!(key("hand.pose"), "part1.pose");
+        assert_eq!(key("add_part(hand,m1).turn"), "add_part(part1,m1).turn");
+        assert_eq!(key("/hand:b.pose"), "/part1:b.pose");
+        assert!(names_step("add_part(hand,m1).turn", "hand"));
+        assert!(!names_step("add_part(fore,m1).turn", "hand"));
+        let mut args = serde_json::json!({
+            "entities": [{"target": "/hand:model", "name": "block(hand,c1)"},
+                         {"target": "/:model", "name": "block(hand,c1)"}],
+        });
+        rename_in_args(&mut args, &renamed);
+        let expected = serde_json::json!({
+            "entities": [{"target": "/part1:model", "name": "block(hand,c1)"},
+                         {"target": "/:model", "name": "block(part1,c1)"}],
+        });
+        assert_eq!(args, expected);
+    }
+}

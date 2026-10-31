@@ -1683,10 +1683,6 @@ fn a_hidden_part_is_not_picked_through() {
 /// places a second hand under an id of its own, and its joint is between
 /// that new hand and the forearm — not a second joint on the hand copied.
 #[test]
-#[ignore = "bug: Program::paste gives the pasted add_part step a fresh id (`part1`) but leaves its \
-            mates naming the instance it was copied from: the pasted joint `add_part(part1,m1)` \
-            is between `/fore:model` and `/hand:model`, so the copy is held by nothing and the hand \
-            gets a duplicate joint"]
 fn a_placed_part_copied_and_pasted_is_mated_as_itself() {
     let mut editor = editor();
     handled(
@@ -1715,10 +1711,6 @@ fn a_placed_part_copied_and_pasted_is_mated_as_itself() {
 /// takes back that last edit — the box as deep as it was — and leaves the
 /// box placed.
 #[test]
-#[ignore = "bug: committing a step of a placed part (Command::Open with `placed`) changes the \
-            placed file, not the program, so nothing is pushed on the undo stack; the next Undo \
-            pops the edit before it and removes the step `part1` placing the box, while box.geop \
-            keeps the new distance"]
 fn undo_after_editing_a_placed_part_takes_back_that_edit() {
     let part = geop_ops_extrude_revolve::examples::box_with_drill_hole();
     let mut editor = editor();
@@ -1780,11 +1772,6 @@ fn undo_after_editing_a_placed_part_takes_back_that_edit() {
 /// 5 into the plate's `x` moves the plate there — in the hinge's file once
 /// committed, and on the screen.
 #[test]
-#[ignore = "bug: a step placing a part, opened in a placed sub-assembly (Command::Open with \
-            `placed: hinge`), takes its placement fields and does nothing with them: the editor \
-            ignores what a step of a placed part pulls (`pulls` only for the program's own \
-            steps), so `x` = 5 leaves `hinge/plate` at the origin, and the commit writes \
-            hinge.geop with the plate's pose unchanged"]
 fn a_part_of_a_sub_assembly_goes_where_its_placement_fields_say() {
     let mut editor = editor();
     let files = BTreeMap::from([
@@ -1838,10 +1825,6 @@ fn a_part_of_a_sub_assembly_goes_where_its_placement_fields_say() {
 /// plate beside it, `plate.geop` — and pasted into `top.geop` at the top of
 /// the workspace: it places the same plate, `parts/plate.geop`.
 #[test]
-#[ignore = "bug: Command::Copy keeps an add_part step's file as it is spelled relative to the \
-            program copied from, and Command::Paste inserts it unchanged: pasted into `top.geop`, \
-            the step copied from `parts/asm.geop` looks for `plate.geop` beside top.geop and \
-            fails with `there is no file \"plate.geop\"`"]
 fn a_placed_part_pasted_into_a_file_in_another_folder_places_the_same_file() {
     let mut editor = editor();
     let mut asm = Program::new();
@@ -1884,10 +1867,6 @@ fn a_placed_part_pasted_into_a_file_in_another_folder_places_the_same_file() {
 /// examples menu: the pin in the plate shows whole — what was isolated,
 /// hidden or coloured is the arm's, for as long as the arm is edited.
 #[test]
-#[ignore = "bug: Command::LoadWorkspaceExample switches the file edited (its `path`) without \
-            clearing what Command::Load clears when the path changes — visibility, colours, \
-            isolation — so after isolating `upper` in the arm, the pin_in_plate example opens \
-            with `plate` and `pin` both hidden: an empty viewport"]
 fn an_example_opened_shows_whole_whatever_was_isolated_before() {
     let mut editor = editor();
     let example = |name: &str| Command::LoadWorkspaceExample {
@@ -1916,11 +1895,6 @@ fn an_example_opened_shows_whole_whatever_was_isolated_before() {
 /// line every front end shows of an error, and the assistant's summary —
 /// naming the file.
 #[test]
-#[ignore = "bug: Command::Commit refuses a step that does not build with \
-            `GeopError::new(format!(\"the step does not build: {error}\"))`, where `error` is \
-            the step's whole error as displayed, so the refusal's root message reads `the step \
-            does not build: GeopError` — its first line — and the reason (`there is no file \
-            \"box.geop\"`) is buried in a backtrace and context dump inside the message"]
 fn a_step_that_does_not_build_says_why_in_its_refusal() {
     let mut editor = editor();
     let box_text = geop_ops_extrude_revolve::examples::box_with_drill_hole()

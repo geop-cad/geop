@@ -166,6 +166,14 @@ enum PlacedStep {
     New(String),
 }
 
+/// What an undo takes back: an edit of the program, or of the file of a
+/// part placed in it, committed where the part is placed — each as it was
+/// before.
+enum Undone {
+    Program(Program),
+    File { path: String, program: Program },
+}
+
 /// The tool in hand, and the key it was taken in hand by.
 struct InHand {
     key: String,
@@ -211,8 +219,8 @@ pub struct Editor {
     path: Option<String>,
     /// The other program files, which it places parts from.
     workspace: Rc<EditorFiles>,
-    undo: Vec<Program>,
-    redo: Vec<Program>,
+    undo: Vec<Undone>,
+    redo: Vec<Undone>,
     marker: Option<usize>,
     open: Option<Open>,
     preview: bool,
@@ -496,7 +504,7 @@ impl Editor {
             && path == self.path
             && self.file != before
         {
-            self.undo.push(before);
+            self.undo.push(Undone::Program(before));
             self.redo.clear();
         }
         if !matches!(result, Ok(Changed::Nothing | Changed::Display)) {
@@ -999,6 +1007,14 @@ impl Editor {
                 // which the front end is given to keep.
                 if let Some(within) = &open.within {
                     let path = within.location.file.clone();
+                    let before = Program::from_json(&within.text)?;
+                    if before != committed {
+                        self.undo.push(Undone::File {
+                            path: path.clone(),
+                            program: before,
+                        });
+                        self.redo.clear();
+                    }
                     self.written.push(File {
                         path,
                         program: committed,
@@ -1302,14 +1318,29 @@ impl Editor {
                     Command::Undo => (&mut self.undo, &mut self.redo),
                     _ => (&mut self.redo, &mut self.undo),
                 };
-                let Some(program) = from.pop() else {
+                let Some(undone) = from.pop() else {
                     return Ok(Changed::Nothing);
                 };
-                to.push(self.file.clone());
-                self.edit_file(|file| {
-                    *file = program;
-                    Ok(())
-                })?;
+                match undone {
+                    Undone::Program(program) => {
+                        to.push(Undone::Program(self.file.clone()));
+                        self.edit_file(|file| {
+                            *file = program;
+                            Ok(())
+                        })?;
+                    }
+                    // A placed part's file, written back as it was, for the
+                    // front end to keep too.
+                    Undone::File { path, program } => {
+                        let now = (*self.workspace.program(&path)?).clone();
+                        to.push(Undone::File {
+                            path: path.clone(),
+                            program: now,
+                        });
+                        self.workspace.write(&path, Some(program.to_json()?));
+                        self.written.push(File { path, program });
+                    }
+                }
                 // Undoing is not itself an edit to undo.
                 Changed::Run
             }
