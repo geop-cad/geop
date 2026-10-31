@@ -1,9 +1,14 @@
-use std::backtrace::Backtrace;
+use std::{backtrace::Backtrace, sync::Arc};
 
+/// An error: what went wrong at the root, and the context it was reported
+/// through. A copy of one is the same error — a step's failure kept with
+/// what it built, and reported again with more context — so the backtrace
+/// is shared, not captured again.
+#[derive(Clone)]
 pub enum GeopError {
     Root {
         message: String,
-        backtrace: Backtrace,
+        backtrace: Arc<Backtrace>,
     },
     /// `inner`, reported through a frame that says what was being done:
     /// one line of the chain that [`GeopError::with_context`] builds.
@@ -16,7 +21,7 @@ pub enum GeopError {
 impl GeopError {
     /// Create a root error. Captures a backtrace at the call site.
     pub fn new(message: impl Into<String>) -> Self {
-        let backtrace = Backtrace::capture();
+        let backtrace = Arc::new(Backtrace::capture());
         GeopError::Root {
             message: message.into(),
             backtrace,
@@ -53,6 +58,27 @@ impl std::fmt::Display for GeopError {
                 write!(f, "{}", inner)?;
                 writeln!(f, "Context:\n{}", message)
             }
+        }
+    }
+}
+
+/// Two errors are the same when they say the same: their messages, root
+/// and context — not where they were captured.
+impl PartialEq for GeopError {
+    fn eq(&self, other: &Self) -> bool {
+        match (self, other) {
+            (GeopError::Root { message: a, .. }, GeopError::Root { message: b, .. }) => a == b,
+            (
+                GeopError::Context {
+                    inner: a,
+                    message: m,
+                },
+                GeopError::Context {
+                    inner: b,
+                    message: n,
+                },
+            ) => m == n && a == b,
+            _ => false,
         }
     }
 }

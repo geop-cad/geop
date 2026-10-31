@@ -292,7 +292,7 @@ pub fn place(ctx: &mut StepContext, instance: &str, args: &PlacedArgs) -> GeopRe
     let part = reader.part().placed_at(instance, reader.position(), None)?;
     match part.failures().first() {
         Some((step, e)) => Err(ctx_error(
-            GeopError::new(e.clone()).with_context(format!("step `{step}` of {:?}", args.file)),
+            (e.clone()).with_context(format!("step `{step}` of {:?}", args.file)),
         )),
         None => Ok(()),
     }

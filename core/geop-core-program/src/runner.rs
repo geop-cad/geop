@@ -144,9 +144,7 @@ impl Runner {
                 step_errors.push((step.id.clone(), e));
             }
         }
-        let failures = (step_errors.iter())
-            .map(|(step, e)| (step.clone(), e.to_string()))
-            .collect();
+        let failures = step_errors.clone();
         part.end(failures);
         if self.location.within.is_empty() {
             self.shared.cache.borrow_mut().sweep();
@@ -222,7 +220,7 @@ impl Runner {
         let ran = body(&mut StepContext::new(self, part, step, at));
         part.end_step(at);
         let failures = (ran.as_ref().err())
-            .map(|e| (step.to_string(), e.to_string()))
+            .map(|e| (step.to_string(), e.clone()))
             .into_iter()
             .collect();
         part.end(failures);

@@ -75,7 +75,7 @@ pub struct Part {
     pub(crate) inputs: Settings,
     pub(crate) state: StateValues,
     /// The steps of the last run that failed, with why.
-    failures: Vec<(String, String)>,
+    failures: Vec<(String, GeopError)>,
     /// Changes whenever a run changes any node (see [`Part::revision`]).
     revision: u64,
     changed: bool,
@@ -159,7 +159,7 @@ impl Part {
     }
 
     /// The steps of its last run that failed, in order, with why.
-    pub fn failures(&self) -> &[(String, String)] {
+    pub fn failures(&self) -> &[(String, GeopError)] {
         &self.failures
     }
 
@@ -520,7 +520,7 @@ impl Part {
     /// Ends the run: drops the nodes of steps no longer in the program —
     /// those after where it stopped stay — and notes what it read from
     /// outside and how its steps failed.
-    pub(crate) fn end(&mut self, failures: Vec<(String, String)>) {
+    pub(crate) fn end(&mut self, failures: Vec<(String, GeopError)>) {
         self.running = None;
         let gone: Vec<String> = (self.produced.keys())
             .filter(|step| !self.positions.contains_key(*step))

@@ -231,16 +231,25 @@ impl StepEditor {
         &*self.editing
     }
 
-    /// Starts the editing afresh — the operation's state as for a step just
-    /// opened, nothing picked for or dragged — after the step's arguments
-    /// were put back as an edit found them: undoing one. What the old
-    /// editing state held may not be in the step any more.
-    pub fn restart(&mut self, editors: &Editors, program: &Program) -> GeopResult<()> {
+    /// Starts the operation's editing afresh, as for a step just opened —
+    /// nothing picked for or dragged — after the step's arguments were put
+    /// back as an edit found them: undoing one. What the old editing state
+    /// held may not be in the step any more. What is the user's, not the
+    /// operation's, stays: the field waiting for a pick still waits, if the
+    /// step still has it, and the gizmo stays turned as it was.
+    pub fn restart(
+        &mut self,
+        editors: &Editors,
+        runner: &Runner,
+        part: &Part,
+        program: &Program,
+    ) -> GeopResult<()> {
         self.editing = Rc::from(editors.initial_editing(program, &self.step)?);
-        self.armed = None;
         self.hover = None;
         self.grab = None;
-        self.references = None;
+        let references = references(&self.form(editors, runner, part, program)?);
+        self.armed = (self.armed.take()).filter(|armed| references.contains(armed));
+        self.references = Some(references);
         Ok(())
     }
 
