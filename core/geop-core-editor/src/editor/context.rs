@@ -118,12 +118,7 @@ impl<'a> EditorContext<'a> {
         edit: impl Fn(&mut Program) -> GeopResult<()>,
     ) -> GeopResult<()> {
         let editor = &mut *self.editor;
-        let steps = &editor.file.steps;
-        let marked = (editor.marker.and_then(|m| steps.get(m))).map(|s| s.id.clone());
-        edit(&mut editor.file)?;
-        if let Some(marked) = marked {
-            editor.marker = Some(editor.file.index_of(&marked)?);
-        }
+        editor.edit_file(&edit)?;
         // A step of a placed part is of another program.
         if let Some(open) = &mut editor.open
             && open.within.is_none()

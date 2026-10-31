@@ -252,7 +252,7 @@ impl ModelOperation for DerivedPart {
         };
         let derived = build_derived(reader, &placed).with_context(ctx)?;
         if let Some((failed, e)) = derived.part.failures().first() {
-            let e = GeopError::new(e.clone());
+            let e = e.clone();
             return Err(e.with_context(format!("step `{failed}` of {:?}", args.file)))
                 .with_context(ctx);
         }

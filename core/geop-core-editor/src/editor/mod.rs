@@ -95,15 +95,6 @@ type EditorFiles = Files<Box<dyn FileStoreMut>>;
 /// program's state.
 type Edited = (serde_json::Value, StateValues);
 
-/// What a program-level undo goes back to.
-enum Undone {
-    /// The program as it was before an edit.
-    Program(Program),
-    /// A step cancelled after it was edited: undoing the cancel opens it
-    /// again as it was left, with its own edits to undo.
-    Cancelled(Box<Open>),
-}
-
 /// The step being edited.
 struct Open {
     /// Where it is, or goes.
@@ -173,6 +164,20 @@ impl Open {
 enum PlacedStep {
     Existing(String),
     New(String),
+}
+
+/// What an undo takes back: an edit of the program, or of the file of a
+/// part placed in it, committed where the part is placed — each as it was
+/// before — or the cancel of a step that was edited.
+enum Undone {
+    Program(Program),
+    File {
+        path: String,
+        program: Program,
+    },
+    /// A step cancelled after it was edited: undoing the cancel opens it
+    /// again as it was left, with its own edits to undo.
+    Cancelled(Box<Open>),
 }
 
 /// The tool in hand, and the key it was taken in hand by.
@@ -384,13 +389,18 @@ impl Editor {
         serde_json::to_string(&self.handle(command)).map_err(|e| format!("writing update: {e}"))
     }
 
+    /// The path of the file edited in the workspace: its top, until told.
+    fn own_file(&self) -> String {
+        let path = self.path.as_deref().unwrap_or_default();
+        geop_core_program::workspace::resolve("", path)
+    }
+
     /// Tells the runner the workspace the program reads from, and the file
     /// it is in there.
     fn give(&mut self) {
-        let path = self.path.clone().unwrap_or_default();
         self.build.runner.workspace = Some(self.workspace.clone());
         self.build.runner.location = Location {
-            file: geop_core_program::workspace::resolve("", &path),
+            file: self.own_file(),
             within: Vec::new(),
         };
     }
@@ -473,7 +483,7 @@ impl Editor {
     }
 
     /// Why the step `open` does not build, if it does not.
-    fn step_error(&self, open: &Open) -> Option<String> {
+    fn step_error(&self, open: &Open) -> Option<GeopError> {
         match &open.within {
             Some(within) => (within.part.failures().iter())
                 .find(|(step, _)| *step == open.id)
@@ -817,6 +827,22 @@ impl Editor {
         Ok(())
     }
 
+    /// Edits the file by `edit`. The marker stays at its step, found again
+    /// by id — or, if the edit took that step out, where it was: one rule
+    /// for where the program runs to, whatever an edit does to its steps.
+    fn edit_file<T>(&mut self, edit: impl FnOnce(&mut Program) -> GeopResult<T>) -> GeopResult<T> {
+        let marked = (self.marker)
+            .and_then(|m| self.file.steps.get(m))
+            .map(|step| step.id.clone());
+        let done = edit(&mut self.file)?;
+        if let (Some(marker), Some(marked)) = (self.marker, marked) {
+            let steps = &self.file.steps;
+            let at = steps.iter().position(|step| step.id == marked);
+            self.marker = Some(at.unwrap_or(marker)).filter(|&m| m < steps.len());
+        }
+        Ok(done)
+    }
+
     /// Refuses while a step is edited.
     fn idle(&self) -> GeopResult<()> {
         match self.open {
@@ -919,7 +945,7 @@ impl Editor {
                 let editing = Editing {
                     editors: self.registry.editors(),
                     runner,
-                    part,
+                    part: part.clone(),
                     program: &mut open.program,
                     scene: &scene,
                 };
@@ -934,8 +960,8 @@ impl Editor {
                     open.undo.push(start);
                     open.redo.clear();
                 }
-                // A drag changes neither, but what it pulls moves the parts —
-                // of the program's own steps: a placed part's pulls nothing.
+                // A drag changes neither, but what it pulls moves the parts
+                // — of the program, or of the placed part the step is of.
                 // The pointer moving over the view pulls nothing new: what
                 // the step pulled was solved for at the edit that pulled it,
                 // and a hover is not solved for again (nor its form built
@@ -944,18 +970,11 @@ impl Editor {
                     event,
                     StepEditEvent::Hover { .. } | StepEditEvent::Leave | StepEditEvent::View { .. }
                 );
-                let pulls = open.within.is_none()
-                    && !moved_only
-                    && !(open
-                        .editor
-                        .form(
-                            self.registry.editors(),
-                            &self.build.runner,
-                            &self.build.part,
-                            &open.program,
-                        )?
+                let pulls = !moved_only
+                    && !(open.editor)
+                        .form(self.registry.editors(), runner, part, &open.program)?
                         .pulls
-                        .is_empty());
+                        .is_empty();
                 match before == after && !pulls {
                     true => Changed::Nothing,
                     false => Changed::Step,
@@ -986,7 +1005,7 @@ impl Editor {
                     return Err(GeopError::new("no step is being edited"));
                 };
                 if let Some(error) = self.step_error(open) {
-                    return Err(GeopError::new(format!("the step does not build: {error}")));
+                    return Err(error.with_context("the step does not build"));
                 }
                 let committed = open.program.clone();
                 committed.validate(&self.build.runner.registry)?;
@@ -994,6 +1013,14 @@ impl Editor {
                 // which the front end is given to keep.
                 if let Some(within) = &open.within {
                     let path = within.location.file.clone();
+                    let before = Program::from_json(&within.text)?;
+                    if before != committed {
+                        self.undo.push(Undone::File {
+                            path: path.clone(),
+                            program: before,
+                        });
+                        self.redo.clear();
+                    }
                     self.written.push(File {
                         path,
                         program: committed,
@@ -1001,18 +1028,16 @@ impl Editor {
                     self.open = None;
                     return Ok(Changed::Run);
                 }
+                self.open = None;
                 // How the program is shown is the file's: it may have
                 // changed while the step was edited.
-                self.file = Program {
-                    display: std::mem::take(&mut self.file.display),
-                    ..committed
-                };
-                if open.new
-                    && let Some(marker) = &mut self.marker
-                {
-                    *marker += 1;
-                }
-                self.open = None;
+                self.edit_file(|file| {
+                    *file = Program {
+                        display: std::mem::take(&mut file.display),
+                        ..committed
+                    };
+                    Ok(())
+                })?;
                 Changed::Program
             }
             Command::Cancel => {
@@ -1045,54 +1070,78 @@ impl Editor {
             }
             Command::Remove { id } => {
                 self.idle()?;
-                let index = self.file.index_of(&id)?;
-                self.file.steps.remove(index);
-                if let Some(marker) = &mut self.marker
-                    && index < *marker
-                {
-                    *marker -= 1;
-                }
+                self.edit_file(|file| {
+                    let index = file.index_of(&id)?;
+                    file.steps.remove(index);
+                    Ok(())
+                })?;
                 Changed::Program
             }
             Command::Move { id, index } => {
                 self.idle()?;
-                let from = self.file.index_of(&id)?;
-                let steps = &mut self.file.steps;
-                if index >= steps.len() {
-                    return Err(GeopError::new(format!(
-                        "cannot move step {id:?} to {index}: the program has {} steps",
-                        steps.len()
-                    )));
-                }
-                let step = steps.remove(from);
-                steps.insert(index, step);
+                self.edit_file(|file| {
+                    let from = file.index_of(&id)?;
+                    let steps = &mut file.steps;
+                    if index >= steps.len() {
+                        return Err(GeopError::new(format!(
+                            "cannot move step {id:?} to {index}: the program has {} steps",
+                            steps.len()
+                        )));
+                    }
+                    let step = steps.remove(from);
+                    steps.insert(index, step);
+                    Ok(())
+                })?;
                 Changed::Program
             }
             Command::Copy { id } => {
+                // The step as it is edited, if it is the one open — and the
+                // file it is in, which the files it names are named from.
+                let (program, from) = match &self.open {
+                    Some(open) if open.id == id => (
+                        &open.program,
+                        open.within.as_ref().map(|w| w.location.file.clone()),
+                    ),
+                    _ => (&self.file, None),
+                };
+                let from = from.unwrap_or_else(|| self.own_file());
+                let mut excerpt = program.excerpt(&id)?;
+                // Named from the workspace's top, pasted in a file anywhere
+                // they name the same files (see [`Command::Paste`]).
+                let files = self.workspace.list();
+                excerpt.rewrite_texts(|text| {
+                    let path = self.workspace.resolve(&from, text);
+                    (path != text && files.contains(&path)).then_some(path)
+                });
                 self.exported = Some(Export {
                     name: format!("{id}.geop"),
                     media_type: "application/json".into(),
-                    content: Content::Text(self.file.excerpt(&id)?.to_json()?),
+                    content: Content::Text(excerpt.to_json()?),
                 });
                 Changed::Nothing
             }
             Command::Paste { text } => {
                 self.idle()?;
-                let pasted = Program::from_json(&text).map_err(|e| {
+                let mut pasted = Program::from_json(&text).map_err(|e| {
                     e.with_context("pasting: what is pasted is not steps copied from geop")
                 })?;
+                // The files it names, named from the workspace's top as a
+                // copy names them, named from the file pasted in.
+                let (own, files) = (self.own_file(), self.workspace.list());
+                pasted.rewrite_texts(|text| {
+                    let path = self.workspace.resolve("", text);
+                    let named = self.workspace.relative(&own, &path);
+                    (named != text && files.contains(&path)).then_some(named)
+                });
                 let index = self.marker.unwrap_or(self.file.steps.len());
-                let editors = self.registry.editors();
+                let registry = self.registry.clone();
+                let editors = registry.editors();
                 let label = |step: &ProgramStep| match editors.info(&step.operation) {
                     Some(listed) => listed.info.label.to_string(),
                     None => step.operation.clone(),
                 };
-                let ids = self
-                    .file
-                    .paste(pasted, index, &self.build.runner.registry, label)?;
-                if let Some(marker) = &mut self.marker {
-                    *marker += ids.len();
-                }
+                let operations = self.operations.clone();
+                self.edit_file(|file| file.paste(pasted, index, &operations, label))?;
                 Changed::Program
             }
             Command::Seek { marker } => {
@@ -1172,19 +1221,18 @@ impl Editor {
                         program,
                     })
                     .collect();
+                let first = files
+                    .first()
+                    .ok_or_else(|| GeopError::new(format!("the example {name:?} has no files")))?;
+                // Its first file opened as any file is — the one left kept
+                // as edited, and what was shown of it, and how, forgotten —
+                // before its files are written over what was there.
+                let (program, path) = (first.program.clone(), Some(first.path.clone()));
+                self.apply(Command::Load { program, path })?;
                 for file in &files {
                     self.workspace
                         .write(&file.path, Some(file.program.to_json()?));
                 }
-                let first = files
-                    .first()
-                    .ok_or_else(|| GeopError::new(format!("the example {name:?} has no files")))?;
-                self.file = first.program.clone();
-                self.path = Some(first.path.clone());
-                self.marker = None;
-                self.undo.clear();
-                self.redo.clear();
-                self.build = Build::new(&self.operations);
                 self.added = Some(files);
                 Changed::Program
             }
@@ -1268,8 +1316,18 @@ impl Editor {
                 to.push(now);
                 open.program.step_mut(&open.id)?.args = args;
                 open.program.state = state;
-                open.editor
-                    .restart(self.registry.editors(), &open.program)?;
+                let (runner, part) = match &open.within {
+                    Some(within) => (
+                        &within.runner,
+                        Against {
+                            part: &within.part,
+                            outside: self.build.part.placing(&within.instance),
+                        },
+                    ),
+                    None => (&self.build.runner, Against::from(&self.build.part)),
+                };
+                let editors = self.registry.editors();
+                (open.editor).restart(editors, runner, part, &open.program)?;
                 Changed::Step
             }
             Command::Undo | Command::Redo => {
@@ -1277,15 +1335,31 @@ impl Editor {
                     Command::Undo => (&mut self.undo, &mut self.redo),
                     _ => (&mut self.redo, &mut self.undo),
                 };
-                match from.pop() {
-                    None => return Ok(Changed::Nothing),
-                    Some(Undone::Program(program)) => {
-                        to.push(Undone::Program(std::mem::replace(&mut self.file, program)));
-                        self.marker = None;
+                let Some(undone) = from.pop() else {
+                    return Ok(Changed::Nothing);
+                };
+                match undone {
+                    Undone::Program(program) => {
+                        to.push(Undone::Program(self.file.clone()));
+                        self.edit_file(|file| {
+                            *file = program;
+                            Ok(())
+                        })?;
+                    }
+                    // A placed part's file, written back as it was, for the
+                    // front end to keep too.
+                    Undone::File { path, program } => {
+                        let now = (*self.workspace.program(&path)?).clone();
+                        to.push(Undone::File {
+                            path: path.clone(),
+                            program: now,
+                        });
+                        self.workspace.write(&path, Some(program.to_json()?));
+                        self.written.push(File { path, program });
                     }
                     // The cancel undone: the step is edited again, built as
                     // it is when opened.
-                    Some(Undone::Cancelled(open)) => {
+                    Undone::Cancelled(open) => {
                         self.tool = None;
                         self.give();
                         (self.build)
@@ -1320,6 +1394,34 @@ impl Editor {
         let Some(settler) = registry.get_settler() else {
             return;
         };
+        // A step of a placed part edited pulls that part's state: its
+        // program's, which its file is written with, solved where the part
+        // is built — then the program placing it runs with it.
+        if self.preview
+            && let Some(open) = &mut self.open
+            && let Some(within) = &open.within
+        {
+            let editors = self.registry.editors();
+            let against = Against {
+                part: &within.part,
+                outside: self.build.part.placing(&within.instance),
+            };
+            let pulls = (open
+                .editor
+                .form(editors, &within.runner, against, &open.program))
+            .map(|form| form.pulls)
+            .unwrap_or_default();
+            if !pulls.is_empty() {
+                let mut part = (*within.part).clone();
+                let mut rerun = Rerun {
+                    runner: &within.runner,
+                    part: &mut part,
+                    program: &open.program,
+                };
+                let moved = settler.settle(&mut rerun, &pulls, Some(&open.id));
+                open.program.state.extend(moved.unwrap_or_default());
+            }
+        }
         // Up to the step edited first: what it pulls is known from the part
         // it is applied to.
         self.run_to(match &self.open {
@@ -1475,7 +1577,7 @@ impl Editor {
             label: info.label,
             doc: info.doc,
             id: (!open.new).then(|| open.id.clone()),
-            error,
+            error: error.map(|e| e.to_string()),
             missing,
             presentation,
             preview: self.preview,
@@ -1784,7 +1886,7 @@ impl Editor {
         let error = |id: &str| {
             (failures.iter())
                 .find(|(step, _)| step == id)
-                .map(|(_, e)| e.clone())
+                .map(|(_, e)| e.to_string())
         };
         let runner = self.build.runner.nested(placed.location.clone());
         let steps = self.listed_steps(
@@ -1819,7 +1921,7 @@ impl Editor {
             None => self.marker.unwrap_or(self.file.steps.len()),
         };
         let editors = self.registry.editors();
-        let errors = |id: &str| self.build.errors.get(id).cloned();
+        let errors = |id: &str| self.build.errors.get(id).map(|e| e.to_string());
         let (runner, part) = (&self.build.runner, &self.build.part);
         let steps = self.listed_steps(runner, part, &self.file, runs_to, editing, errors, true);
         // What no part placed now is built as is listed no more.

@@ -15,6 +15,7 @@ use geop_core_math::{
     vector::Vector3,
 };
 use geop_core_program::{part::StepContext, reader::Reader};
+use geop_core_topology::validation::{ValidationParameters, numerical_accuracy};
 use geop_ops_model::{ModelOperation, NamedModel, build_model, read_model, resolve_bodies};
 use serde::{Deserialize, Serialize};
 
@@ -113,11 +114,44 @@ impl ModelOperation for ScaleBody {
         }
         let about = Vector3::from_array(args.about.map(Scalar::from_f64));
         let motion = Motion::scaling(&about, args.factors.map(Scalar::from_f64))?;
+        let before = imprecise(model);
         for body in resolve_bodies(reader, &args.bodies)? {
             model.transform_body(body, &motion)?;
         }
+        // Scaled, an entity's enclosure scales with it, and the kernel's
+        // budget of what an entity may carry and of the shortest edge it
+        // resolves does not: what scaling makes too wide or too short is
+        // refused, by name, not left to fail in the next step.
+        let made: Vec<String> = (imprecise(model).into_iter())
+            .filter(|error| !before.contains(error))
+            .collect();
+        if let Some(first) = made.first() {
+            return Err(GeopError::new(format!(
+                "scaled by {:?}, the bodies are not as precise as the kernel needs ({} entities, \
+                 {}): {first} — scale what they were built from instead, before the features \
+                 that trace curves on them, or scale by a factor nearer 1",
+                args.factors,
+                made.len(),
+                model.names_mentioned(first).join(", "),
+            )));
+        }
         Ok(())
     }
+}
+
+/// What of `model` is wider than an entity may carry, or an edge shorter
+/// than the searches resolve, as validation says it (see
+/// [`geop_core_topology::validation::numerical_accuracy`]).
+fn imprecise(model: &NamedModel) -> Vec<String> {
+    let mut errors = Vec::new();
+    numerical_accuracy::check_numerical_accuracy(
+        &ValidationParameters::default(),
+        &mut errors,
+        model.topology(),
+    );
+    (errors.iter())
+        .map(|e| e.root_message().to_string())
+        .collect()
 }
 
 #[cfg(test)]

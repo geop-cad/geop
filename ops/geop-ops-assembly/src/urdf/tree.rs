@@ -4,8 +4,8 @@
 //!
 //! Parts held together by mates alone — constraints and fastened joints —
 //! move as one, so they make one link; so do the parts the mates hold to
-//! the ground (the fixed parts, and a pattern's copies), which make the
-//! root. That only holds if those mates hold them rigidly: where they leave
+//! the ground (the fixed parts), which make the root, and a pattern's
+//! copies with the part each copies. That only holds if those mates hold them rigidly: where they leave
 //! a part free to move, the motion is one no URDF joint names, and the
 //! export is refused. The revolute and slider joints between links must
 //! then form a tree hanging from the root: a joint closing a loop, or a
@@ -60,8 +60,10 @@ fn groups(mechanism: &Mechanism) -> Vec<usize> {
     let count = mechanism.bodies.len();
     let mut groups = UnionFind::new(count + 1);
     for (b, body) in mechanism.bodies.iter().enumerate() {
-        if !body.free {
-            groups.union(0, b + 1);
+        match body.carrier {
+            Some(carrier) => groups.union(carrier + 1, b + 1),
+            None if !body.free => groups.union(0, b + 1),
+            None => {}
         }
     }
     for (_, [a, b]) in &mechanism.constraints {
@@ -94,7 +96,10 @@ pub fn tree(mechanism: &Mechanism) -> GeopResult<Tree> {
         |group: usize| -> Vec<usize> { (0..count).filter(|&b| groups[b + 1] == group).collect() };
     let link_named = |group: usize| -> LinkBodies {
         let bodies = members(group);
-        let fixed = bodies.iter().find(|&&b| !mechanism.bodies[b].free);
+        let fixed = (bodies.iter()).find(|&&b| {
+            let body = &mechanism.bodies[b];
+            !body.free && body.carrier.is_none()
+        });
         let name = match fixed.or(bodies.first()) {
             Some(&b) => part(b).to_string(),
             None => "base".to_string(),

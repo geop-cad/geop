@@ -123,34 +123,49 @@ fn block_turned_a_quarter_round_its_edge_and_joined() {
     assert_valid(&program.build_model(registry).unwrap());
 }
 
-/// A sphere of radius 1 drilled through, scaled up ten thousand times: a
-/// sphere of radius 10000 drilled through, as valid as the same sphere
-/// drilled at that size (which is).
+/// A sphere of radius 1 drilled through, scaled up ten thousand times. The
+/// curves the hole traced on the sphere are fitted to within `1.7e-6`, and
+/// that is honest: scaled, they are within `0.017` of the curves of the
+/// scaled solid, far past the `1e-4` an entity may carry, which is no
+/// fraction of the part's size. The kernel's budget is absolute, so the
+/// scale is refused, naming what it would make too wide and what to do —
+/// as a block scaled so small its edges are shorter than the searches
+/// resolve is. A sphere not drilled scales up valid: its enclosures are
+/// sharp.
 #[test]
-#[ignore = "bug: ScaleBody scales every control point's enclosure with it, width and all: \
-            curves of the drilled sphere 1.7e-6 wide come out 0.017 wide (e.g. EdgeId(169)'s \
-            control point 0, component 1 is [-1999.808, -1999.792]), far past the 1e-4 an \
-            entity may carry, and the scaled solid fails validation with 496 such errors, \
-            where the same sphere drilled at radius 10000 is valid. Scaling by 1e-4 fails the \
-            other way: the corner-cut block's edges come out 7e-5 long, shorter than the \
-            1e-4 the searches resolve, unrefused"]
-fn a_drilled_sphere_scaled_ten_thousand_times_is_valid() {
+fn a_drilled_sphere_scaled_ten_thousand_times() {
     use crate::{ScaleBody, ScaleBodyArgs};
-    let mut program = Program::new();
-    program.push("ball", PrimitiveArgs::sphere([0.0; 3], 1.0));
-    program.push(
+    let registry = || registry()?.with(ScaleBody);
+    let scaled = |program: &Program, solid: &str, factor: f64| {
+        let mut program = program.clone();
+        program.push(
+            "scaled",
+            ScaleBodyArgs {
+                bodies: vec![body(solid)],
+                about: [0.3, 0.2, 0.1],
+                factors: [factor; 3],
+            },
+        );
+        program.build_model(registry)
+    };
+    let mut ball = Program::new();
+    ball.push("ball", PrimitiveArgs::sphere([0.0; 3], 1.0));
+    assert_valid(&scaled(&ball, "sphere(ball)", 1e4).unwrap());
+    let mut drilled = ball;
+    drilled.push(
         "hole",
         PrimitiveArgs::cylinder_z([0.0, 0.0, -2.0], 0.3, 4.0).cut("sphere(ball)"),
     );
-    program.push(
-        "big",
-        ScaleBodyArgs {
-            bodies: vec![body("cylinder(hole)")],
-            about: [0.3, 0.2, 0.1],
-            factors: [1e4; 3],
-        },
+    let error = scaled(&drilled, "cylinder(hole)", 1e4)
+        .unwrap_err()
+        .to_string();
+    assert!(
+        error.contains("not as precise as the kernel needs"),
+        "{error}"
     );
-    let registry = || registry()?.with(ScaleBody);
-    let part = program.build_model(registry).unwrap();
-    assert_valid(&part);
+    assert!(error.contains("wide"), "{error}");
+    let mut block = Program::new();
+    block.push("b", PrimitiveArgs::block([0.0; 3], [0.5; 3]));
+    let error = scaled(&block, "block(b)", 1e-4).unwrap_err().to_string();
+    assert!(error.contains("shorter than"), "{error}");
 }
