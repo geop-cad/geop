@@ -48,7 +48,7 @@ use geop_core_program::{
 };
 use std::{
     cell::RefCell,
-    collections::{BTreeMap, HashMap},
+    collections::{BTreeMap, BTreeSet, HashMap},
     rc::Rc,
 };
 
@@ -253,6 +253,17 @@ pub struct Editor {
     /// drawn with other sketches than before — the part before a sketch
     /// opened — draws its sketches again, not its faces.
     drawings: Drawings,
+    /// The steps of the parts placed, as listed, by file and build (see
+    /// [`Editor::placed_steps`]).
+    listed: RefCell<HashMap<(String, *const Part), ListedBuild>>,
+}
+
+/// A placed part's steps as listed, and the build and program they list:
+/// listed again only for another build or another program.
+struct ListedBuild {
+    part: Rc<Part>,
+    program: Rc<Program>,
+    steps: Vec<StepInfo>,
 }
 
 impl Editor {
@@ -298,6 +309,7 @@ impl Editor {
             drawn: None,
             views: RefCell::default(),
             drawings: Drawings::default(),
+            listed: RefCell::default(),
         }
     }
 
@@ -1619,7 +1631,13 @@ impl Editor {
         placing: bool,
     ) -> Vec<StepInfo> {
         let editors = self.registry.editors();
-        let placed = if placing { part.placed() } else { Vec::new() };
+        // The parts placed, by the step that placed them.
+        let mut placed: HashMap<&str, Vec<(&str, &PlacedPart)>> = HashMap::new();
+        if placing {
+            for (instance, by, part) in part.placed() {
+                placed.entry(by).or_default().push((instance, part));
+            }
+        }
         (program.steps.iter().enumerate())
             .map(|(i, step)| {
                 let listed = editors.info(&step.operation);
@@ -1628,9 +1646,8 @@ impl Editor {
                 let summary = (editors.listed(runner, part, program, &step.id))
                     .map(|form| form.dialog.summary())
                     .unwrap_or_default();
-                let placed = (placed.iter())
-                    .filter(|(_, by, _)| *by == step.id)
-                    .filter_map(|(instance, _, placed)| self.placed_steps(instance, placed))
+                let placed = (placed.get(step.id.as_str()).into_iter().flatten())
+                    .filter_map(|(instance, placed)| self.placed_steps(instance, placed))
                     .collect();
                 StepInfo {
                     id: step.id.clone(),
@@ -1649,6 +1666,10 @@ impl Editor {
 
     /// The steps of the part placed as `instance`, built as `placed`: none
     /// if its program cannot be read.
+    ///
+    /// Listed once for every build and program — every screw of a size —
+    /// and kept: a drag moves placed parts and builds none of them again,
+    /// and a form of a placed standard part's sketch solves the sketch.
     fn placed_steps(&self, instance: &str, placed: &PlacedPart) -> Option<PlacedSteps> {
         let file = placed.location.file.clone();
         let open = (self.open.as_ref())
@@ -1659,6 +1680,18 @@ impl Editor {
             Some(open) => Rc::new(open.program.clone()),
             None => self.workspace.program(&file).ok()?,
         };
+        let key = (file.clone(), Rc::as_ptr(&placed.part));
+        if open.is_none()
+            && let Some(listed) = self.listed.borrow().get(&key)
+            && Rc::ptr_eq(&listed.part, &placed.part)
+            && (Rc::ptr_eq(&listed.program, &program) || listed.program == program)
+        {
+            return Some(PlacedSteps {
+                instance: instance.to_string(),
+                file,
+                steps: listed.steps.clone(),
+            });
+        }
         let editing = open.map(|open| open.id.as_str());
         let failures = placed.part.failures();
         let error = |id: &str| {
@@ -1676,6 +1709,14 @@ impl Editor {
             error,
             false,
         );
+        if open.is_none() {
+            let listed = ListedBuild {
+                part: placed.part.clone(),
+                program,
+                steps: steps.clone(),
+            };
+            self.listed.borrow_mut().insert(key, listed);
+        }
         Some(PlacedSteps {
             instance: instance.to_string(),
             file,
@@ -1694,6 +1735,11 @@ impl Editor {
         let errors = |id: &str| self.build.errors.get(id).cloned();
         let (runner, part) = (&self.build.runner, &self.build.part);
         let steps = self.listed_steps(runner, part, &self.file, runs_to, editing, errors, true);
+        // What no part placed now is built as is listed no more.
+        let builds: BTreeSet<*const Part> = (part.placed().into_iter())
+            .map(|(_, _, placed)| Rc::as_ptr(&placed.part))
+            .collect();
+        (self.listed.borrow_mut()).retain(|(_, build), _| builds.contains(build));
         let mut operations = editors.infos();
         operations.sort_by_key(|listed| (listed.info.group, listed.info.tier));
         let part = self.part();

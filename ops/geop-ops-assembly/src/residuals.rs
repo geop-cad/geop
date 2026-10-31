@@ -323,11 +323,13 @@ impl Geometry {
     /// in the part's own frame — a free choice — and turn with it.
     pub fn placed(&self, pose: Option<&Pose<D>>) -> GeopResult<World> {
         let placing = Placing::new(pose);
+        // Of the part's own direction, which no state moves: in plain
+        // numbers, the same values dual numbers would carry with no slope.
         let direction = |d: &Vector3| -> GeopResult<Direction> {
-            let d = d.map(D::cst).normalize()?;
+            let d = d.normalize()?;
             Ok(Direction {
-                along: placing.turn(&d),
-                across: d.across()?.map(|v| placing.turn(&v)),
+                along: placing.turn(&d.map(D::cst)),
+                across: d.across()?.map(|v| placing.turn(&v.map(D::cst))),
             })
         };
         Ok(match self {

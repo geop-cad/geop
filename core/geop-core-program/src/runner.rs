@@ -70,6 +70,17 @@ pub(crate) fn quoted(names: &[&str]) -> String {
     quoted.join(", ")
 }
 
+thread_local! {
+    static STEPS_RUN: Cell<usize> = const { Cell::new(0) };
+}
+
+/// How many steps this thread has run, of every program and every part
+/// placed — each walked whether or not it made anything again: what a run
+/// costs at least, so a test can bound the runs an edit takes by a count.
+pub fn steps_run() -> usize {
+    STEPS_RUN.get()
+}
+
 /// How a run went.
 pub struct RunOutput {
     /// The steps that failed, in program order, with why. A failed step does
@@ -130,13 +141,24 @@ impl Runner {
         upto: Option<&str>,
         outside: Option<Rc<Reader>>,
     ) -> RunOutput {
-        let order = steps.iter().map(|step| step.id.clone()).collect();
-        part.begin(order, inputs, state);
         let end = (upto.and_then(|upto| steps.iter().position(|step| step.id == upto)))
             .unwrap_or(steps.len());
+        // Nothing changed since it last ran: every step would reuse what
+        // it made, and walking them all to find that is a run's cost — an
+        // editor runs its program several times an event of a drag.
+        if part.ran_as(steps, end, inputs, state)
+            && (part.files_read.iter()).all(|(path, read)| self.revision(path) == *read)
+        {
+            return RunOutput {
+                step_errors: Vec::new(),
+            };
+        }
+        let order = steps.iter().map(|step| step.id.clone()).collect();
+        part.begin(order, inputs, state);
         let mut step_errors = Vec::new();
         let mut ids = HashSet::new();
         for (at, step) in steps.iter().enumerate().take(end) {
+            STEPS_RUN.set(STEPS_RUN.get() + 1);
             part.begin_step(at);
             let ran = match ids.insert(step.id.as_str()) {
                 true => self.run_step_of(part, step, at, outside.clone()),
@@ -165,6 +187,7 @@ impl Runner {
             .map(|(step, e)| (step.clone(), e.to_string()))
             .collect();
         part.end(failures);
+        part.ran_through(steps, end);
         if self.location.within.is_empty() {
             self.shared.cache.borrow_mut().sweep();
             self.keep(part);

@@ -23,6 +23,7 @@ use crate::{
     kept::{Derivation, Digest, Hasher, Keeper, KeptRead, digest_debug},
     numeric::{evaluate, read_parameter},
     placed::{OUTSIDE, PLACED, PlacedPart, placed},
+    program::ProgramStep,
     reader::{Reader, Recording},
     runner::Runner,
     target::{Node, Provenance, Read, Target, TargetReference, next_version},
@@ -99,6 +100,11 @@ pub struct Part {
     /// What was made of it whole, once for every reader of it (see
     /// [`Reader::shared`]).
     pub(crate) shared: Shared,
+    /// The steps its last run ran, and up to where, if it ran them all
+    /// without a failure: what a run of the same, with the same inputs and
+    /// state and every file as it read it, finds nothing to do for
+    /// ([`Part::ran_as`]).
+    ran_steps: Option<(Vec<ProgramStep>, usize)>,
 }
 
 /// What was made of a part whole, by what made it, with what that read
@@ -201,7 +207,7 @@ impl Part {
     }
 
     /// The position of the step `step` in the last run.
-    fn position(&self, step: &str) -> Option<usize> {
+    pub(crate) fn position(&self, step: &str) -> Option<usize> {
         self.positions.get(step).copied()
     }
 
@@ -535,6 +541,7 @@ impl Part {
 
     /// Starts a run of the steps `order`, given `inputs` and `state`.
     pub(crate) fn begin(&mut self, order: Vec<String>, inputs: &Settings, state: &StateValues) {
+        self.ran_steps = None;
         self.shared = Shared::default();
         self.positions.clear();
         for (at, step) in order.iter().enumerate() {
@@ -598,6 +605,27 @@ impl Part {
             self.produced.remove(step);
         }
         self.changed |= !dropped.is_empty();
+    }
+
+    /// Whether its last run ran `steps` up to `end`, with `inputs` and
+    /// `state`, and none failed: run so again, with every file it read as
+    /// it read it, every step would reuse what it made.
+    pub(crate) fn ran_as(
+        &self,
+        steps: &[ProgramStep],
+        end: usize,
+        inputs: &Settings,
+        state: &StateValues,
+    ) -> bool {
+        self.failures.is_empty()
+            && self.state == *state
+            && self.inputs == *inputs
+            && (self.ran_steps.as_ref()).is_some_and(|(ran, upto)| *upto == end && ran == steps)
+    }
+
+    /// Notes that its run ran `steps` up to `end` (see [`Part::ran_as`]).
+    pub(crate) fn ran_through(&mut self, steps: &[ProgramStep], end: usize) {
+        self.ran_steps = self.failures.is_empty().then(|| (steps.to_vec(), end));
     }
 
     /// Ends the run: drops the nodes of steps no longer in the program —

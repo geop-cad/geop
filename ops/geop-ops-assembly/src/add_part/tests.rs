@@ -229,7 +229,7 @@ impl Assembly {
     /// near where it ended.
     fn solve(&mut self, pulls: &[Pull]) -> solving::Report {
         let state = self.state.clone();
-        let (moved, report) = solve(&mut self.rerun(), &state, pulls, None).unwrap();
+        let (moved, report) = solve(&mut self.rerun(), &state, pulls, None, true, None).unwrap();
         if report.converged {
             assert!(report.unproven.is_empty(), "{:?}", report.unproven);
         }
@@ -328,7 +328,7 @@ fn solving_the_mates_moves_a_part_onto_the_part_before() {
     let mut assembly = Assembly::on_a(&[("b", mates)], state);
     assert!(!check_mates(&assembly.reader()).unwrap().converged);
     let state = assembly.state.clone();
-    let (moved, _) = solve(&mut assembly.rerun(), &state, &[], None).unwrap();
+    let (moved, _) = solve(&mut assembly.rerun(), &state, &[], None, true, None).unwrap();
     assert_eq!(moved.keys().collect::<Vec<_>>(), ["b.pose"], "a is fixed");
     assembly.run();
     let report = assembly.solve(&[]);
@@ -414,7 +414,7 @@ fn a_drag_pulls_the_point_grabbed() {
         pulls
     };
     let state = assembly.state.clone();
-    let (moved, report) = solve(&mut assembly.rerun(), &state, &pulls, None).unwrap();
+    let (moved, report) = solve(&mut assembly.rerun(), &state, &pulls, None, true, None).unwrap();
     assert!(report.converged);
     let corner = apply(&moved_to(&moved, "b"), [1.0, 0.0, 0.0]);
     assert_close(corner, [0.0, 1.0, 0.0], 1e-2);

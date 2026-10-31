@@ -7,8 +7,11 @@
 //! ([`Problem::free`]), each a block of the system, stepped along its own
 //! steps ([`geop_core_math::solvers::system::Variable::retract`]: a pose by
 //! the exponential map of a twist). The constraints are those the program
-//! defines, run again at every state tried: what did not read the state
-//! that changed is reused, not built again. What a solve
+//! defines, run once at the state a solve starts from: at every state it
+//! tries, only the constraints it asks are made again, each by its step's
+//! generator, of the part as built and the state tried
+//! ([`crate::constraint::Remade`]) — no program is run, and the work
+//! of a solve step is that of the constraints it asks. What a solve
 //! should prefer among the states the constraints allow is the caller's
 //! too: [`Preference`]s pull — a drag — and every value nothing pulls stays
 //! as near where it was as the constraints let it.
@@ -31,7 +34,9 @@ use std::{
 
 use geop_core_math::{
     geop_error::GeopResult,
-    solvers::system::{self, Bound, Equations, Linearized, Phase, System, Term, Variable},
+    solvers::system::{
+        self, Bound, Equations, Linearized, Phase, Structure, System, Term, Variable,
+    },
 };
 
 pub use geop_core_math::solvers::system::Mobility;
@@ -44,10 +49,12 @@ use geop_core_program::{
     values::{Settings, StateValue, StateValues},
 };
 
-use crate::constraint::{Constraint, Constraints, DefinedAt};
+use crate::constraint::{Constraint, Constraints, DefinedAt, Remade};
 
-/// A program to run again at every state a solve tries, with its inputs:
-/// its state is the state tried.
+/// A program, with its inputs, and the part it builds: run once, at its
+/// own state, for a solve to make its constraints again of at every state
+/// it tries. A solve leaves the part so; a caller keeping the state found
+/// runs the program there.
 pub struct Run<'r> {
     pub runner: &'r Runner,
     pub part: &'r mut Part,
@@ -68,10 +75,12 @@ pub fn runs() -> usize {
 }
 
 impl Run<'_> {
-    /// The part the program builds at `state`.
-    fn at(&mut self, state: &StateValues) -> &Part {
+    /// The part the program builds, at its own state: what a solve makes
+    /// its constraints again of, at every state it tries. Run again only if
+    /// the part was last run otherwise (see
+    /// [`geop_core_program::runner::Runner::run_with`]).
+    fn built(&mut self) -> &Part {
         RUNS.set(RUNS.get() + 1);
-        self.program.state.clone_from(state);
         (self.runner).run_with(self.part, &self.program, &self.inputs, None);
         self.part
     }
@@ -96,6 +105,11 @@ pub struct Problem<'p> {
     /// far one step may go, and what a turn is measured against when a
     /// value stays where it was.
     pub scale: Scalar,
+    /// The groups a solve of the same system found before, a hair away —
+    /// the last event of a drag — to solve in rather than find them again
+    /// (see [`System::solve_unproven_in`]); found if none is given, or one
+    /// of another system.
+    pub structure: Option<&'p Structure>,
 }
 
 /// How a solve went.
@@ -138,11 +152,14 @@ pub struct Enclosure {
 }
 
 /// Where a solve put the state, how it went, and the enclosure of a true
-/// solution near there of every group it solved.
+/// solution near there of every group it solved — if it was asked to
+/// prove it.
 pub struct Solved {
     pub state: StateValues,
     pub report: Report,
-    pub enclosure: Enclosure,
+    pub enclosure: Option<Enclosure>,
+    /// The groups it was solved in (see [`Problem::structure`]).
+    pub structure: Structure,
 }
 
 /// How free the values of the state are, where they are now (see
@@ -169,6 +186,8 @@ struct Solving<'r, 'p> {
     index: BTreeMap<String, usize>,
     /// Per constraint, its name, what it asks, and where it is defined.
     constraints: Vec<(String, Bound, DefinedAt)>,
+    /// What the constraints were made again as, at the states tried.
+    remade: Remade,
     preferences: &'p [&'p dyn Preference],
 }
 
@@ -181,7 +200,7 @@ impl<'r, 'p> Solving<'r, 'p> {
         state: &StateValues,
         problem: &'p Problem<'p>,
     ) -> GeopResult<(Self, Vec<StateValue>)> {
-        let all = Constraints::of(&run.at(state).current())?;
+        let all = Constraints::of(&run.built().current())?;
         let constraints = (all.iter().zip(all.defining()))
             .map(|((name, constraint), (_, at))| (name.to_string(), constraint.bound, at.clone()))
             .collect();
@@ -201,6 +220,7 @@ impl<'r, 'p> Solving<'r, 'p> {
             blocks,
             index,
             constraints,
+            remade: Remade::default(),
             preferences: &problem.preferences,
         };
         Ok((solving, values))
@@ -222,11 +242,6 @@ impl<'r, 'p> Solving<'r, 'p> {
         (which.iter())
             .filter_map(|&c| self.constraints.get(c).map(|(name, ..)| name.clone()))
             .collect()
-    }
-
-    /// The part, left as the program builds it at `state`.
-    fn finish(self, state: &StateValues) {
-        self.run.into_inner().at(state);
     }
 
     /// `constraint` as a term of the system: its derivatives by the
@@ -263,13 +278,21 @@ impl Equations for Solving<'_, '_> {
                 }
             }
         }
-        let mut run = self.run.borrow_mut();
-        let reader = run.at(&self.working.borrow()).current();
+        let run = self.run.borrow();
+        let working = self.working.borrow();
+        let reader = run.part.current().trying(&working);
+        let asked: Vec<&DefinedAt> = (which.iter())
+            .filter_map(|term| match term {
+                Term::Constraint(c) => self.constraints.get(*c).map(|(.., at)| at),
+                Term::Preference(_) => None,
+            })
+            .collect();
+        let mut made = self.remade.constraints(&reader, &asked).into_iter();
         (which.iter())
             .map(|term| match term {
                 Term::Constraint(c) => {
-                    let (.., at) = self.constraints.get(*c)?;
-                    Some(self.linearized(&at.read(&reader).ok()?))
+                    self.constraints.get(*c)?;
+                    Some(self.linearized(&made.next()?.ok()?))
                 }
                 Term::Preference(p) => {
                     let preference = self.preferences.get(*p)?.evaluate(&reader).ok()?;
@@ -302,16 +325,33 @@ fn named(program: &Solving, enclosure: system::Enclosure<StateValue>) -> Enclosu
 /// them — for every constraint the program `run` runs defines to hold, as
 /// near where they are as the constraints allow, pulled as its preferences
 /// ask (see [`System::solve`]), and an enclosure of a true solution near
-/// there. The program is run at each state tried, and the part is left as
-/// it builds at the one found.
+/// there. The part is left as the program builds it at its own state.
 ///
 /// The state is moved even where the constraints cannot all hold, to where
 /// they come closest; the report says which do not.
-pub fn solve(run: Run<'_>, state: &StateValues, problem: &Problem) -> GeopResult<Solved> {
+///
+/// Only where `prove` asks is the solution enclosed: a solve shown and
+/// solved again at once — an event of a drag — need not be, and proving
+/// every group it moved costs several times the solve (see
+/// [`System::solve_unproven`]).
+pub fn solve(
+    run: Run<'_>,
+    state: &StateValues,
+    problem: &Problem,
+    prove: bool,
+) -> GeopResult<Solved> {
     let (program, start) = Solving::new(run, state, problem)?;
     let system = program.system(problem);
     let work = geop_core_math::solvers::work();
-    let solution = system.solve(&start)?;
+    let structure = (problem.structure)
+        .filter(|s| s.fits(start.len(), program.count()))
+        .cloned()
+        .unwrap_or_else(|| system.structure(&start));
+    let solution = system.solve_unproven_in(&start, structure)?;
+    let solution = match prove {
+        true => system.proven(solution)?,
+        false => solution,
+    };
     let work = geop_core_math::solvers::work() - work;
     let held = system.held(&solution.values)?;
     let mut solved = state.clone();
@@ -340,12 +380,12 @@ pub fn solve(run: Run<'_>, state: &StateValues, problem: &Problem) -> GeopResult
             .unwrap_or(0),
         work,
     };
-    let enclosure = named(&program, solution.enclosure);
-    program.finish(&solved);
+    let enclosure = prove.then(|| named(&program, solution.enclosure));
     Ok(Solved {
         state: solved,
         report,
         enclosure,
+        structure: solution.structure,
     })
 }
 
@@ -357,7 +397,6 @@ pub fn enclose(run: Run<'_>, state: &StateValues, problem: &Problem) -> GeopResu
     let (program, start) = Solving::new(run, state, problem)?;
     let enclosure = program.system(problem).enclose(&start)?;
     let enclosure = named(&program, enclosure);
-    program.finish(state);
     Ok(enclosure)
 }
 
@@ -372,7 +411,6 @@ pub fn freedom(run: Run<'_>, state: &StateValues, problem: &Problem) -> GeopResu
     let states = (program.blocks.iter().cloned())
         .zip(freedom.blocks)
         .collect();
-    program.finish(state);
     Ok(Freedom {
         states,
         total: freedom.total,
@@ -391,6 +429,5 @@ pub fn conflicting(
     let (program, start) = Solving::new(run, state, problem)?;
     let conflicting = program.system(problem).conflicting(&start)?;
     let names: BTreeSet<String> = program.names(&conflicting).into_iter().collect();
-    program.finish(state);
     Ok(names.into_iter().collect())
 }

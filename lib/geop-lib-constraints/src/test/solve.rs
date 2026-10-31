@@ -85,6 +85,7 @@ fn problem<'p>(names: &[&str], preferences: Vec<&'p dyn Preference>) -> Problem<
             .collect(),
         preferences,
         scale: Scalar::ONE,
+        structure: None,
     }
 }
 
@@ -113,27 +114,29 @@ fn a_pinned_body_goes_to_its_frame() {
     let x = inputs(&[("x", 1.0)]);
     let state = at(&[("body", [3.0, 2.0, 0.0])]);
     let solved = solve(
-        runner.rerun(&program, &x),
+        runner.rerun(&program, &x, &state),
         &state,
         &problem(&["body"], vec![]),
+        true,
     )
     .unwrap();
     assert!(solved.report.converged, "{:?}", solved.report);
     assert_eq!(solved.report.moved, ["body"]);
     assert_near(where_is(&solved.state, "body"), [1.0, 0.0, 0.0]);
     assert!(
-        solved.enclosure.unproven.is_empty(),
+        solved.enclosure.as_ref().unwrap().unproven.is_empty(),
         "{:?}",
         solved.enclosure
     );
-    let enclosed = pose_of(&solved.enclosure.state["body"]).position();
+    let enclosed = pose_of(&solved.enclosure.as_ref().unwrap().state["body"]).position();
     for (k, exact) in [1.0, 0.0, 0.0].into_iter().enumerate() {
         assert!(
             Scalar::from_f64(exact).is_subset_of(enclosed[k]),
             "{enclosed:?}"
         );
     }
-    // The part is left at the state found.
+    // Run at the state found, the pin holds.
+    runner.run(&program, &x, &solved.state);
     let constraints = constraints_now(&runner.part).unwrap();
     assert!(
         constraints
@@ -163,16 +166,17 @@ fn a_pull_moves_what_the_constraints_leave_free() {
         },
     );
     let both = problem(&["body", "loose"], vec![&body, &loose]);
-    let solved = solve(runner.rerun(&program, &x), &state, &both).unwrap();
+    let solved = solve(runner.rerun(&program, &x, &state), &state, &both, true).unwrap();
     assert!(solved.report.converged);
     assert_near(where_is(&solved.state, "body"), [1.0, 0.0, 0.0]);
     assert_near(where_is(&solved.state, "loose"), [0.0, 2.0, 0.0]);
     assert_eq!(solved.report.moved, ["loose"]);
 
     let still = solve(
-        runner.rerun(&program, &x),
+        runner.rerun(&program, &x, &state),
         &state,
         &problem(&["body", "loose"], vec![]),
+        true,
     )
     .unwrap();
     assert!(still.report.moved.is_empty());
@@ -197,9 +201,10 @@ fn a_limit_stops_a_pull() {
         to: [5.0, 1.0, 0.0],
     };
     let solved = solve(
-        runner.rerun(&program, &none),
+        runner.rerun(&program, &none, &state),
         &state,
         &problem(&["body"], vec![&pull]),
+        true,
     )
     .unwrap();
     assert!(solved.report.converged, "{:?}", solved.report);
@@ -223,22 +228,22 @@ fn conflicts_and_freedom() {
     let values = inputs(&[("x", 1.0), ("y", 2.0)]);
     let state = at(&[("body", [0.0; 3]), ("loose", [0.0; 3])]);
     let both = problem(&["body", "loose"], vec![]);
-    let solved = solve(runner.rerun(&program, &values), &state, &both).unwrap();
+    let solved = solve(runner.rerun(&program, &values, &state), &state, &both, true).unwrap();
     assert!(!solved.report.converged);
     assert_eq!(solved.report.failed, ["one", "two"]);
     // Nothing to enclose, and the enclosure says why, by name.
-    let [(group, why)] = &solved.enclosure.unproven[..] else {
+    let [(group, why)] = &solved.enclosure.as_ref().unwrap().unproven[..] else {
         panic!("{:?}", solved.enclosure);
     };
     assert_eq!(group, &["body"]);
     assert!(why.contains("one") && why.contains("two"), "{why}");
     assert_eq!(
-        conflicting(runner.rerun(&program, &values), &state, &both).unwrap(),
+        conflicting(runner.rerun(&program, &values, &state), &state, &both).unwrap(),
         ["one", "two"]
     );
 
     let single = Program::from_steps(vec![input_frame("a", "a", "x"), pin("one", "a", "body")]);
-    let free = freedom(runner.rerun(&single, &values), &state, &both).unwrap();
+    let free = freedom(runner.rerun(&single, &values, &state), &state, &both).unwrap();
     assert_eq!(free.states["body"], 3);
     assert_eq!(free.states["loose"], 6);
     assert_eq!(free.total, 9);
