@@ -426,18 +426,25 @@ function App() {
 
   // Ctrl+C copies the step being edited, unless text is selected or typed
   // into a field; Ctrl+V pastes steps copied — here, or in another file —
-  // where new steps go.
+  // where new steps go. Only a paste the keys asked for: a middle click
+  // pastes the primary selection on Linux, and that is never steps.
   const copyable = step?.id ?? null;
   useEffect(() => {
+    let keyedPaste = false;
     const onKey = (e: KeyboardEvent) => {
-      if (typing(e) || !(e.ctrlKey || e.metaKey) || e.key.toLowerCase() !== "c") return;
+      if (typing(e) || !(e.ctrlKey || e.metaKey)) return;
+      const key = e.key.toLowerCase();
+      if (key === "v") keyedPaste = true;
+      if (key !== "c") return;
       if (copyable == null || !(window.getSelection()?.isCollapsed ?? true)) return;
       e.preventDefault();
       void copyStep(copyable);
     };
     const onPaste = (e: ClipboardEvent) => {
+      const keyed = keyedPaste;
+      keyedPaste = false;
       const t = e.target;
-      if (t instanceof HTMLInputElement || t instanceof HTMLTextAreaElement) return;
+      if (!keyed || t instanceof HTMLInputElement || t instanceof HTMLTextAreaElement) return;
       const text = e.clipboardData?.getData("text/plain");
       if (!text) return;
       e.preventDefault();

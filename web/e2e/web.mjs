@@ -978,12 +978,27 @@ await check("a step is copied and pasted", async () => {
   await settle(page);
   const text = await page.evaluate(() => navigator.clipboard.readText());
   expect(text.includes('"steps"'), `the clipboard holds ${text.slice(0, 80)}`);
-  // Ctrl+V as the page receives it: a paste event outside any field.
-  await page.evaluate((text) => {
-    const data = new DataTransfer();
-    data.setData("text/plain", text);
-    document.body.dispatchEvent(new ClipboardEvent("paste", { clipboardData: data, bubbles: true }));
-  }, text);
+  const paste = (text, keyed) =>
+    page.evaluate(
+      ({ text, keyed }) => {
+        if (keyed)
+          document.body.dispatchEvent(new KeyboardEvent("keydown", { key: "v", ctrlKey: true, bubbles: true }));
+        const data = new DataTransfer();
+        data.setData("text/plain", text);
+        document.body.dispatchEvent(new ClipboardEvent("paste", { clipboardData: data, bubbles: true }));
+      },
+      { text, keyed },
+    );
+  // A paste no key asked for — what a middle click sends on Linux, the
+  // primary selection — pastes nothing and says nothing, steps or not.
+  await paste("extrude(extrude1)\norigin\nsketch1", false);
+  await paste(text, false);
+  await settle(page);
+  expect((await boxes.count()) === before, `a paste no key asked for added steps`);
+  const pasteErrors = await page.locator(".error", { hasText: "pasting" }).count();
+  expect(pasteErrors === 0, "a paste no key asked for showed an error");
+  // Ctrl+V as the page receives it: the key, then a paste event outside any field.
+  await paste(text, true);
   const stats = await builtCleanly();
   const after = await boxes.count();
   expect(after === before + 1, `${before} steps before the paste, ${after} after`);

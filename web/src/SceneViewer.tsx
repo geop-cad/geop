@@ -700,6 +700,7 @@ export function SceneViewer({
     container.addEventListener("pointerenter", sendView);
     container.addEventListener("contextmenu", onContextMenu);
     container.addEventListener("mousedown", onMiddle);
+    container.addEventListener("mouseup", onMiddle);
     container.addEventListener("auxclick", onMiddle);
 
     // The view cube: turned as the view is, drawn in its corner after the
@@ -931,6 +932,7 @@ export function SceneViewer({
       container.removeEventListener("pointerenter", sendView);
       container.removeEventListener("contextmenu", onContextMenu);
       container.removeEventListener("mousedown", onMiddle);
+      container.removeEventListener("mouseup", onMiddle);
       container.removeEventListener("auxclick", onMiddle);
       cubeEl?.removeEventListener("pointerdown", onCubeDown);
       cubeEl?.removeEventListener("pointermove", onCubeMove);
