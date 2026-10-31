@@ -707,10 +707,12 @@ await check("a subd cage face is moved up by the gizmo's arrow", async () => {
   await page.getByRole("button", { name: "Fit", exact: true }).click();
   await page.waitForTimeout(1200);
   // The cage's top face, near its middle: selected, a gizmo at its centre.
-  await clickAt(await onScreen([0.3, 0.2, 1]));
+  // A new basic shape is 100 across, about the origin.
+  const top = 50;
+  await clickAt(await onScreen([15, 10, top]));
   const selected = await presented();
   const at = selected.gizmo?.at;
-  expect(at && Math.abs(at[2] - 1) < 1e-9, `no gizmo at the top face's centre: ${JSON.stringify(selected.gizmo)}`);
+  expect(at && Math.abs(at[2] - top) < 1e-9, `no gizmo at the top face's centre: ${JSON.stringify(selected.gizmo)}`);
   expect(!selected.visuals.some((v) => v.shape === "handle"), "the old handles are still drawn");
   const reach = await reachAt(at);
   const step = gridStep(reach);
@@ -722,7 +724,7 @@ await check("a subd cage face is moved up by the gizmo's arrow", async () => {
     "subd-face",
   );
   const [z] = numbers(await presented(), ["z"]);
-  expect(Math.abs(z - (1 + 3 * step)) < 1e-9, `the face's centre went to z = ${z}, not ${1 + 3 * step}`);
+  expect(Math.abs(z - (top + 3 * step)) < 1e-9, `the face's centre went to z = ${z}, not ${top + 3 * step}`);
   await popup.locator(".button-row button.primary").click();
   const stats = await builtCleanly();
   return `moved by ${readout}; ${stats}`;
