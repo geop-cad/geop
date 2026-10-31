@@ -61,8 +61,9 @@ use crate::{
 pub struct Options {
     /// Steps taken at most: how hard it tries, never what an answer means.
     pub max_iterations: usize,
-    /// The longest step: where the variables have a natural size, no step
-    /// longer than it is sensible.
+    /// The longest step, but where the steps before landed as their
+    /// linearization said: where the variables have a natural size, no
+    /// step longer than it is sensible until the problem shows it is.
     pub max_step: Scalar,
 }
 
@@ -630,6 +631,9 @@ pub async fn minimize<P: Space>(
                     rejected = Some(Rejection::Unresolved);
                 } else {
                     let delta = sharp(&delta);
+                    // What the linearization expects of it: the violation
+                    // where it leads.
+                    let predicted = norm(&e.constraints.linearized(&delta))?;
                     let next = space.step(&x, &delta);
                     // Where not even this step changes anything, no smaller one
                     // will: nothing improves on here.
@@ -667,6 +671,20 @@ pub async fn minimize<P: Space>(
                         let taken = |j: &Judged| j.lower || (first && j.undecided && j.contracting);
                         if taken(&judged) {
                             let (next, e_next, _) = landed;
+                            // Whether the step brought the constraints as near
+                            // as their linearization said it would — three
+                            // quarters of the drop it predicted, at least:
+                            // the linearization then
+                            // holds that far, and `max_step` does not bound
+                            // the next. A part mated from far away is
+                            // brought there in a few steps, not one of its
+                            // sizes at a time.
+                            let held = |old: Scalar, predicted: Scalar, new: Scalar| {
+                                let gained = old.sub(new).mul(Scalar::from_i64(4));
+                                gained.definitely_greater(old.sub(predicted).mul(Scalar::from_i64(3)))
+                            };
+                            let linear = theta.definitely_greater(Scalar::ZERO)
+                                && held(theta, predicted, norm(&e_next.constraints.values)?);
                             let length = judged.length;
                             // Never to zero, which the scalar's resolution
                             // rounds a small one to in fixed point: no
@@ -678,7 +696,7 @@ pub async fn minimize<P: Space>(
                             }
                             let reach = Scalar::TWO.mul(length);
                             if reach.definitely_greater(radius) {
-                                radius = if reach.definitely_less(options.max_step) {
+                                radius = if linear || reach.definitely_less(options.max_step) {
                                     reach.upper()
                                 } else {
                                     options.max_step
