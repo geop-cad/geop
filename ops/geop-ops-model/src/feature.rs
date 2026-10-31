@@ -18,12 +18,18 @@
 
 use std::{collections::HashMap, sync::Arc};
 
+use geop_core_editor::selectable::SelectableElement;
 use geop_core_math::geop_error::{GeopError, GeopResult};
+use geop_core_program::{
+    element::{ElementReference, HasElements, Kind, PickedElement},
+    reader::Reader,
+};
 use geop_core_topology::build::BodySpec;
 use serde::{Deserialize, Serialize};
 
 use super::{
     BodyNames, NamedModel,
+    elements::{Face, read_model},
     names::{digest, origin_of},
 };
 
@@ -134,5 +140,80 @@ impl FeatureFaces<'_> {
         // Each origin a shorter name than the piece's: the chain ends.
         std::iter::successors(Some(face), |&name| origin_of(name))
             .find_map(|name| self.steps.get(name).copied())
+    }
+}
+
+/// What a step did by combining tools with a solid — a cut, a boss, a hole
+/// — as an element of the model: named by the step, and picked by a face
+/// it made (see [`FeatureFaces`]), lit as every face of it that is left. A
+/// feature of a part placed in the part is picked as one of that part,
+/// behind its instance.
+pub struct FeatureElement;
+
+/// A feature of the part, or of a part placed in it, by the step that
+/// made it.
+pub type FeatureRef = ElementReference<NamedModel, FeatureElement>;
+
+/// The feature of the step `step`.
+pub fn feature(step: impl Into<String>) -> FeatureRef {
+    ElementReference::new(super::model(), step)
+}
+
+impl Kind for FeatureElement {
+    const NAME: &'static str = "feature";
+}
+
+impl HasElements<FeatureElement> for NamedModel {
+    type Element<'a> = &'a Feature;
+    const SINGLETON: Option<&'static str> = <Self as HasElements<Face>>::SINGLETON;
+
+    fn element(&self, name: &str) -> GeopResult<Self::Element<'_>> {
+        self.feature(name)
+    }
+}
+
+/// The part a pick of `instance` is of: the part `reader` reads, or the
+/// part placed there.
+fn part_of<'a>(reader: &Reader<'a>, instance: &str) -> Option<Reader<'a>> {
+    match instance.is_empty() {
+        true => Some(reader.clone()),
+        false => reader.placed_part(instance).ok(),
+    }
+}
+
+impl SelectableElement<NamedModel> for FeatureElement {
+    const PICKED_FROM: &'static [&'static str] = &[Face::NAME];
+
+    fn select(reader: &Reader, hit: &PickedElement) -> Option<FeatureRef> {
+        let face = ElementReference::<NamedModel, Face>::from_picked(hit)?;
+        let instance = face.instance().to_string();
+        let part = read_model(&part_of(reader, &instance)?).ok()?;
+        part.face_id(face.name()).ok()?;
+        let step = part.feature_faces().of(face.name())?.to_string();
+        Some(match instance.is_empty() {
+            true => feature(step),
+            false => feature(step).behind(&instance),
+        })
+    }
+
+    fn drawn(reader: &Reader, feature: &FeatureRef) -> Vec<PickedElement> {
+        let instance = feature.instance();
+        let Some(part) = part_of(reader, instance).and_then(|r| read_model(&r).ok()) else {
+            return Vec::new();
+        };
+        let made = part.feature_faces();
+        let mut faces: Vec<_> = part.topology().faces.keys().copied().collect();
+        faces.sort_by_key(|face| face.0);
+        (faces.into_iter())
+            .filter_map(|face| part.name_of(face))
+            .filter(|&face| made.of(face) == Some(feature.name()))
+            .map(|face| {
+                let face = ElementReference::<NamedModel, Face>::new(super::model(), face);
+                match instance.is_empty() {
+                    true => face.picked(),
+                    false => face.behind(instance).picked(),
+                }
+            })
+            .collect()
     }
 }

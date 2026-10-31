@@ -9,6 +9,8 @@
 //!   all of them together ([`mass_report`]).
 //! - [`Interference`]: which solids overlap, by how much, and which only
 //!   touch ([`interference_report`]).
+//! - [`Clearance`]: which solids come nearer each other than a clearance,
+//!   and how near ([`clearance_report`]).
 //!
 //! Every number is computed from the exact geometry and carries how well it
 //! is known ([`Bounded`]): an interval enclosure, widened — for the
@@ -16,10 +18,12 @@
 //! [`geop_core_math::quadrature`]). Lengths are millimetres, masses
 //! kilograms (see [`geop_ops_model::parameters::Material`]).
 
+pub mod clearance;
 pub mod interference;
 pub mod mass;
 pub mod measure;
 
+pub use clearance::{ClearanceOptions, ClearanceReport, clearance_report};
 pub use interference::{InterferenceReport, interference_report};
 pub use mass::{MassReport, mass_report};
 pub use measure::{Measurement, measure};
@@ -115,6 +119,35 @@ impl Inspector for Interference {
     }
 }
 
+/// Checks the part's solids keep a clearance from each other.
+pub struct Clearance;
+
+impl Inspector for Clearance {
+    const INFO: InspectorInfo = InspectorInfo {
+        kind: "clearance",
+        label: "Clearance",
+        doc: "Which solids come nearer each other than a clearance, and the least distance between them.",
+        icon: Some(crate::icons::CLEARANCE),
+        picks: None,
+    };
+    type Options = ClearanceOptions;
+    type Report = ClearanceReport;
+
+    fn inspect(
+        output: &mut Output,
+        _: &[PickedElement],
+        options: ClearanceOptions,
+    ) -> GeopResult<(ClearanceReport, Vec<Visual>)> {
+        let report = clearance_report(&output.part(), options)?;
+        let visuals = report.visuals();
+        Ok((report, visuals))
+    }
+
+    fn show(report: &ClearanceReport) -> Answer {
+        report.shown()
+    }
+}
+
 #[cfg(test)]
 mod editor_tests;
 mod icons;
@@ -126,9 +159,10 @@ mod tests;
 use geop_core_editor::registry::Registry;
 
 /// Adds what this crate offers an editor to `r`: measuring a part, its mass
-/// properties and where its bodies interfere.
+/// properties, where its bodies interfere and where they come too near.
 pub fn register(r: Registry) -> GeopResult<Registry> {
     r.inspector(Measure)?
         .inspector(MassProperties)?
-        .inspector(Interference)
+        .inspector(Interference)?
+        .inspector(Clearance)
 }

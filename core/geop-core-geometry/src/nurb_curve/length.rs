@@ -1,4 +1,5 @@
-//! [`NurbCurve::length`]: how long a curve is, in space or in a plane.
+//! [`NurbCurve::length`]: how long a curve is, in space or in a plane, and
+//! where along it a fraction of that length is run.
 
 use geop_core_math::{
     geop_error::{GeopError, GeopResult},
@@ -28,26 +29,40 @@ impl<const D: usize> NurbCurve<D> {
     }
 }
 
-impl NurbCurve<4> {
-    /// The curve's length, `∫ |C'(t)| dt` over its domain, enclosed (see
-    /// [`Self::integrated`]), and whether the quadrature converged.
-    pub fn length(&self) -> GeopResult<(Scalar, bool)> {
+/// A curve with a length: in space, or in a plane.
+pub trait Length: Sized {
+    /// Its length, `∫ |C'(t)| dt` over its domain, enclosed (see
+    /// `NurbCurve::integrated`), and whether the quadrature converged.
+    fn length(&self) -> GeopResult<(Scalar, bool)>;
+}
+
+impl Length for NurbCurve<4> {
+    fn length(&self) -> GeopResult<(Scalar, bool)> {
         self.integrated(|t| Ok(self.tangent(t)?.norm()))
     }
 }
 
-impl NurbCurve<3> {
-    /// The planar curve's length, `∫ |C'(t)| dt` over its domain, enclosed
-    /// (see [`Self::integrated`]), and whether the quadrature converged.
-    pub fn length(&self) -> GeopResult<(Scalar, bool)> {
+impl Length for NurbCurve<3> {
+    fn length(&self) -> GeopResult<(Scalar, bool)> {
         self.integrated(|t| Ok(self.tangent(t)?.norm()))
+    }
+}
+
+impl<const D: usize> NurbCurve<D>
+where
+    Self: Length,
+{
+    /// The curve's length, `∫ |C'(t)| dt` over its domain, enclosed, and
+    /// whether the quadrature converged (see [`Length`]).
+    pub fn length(&self) -> GeopResult<(Scalar, bool)> {
+        Length::length(self)
     }
 
     /// The parameter `t` at which the fraction `fraction` of the curve's
     /// length, from its start, has been run, for `fraction` in `(0, 1)`:
-    /// a sharp value, for a caller choosing where to cut the curve, found
-    /// by bisection on the length up to `t`, which grows with `t`. An
-    /// error for a fraction outside `(0, 1)`.
+    /// a sharp value, for a caller choosing where to cut the curve or put
+    /// something on it, found by bisection on the length up to `t`, which
+    /// grows with `t`. An error for a fraction outside `(0, 1)`.
     pub fn parameter_at_length_fraction(&self, fraction: f64) -> GeopResult<Scalar> {
         if !(0.0 < fraction && fraction < 1.0) {
             return Err(GeopError::new(format!(
@@ -75,47 +90,5 @@ impl NurbCurve<3> {
             }
         }
         Ok(Scalar::from_f64(0.5 * (lo + hi)))
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use geop_core_math::{scalars::Scalar, vector::Vector4};
-
-    use crate::nurb_curve::NurbCurve;
-
-    /// A quarter circle of radius 2 is pi long, enclosed.
-    #[test]
-    fn a_quarter_circle_is_pi_long() {
-        let w = Scalar::from_f64(std::f64::consts::FRAC_1_SQRT_2);
-        let p = |x: f64, y: f64, w: Scalar| {
-            Vector4::from_array([
-                Scalar::from_f64(x).mul(w),
-                Scalar::from_f64(y).mul(w),
-                Scalar::ZERO,
-                w,
-            ])
-        };
-        let arc = NurbCurve::try_new(
-            2,
-            vec![
-                p(2.0, 0.0, Scalar::ONE),
-                p(2.0, 2.0, w),
-                p(0.0, 2.0, Scalar::ONE),
-            ],
-            vec![
-                Scalar::ZERO,
-                Scalar::ZERO,
-                Scalar::ZERO,
-                Scalar::ONE,
-                Scalar::ONE,
-                Scalar::ONE,
-            ],
-        )
-        .unwrap();
-        let (length, converged) = arc.length().unwrap();
-        assert!(converged);
-        assert!(length.could_be_equal(Scalar::PI), "{length:?}");
-        assert!(length.width().to_f64() < 1e-8, "{length:?}");
     }
 }

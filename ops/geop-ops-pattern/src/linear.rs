@@ -3,26 +3,19 @@
 use geop_core_editor::{
     edit_form::{EditForm, FormState},
     editable::{Context, OperationGroup, OperationInfo, OperationTier},
-    editing::{Number, Unit},
     part_operation,
     part_operation::PartOperation,
 };
 use geop_core_math::{
-    geop_error::{GeopError, GeopResult},
+    geop_error::GeopResult,
     primitives::{FrameAxis, Motion},
-    scalars::Scalar,
-    vector::Vector3,
 };
-use geop_core_program::{numeric::NumericInput, part::StepContext, reader::Reader};
-use geop_ops_model::datums::origin_axis;
+use geop_core_program::{part::StepContext, reader::Reader};
+use geop_ops_model::spacing::{Direction, Frames};
 use geop_ops_model::{ModelOperation, NamedModel};
 use serde::{Deserialize, Serialize};
 
-use crate::{
-    common::{Naming, Pattern, Seeds, build_pattern, run_pattern, track},
-    references::PatternDirection,
-};
-use geop_ops_model::spacing::{Row, Spacing, count_field, whole_count};
+use crate::common::{Naming, Pattern, Seeds, build_pattern, placed_by, run_pattern};
 
 /// Copies the bodies `bodies` — solids, and sheets by one of their faces —
 /// or the features `features` in a row along a direction, or in a grid
@@ -47,23 +40,6 @@ use geop_ops_model::spacing::{Row, Spacing, count_field, whole_count};
 /// `linear_pattern(P,3,extrude(E,end))` however the bodies change.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub struct LinearPattern;
-
-/// One direction of a [`LinearPattern`].
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub struct Direction {
-    /// What gives the direction: a line — a straight edge, an axis, a
-    /// sketch line — or a plane, along its normal; none, for a step that
-    /// has not picked one.
-    pub along: Option<PatternDirection>,
-    /// Go against it instead.
-    #[serde(default)]
-    pub reversed: bool,
-    /// How many instances along it, the bodies themselves included: a
-    /// number, or a formula of the part's parameters.
-    pub count: NumericInput,
-    /// How far apart they are.
-    pub spacing: Spacing,
-}
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct LinearPatternArgs {
@@ -93,154 +69,11 @@ impl Pattern for LinearPatternArgs {
     }
 
     fn placements(&self, reader: &Reader) -> GeopResult<Vec<(String, Motion)>> {
-        let first = self.first.unit(reader)?;
-        let first_row = self.first.row(reader)?;
-        let second = match &self.second {
-            None => None,
-            Some(direction) => {
-                let unit = direction.unit(reader)?;
-                let cross = first.prod_cross(&unit);
-                if (0..3).all(|k| cross[k].could_be_equal(Scalar::ZERO)) {
-                    return Err(GeopError::new(
-                        "the two directions are parallel: the grid's rows would lie on top of each other",
-                    ));
-                }
-                Some((unit, direction.row(reader)?))
-            }
+        let frames = Frames::Linear {
+            first: self.first.clone(),
+            second: self.second.clone(),
         };
-        let rows = second.as_ref().map_or(1, |(_, row)| row.count);
-        let mut placements = Vec::new();
-        for i in 0..first_row.count {
-            for j in 0..rows {
-                let along = first_row.offset(&first, i)?;
-                let across = match &second {
-                    Some((unit, row)) => row.offset(unit, j)?,
-                    None => None,
-                };
-                let offset = match (along, across) {
-                    (None, None) => continue,
-                    (Some(a), None) => a,
-                    (None, Some(b)) => b,
-                    (Some(a), Some(b)) => a.add(&b),
-                };
-                let label = match second {
-                    Some(_) => format!("{i}.{j}"),
-                    None => i.to_string(),
-                };
-                placements.push((label, Motion::translation(offset)));
-            }
-        }
-        Ok(placements)
-    }
-}
-
-impl Direction {
-    /// Along the origin's axis `axis`, three instances a unit apart.
-    fn along(axis: FrameAxis) -> Self {
-        Direction {
-            along: Some(PatternDirection::Datum(origin_axis(axis))),
-            reversed: false,
-            count: NumericInput::Plain(3.0),
-            spacing: Spacing::step(1.0),
-        }
-    }
-
-    /// The unit vector it goes along, as `reader` reads the part.
-    fn unit(&self, reader: &Reader) -> GeopResult<Vector3> {
-        let along = (self.along.as_ref())
-            .ok_or_else(|| GeopError::new("pick a direction to pattern along"))?;
-        let d = along.direction(reader)?;
-        Ok(if self.reversed { d.neg() } else { d })
-    }
-
-    /// The instances along it, as `reader` reads the parameters.
-    fn row(&self, reader: &Reader) -> GeopResult<Row> {
-        let count = whole_count(&self.count, reader)?;
-        self.spacing.along(count, reader)
-    }
-
-    /// Its fields in `f`, keyed with `suffix`: what it goes along, its
-    /// sense, the count and the spacing, with handles from `at`. `set` puts
-    /// the direction set where the arguments keep it.
-    fn fields<'a, A: 'a>(
-        &self,
-        f: &mut EditForm<'a, A>,
-        before: &Reader<'a>,
-        at: Option<Vector3>,
-        suffix: &str,
-        set: impl Fn(&mut A, Direction) + Clone + 'a,
-    ) {
-        // What setting one of its fields to `change` makes of it.
-        fn with<A, V>(
-            direction: Direction,
-            set: impl Fn(&mut A, Direction) + Clone,
-            change: fn(&mut Direction, V),
-        ) -> impl Fn(&mut A, V) + Clone {
-            move |args, value| {
-                let mut direction = direction.clone();
-                change(&mut direction, value);
-                set(args, direction);
-            }
-        }
-        let key = |name: &str| format!("{name}{suffix}");
-        let set_along = with(self.clone(), set.clone(), |d, picked| {
-            d.along = Some(picked)
-        });
-        let set_reversed = with(self.clone(), set.clone(), |d, b| d.reversed = b);
-        f.pick_one(
-            &key("direction"),
-            "direction",
-            before,
-            self.along.as_ref(),
-            move |edit, p| set_along(edit.args, p),
-        )
-        .checkbox(
-            &key("reversed"),
-            "reverse direction",
-            self.reversed,
-            move |edit, b| set_reversed(edit.args, b),
-        );
-        // Moving the spacing's handle by the unit direction adds one to it;
-        // the count's, by one step, adds an instance.
-        let unit = self.unit(before).ok();
-        let row = self.row(before).ok();
-        let handles = at.zip(unit);
-        let count_handle =
-            handles
-                .zip(row.filter(|row| row.count > 1))
-                .and_then(|((at, unit), row)| {
-                    let step = row.step();
-                    let end = (row.count - 1) as f64 * step;
-                    track(
-                        at.add(&unit.prod_scalar(Scalar::from_f64(end))),
-                        unit.prod_scalar(Scalar::from_f64(step)),
-                    )
-                });
-        let set_count = with(self.clone(), set.clone(), |d, count| d.count = count);
-        count_field(
-            f,
-            &key("count"),
-            &self.count,
-            before,
-            count_handle,
-            move |edit, count| set_count(edit.args, count),
-        );
-        self.spacing.fields(
-            f,
-            &key("spacing"),
-            ["spacing", "total"],
-            |label, value| {
-                let number = Number::numeric(value, label, before, Unit::Length);
-                let at = handles.and_then(|(at, unit)| {
-                    track(
-                        at.add(&unit.prod_scalar(Scalar::from_f64(number.value))),
-                        unit,
-                    )
-                });
-                number.handle(at)
-            },
-            with(self.clone(), set.clone(), |d, spacing| d.spacing = spacing),
-        );
+        placed_by(&frames, reader, &self.seeds)
     }
 }
 

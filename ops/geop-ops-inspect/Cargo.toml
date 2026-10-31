@@ -14,6 +14,8 @@ geop-ops-model.workspace = true
 # The overlap of two solids is their intersection.
 geop-lib-booleans.workspace = true
 serde.workspace = true
+# Options of the answers' buttons.
+serde_json.workspace = true
 
 [dev-dependencies]
 # The given solids the measured box is built from.
@@ -30,5 +32,4 @@ geop-ops-assembly = { workspace = true, features = ["testing", "examples"] }
 geop-ops-sketch.workspace = true
 geop-ops-extrude-revolve.workspace = true
 geop-lib-stdlib.workspace = true
-serde_json.workspace = true
 geop-core-editor = { workspace = true, features = ["testing"] }

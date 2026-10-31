@@ -8,7 +8,7 @@ use geop_core_editor::{
     part_operation::PartOperation,
 };
 use geop_core_math::{
-    geop_error::{GeopError, GeopResult},
+    geop_error::GeopResult,
     primitives::{FrameAxis, Motion},
 };
 use geop_core_program::{numeric::NumericInput, part::StepContext, reader::Reader};
@@ -17,10 +17,10 @@ use geop_ops_model::{ModelOperation, NamedModel};
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    common::{Naming, Pattern, Seeds, build_pattern, run_pattern},
+    common::{Naming, Pattern, Seeds, build_pattern, placed_by, run_pattern},
     references::TurnAxis,
 };
-use geop_ops_model::spacing::{Row, Spacing, count_field, whole_count};
+use geop_ops_model::spacing::{Frames, Spacing, count_field};
 
 /// Copies the bodies `bodies` — solids, and sheets by one of their faces —
 /// or does the features `features` again, turned around an axis: `count` instances, the bodies themselves the
@@ -72,30 +72,13 @@ impl Pattern for CircularPatternArgs {
     }
 
     fn placements(&self, reader: &Reader) -> GeopResult<Vec<(String, Motion)>> {
-        let Some(axis) = &self.axis else {
-            return Err(GeopError::new("pick an axis to turn around"));
+        let frames = Frames::Circular {
+            axis: self.axis.clone(),
+            reversed: self.reversed,
+            count: self.count.clone(),
+            angle: self.angle.clone(),
         };
-        let axis = axis.resolve(reader)?;
-        let direction = if self.reversed {
-            axis.direction.neg()
-        } else {
-            axis.direction
-        };
-        let row = self.row(reader)?;
-        let mut placements = Vec::new();
-        for k in 1..row.count {
-            let motion = row.turn(&axis.point, &direction, k)?.motion();
-            placements.push((k.to_string(), motion));
-        }
-        Ok(placements)
-    }
-}
-
-impl CircularPatternArgs {
-    /// The instances round the axis, as `reader` reads the parameters.
-    fn row(&self, reader: &Reader) -> GeopResult<Row> {
-        let count = whole_count(&self.count, reader)?;
-        self.angle.round(count, reader)
+        placed_by(&frames, reader, &self.seeds)
     }
 }
 
