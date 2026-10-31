@@ -781,7 +781,10 @@ impl Editor {
                 inspector.inspect(output, &picked, &options).map(Some)
             });
         }
-        let Some(mut in_hand) = self.tool.take().filter(|_| idle) else {
+        if !idle {
+            return Ok(None);
+        }
+        let Some(mut in_hand) = self.tool.take() else {
             return Ok(None);
         };
         let inspection = in_hand.tool.inspection(&mut EditorContext::new(self));
