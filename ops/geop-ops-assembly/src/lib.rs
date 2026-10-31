@@ -79,7 +79,7 @@ pub use motion::{
     MotionState, StudyState,
 };
 pub use panel::{JointsCommand, JointsPanel, JointsState};
-pub use part_pattern::{Layout, PartPattern, PartPatternArgs, PatternAxis};
+pub use part_pattern::{PartPattern, PartPatternArgs};
 pub use placed::define_placed;
 pub use settle::Settler;
 pub use stl::{Stl, StlOptions};

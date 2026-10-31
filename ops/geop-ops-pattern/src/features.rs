@@ -28,13 +28,9 @@
 //! first contact, or all the way) are not tried again for a copy: a copy
 //! that nothing stops all round is refused.
 
-use geop_core_program::{
-    element::{ElementReference, HasElements, Kind, PickedElement},
-    reader::Reader,
-};
+
 use std::collections::BTreeSet;
 
-use geop_core_editor::selectable::SelectableElement;
 use geop_core_math::{
     geop_error::{GeopError, GeopResult, WithContext},
     primitives::Motion,
@@ -44,61 +40,11 @@ use geop_core_math::{
 use geop_core_topology::Body;
 use geop_lib_booleans::{Reach, combine_tools};
 use geop_ops_model::{Combine, Tool, solid};
-use geop_ops_model::{Face, NamedModel, ToolReach, model, read_model};
+use geop_ops_model::{NamedModel, ToolReach};
 
 use crate::common::{Names, middle};
 
-/// What a step did by combining tools with a solid — a cut, a boss, a hole
-/// — as an element of the model: named by the step, and picked by a face
-/// it made (see [`geop_ops_model::FeatureFaces`]), lit as every face of it
-/// that is left.
-pub struct Feature;
-
-/// A feature of the part, by the step that made it.
-pub type FeatureRef = ElementReference<NamedModel, Feature>;
-
-/// The feature of the step `step`.
-pub fn feature(step: impl Into<String>) -> FeatureRef {
-    ElementReference::new(model(), step)
-}
-
-impl Kind for Feature {
-    const NAME: &'static str = "feature";
-}
-
-impl HasElements<Feature> for NamedModel {
-    type Element<'a> = &'a geop_ops_model::Feature;
-    const SINGLETON: Option<&'static str> = <Self as HasElements<Face>>::SINGLETON;
-
-    fn element(&self, name: &str) -> GeopResult<Self::Element<'_>> {
-        self.feature(name)
-    }
-}
-
-impl SelectableElement<NamedModel> for Feature {
-    const PICKED_FROM: &'static [&'static str] = &[Face::NAME];
-
-    fn select(reader: &Reader, hit: &PickedElement) -> Option<FeatureRef> {
-        let face = ElementReference::<NamedModel, Face>::from_picked(hit)?;
-        let part = read_model(reader).ok()?;
-        part.face_id(face.name()).ok()?;
-        Some(feature(part.feature_faces().of(face.name())?))
-    }
-
-    fn drawn(reader: &Reader, feature: &FeatureRef) -> Vec<PickedElement> {
-        let Ok(part) = read_model(reader) else {
-            return Vec::new();
-        };
-        let made = part.feature_faces();
-        let mut faces: Vec<_> = part.topology().faces.keys().copied().collect();
-        faces.sort_by_key(|face| face.0);
-        (faces.into_iter())
-            .filter_map(|face| part.name_of(face))
-            .filter(|&face| made.of(face) == Some(feature.name()))
-            .map(|face| ElementReference::<NamedModel, Face>::new(model(), face).picked())
-            .collect()
-    }
-}
+pub use geop_ops_model::{FeatureElement as Feature, FeatureRef, feature};
 
 /// The steps of the features `refs` refer to, each once, in the order the
 /// steps ran — the order a copy of each must be combined in, for a hole cut

@@ -4,12 +4,15 @@
 //! - [`LinearPattern`]: copies in a row along a direction, or in a grid
 //!   along two.
 //! - [`CircularPattern`]: copies turned around an axis.
+//! - [`Pattern`]: copies wherever a list of frames puts them — along a
+//!   curve, at points, from a table, filling a face, at holes (see
+//!   [`geop_ops_model::spacing::Frames`]).
 //! - [`Mirror`]: a mirror image in a plane.
 //! - [`MoveBody`]: bodies, or a copy of them, turned and shifted.
 //! - [`ScaleBody`]: bodies scaled about a point, evenly or along each axis.
 //! - [`DeformBody`]: bodies tapered, twisted or bent about an axis.
 //!
-//! The first three repeat bodies or features.
+//! The first four repeat bodies or features.
 //!
 //! Each acts on solids, and on sheets — faces standing on their own — and
 //! keeps what it makes as new bodies, or combines it with a solid as an
@@ -33,10 +36,10 @@
 //!
 //! # Spacing
 //!
-//! How instances are spaced in a row — each a step from the last, or spread
-//! over an extent — and how many there are is
+//! Where instances go — in a row, each a step from the last or spread over
+//! an extent, round an axis, along a curve, at points, filling a face — is
 //! [`geop_ops_model::spacing`]'s, shared with every operation that lays out
-//! instances (a placed part's copies, too).
+//! instances (a placed part's copies, fasteners in holes, too).
 
 mod circular;
 mod common;
@@ -50,6 +53,7 @@ mod icons;
 mod linear;
 mod mirror;
 mod move_body;
+mod pattern;
 #[cfg(test)]
 mod program_tests;
 mod references;
@@ -63,7 +67,9 @@ pub use circular::{CircularPattern, CircularPatternArgs};
 pub use common::{BodyRef, Seeds, body};
 pub use deform_body::{Deform, DeformBody, DeformBodyArgs};
 pub use features::{Feature, FeatureRef, feature};
-pub use linear::{Direction, LinearPattern, LinearPatternArgs};
+pub use geop_ops_model::spacing::{Direction, Frames, Offset, PointsRef};
+pub use linear::{LinearPattern, LinearPatternArgs};
+pub use pattern::{Pattern, PatternArgs};
 pub use mirror::{Mirror, MirrorArgs};
 pub use move_body::{MoveBody, MoveBodyArgs};
 pub use references::{PatternDirection, TurnAxis};
@@ -78,6 +84,7 @@ pub fn register(r: Registry) -> GeopResult<Registry> {
     let r = r
         .operation(LinearPattern)?
         .operation(CircularPattern)?
+        .operation(Pattern)?
         .operation(Mirror)?
         .operation(MoveBody)?
         .operation(ScaleBody)?

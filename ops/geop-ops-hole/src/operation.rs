@@ -7,7 +7,7 @@ use geop_core_editor::{
     edit_form::{EditForm, FormState, choices, chosen},
     editable::{Context, OperationGroup, OperationInfo, OperationTier},
     editing::{Choice, Number, Shape, Style, Tone, Unit, Visual},
-    one_of, part_operation,
+    part_operation,
     part_operation::PartOperation,
 };
 use geop_core_program::{
@@ -16,7 +16,6 @@ use geop_core_program::{
     reader::Reader,
     target::{Target, TargetReference},
 };
-use std::collections::BTreeSet;
 
 use geop_core_geometry::shape::RoundWall;
 use geop_core_math::{
@@ -26,14 +25,14 @@ use geop_core_math::{
     vector::Vector3,
     with_context,
 };
-use geop_core_sketch::CurveKind;
 use geop_core_topology::SolidId;
 use geop_lib_booleans::{Reach, combine_tools};
-use geop_ops_model::datums::Datums;
-use geop_ops_model::sketch::{PlacedSketch, SketchRef};
+use geop_ops_model::spacing::{
+    HoleFit, HoleSite, HoleSites, PointsRef, hole_sites, read_hole_sites, resolve_points,
+};
 use geop_ops_model::{Combine, Extent, Tool, hull, reach_past};
 use geop_ops_model::{
-    CosmeticThread, Face, ModelOperation, NamedModel, Namer, Plane, Point, Threads, ToolReach,
+    CosmeticThread, Face, ModelOperation, NamedModel, Namer, Plane, Threads, ToolReach,
     build_model, draw_threads, frame_along, read_model, threads,
 };
 use serde::{Deserialize, Serialize};
@@ -45,17 +44,10 @@ use crate::{
     thread::{ThreadPlacement, ThreadSize, Wall, thread_tool},
 };
 
-one_of! {
-    /// Where a hole goes: a vertex, a datum point or a frame's origin, a
-    /// sketch's point — or a sketch, standing for its points that no line,
-    /// arc or spline runs through.
-    pub enum HoleCentre {
-        Vertex(ElementReference<NamedModel, Point>),
-        Datum(ElementReference<Datums, Point>),
-        SketchPoint(ElementReference<PlacedSketch, Point>),
-        Sketch(SketchRef),
-    }
-}
+/// Where a hole goes: a vertex, a datum point or a frame's origin, a
+/// sketch's point — or a sketch, standing for its points that no line,
+/// arc or spline runs through (see [`PointsRef`]).
+pub type HoleCentre = PointsRef;
 
 /// A flat face of the part, by name.
 pub type PlaneRef = ElementReference<NamedModel, Plane>;
@@ -276,64 +268,6 @@ impl HoleArgs {
     }
 }
 
-/// The hole centres `points` stand for, as `reader` reads them: each by the
-/// name its hole's entities are scoped by, and where it is. A sketch stands
-/// for its points no line, arc or spline runs through.
-fn centres(reader: &Reader, points: &[HoleCentre]) -> GeopResult<Vec<(String, Vector3)>> {
-    let mut found = Vec::new();
-    for point in points {
-        let ctx = with_context!("the hole centre {point:?}");
-        match point {
-            HoleCentre::Sketch(sketch) => {
-                let placed = reader.retrieve_element(sketch).with_context(ctx)?;
-                let (name, sketch) = (&placed.name, &placed.sketch);
-                let on_curves: BTreeSet<_> = sketch
-                    .curves
-                    .values()
-                    .filter(|c| !matches!(c.kind, CurveKind::Circle { .. }))
-                    .flat_map(|c| c.points())
-                    .collect();
-                let geometry = sketch.enclose().with_context(ctx)?;
-                let before = found.len();
-                for (&id, p) in &sketch.points {
-                    if !p.fixed && !on_curves.contains(&id) {
-                        found.push((
-                            format!("{name},{id}"),
-                            placed.plane.uv_to_xyz(&geometry.points[&id]),
-                        ));
-                    }
-                }
-                if found.len() == before {
-                    return Err(GeopError::new(format!(
-                        "sketch {name:?} has no points of its own to drill at: place points in it, or pick them one by one"
-                    )));
-                }
-            }
-            HoleCentre::SketchPoint(at) => {
-                let whole = SketchRef::whole(at.target().clone());
-                let sketch = &reader.retrieve_element(&whole).with_context(ctx)?.name;
-                let p = reader.retrieve_element(at).with_context(ctx)?;
-                found.push((format!("{sketch},{}", at.name()), p));
-            }
-            HoleCentre::Vertex(at) => {
-                let p = reader.retrieve_element(at).with_context(ctx)?;
-                found.push((at.name().to_string(), p));
-            }
-            HoleCentre::Datum(at) => {
-                let p = reader.retrieve_element(at).with_context(ctx)?;
-                found.push((at.name().to_string(), p));
-            }
-        }
-    }
-    let mut seen = BTreeSet::new();
-    for (scope, _) in &found {
-        if !seen.insert(scope) {
-            return Err(GeopError::new(format!("the point {scope} is picked twice")));
-        }
-    }
-    Ok(found)
-}
-
 /// The circle of `diameter` around `centre` in the plane normal to
 /// `normal`, as a polyline: what a hole looks like on its face.
 fn circle(centre: Vector3, normal: &Vector3, diameter: f64) -> Option<Shape> {
@@ -396,7 +330,7 @@ fn sites(reader: &Reader, args: &HoleArgs) -> GeopResult<Sites> {
         return Err(GeopError::new("pick the points to drill at"));
     }
     let mut holes = Vec::new();
-    for (scope, at) in centres(reader, &args.points)? {
+    for (scope, at) in resolve_points(reader, &args.points)? {
         if !plane.signed_distance(&at).could_be_equal(Scalar::ZERO) {
             return Err(GeopError::new(format!(
                 "the point {scope} does not lie on face {face_name:?}: holes are drilled at points on the face"
@@ -407,42 +341,111 @@ fn sites(reader: &Reader, args: &HoleArgs) -> GeopResult<Sites> {
     Ok(Sites { target, holes })
 }
 
-/// Where a tapped hole drilled each of its holes, as the part before it
-/// put them, and how far they are threaded: what their threads are
-/// recorded from, on the walls the holes left.
+/// Where a hole step drills each of its holes, as the part before it put
+/// them, how deep a blind one goes and how far a tapped one is threaded:
+/// what their holes and threads are recorded from, on the walls the holes
+/// left.
 #[derive(Clone, Debug, PartialEq)]
-struct Tapped {
+struct Drilled {
     holes: Vec<(String, CoordinateSystem)>,
-    length: Option<f64>,
+    /// How deep, for a blind hole; none for one through the solid.
+    blind: Option<f64>,
+    threaded: Option<f64>,
 }
 
-/// Each tapped hole's own, made before its model.
-impl Target for Tapped {}
+/// Each hole step's own, made before its model.
+impl Target for Drilled {}
 
 /// Read whole.
-impl geop_core_program::element::Kind for Tapped {
-    const NAME: &'static str = "tapped";
+impl geop_core_program::element::Kind for Drilled {
+    const NAME: &'static str = "drilled";
 }
 
-impl geop_core_program::element::HasElements<Tapped> for Tapped {
-    type Element<'a> = &'a Tapped;
+impl geop_core_program::element::HasElements<Drilled> for Drilled {
+    type Element<'a> = &'a Drilled;
 
-    fn element(&self, name: &str) -> GeopResult<&Tapped> {
+    fn element(&self, name: &str) -> GeopResult<&Drilled> {
         geop_core_program::element::whole(self, name)
     }
 }
 
-/// Where the tapped hole `step` drills its holes.
-fn tapped(step: &str) -> TargetReference<Tapped> {
-    TargetReference::new(format!("tapped:{step}"))
+/// Where the hole step `step` drills its holes.
+fn drilled(step: &str) -> TargetReference<Drilled> {
+    TargetReference::new(format!("drilled:{step}"))
 }
 
 /// Where the hole `args` drills its holes, as the part before it is.
-fn plan(reader: &Reader, args: &HoleArgs) -> GeopResult<Tapped> {
-    Ok(Tapped {
+fn plan(reader: &Reader, args: &HoleArgs) -> GeopResult<Drilled> {
+    let blind = args.end.end(reader)?.length();
+    Ok(Drilled {
         holes: sites(reader, args)?.holes,
-        length: args.thread_length.or(args.end.end(reader)?.length()),
+        blind,
+        threaded: args.thread_length.or(blind),
     })
+}
+
+/// Records every hole the hole step `step` drilled, in the model it left:
+/// its axis, the screw it is for, where a head seats in it and how deep it
+/// runs — as far as its wall goes along its axis (see [`HoleSite`]).
+fn record_holes(reader: &Reader, (step, args): &(String, HoleArgs)) -> GeopResult<HoleSites> {
+    let mut sites = read_hole_sites(reader)?.clone();
+    let ctx = with_context!("the holes of hole({step})");
+    let Drilled { holes, blind, .. } =
+        reader.retrieve_element(&ElementReference::whole(drilled(step)))?;
+    let namer = Namer::new("hole", step)?;
+    let shape = args.shape().with_context(ctx)?;
+    let size = match &args.standard {
+        Standard::Iso { size, .. } => Some(size.clone()),
+        _ => None,
+    };
+    let fit = match args.kind {
+        HoleKind::Simple => HoleFit::Clearance,
+        HoleKind::Counterbore => HoleFit::Counterbore,
+        HoleKind::Countersink => HoleFit::Countersink,
+        HoleKind::Tapped => HoleFit::Tapped,
+    };
+    let seat = match shape.head {
+        Head::Counterbore { depth, .. } => depth,
+        _ => 0.0,
+    };
+    let model = read_model(reader).with_context(ctx)?;
+    let topology = model.topology();
+    for (scope, frame) in holes {
+        let direction = frame.w().neg();
+        let wall = namer.scoped(scope).name(&["wall"]);
+        let wall = format!("{},", wall.trim_end_matches(')'));
+        // How far its wall goes from the face, along its axis.
+        let mut deepest: Option<f64> = None;
+        for (&face, _) in &topology.faces {
+            if !model.name_of(face).is_some_and(|name| name.starts_with(&wall)) {
+                continue;
+            }
+            for edge in topology.face_edges(face) {
+                let edge = topology.get_edge(edge).with_context(ctx)?;
+                for vertex in [edge.start_vertex, edge.end_vertex] {
+                    let at = topology.get_vertex(vertex).with_context(ctx)?.point;
+                    let along = at.sub(frame.origin()).prod_dot(&direction).upper().to_f64();
+                    deepest = Some(deepest.map_or(along, |d| d.max(along)));
+                }
+            }
+        }
+        let depth = deepest.or(*blind).ok_or_else(|| {
+            GeopError::new(format!("the hole {scope} left no wall to measure how deep it is"))
+        })?;
+        let site = HoleSite {
+            axis: geop_core_geometry::shape::Axis {
+                point: *frame.origin(),
+                direction,
+            },
+            size: size.clone(),
+            fit,
+            seat,
+            depth,
+            through: blind.is_none(),
+        };
+        sites.add(namer.name(&[scope]), site).with_context(ctx)?;
+    }
+    Ok(sites)
 }
 
 /// Records the cosmetic thread of every hole the tapped hole `step`
@@ -450,8 +453,9 @@ fn plan(reader: &Reader, args: &HoleArgs) -> GeopResult<Tapped> {
 fn tap(reader: &Reader, (step, args): &(String, HoleArgs)) -> GeopResult<Threads> {
     let mut threads: Threads = reader.previous()?;
     let ctx = with_context!("the threads of hole({step})");
-    let Tapped { holes, length } =
-        reader.retrieve_element(&ElementReference::whole(tapped(step)))?;
+    let Drilled {
+        holes, threaded, ..
+    } = reader.retrieve_element(&ElementReference::whole(drilled(step)))?;
     let namer = Namer::new("hole", step)?;
     let shape = args.shape().with_context(ctx)?;
     let Some(size) = shape.thread else {
@@ -461,7 +465,7 @@ fn tap(reader: &Reader, (step, args): &(String, HoleArgs)) -> GeopResult<Threads
     let result = model.solid_id(&namer.root()).with_context(ctx)?;
     for hole in holes {
         let thread =
-            tapped_thread(&model, result, hole, &shape, &size, *length).with_context(ctx)?;
+            tapped_thread(&model, result, hole, &shape, &size, *threaded).with_context(ctx)?;
         threads.add(namer.scoped(&hole.0).name(&["thread"]), thread)?;
     }
     Ok(threads)
@@ -498,15 +502,16 @@ impl PartOperation for Hole {
         }
     }
 
-    /// Drills the holes, then — tapped — records their threads, where the
-    /// part before the step put them and on the walls the holes left.
+    /// Drills the holes, then records them — and, tapped, their threads —
+    /// where the part before the step put them and on the walls the holes
+    /// left.
     fn run(ctx: &mut StepContext, args: &HoleArgs) -> GeopResult<()> {
         let step = ctx.step();
         let threaded = args.shape().is_ok_and(|shape| shape.thread.is_some());
-        if threaded {
-            ctx.produce(&tapped(step), args, plan)?;
-        }
+        let planned = ctx.produce(&drilled(step), args, plan);
         build_model::<Self>(ctx, args)?;
+        planned?;
+        ctx.produce(&hole_sites(), &(step.to_string(), args.clone()), record_holes)?;
         match threaded {
             true => {
                 ctx.produce(&threads(), &(step.to_string(), args.clone()), tap)?;
@@ -718,7 +723,7 @@ impl PartOperation for Hole {
         // Each hole, drawn on the face.
         let plane = (args.face.as_ref()).and_then(|face| before.retrieve_element(face).ok());
         if let (Ok(shape), Some(plane)) = (args.shape(), plane)
-            && let Ok(centres) = centres(before, &args.points)
+            && let Ok(centres) = resolve_points(before, &args.points)
         {
             let outer = match shape.head {
                 Head::None => shape.diameter,

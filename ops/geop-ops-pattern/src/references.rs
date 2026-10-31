@@ -1,56 +1,7 @@
-//! What the operations of this crate move along or turn about, from
-//! whichever element of the part gives it: [`TurnAxis`], a line or what a
-//! round element turns around, and [`PatternDirection`], a line or a
-//! plane's normal. A mirror's plane is a [`geop_ops_model::sketch::SketchPlane`]:
-//! a flat face, a datum plane, a sketch's plane.
+//! What the operations of this crate move along or turn about: the model's
+//! (see [`geop_ops_model::spacing::references`]), shared with every
+//! operation that lays out instances. A mirror's plane is a
+//! [`geop_ops_model::sketch::SketchPlane`]: a flat face, a datum plane, a
+//! sketch's plane.
 
-use geop_core_editor::one_of;
-use geop_core_geometry::shape::Axis;
-use geop_core_math::{geop_error::GeopResult, vector::Vector3};
-use geop_core_program::{element::ElementReference, reader::Reader};
-use geop_ops_model::datums::Datums;
-use geop_ops_model::sketch::PlacedSketch;
-use geop_ops_model::{Line, NamedModel, Plane, Round};
-
-one_of! {
-    /// An axis to turn about: a line — a straight edge, a datum axis or a
-    /// frame's, a sketch's line — or what a round element turns around: a
-    /// circular edge, a cylindrical or conical face, a sketch's circle or
-    /// arc.
-    pub enum TurnAxis -> Axis {
-        Edge(ElementReference<NamedModel, Line>),
-        Round(ElementReference<NamedModel, Round>),
-        Datum(ElementReference<Datums, Line>),
-        Sketch(ElementReference<PlacedSketch, Line>),
-        SketchRound(ElementReference<PlacedSketch, Round>),
-    }
-}
-
-one_of! {
-    /// A direction to go along: a line — a straight edge, a datum axis or
-    /// a frame's, a sketch's line — or a plane, along its normal: a flat
-    /// face, a datum plane, a sketch's plane.
-    pub enum PatternDirection {
-        Edge(ElementReference<NamedModel, Line>),
-        Face(ElementReference<NamedModel, Plane>),
-        Datum(ElementReference<Datums, Line>),
-        DatumPlane(ElementReference<Datums, Plane>),
-        Sketch(ElementReference<PlacedSketch, Line>),
-        SketchPlane(ElementReference<PlacedSketch, Plane>),
-    }
-}
-
-impl PatternDirection {
-    /// The unit vector it goes along, as `reader` reads the part: a line's
-    /// direction, a plane's normal.
-    pub fn direction(&self, reader: &Reader) -> GeopResult<Vector3> {
-        Ok(match self {
-            PatternDirection::Edge(line) => reader.retrieve_element(line)?.direction,
-            PatternDirection::Datum(line) => reader.retrieve_element(line)?.direction,
-            PatternDirection::Sketch(line) => reader.retrieve_element(line)?.direction,
-            PatternDirection::Face(plane) => *reader.retrieve_element(plane)?.w(),
-            PatternDirection::DatumPlane(plane) => *reader.retrieve_element(plane)?.w(),
-            PatternDirection::SketchPlane(plane) => *reader.retrieve_element(plane)?.w(),
-        })
-    }
-}
+pub use geop_ops_model::spacing::{PatternDirection, TurnAxis};

@@ -93,9 +93,11 @@ pub use draw::ModelDrawer;
 pub use edit::BodyNames;
 pub use elements::{ChainElement, Edge, EdgeChain, Face, ModelElement, Solid, Vertex, read_model};
 pub use extent::{End, Extent, face_hull, hull, reach_past, spread_along};
-pub use feature::{BooleanOp, Feature, FeatureFaces, FeatureTool, ToolReach};
+pub use feature::{
+    BooleanOp, Feature, FeatureElement, FeatureFaces, FeatureRef, FeatureTool, ToolReach, feature,
+};
 pub use geometry::{
-    Body, Circle, Curve, Line, Path, Plane, Point, Round, frame_along, resolve_bodies,
+    Body, Circle, Curve, Line, Path, PathRef, Plane, Point, Round, frame_along, resolve_bodies,
 };
 pub use ids::RefId;
 pub use mesh::{STL_QUALITY, SolidMeshes, stl_bytes};

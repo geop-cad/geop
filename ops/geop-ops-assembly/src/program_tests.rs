@@ -46,7 +46,7 @@ use geop_ops_model::sketch::{
     figures::{n, on_origin, rectangle_outline},
     sketch_element, whole_sketch,
 };
-use geop_ops_model::spacing::Spacing;
+use geop_ops_model::spacing::{Frames, Spacing, TurnAxis};
 use geop_ops_model::{
     Combine, Point, element, read_model,
     testing::{Built as _, assert_close, face_towards, model_of},
@@ -57,7 +57,7 @@ use geop_ops_sketch::AddSketchArgs;
 use geop_ops_model::placed::{Placed, locate, placed_parts};
 
 use crate::{
-    AddPartArgs, DragTool, PartPatternArgs, PatternAxis, Resolved,
+    AddPartArgs, DragTool, PartPatternArgs, Resolved,
     examples::{self, pose},
     mate_name,
     solving::{self, Freedom, Report, SettingsState},
@@ -1564,14 +1564,14 @@ fn six_pins_are_patterned_round_a_hole() {
         PartPatternArgs {
             part: "pin".into(),
             // The plate's hole, round about (1, 1) in it.
-            axis: Some(PatternAxis::Round(
-                element("extrude(hole,hole_sketch,c1)").behind("plate"),
-            )),
-            reversed: false,
-            layout: crate::Layout::Circular {
+            frames: Frames::Circular {
+                axis: Some(TurnAxis::Round(
+                    element("extrude(hole,hole_sketch,c1)").behind("plate"),
+                )),
+                reversed: false,
+                count: 6.0.into(),
                 angle: Spacing::step(60.0),
             },
-            count: 6.0.into(),
         },
     );
     program.state = BTreeMap::from([
@@ -1623,7 +1623,9 @@ fn six_pins_are_patterned_round_a_hole() {
     assert!(err.contains("no part placed so far"), "{err}");
     edit_args(&mut program.steps[2], |pattern: &mut PartPatternArgs| {
         pattern.part = "pin".into();
-        pattern.count = 1.0.into();
+        if let Frames::Circular { count, .. } = &mut pattern.frames {
+            *count = 1.0.into();
+        }
     });
     let err = build(&program, &library).err().unwrap().to_string();
     assert!(err.contains("needs 2 or more"), "{err}");
@@ -1657,14 +1659,14 @@ fn a_part_pattern_is_made_again_only_when_what_it_reads_changes() {
         "pins",
         PartPatternArgs {
             part: "pin".into(),
-            axis: Some(PatternAxis::Round(
-                element("extrude(hole,hole_sketch,c1)").behind("plate"),
-            )),
-            reversed: false,
-            layout: crate::Layout::Circular {
+            frames: Frames::Circular {
+                axis: Some(TurnAxis::Round(
+                    element("extrude(hole,hole_sketch,c1)").behind("plate"),
+                )),
+                reversed: false,
+                count: 6.0.into(),
                 angle: Spacing::step(60.0),
             },
-            count: 6.0.into(),
         },
     );
     program.state = BTreeMap::from([

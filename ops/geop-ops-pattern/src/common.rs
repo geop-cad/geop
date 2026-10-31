@@ -4,7 +4,6 @@
 
 use geop_core_editor::{
     edit_form::{Edit, EditForm},
-    editing::Track,
     part_operation::PartOperation,
 };
 use geop_core_geometry::shape::Axis;
@@ -27,6 +26,8 @@ use geop_ops_model::{
 use serde::{Deserialize, Serialize};
 
 use crate::features::FeatureRef;
+use geop_core_geometry::nurb_curve::NurbCurve3D;
+use geop_ops_model::spacing::{Frames, HoleSites, hole_sites, read_hole_sites};
 
 /// A body of the part: a solid by its name, or a sheet by one of its
 /// faces'.
@@ -187,6 +188,31 @@ impl Seeds {
                 combine_instances(part, &names.namer, operation_id, &self.combine, &instances)
             }
         }
+    }
+
+    /// Where it is, to lay instances out from — a face filled through it:
+    /// the middle of the box round the edges of the bodies, or of the
+    /// tools of the features, in the part `reader` reads.
+    pub(crate) fn anchor(&self, reader: &Reader) -> GeopResult<Vector3> {
+        let part = read_model(reader)?;
+        if self.features.is_empty() {
+            let model = part.topology();
+            let mut curves = Vec::new();
+            for body in resolve_bodies(reader, &self.bodies)? {
+                for edge in model.iter_body_edges(body)? {
+                    curves.push(&model.get_edge(edge)?.curve);
+                }
+            }
+            return box_middle(curves);
+        }
+        let steps = crate::features::feature_steps(&part, &self.features)?;
+        let mut curves = Vec::new();
+        for step in &steps {
+            for tool in &part.feature(step)?.tools {
+                curves.extend(tool.spec.edges.iter().map(|e| &e.curve));
+            }
+        }
+        box_middle(curves)
     }
 
     /// Where the handles of a step repeating it sit, in the part `reader`
@@ -409,13 +435,35 @@ pub(crate) fn middle(points: impl IntoIterator<Item = Vector3>) -> Option<Vector
     Some(Vector3::from_array(c.map(Scalar::from_f64)))
 }
 
-/// A handle at `at`, dragged along `direction`; none for a direction that
-/// could be zero, which nothing could be dragged along.
-pub(crate) fn track(at: Vector3, direction: Vector3) -> Option<Track> {
-    let length = direction.norm_sq();
-    length
-        .definitely_greater(Scalar::ZERO)
-        .then_some(Track { at, direction })
+/// Where the instances of a pattern of `seeds` laid out by `frames` go,
+/// as `reader` reads the part: each a label and the motion from the seeds.
+pub(crate) fn placed_by(
+    frames: &Frames,
+    reader: &Reader,
+    seeds: &Seeds,
+) -> GeopResult<Vec<(String, Motion)>> {
+    let anchor = || seeds.anchor(reader);
+    Ok((frames.motions(reader, &anchor)?.into_iter())
+        .map(|(label, pose)| (label, pose.motion()))
+        .collect())
+}
+
+/// The middle of the box around `curves`' control points: on the axis of
+/// a round one, where the middle of its corners is not.
+fn box_middle<'c>(curves: impl IntoIterator<Item = &'c NurbCurve3D>) -> GeopResult<Vector3> {
+    let mut points = Vec::new();
+    for curve in curves {
+        for cp in &curve.control_points {
+            points.push(cp.dehomogenized()?);
+        }
+    }
+    let Some(hull) = points.into_iter().reduce(|a, b| a.union(&b)) else {
+        return Err(GeopError::new("the seeds have no edges to lay them out from"));
+    };
+    // Any point of the box would do: its middle, sharp.
+    Ok(Vector3::from_array(std::array::from_fn(|k| {
+        Scalar::from_f64(hull[k].to_f64())
+    })))
 }
 
 /// The part's cosmetic threads with those each feature the pattern `O`'s
@@ -451,6 +499,34 @@ where
     Ok(threads)
 }
 
+/// The part's holes with those each feature the pattern `O`'s step
+/// `step` copies drilled copied to every placement of it, named alike (see
+/// [`copy_threads`]).
+fn copy_holes<O>(reader: &Reader, (step, args): &(String, O::Args)) -> GeopResult<HoleSites>
+where
+    O: ModelOperation + PartOperation,
+    O::Args: Pattern,
+{
+    let mut holes = read_hole_sites(reader)?.clone();
+    let features = crate::features::feature_steps(&*read_model(reader)?, &args.seeds().features)?;
+    let placements = args.placements(reader)?;
+    let names = O::Args::NAMING.of(step)?;
+    for step in &features {
+        let ctx = with_context!("copying the holes of feature {step:?}");
+        let drilled: Vec<_> = (holes.of_step(step).into_iter())
+            .map(|(name, site)| (name.to_string(), site.clone()))
+            .collect();
+        for (name, site) in drilled {
+            for (label, motion) in &placements {
+                holes
+                    .add(names.copy(label, &name), site.moved(motion))
+                    .with_context(ctx)?;
+            }
+        }
+    }
+    Ok(holes)
+}
+
 /// Runs the pattern `O` of features or bodies as the step being run:
 /// copies of its seeds in the model, at its placements — of the part as it
 /// is before the step — and, of features, copies of their cosmetic
@@ -464,6 +540,7 @@ where
     if features {
         let copies = (ctx.step().to_string(), args.clone());
         ctx.produce(&threads(), &copies, copy_threads::<O>)?;
+        ctx.produce(&hole_sites(), &copies, copy_holes::<O>)?;
     }
     build_model::<O>(ctx, args)?;
     match features {

@@ -28,14 +28,14 @@ use geop_lib_constraints::Constraints;
 use geop_lib_sweep::shapes::{block_part, v3};
 use geop_ops_model::datums::{ORIGIN, component_name, datums, origin_axis, read_datums};
 use geop_ops_model::selection::Selected;
-use geop_ops_model::spacing::Spacing;
+use geop_ops_model::spacing::{Direction, Frames, PatternDirection, Spacing};
 use geop_ops_model::{read_model, testing::assert_close};
 
 use super::*;
 use geop_ops_model::placed::{locate, placed_parts};
 
 use crate::{
-    Kind, MateKind, PatternAxis,
+    Kind, MateKind,
     editor::PART,
     solving::{self, check as check_mates, solve, solved_states},
     testing::{Shelf, given_model},
@@ -437,12 +437,15 @@ fn a_part_needs_a_file() {
 fn a_pattern_places_copies_after_the_part() {
     let pattern = crate::PartPatternArgs {
         part: "a".into(),
-        axis: Some(PatternAxis::Datum(origin_axis(FrameAxis::X))),
-        reversed: false,
-        layout: crate::Layout::Linear {
-            spacing: Spacing::step(2.0),
+        frames: Frames::Linear {
+            first: Direction {
+                along: Some(PatternDirection::Datum(origin_axis(FrameAxis::X))),
+                reversed: false,
+                count: 3.0.into(),
+                spacing: Spacing::step(2.0),
+            },
+            second: None,
         },
-        count: 3.0.into(),
     };
     let steps = vec![
         ProgramStep::of("a", &args(false, &[])).unwrap(),
