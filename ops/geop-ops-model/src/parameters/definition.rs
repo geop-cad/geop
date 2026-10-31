@@ -22,6 +22,11 @@ use serde::{Deserialize, Serialize};
 /// The name the part's colour is set by.
 pub const COLOR: &str = "color";
 
+/// The parameter a program's configurations are looked up by: the table of
+/// its configurations is the one looked up by it (see
+/// [`crate::parameters::configurations`]).
+pub const CONFIGURATION: &str = "configuration";
+
 /// What a part is made of: a name, and its density in kg/m³ — what its
 /// mass and inertia are computed with (see `geop-ops-inspect`). Lengths are
 /// millimetres, so a part of `V` mm³ weighs `density · V · 1e-9` kg.

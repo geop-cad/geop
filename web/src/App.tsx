@@ -40,6 +40,7 @@ import {
 import { InspectPanel } from "./InspectPanel";
 import { sectionPlane, type Section } from "./section";
 import { ProgramPanels } from "./ProgramPanels";
+import { suppressStep } from "./panels";
 import { SceneViewer } from "./SceneViewer";
 import { StructurePanel } from "./StructurePanel";
 import { OperationGrid, OperationRibbon, type Tool } from "./OperationRibbon";
@@ -433,6 +434,26 @@ function App() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [copyable]);
 
+  /**
+   * The part placed in the program that new steps go into, built in context
+   * against the parts placed beside it — none, for the program itself. Gone
+   * with the file, or the part.
+   */
+  const [context, setContext] = useState<string | null>(null);
+  const placedNames = (program?.steps ?? []).flatMap((s) => s.placed.map((p) => p.instance)).join("\n");
+  useEffect(() => {
+    if (context != null && !placedNames.split("\n").includes(context)) setContext(null);
+  }, [context, placedNames]);
+
+  /** Suppress the step `id` in the configuration built, or run it again. */
+  function suppress(id: string) {
+    const { key, payload } = suppressStep(id);
+    return dispatch({ command: "panel", key, payload });
+  }
+
+  /** The step under the pointer in the timeline, which Ctrl+E suppresses with no step edited. */
+  const hoveredRef = useRef<string | null>(null);
+
   // ── editing a step ─────────────────────────────────────────────────────
 
   async function open(command: Command) {
@@ -455,6 +476,7 @@ function App() {
 
   function newStep(info: OperationInfo) {
     if (step?.kind === info.kind && step.id == null) void close({ command: "cancel" });
+    else if (context != null) void open({ command: "new_in", kind: info.kind, placed: context });
     else void open({ command: "new", kind: info.kind });
   }
 
@@ -699,6 +721,7 @@ function App() {
           : `${s.label}: ${s.summary}`,
       error: s.error,
       dim: !s.editing && !s.runs,
+      suppressed: s.suppressed,
       editing: s.editing,
       placed: s.placed.map((p) => ({
         instance: p.instance,
@@ -708,6 +731,7 @@ function App() {
           icon: iconOf(inner.kind),
           title: `${programName(p.file)}: ${inner.label}: ${inner.summary}`,
           error: inner.error,
+          suppressed: inner.suppressed,
           editing: inner.editing,
         })),
       })),
@@ -775,6 +799,18 @@ function App() {
       shortcut: "Mod+Shift+Z",
       disabled: !(step ? step.can_redo : (program?.can_redo ?? false)),
       run: () => void dispatch({ command: "redo" }),
+    },
+    {
+      id: "edit:suppress",
+      label: "Suppress the step, or run it again",
+      group: "Edit",
+      detail: "the step edited, or the one under the pointer in the timeline, in the configuration built",
+      shortcut: "Mod+E",
+      disabled: !wasmReady || (step != null && step.id == null),
+      run: () => {
+        const id = step?.id ?? hoveredRef.current;
+        if (id != null) void suppress(id);
+      },
     },
     {
       id: "edit:preview",
@@ -915,8 +951,12 @@ function App() {
         enabled={wasmReady && step == null}
         onEdit={(i) => void open({ command: "open", id: steps[i].id })}
         onEditPlaced={(placed, id) => void open({ command: "open", id, placed })}
+        context={context}
+        onContext={setContext}
         onRemove={(i) => dispatch({ command: "remove", id: steps[i].id })}
         onCopy={(i) => void copyStep(steps[i].id)}
+        onSuppress={(i) => void suppress(steps[i].id)}
+        onHover={(i) => (hoveredRef.current = i == null ? null : steps[i].id)}
         onMove={(i, to) => dispatch({ command: "move", id: steps[i].id, index: to })}
         onSeek={(slot) => dispatch({ command: "seek", marker: slot >= stepCount ? null : slot })}
       />

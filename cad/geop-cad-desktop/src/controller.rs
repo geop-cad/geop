@@ -147,6 +147,9 @@ pub struct Controller {
     pub workspace: Option<Workspace>,
     /// What the experimental operations are left out of: on by default.
     pub reduced: bool,
+    /// The part placed in the program that new steps go into, built in
+    /// context against the parts placed beside it: none, for the program.
+    pub context: Option<String>,
 
     /// Where the camera was before it turned to face the plane worked in.
     before_plane: Option<Pose>,
@@ -193,6 +196,7 @@ impl Controller {
             camera: Camera::new(),
             workspace: None,
             reduced: true,
+            context: None,
             before_plane: None,
             plane: None,
             drawn: None,
@@ -582,6 +586,11 @@ impl Controller {
             .is_some_and(|s| s.kind == kind && s.id.is_none());
         if open_new {
             self.command(Command::Cancel);
+        } else if let Some(placed) = self.context.clone() {
+            self.command(Command::NewIn {
+                kind: kind.to_string(),
+                placed,
+            });
         } else {
             self.command(Command::New {
                 kind: kind.to_string(),
@@ -918,6 +927,7 @@ fn kind(command: &Command) -> &'static str {
         Command::Show => "show",
         Command::New { .. } => "new",
         Command::Open { .. } => "open",
+        Command::NewIn { .. } => "new_in",
         Command::Event { .. } => "event",
         Command::Commit => "commit",
         Command::Cancel => "cancel",

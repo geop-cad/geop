@@ -8,9 +8,11 @@ use geop_core_editor::{
     part_operation::PartOperation,
     selectable::Selectable,
 };
+use geop_core_math::primitives::FrameAxis;
 use geop_core_program::{
     element::ElementReference,
     part::StepContext,
+    placed::PlacedArgs,
     values::{Settings, pose_state},
 };
 use std::collections::BTreeMap;
@@ -28,6 +30,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::{
     Mate,
+    add_part_derived::mirror_step,
     editor::{self, PartEditing, PartSession},
     mechanism::{define, resolve},
     placed::define_placed,
@@ -76,6 +79,12 @@ pub struct AddPartArgs {
     /// program places it.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub parameters: Settings,
+    /// The part mirrored, in the plane of its own origin normal to this
+    /// axis — `x` for its `yz` plane — or not: a mirrored component, the
+    /// other hand of the part, placed as a part derived from it (its
+    /// program, then [`crate::MirrorPart`]).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub mirror: Option<FrameAxis>,
 }
 
 impl AddPartArgs {
@@ -142,7 +151,15 @@ impl PartOperation for AddPart {
             return Err(GeopError::new("choose a file to place")).with_context(context);
         }
         let placement = Placement::State(pose_state(step));
-        define_placed(ctx, step, &args.file, &args.parameters, placement).with_context(context)?;
+        let placed = PlacedArgs {
+            file: args.file.clone(),
+            inputs: args.parameters.clone(),
+            then: (args.mirror.map(mirror_step).transpose())
+                .with_context(context)?
+                .into_iter()
+                .collect(),
+        };
+        define_placed(ctx, step, &placed, placement).with_context(context)?;
         let namer = Namer::new("add_part", step)?;
         let own_frame = MateEntity::of(
             step,
@@ -194,5 +211,11 @@ impl PartOperation for AddPart {
     }
 }
 
+#[cfg(test)]
+mod configurations;
+#[cfg(test)]
+mod in_context;
+#[cfg(test)]
+mod mirrored;
 #[cfg(test)]
 mod tests;

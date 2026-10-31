@@ -1,7 +1,8 @@
-//! The program: its panels (the joints), then its steps one under another
-//! with the seeker — the line after which nothing runs. Click a step to
-//! edit it, drag it to move it, drag the seeker to go back in time; copy
-//! or delete a step by its buttons; unfold a step placing parts to edit
+//! The program: its panels (the configurations, the joints), then its
+//! steps one under another with the seeker — the line after which nothing
+//! runs. Click a step to edit it, drag it to move it, drag the seeker to go
+//! back in time; copy, suppress or delete a step by its buttons — a
+//! suppressed step struck through; unfold a step placing parts to edit
 //! their steps where they are placed. A drag only drops on release; until
 //! then the slot it would drop into is drawn.
 
@@ -51,6 +52,9 @@ pub fn program(window: &mut GeopApp, ui: &mut Ui) {
     let mut open_placed = None;
     let mut remove = None;
     let mut copy = None;
+    let mut suppress = None;
+    // Where new steps go: into a placed part, in context, or the program.
+    let mut context = None;
     let mut released: Option<Drag> = None;
     let pointer = ui.input(|i| i.pointer.interact_pos());
     let seeker_slot = match drag {
@@ -181,6 +185,9 @@ pub fn program(window: &mut GeopApp, ui: &mut Ui) {
                     if step.editing {
                         text = text.strong();
                     }
+                    if step.suppressed {
+                        text = text.strikethrough().color(theme.weak());
+                    }
                     ui.add(egui::Label::new(text).truncate().selectable(false));
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                         ui.spacing_mut().item_spacing.x = 0.0;
@@ -195,6 +202,21 @@ pub fn program(window: &mut GeopApp, ui: &mut Ui) {
                         if small(ui, "trash", "Delete this step") {
                             remove = Some(step.id.clone());
                         }
+                        let (tip, tint) = match step.suppressed {
+                            true => ("Run this step again (Ctrl+E)", theme.accent()),
+                            false => (
+                                "Suppress this step: build without it (Ctrl+E)",
+                                theme.weak(),
+                            ),
+                        };
+                        let image = icons::image("suppress", 13.0, tint);
+                        if image.is_some_and(|image| {
+                            ui.add_enabled(enabled, egui::Button::image(image).frame(false))
+                                .on_hover_text(tip)
+                                .clicked()
+                        }) {
+                            suppress = Some(step.id.clone());
+                        }
                         if small(
                             ui,
                             "copy",
@@ -204,7 +226,10 @@ pub fn program(window: &mut GeopApp, ui: &mut Ui) {
                         }
                     });
                 }
-                let title = format!("{}: {}", step.label, step.summary);
+                let mut title = format!("{}: {}", step.label, step.summary);
+                if step.suppressed {
+                    title.push_str("\n\nSuppressed: it builds nothing (Ctrl+E runs it again)");
+                }
                 let response = match &step.error {
                     Some(e) => response.on_hover_text(format!("{title}\n\n{e}")),
                     None => response.on_hover_text(title),
@@ -247,6 +272,9 @@ pub fn program(window: &mut GeopApp, ui: &mut Ui) {
                                 if inner.editing {
                                     text = text.strong().color(theme.accent());
                                 }
+                                if inner.suppressed {
+                                    text = text.strikethrough();
+                                }
                                 let title = format!(
                                     "{}: {}: {}",
                                     program_name(&placed.file),
@@ -263,6 +291,26 @@ pub fn program(window: &mut GeopApp, ui: &mut Ui) {
                                 }
                             });
                         }
+                        let here = app.context.as_deref() == Some(placed.instance.as_str());
+                        ui.horizontal(|ui| {
+                            ui.add_space(22.0);
+                            let text = match here {
+                                true => format!("New steps go into {} ✕", placed.instance),
+                                false => format!("＋ New step in {}", placed.instance),
+                            };
+                            let tip = match here {
+                                true => "New steps go into this part, built against the parts placed before it here. Click to put them into the program again.",
+                                false => "Put new steps into this part, where it is placed: built against the parts placed before it here, in context.",
+                            };
+                            let text = RichText::new(text).small().italics().color(theme.weak());
+                            let r = ui.add_enabled(
+                                enabled,
+                                egui::Button::selectable(here, text).frame_when_inactive(false),
+                            );
+                            if r.on_hover_text(tip).clicked() {
+                                context = Some((!here).then(|| placed.instance.clone()));
+                            }
+                        });
                     }
                 }
             }
@@ -332,6 +380,12 @@ pub fn program(window: &mut GeopApp, ui: &mut Ui) {
     }
     if let Some(id) = copy {
         app.copy_step(&id);
+    }
+    if let Some(id) = suppress {
+        app.command(panels::suppress_step(&id));
+    }
+    if let Some(context) = context {
+        app.context = context;
     }
 }
 

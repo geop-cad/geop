@@ -230,3 +230,36 @@ fn the_view_draws_placed_parts_and_the_light_theme() {
         shot(&mut harness, "light-datum");
     }
 }
+
+/// The configurations panel is there, as the app draws the kernel's
+/// panels: a configuration added by its button is the one the program
+/// builds. Ctrl+E suppresses the step open in it, and the timeline lists
+/// it so; pressed again, the step runs again.
+#[test]
+fn configurations_are_added_and_steps_suppressed() {
+    let mut harness = window("ui-configurations", false);
+    let name = harness.state().app.program.as_ref().unwrap().examples[0].to_string();
+    harness
+        .state_mut()
+        .act(&egui::Context::default(), Action::LoadExample(name));
+    idle(&mut harness);
+    harness.get_by_label("+ Configuration").click();
+    idle(&mut harness);
+    let tables = |h: &Harness<'_, GeopApp>| {
+        h.state().app.program.as_ref().unwrap().panels["configurations"]["tables"].clone()
+    };
+    assert_eq!(tables(&harness)[0]["selected"], "Configuration 2");
+    let last = |h: &Harness<'_, GeopApp>| {
+        let steps = &h.state().app.program.as_ref().unwrap().steps;
+        steps.last().unwrap().clone()
+    };
+    let id = last(&harness).id;
+    harness.state_mut().app.open_step(&id, None);
+    idle(&mut harness);
+    harness.key_press_modifiers(egui::Modifiers::COMMAND, egui::Key::E);
+    idle(&mut harness);
+    assert!(last(&harness).suppressed, "{id} is suppressed");
+    harness.key_press_modifiers(egui::Modifiers::COMMAND, egui::Key::E);
+    idle(&mut harness);
+    assert!(!last(&harness).suppressed, "{id} runs again");
+}

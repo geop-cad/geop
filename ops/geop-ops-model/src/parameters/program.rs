@@ -124,6 +124,7 @@ fn lookup_step(table: &LookupTableArgs) -> ProgramStep {
         id: format!("table_{}", table.input),
         operation: LOOKUP.to_string(),
         args: serde_json::to_value(table).expect("a step's arguments are plain data"),
+        active: None,
     }
 }
 
@@ -155,6 +156,7 @@ fn set_step<A: Serialize>(program: &mut Program, kind: &str, args: Option<&A>) {
                 id,
                 operation: kind.to_string(),
                 args,
+                active: None,
             };
             steps.insert(0, step);
         }

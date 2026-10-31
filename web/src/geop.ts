@@ -252,6 +252,8 @@ export interface Step {
   id: string;
   operation: string;
   args: unknown;
+  /** Whether it runs, a formula of the parameters: where it is 0 it is suppressed. Always, if none. */
+  active?: string;
 }
 
 /** A pose, as a file has it: a position and a rotation quaternion `[w, x, y, z]`. */
@@ -303,6 +305,15 @@ export type ParamValue = number | Pose | string;
 export interface Program {
   steps: Step[];
   state?: Record<string, ParamValue>;
+  /** How it is shown, saved with it — see `geop_core_program::program::Display`. */
+  display?: Display;
+}
+
+/** What is shown or hidden, the colours placed parts are drawn in, and the placed parts shown alone, by name. */
+export interface Display {
+  visibility?: Record<string, boolean>;
+  colors?: Record<string, string>;
+  isolated?: string[];
 }
 
 // ── editing ──────────────────────────────────────────────────────────────────
@@ -631,6 +642,8 @@ export type Command =
   | { command: "new"; kind: string }
   /** Open the step `id` — of the part placed as `placed`, if given, where it is placed. */
   | { command: "open"; id: string; placed?: string }
+  /** A new step of `kind` after the steps of the part placed as `placed`, edited where it is placed: built against the parts placed beside it, in context. */
+  | { command: "new_in"; kind: string; placed: string }
   | { command: "event"; event: EditEvent }
   | { command: "commit" }
   | { command: "cancel" }
@@ -725,6 +738,8 @@ export interface StepInfo {
   error: string | null;
   /** Whether it runs: it is before where the program runs to. */
   runs: boolean;
+  /** Whether it is suppressed: it ran, and found it was not to, so it built nothing. */
+  suppressed: boolean;
   editing: boolean;
   /** The parts it placed, each with its program's steps, to edit where it is placed. */
   placed: PlacedSteps[];

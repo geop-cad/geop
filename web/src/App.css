@@ -801,6 +801,7 @@ button.inline {
 }
 
 .timeline .step-copy,
+.timeline .step-suppress,
 .timeline .step-remove {
   flex-shrink: 0;
   padding: 0 6px;
@@ -817,15 +818,61 @@ button.inline {
 /* Shown on the box under the pointer only, where there is one: a list of
    them is noise. */
 @media (hover: hover) {
-  .timeline .step-copy {
+  .timeline .step-copy,
+  .timeline .step-suppress:not(.on) {
     visibility: hidden;
   }
-  .timeline li.step-box:hover .step-copy {
+  .timeline li.step-box:hover .step-copy,
+  .timeline li.step-box:hover .step-suppress {
     visibility: visible;
   }
 }
-.timeline .step-copy:hover:not(:disabled) {
+.timeline .step-copy:hover:not(:disabled),
+.timeline .step-suppress:hover:not(:disabled) {
   color: #7ec9ff;
+}
+/* Where new steps go into a placed part, built in context. */
+.timeline li.step-box.step-context {
+  color: var(--text-dim);
+  font-style: italic;
+}
+
+/* A suppressed step builds nothing: struck through, its button lit. */
+.timeline li.step-box.step-suppressed {
+  opacity: 0.55;
+}
+.timeline li.step-box.step-suppressed .step-name {
+  text-decoration: line-through;
+}
+.timeline .step-suppress.on {
+  color: #ffa040;
+}
+
+/* The configuration built, and the other tables a part is looked up in. */
+.configurations {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 8px;
+}
+.configurations .configuration {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+.configurations .configuration span {
+  color: var(--text-dim);
+  font-size: 0.85rem;
+}
+.configurations select {
+  min-width: 0;
+  max-width: 12rem;
+}
+.configurations .configuration-add {
+  padding: 1px 8px;
+  font-size: 0.85rem;
 }
 
 /* Where a dragged step would land. Takes no room, so the boxes stay put. */

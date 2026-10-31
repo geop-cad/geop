@@ -1,6 +1,7 @@
 //! The program's panels, each shown by what its key maps to — the one
-//! place the app names a panel (as `web/src/ProgramPanels.tsx`). A panel
-//! of a key not here is not shown.
+//! place the app names a panel (as `web/src/ProgramPanels.tsx`): the
+//! configurations, then the joints. A panel of a key not here is not
+//! shown.
 
 use eframe::egui::{self, RichText, Ui};
 use geop_core_editor::editor::Command;
@@ -36,9 +37,99 @@ struct JointValue {
     max: Option<f64>,
 }
 
+/// The key of the configurations panel (see
+/// `geop_ops_model::parameters::ConfigurationsPanel`).
+const CONFIGURATIONS: &str = "configurations";
+
+/// What the configurations panel shows (see
+/// `geop_ops_model::parameters::ConfigurationsState`).
+#[derive(Deserialize, Default)]
+struct ConfigurationsState {
+    #[serde(default)]
+    tables: Vec<TableChoice>,
+}
+
+#[derive(Deserialize)]
+struct TableChoice {
+    step: String,
+    input: String,
+    rows: Vec<String>,
+    selected: String,
+}
+
+/// The command suppressing the step `id` in the configuration built, or
+/// running it again: what the timeline's button and Ctrl+E send.
+pub fn suppress_step(id: &str) -> Command {
+    Command::Panel {
+        key: CONFIGURATIONS.into(),
+        payload: serde_json::json!({ "command": "suppress", "step": id }),
+    }
+}
+
 pub fn program_panels(window: &mut GeopApp, ui: &mut Ui) {
+    configurations(window, ui);
     joints_panel(window, ui);
     motion_panel(window, ui);
+}
+
+/// The configuration built, and every other table the part is looked up
+/// in, each a list to switch; and a button adding a configuration.
+fn configurations(window: &mut GeopApp, ui: &mut Ui) {
+    let Some(state) = (window.app.program.as_ref())
+        .and_then(|p| p.panels.get(CONFIGURATIONS))
+        .cloned()
+    else {
+        return;
+    };
+    let Ok(state) = serde_json::from_value::<ConfigurationsState>(state) else {
+        return;
+    };
+    let enabled = window.app.ready();
+    let idle = window.app.step.is_none();
+    let mut command = None;
+    ui.horizontal_wrapped(|ui| {
+        for table in &state.tables {
+            let label = match table.input.as_str() {
+                "configuration" => "Configuration",
+                input => input,
+            };
+            ui.label(RichText::new(label).color(window.theme.weak()));
+            ui.add_enabled_ui(enabled, |ui| {
+                egui::ComboBox::from_id_salt(("table", &table.step))
+                    .selected_text(&table.selected)
+                    .show_ui(ui, |ui| {
+                        for row in &table.rows {
+                            if ui.selectable_label(*row == table.selected, row).clicked() {
+                                command = Some(serde_json::json!({
+                                    "command": "select", "input": table.input, "row": row,
+                                }));
+                            }
+                        }
+                    });
+            });
+        }
+        let has = state.tables.iter().any(|t| t.input == "configuration");
+        let (text, tip) = match has {
+            true => ("+", "Add a configuration as this one is, and build it"),
+            false => (
+                "+ Configuration",
+                "Add a configuration: the part as it is stays the Default one",
+            ),
+        };
+        if ui
+            .add_enabled(enabled && idle, egui::Button::new(text).small())
+            .on_hover_text(tip)
+            .clicked()
+        {
+            command = Some(serde_json::json!({ "command": "add" }));
+        }
+    });
+    if let Some(payload) = command {
+        window.app.command(Command::Panel {
+            key: CONFIGURATIONS.into(),
+            payload,
+        });
+    }
 }
 
 /// The joints panel: each joint's coordinates, to set.

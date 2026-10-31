@@ -26,6 +26,15 @@ pub enum Command {
     New {
         kind: String,
     },
+    /// Start a new step of the operation `kind` after the steps of the
+    /// part placed as `placed`, edited where it is placed: built against
+    /// the parts placed beside it, which it reads in context (see
+    /// [`geop_core_program::placed::OUTSIDE`]). Committed, it is written to
+    /// that part's file.
+    NewIn {
+        kind: String,
+        placed: String,
+    },
     /// Start editing the step `id` — of the program, or, given `placed`,
     /// of the part placed as that instance, where it is placed (see
     /// [`StepInfo::placed`]).
@@ -111,16 +120,16 @@ pub enum Command {
         payload: serde_json::Value,
     },
     /// Show the datum, sketch, solid or placed part `name` of the part
-    /// drawn, or hide it — whatever the editor would do by itself — for as
-    /// long as the same file is edited.
+    /// drawn, or hide it — whatever the editor would do by itself: a
+    /// display setting, saved with the program
+    /// ([`geop_core_program::program::Display`]), not a step.
     Visibility {
         name: String,
         visible: bool,
     },
     /// Draw the placed part `name` — `bolt`, `asm/bolt` — in the colour
-    /// `color`, `#rrggbb`, over its own, or — `None` — in its own again,
-    /// for as long as the same file is edited: a display setting, as the
-    /// camera is, not a step.
+    /// `color`, `#rrggbb`, over its own, or — `None` — in its own again:
+    /// a display setting, saved with the program, not a step.
     Appearance {
         name: String,
         #[serde(default)]
@@ -128,7 +137,7 @@ pub enum Command {
     },
     /// Show only the placed parts `names` — with the parts placed in them
     /// and those they are placed in — of the parts placed, or every one
-    /// again for none, for as long as the same file is edited.
+    /// again for none: a display setting, saved with the program.
     Isolate {
         names: Vec<String>,
     },
@@ -200,6 +209,10 @@ pub struct StepInfo {
     pub error: Option<String>,
     /// Whether it runs: it is before where the program runs to.
     pub runs: bool,
+    /// Whether it is suppressed: it ran, and found it was not to (see
+    /// [`geop_core_program::program::ProgramStep::active`]), so it built
+    /// nothing.
+    pub suppressed: bool,
     /// Whether it is the step being edited.
     pub editing: bool,
     /// The parts it placed, each with its program's steps, to edit where

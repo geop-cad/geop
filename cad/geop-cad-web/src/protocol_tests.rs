@@ -24,7 +24,7 @@ const SAMPLES: &str = concat!(
 );
 
 /// How many kinds of [`Command`] there are: what [`kind`] tells apart.
-const COMMAND_KINDS: usize = 26;
+const COMMAND_KINDS: usize = 27;
 
 /// The kind of `command`. A kind added to [`Command`] does not compile
 /// here until it is named, and [`COMMAND_KINDS`] counted up, and then
@@ -34,6 +34,7 @@ fn kind(command: &Command) -> &'static str {
         Command::Show => "show",
         Command::New { .. } => "new",
         Command::Open { .. } => "open",
+        Command::NewIn { .. } => "new_in",
         Command::Event { .. } => "event",
         Command::Commit => "commit",
         Command::Cancel => "cancel",
@@ -142,6 +143,8 @@ fn session(kinds: &[&str]) -> Vec<Value> {
         event(json!({ "type": "hover", "pointer": pointer([1.0, 1.0, 5.0], [0.0, 0.0, -1.0]), "shift": false })),
         json!({ "command": "tool", "key": null }),
         json!({ "command": "open", "id": "pin" }),
+        json!({ "command": "cancel" }),
+        json!({ "command": "new_in", "kind": "add_datum", "placed": "pin" }),
         json!({ "command": "cancel" }),
         json!({ "command": "appearance", "name": "pin", "color": "#ff8800" }),
         json!({ "command": "isolate", "names": ["pin"] }),

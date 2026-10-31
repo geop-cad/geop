@@ -45,6 +45,7 @@ impl Operation for PlaceOperation {
         let placed = PlacedArgs {
             file: args.file.clone(),
             inputs: inputs(&[("x", 1.0)]),
+            then: Vec::new(),
         };
         placed::place(ctx, step, &placed)
     }

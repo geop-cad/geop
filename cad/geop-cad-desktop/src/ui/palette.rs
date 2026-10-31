@@ -207,6 +207,10 @@ pub fn shortcuts(window: &mut GeopApp, ctx: &egui::Context) {
                             Action::CopyStep,
                             "Copy the step edited, to paste here or in another file",
                         ),
+                        (
+                            Action::SuppressStep,
+                            "Suppress the step edited in the configuration built, or run it again",
+                        ),
                         (Action::Paste, "Paste steps where new steps go"),
                         (Action::NewPart, "New part"),
                         (Action::OpenFolder, "Open a folder"),

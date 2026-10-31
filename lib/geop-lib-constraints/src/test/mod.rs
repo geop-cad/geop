@@ -257,6 +257,7 @@ impl Running {
         let program = Program {
             steps: program.steps.clone(),
             state: state.clone(),
+            ..Program::default()
         };
         (self.runner).run_with(&mut self.part, &program, inputs, None)
     }

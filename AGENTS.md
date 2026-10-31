@@ -1426,3 +1426,31 @@ The mate kept a constraint differentiated by nothing, and the solve gave up
 at once. A value behind an instance's path is now read inside that
 instance's part (`Reader::placed_part`), as the check does. When a read and its
 dependency take different routes to the same name, one of them is wrong.
+
+## A read through `..` is checked where it was made
+
+A part placed in an assembly reads the parts placed beside it in context
+(`/../bracket:model`). Its nodes record those reads inside `..`, and they
+are checked against the part placing it, as it was when the placing step
+built it — never against the placed part alone, which cannot answer
+them. The placing node records them too, so the sibling changing builds
+the part again, and a build is shared only where they hold. One file is
+then several programs: a part placed in two contexts, or placed with
+steps after its own (a mirrored component, `PlacedArgs::then`), is built
+differently from the same text. What is kept of a file is of every
+program it was built as since the cache was written: noting only the
+last one's steps dropped what the other had kept, and the reopened
+assembly made the mirror again.
+
+## A cache derived from a value is derived one way
+
+A curve or surface keeps the box of its control points (`aabb`), and
+compares it with the rest. `translate` moved the box by the offset
+instead of boxing the points as moved: cheaper, and not the same
+enclosure, since moving a point rounds it. The rounded box's corner
+patch, translated, then compared unequal to itself read back from the
+kept cache, whose reader boxes the points, and every reopened example
+built "otherwise". The box moved was also narrower than the points it
+claims to hold. A cached value computed from others is computed by the
+one function every constructor uses (`compute_aabb`), never patched
+along by a shortcut of its own.

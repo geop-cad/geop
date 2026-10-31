@@ -6,6 +6,7 @@ use geop_core_math::{
 };
 
 use super::NurbCurve;
+use crate::aabb::compute_aabb;
 
 impl NurbCurve<4> {
     /// This 3-D curve shifted by `offset` — same shape and parametrization,
@@ -13,7 +14,7 @@ impl NurbCurve<4> {
     /// point by `offset * weight`, leaving weights and the knot vector
     /// untouched.
     pub fn translate(&self, offset: Vector3) -> Self {
-        let control_points = self
+        let control_points: Vec<_> = self
             .control_points
             .iter()
             .map(|cp| {
@@ -26,17 +27,13 @@ impl NurbCurve<4> {
                 ])
             })
             .collect();
+        let aabb = compute_aabb(&control_points);
         Self {
             degree: self.degree,
             control_points,
             knot_vector: self.knot_vector.clone(),
-            // Every control point moved by exactly `offset`, so the box
-            // moves by `offset` too — cheaper than rescanning the points.
-            aabb: [
-                self.aabb[0].add(offset[0]),
-                self.aabb[1].add(offset[1]),
-                self.aabb[2].add(offset[2]),
-            ],
+            // Of the control points as moved: see `NurbSurface::translate`.
+            aabb,
         }
     }
 }
@@ -50,7 +47,7 @@ impl NurbCurve<3> {
         if zero(offset[0]) && zero(offset[1]) {
             return self.clone();
         }
-        let control_points = self
+        let control_points: Vec<_> = self
             .control_points
             .iter()
             .map(|cp| {
@@ -58,15 +55,12 @@ impl NurbCurve<3> {
                 Vector3::from_array([cp[0].add(offset[0].mul(w)), cp[1].add(offset[1].mul(w)), w])
             })
             .collect();
+        let aabb = compute_aabb(&control_points);
         Self {
             degree: self.degree,
             control_points,
             knot_vector: self.knot_vector.clone(),
-            aabb: [
-                self.aabb[0].add(offset[0]),
-                self.aabb[1].add(offset[1]),
-                self.aabb[2],
-            ],
+            aabb,
         }
     }
 
@@ -88,7 +82,7 @@ impl NurbCurve<3> {
     /// `(w origin + (w x) e1 + (w y) e2, w)`, so it is exact for any NURBS
     /// and divides by no weight.
     pub fn embed(&self, origin: &Vector3, e1: &Vector3, e2: &Vector3) -> GeopResult<NurbCurve<4>> {
-        let control_points = self
+        let control_points: Vec<_> = self
             .control_points
             .iter()
             .map(|cp| embed_point(cp, origin, e1, e2))

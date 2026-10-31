@@ -1,6 +1,6 @@
 use geop_core_math::{primitives::Motion, vector::Vector3};
 
-use crate::nurb_curve::transform_control_point;
+use crate::{aabb::compute_aabb, nurb_curve::transform_control_point};
 
 use super::NurbSurface;
 
@@ -10,7 +10,7 @@ impl NurbSurface<4> {
     /// point by `offset * weight`, leaving weights and knot vectors
     /// untouched.
     pub fn translate(&self, offset: Vector3) -> Self {
-        let control_points = self
+        let control_points: Vec<_> = self
             .control_points
             .iter()
             .map(|cp| {
@@ -23,6 +23,7 @@ impl NurbSurface<4> {
                 ])
             })
             .collect();
+        let aabb = compute_aabb(&control_points);
         Self {
             degree_u: self.degree_u,
             degree_v: self.degree_v,
@@ -31,13 +32,10 @@ impl NurbSurface<4> {
             control_points,
             knot_vector_u: self.knot_vector_u.clone(),
             knot_vector_v: self.knot_vector_v.clone(),
-            // Every control point moved by exactly `offset`, so the box
-            // moves by `offset` too — cheaper than rescanning the points.
-            aabb: [
-                self.aabb[0].add(offset[0]),
-                self.aabb[1].add(offset[1]),
-                self.aabb[2].add(offset[2]),
-            ],
+            // Of the control points as moved, rounding and all: the box
+            // moved by `offset` misses what rounding the move adds to a
+            // point, and is not the box the same points read back have.
+            aabb,
         }
     }
 
@@ -107,6 +105,36 @@ mod tests {
         let n = mirrored.normal(u, w).unwrap();
         let m = mirror.rotate(&surface.normal(u, w).unwrap()).neg();
         assert!(n.could_be_equal(&m), "{n:?} vs {m:?}");
+    }
+
+    /// A surface shifted holds the box of its control points as shifted,
+    /// rounding and all: the box a surface of the same points has — what
+    /// one kept and read back has — and one that encloses every point.
+    #[test]
+    fn a_surface_shifted_boxes_its_points_as_shifted() {
+        let p = |x: f64, y: f64, z: f64, w: f64| {
+            geop_core_math::vector::Vector4::from_array(
+                [x * w, y * w, z * w, w].map(Scalar::from_f64),
+            )
+        };
+        let surface = NurbSurface3D::try_new(
+            1,
+            1,
+            vec![
+                p(0.1, 0., 0.3, 0.7),
+                p(0., 2.2, 1., 1.3),
+                p(1.9, 0., 1., 0.9),
+                p(2., 2., 0.1, 1.),
+            ],
+            vec![Scalar::ZERO, Scalar::ZERO, Scalar::ONE, Scalar::ONE],
+            vec![Scalar::ZERO, Scalar::ZERO, Scalar::ONE, Scalar::ONE],
+        )
+        .unwrap();
+        let by = Vector3::from_array([1.7, -0.3, 1e3].map(Scalar::from_f64));
+        let shifted = surface.translate(by);
+        let mut boxed = shifted.clone();
+        boxed.recompute_aabb();
+        assert_eq!(shifted, boxed);
     }
 
     #[test]

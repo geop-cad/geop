@@ -285,6 +285,54 @@ mod editor {
         assert_eq!(makes(&editor), built, "a display setting builds nothing");
     }
 
+    /// How a program is shown is saved with it: the colour chosen for a
+    /// placed part is in the program, an edit undone as any other, and the
+    /// program saved and opened again is shown in it.
+    #[test]
+    fn a_display_state_is_saved_with_the_program() {
+        let mut editor = crate::editor();
+        let name = "pin_in_plate".to_string();
+        let loaded = handled(
+            &mut editor,
+            Command::LoadWorkspaceExample { name, folder: None },
+        );
+        let path = loaded.program.expect("the example is shown").path;
+        let update = handled(
+            &mut editor,
+            Command::Appearance {
+                name: "pin".into(),
+                color: Some("#ff8800".into()),
+            },
+        );
+        let program = update
+            .program
+            .expect("the program is sent, to save")
+            .program;
+        assert_eq!(program.display.colors["pin"], "#ff8800");
+        let saved = program.to_json().unwrap();
+        assert!(saved.contains("\"display\""), "{saved}");
+
+        let update = handled(&mut editor, Command::Undo);
+        assert!(update.program.unwrap().program.display.is_empty());
+        let update = handled(&mut editor, Command::Redo);
+        assert!(!update.program.unwrap().program.display.is_empty());
+        handled(&mut editor, Command::Undo);
+
+        let opened = Program::from_json(&saved).unwrap();
+        let update = handled(
+            &mut editor,
+            Command::Load {
+                program: opened,
+                path,
+            },
+        );
+        let scene = update.scene.expect("drawn");
+        let pin = (scene.instances.iter())
+            .find(|i| i.name == "pin")
+            .expect("the pin");
+        assert_eq!(pin.color.as_deref(), Some("#ff8800"));
+    }
+
     fn distance(editor: &Editor, id: &str) -> f64 {
         let program = editor.program();
         let args: ExtrudeArgs = args(&program.steps[program.index_of(id).unwrap()]);
@@ -492,6 +540,7 @@ mod editor {
             id: "mystery".into(),
             operation: "no_such_operation".into(),
             args: serde_json::json!({}),
+            active: None,
         });
         let refused = editor.handle(Command::Load {
             program: unknown.clone(),

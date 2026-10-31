@@ -536,6 +536,7 @@ pub fn bolted_plate() -> Program {
                     ),
                 ),
             ]),
+            mirror: None,
         },
     );
     program.push(
@@ -561,6 +562,7 @@ pub fn bolted_plate() -> Program {
                     ),
                 ),
             ]),
+            mirror: None,
         },
     );
     program.state = StateValues::from([

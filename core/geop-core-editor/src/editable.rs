@@ -308,22 +308,63 @@ pub struct Editors {
     order: Vec<&'static str>,
 }
 
-/// The part `part` as it is before the step `step` of `program`: before
-/// that step as the last run ran it — or, for a step the last run did not
-/// run, after the last step before it in `program` that it did.
-fn before<'a>(part: &'a Part, program: &Program, step: &str) -> GeopResult<Reader<'a>> {
-    let position = (program.steps.iter().position(|s| s.id == step))
-        .ok_or_else(|| GeopError::new(format!("step `{step}` is not in the program")))?;
-    let ran = |id: &str| part.order().iter().any(|ran| ran == id);
-    if ran(step) {
-        return Ok(part.before(step));
+/// The part a step is edited against, as a run left it — and, for a step
+/// of a part placed in the program, edited where it is placed, the part it
+/// is placed in, as the step placing it left it: what the step reads there
+/// in context (see [`geop_core_program::placed::OUTSIDE`]). A part of its
+/// own is read as itself.
+#[derive(Clone)]
+pub struct Against<'a> {
+    pub part: &'a Part,
+    pub outside: Option<Reader<'a>>,
+}
+
+impl<'a> From<&'a Part> for Against<'a> {
+    fn from(part: &'a Part) -> Self {
+        Self {
+            part,
+            outside: None,
+        }
     }
-    let earlier = (program.steps.iter().take(position).rev()).find(|s| ran(&s.id));
-    Ok(match (earlier, program.steps.first()) {
-        (Some(earlier), _) => part.after(&earlier.id),
-        (None, Some(first)) if ran(&first.id) || position == 0 => part.before(&first.id),
-        _ => part.current(),
-    })
+}
+
+impl<'a> Against<'a> {
+    /// `reader`, of the part, placed where it is.
+    fn placed(&self, reader: Reader<'a>) -> Reader<'a> {
+        match &self.outside {
+            Some(outside) => reader.placed_in(outside.clone()),
+            None => reader,
+        }
+    }
+
+    /// The part as it is now (see [`Part::current`]).
+    pub fn current(&self) -> Reader<'a> {
+        self.placed(self.part.current())
+    }
+
+    /// The part after the step `step` of the last run (see [`Part::after`]).
+    pub fn after(&self, step: &str) -> Reader<'a> {
+        self.placed(self.part.after(step))
+    }
+
+    /// The part as it is before the step `step` of `program`: before that
+    /// step as the last run ran it — or, for a step the last run did not
+    /// run, after the last step before it in `program` that it did.
+    pub fn before(&self, program: &Program, step: &str) -> GeopResult<Reader<'a>> {
+        let part = self.part;
+        let position = (program.steps.iter().position(|s| s.id == step))
+            .ok_or_else(|| GeopError::new(format!("step `{step}` is not in the program")))?;
+        let ran = |id: &str| part.order().iter().any(|ran| ran == id);
+        if ran(step) {
+            return Ok(self.placed(part.before(step)));
+        }
+        let earlier = (program.steps.iter().take(position).rev()).find(|s| ran(&s.id));
+        Ok(self.placed(match (earlier, program.steps.first()) {
+            (Some(earlier), _) => part.after(&earlier.id),
+            (None, Some(first)) if ran(&first.id) || position == 0 => part.before(&first.id),
+            _ => part.current(),
+        }))
+    }
 }
 
 /// A step being edited: its arguments as saved, its operation, and what
@@ -393,7 +434,7 @@ impl Editors {
     fn step<'a>(
         &'a self,
         runner: &'a Runner,
-        part: &'a Part,
+        part: Against<'a>,
         program: &'a Program,
         step: &'a str,
     ) -> GeopResult<Step<'a>> {
@@ -401,7 +442,7 @@ impl Editors {
         let context = Context {
             step,
             runner,
-            before: before(part, program, step)?,
+            before: part.before(program, step)?,
             built: Some(part.after(step)),
             scene: None,
         };
@@ -414,18 +455,19 @@ impl Editors {
 
     /// A new step of the operation `kind`, `id`, to insert into `program`
     /// before its step `before`, or after its last.
-    pub fn new_step(
+    pub fn new_step<'a>(
         &self,
         runner: &Runner,
-        part: &Part,
+        part: impl Into<Against<'a>>,
         program: &Program,
         kind: &str,
         id: &str,
         before: Option<&str>,
     ) -> GeopResult<ProgramStep> {
         let operation = self.get(kind)?;
+        let part = part.into();
         let before = match before {
-            Some(step) => self::before(part, program, step)?,
+            Some(step) => part.before(program, step)?,
             None => part.current(),
         };
         let context = Context {
@@ -439,6 +481,7 @@ impl Editors {
             id: id.to_string(),
             operation: operation.kind().to_string(),
             args: operation.new_args(&context)?,
+            active: None,
         })
     }
 
@@ -448,16 +491,16 @@ impl Editors {
     }
 
     /// What the editor shows while the step `step` is edited.
-    pub fn presentation(
+    pub fn presentation<'a>(
         &self,
         runner: &Runner,
-        part: &Part,
+        part: impl Into<Against<'a>>,
         program: &Program,
         step: &str,
         editing: &dyn Any,
     ) -> GeopResult<Form> {
         FORMS_BUILT.set(FORMS_BUILT.get() + 1);
-        let step = self.step(runner, part, program, step)?;
+        let step = self.step(runner, part.into(), program, step)?;
         (step.operation).presentation(&step.context, step.args, editing)
     }
 
@@ -465,14 +508,14 @@ impl Editors {
     /// just opened shows it, against the part before it — and never what
     /// it built, so that a list of every step asks nothing of what each
     /// built.
-    pub fn listed(
+    pub fn listed<'a>(
         &self,
         runner: &Runner,
-        part: &Part,
+        part: impl Into<Against<'a>>,
         program: &Program,
         step: &str,
     ) -> GeopResult<Form> {
-        let mut step = self.step(runner, part, program, step)?;
+        let mut step = self.step(runner, part.into(), program, step)?;
         step.context.built = None;
         let editing = step.operation.initial_editing();
         (step.operation).presentation(&step.context, step.args, &*editing)
@@ -481,17 +524,17 @@ impl Editors {
     /// The arguments and editing state of the step `step` after `event`,
     /// with what the pointer is over found in `scene`, if one is given.
     #[allow(clippy::too_many_arguments)]
-    pub fn process_user_event(
+    pub fn process_user_event<'a>(
         &self,
         runner: &Runner,
-        part: &Part,
+        part: impl Into<Against<'a>>,
         program: &Program,
         step: &str,
         editing: &dyn Any,
         event: Event,
         scene: Option<&dyn Scene>,
     ) -> GeopResult<Edited> {
-        let mut step = self.step(runner, part, program, step)?;
+        let mut step = self.step(runner, part.into(), program, step)?;
         step.context.scene = scene;
         (step.operation).process_user_event(&step.context, step.args, editing, event)
     }
