@@ -628,15 +628,20 @@ pub fn residuals(kind: &Kind, a: &World, b: &World, scale: D) -> GeopResult<Vec<
         // slope at all where the directions are parallel, and the two rows
         // together say one thing twice. At 0° or 180° the condition is two —
         // the directions parallel — and `d·e` has no slope there either:
-        // those are held as parallel ones are.
+        // those are held as parallel ones are, and `d·e = cos θ` says which
+        // way, so that 180° turns the part half way round, as 179.9° does,
+        // not back to 0°. That row is flat where it holds: it adds no
+        // condition there, only makes the other way round no solution
+        // (the sum of squares has a maximum, not a minimum, at it).
         Kind::Angle { value } => {
             let (d, e) = directions()?;
             let radians = D::cst(*value).degrees_to_radians()?;
             let sin = radians.sin();
+            let cos = d.along.prod_dot(&e.along).sub(radians.cos());
             if sin.could_be_equal(D::ZERO) {
                 parallel(d, e, &mut out);
+                out.push(cos.mul(l));
             } else {
-                let cos = d.along.prod_dot(&e.along).sub(radians.cos());
                 out.push(cos.mul(D::ONE.div(sin)?).mul(l));
             }
         }

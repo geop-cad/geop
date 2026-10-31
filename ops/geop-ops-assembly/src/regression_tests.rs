@@ -158,10 +158,6 @@ fn a_gripper_fastened_by_a_frame_of_its_own_holds_where_it_is() {
 /// way — its side facing opposite the other's — not left facing the same
 /// way, as at 0°.
 #[test]
-#[ignore = "bug: residuals::Kind::Angle holds 180° as it holds 0°, as a parallel (either way), so \
-            the cube placed as `b` on the fixed cube `a` with an angle mate of 180° between their \
-            faces `block(c,c1)` stays turned 0° (where it starts at 20°), while 179° turns it \
-            179°: the mate's geometry jumps half a turn between 179.9° and 180°"]
 fn an_angle_mate_of_half_a_turn_turns_the_part_half_way_round() {
     use crate::{Kind, Mate};
     use geop_ops_model::{element, mate_entity::MateEntity, selection::Selected};
