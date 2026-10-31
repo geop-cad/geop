@@ -191,7 +191,9 @@ mod tests {
         assert_eq!(datums, ["origin"]);
         // Opening the empty file changes nothing drawn: the page keeps the
         // scene it has.
-        assert!(opened["scene"].is_null() || opened["scene"]["part"]["datums"][0]["name"] == "origin");
+        assert!(
+            opened["scene"].is_null() || opened["scene"]["part"]["datums"][0]["name"] == "origin"
+        );
     }
 }
 
