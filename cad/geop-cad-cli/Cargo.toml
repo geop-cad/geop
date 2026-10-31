@@ -28,6 +28,14 @@ sha2 = "0.11.1"
 # `geop open`'s page (`web/dist-open`), built in with the feature
 # `frontend`; embedded in debug builds too, so any build runs alike.
 rust-embed = { version = "8.13.0", features = ["debug-embed"], optional = true }
+# `geop app`: that page in a window of its own, in the system's webview
+# (WebKitGTK on Linux, WKWebView on macOS, WebView2 on Windows), with the
+# feature `app`. `rfd` asks for folders and where to save downloads in
+# the system's own dialogs; `resvg` draws the window's icon from the logo.
+wry = { version = "=0.57.0", optional = true }
+tao = { version = "=0.37.1", optional = true }
+rfd = { version = "=0.17.2", default-features = false, features = ["gtk3"], optional = true }
+resvg = { version = "=0.45.1", default-features = false, optional = true }
 
 [dev-dependencies]
 # `tests/mcp.rs` models the drilled box the testing helpers describe,
@@ -39,3 +47,7 @@ geop-ops-model.workspace = true
 # The page `geop open` serves, embedded: build it first with
 # `npm --prefix web run build:open`. The release builds with it.
 frontend = ["dep:rust-embed"]
+# `geop app`: the page `frontend` embeds, in a native window. Needs the
+# system's webview: on Linux WebKitGTK 4.1 (`libwebkit2gtk-4.1-dev` to
+# build, `libwebkit2gtk-4.1-0` to run), nothing on macOS and Windows.
+app = ["frontend", "dep:wry", "dep:tao", "dep:rfd", "dep:resvg"]

@@ -18,7 +18,7 @@ import {
   type Update,
   type Value,
 } from "./geop";
-import { host, onRestart, store } from "./backend";
+import { host, onRestart, openFolder, store } from "./backend";
 import { applyScene, NOTHING_PLACED, type DrawnScene, type Placed } from "./kept";
 import { KernelCrashed } from "./crash";
 import { DEFAULT_POSE, headOnPose, wantsFraming, type CameraPose, type Drawn, type Projection } from "./camera";
@@ -1071,6 +1071,7 @@ function App() {
         reads={reads}
         onExport={(exporter) => void exportWith(exporter)}
         onLoadFile={(file) => void uploadFiles([file])}
+        onOpenFolder={openFolder}
         exampleNames={program?.examples ?? []}
         onLoadExample={(name) => void loadExample(name)}
         workspaceExampleNames={host ? [] : (program?.workspace_examples ?? [])}
@@ -1093,6 +1094,7 @@ function App() {
           setBugReportOpen(true);
           setMobileTab("bug");
         }}
+        onBugReportCollect={async () => (await dispatch({ command: "report" }))?.report ?? null}
         assistantOpen={host ? null : assistantOpen}
         onAssistant={() => setAssistantOpen((open) => !open)}
         onBugReportClose={() => {

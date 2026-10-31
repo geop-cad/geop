@@ -8,6 +8,10 @@
 //
 // The page is given a token in its URL's fragment (`#token=...`), which
 // the process asks of every call: no other page in the browser knows it.
+//
+// `geop app` shows this same page in a window of its own, which says so
+// by `window.geopApp` before the page runs (`cad/geop-cad-cli/src/app.rs`);
+// the window's title is the page's.
 import type { Host } from "./backend";
 import { KernelCrashed } from "./crash";
 import { isProgram, type Workspace, type WorkspaceStore } from "./files";
@@ -32,12 +36,21 @@ interface Listing {
 /** Why the page cannot work, if it cannot: then every call fails saying so. */
 let failure: Error | null = null;
 
+/** The name of the folder edited, once read. */
+let folderName: string | undefined;
+
+/** Title the page (and the app's window) by the program edited and its folder. */
+function showTitle(active: string) {
+  const file = active.split("/").pop();
+  document.title = [file, folderName].filter(Boolean).join(" — ") + " · geop";
+}
+
 // Read before the app starts: its first render takes the files (`store.load`).
 let listing: Listing | null = null;
 try {
   listing = (await (await api("/api/files")).json()) as Listing;
-  const name = listing.root.split(/[\\/]/).filter(Boolean).pop();
-  if (name) document.title = `${name} · geop`;
+  folderName = listing.root.split(/[\\/]/).filter(Boolean).pop();
+  showTitle(listing.active ?? "");
 } catch (e) {
   failure = new Error(
     `this page could not read its files from geop open (${e instanceof Error ? e.message : e}): ` +
@@ -46,6 +59,12 @@ try {
 }
 
 export const host: Host | null = null;
+
+/** The window of `geop app` this page is in, if it is in one. */
+const app = (window as { geopApp?: { openFolder(): void } }).geopApp;
+
+/** Another folder, chosen in the system's dialog, opens in a window of its own. */
+export const openFolder: (() => void) | null = app ? () => app.openFolder() : null;
 
 /** What each file of the folder holds, as last read or written. */
 const onDisk = new Map(Object.entries(listing?.files ?? {}));
@@ -123,6 +142,7 @@ export const store: WorkspaceStore = {
   load: () => listing && { files: { ...listing.files }, active: listing.active ?? "" },
   save(workspace: Workspace) {
     if (!listing) return;
+    showTitle(workspace.active);
     unwritten = workspace.files;
     schedule();
   },

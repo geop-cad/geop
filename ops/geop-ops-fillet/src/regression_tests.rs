@@ -22,8 +22,8 @@ use geop_ops_model::{
     Combine,
     datums::datums,
     sketch::{
-        Sketch, SketchPlane,
-        figures::{n, on_origin},
+        Constraint, Sketch, SketchPlane,
+        figures::{disc, n, on_face, on_origin},
         whole_sketch,
     },
 };
@@ -1312,4 +1312,322 @@ fn every_edge_of_a_block_far_from_the_origin_rounded() {
 #[ignore = "bug: at (1e5,-1e5,0) the corner balls' weighted control points are 1.1e-4..1.3e-4 wide: weights ~1e-9 wide (from the ball's centre, 1.3e-10 wide out of a three-plane solve) times x = 1e5"]
 fn every_edge_of_a_block_further_from_the_origin_rounded() {
     every_edge_rounded_at([1e5, -1e5, 0.0]);
+}
+
+/// A user's program from a bug report (app.geop-cad.dev, September): the
+/// rectangle with corners `(x0, y0)` and `(x1, y1)` sketched on the Z
+/// plane as the report drew it (its lines `c4`, `c6`, `c8` and `c10`, the
+/// side `c6` at `x1`), extruded 1 up (`extrude1`); the circle of `radius`
+/// round `(u, v)` sketched on the side `c6` and cut `depth` back into the
+/// block (`extrude2`), through it. On that side the sketch's `u` runs
+/// along `y` and its `v` along `z`.
+fn block_with_cross_hole(
+    [x0, y0]: [f64; 2],
+    [x1, y1]: [f64; 2],
+    centre: [f64; 2],
+    radius: f64,
+    depth: f64,
+) -> Program {
+    let mut outline = Sketch::new();
+    let p0 = outline.add_point(n(x0), n(y1));
+    let p1 = outline.add_point(n(x1), n(y0));
+    let p2 = outline.add_point(n(x1), n(y1));
+    let p3 = outline.add_point(n(x0), n(y0));
+    let side = |sketch: &mut Sketch, a, b, horizontal: bool| {
+        let line = sketch.add_line(a, b);
+        sketch.constrain(if horizontal {
+            Constraint::Horizontal { line }
+        } else {
+            Constraint::Vertical { line }
+        });
+    };
+    side(&mut outline, p0, p2, true);
+    side(&mut outline, p2, p1, false);
+    side(&mut outline, p1, p3, true);
+    side(&mut outline, p3, p0, false);
+    let mut program = Program::new();
+    program.push(
+        "sketch1",
+        AddSketchArgs::on(on_origin(FrameAxis::Z), outline),
+    );
+    program.push("extrude1", extrude("sketch1", 1.0, false));
+    program.push(
+        "sketch2",
+        AddSketchArgs::on(
+            on_face("extrude(extrude1,sketch1,c6)"),
+            disc(centre, radius),
+        ),
+    );
+    program.push(
+        "extrude2",
+        extrusion(
+            "sketch2",
+            Extents::blind(depth),
+            Combine::cut("extrude(extrude1)"),
+        ),
+    );
+    program
+}
+
+/// The edges of `part` the cross hole of [`block_with_cross_hole`] made
+/// where it meets the block's faces: those whose middles lie on its wall,
+/// the cylinder of `radius` round the line along `x` through `(y, z) =
+/// centre`, but for the seams between the wall's quarters, running along
+/// `x` inside the block; of the solid `solid`.
+fn cross_hole_edges(part: &NamedModel, solid: &str, centre: [f64; 2], radius: f64) -> Vec<String> {
+    let solid = part.solid_id(solid).unwrap();
+    let model = part.topology();
+    let mut edges: Vec<String> = (model.edges.iter())
+        .filter(|&(&id, edge)| {
+            let mid = geop_ops_model::testing::middle(edge);
+            let m = [0, 1, 2].map(|k| mid[k].to_f64());
+            let (dy, dz) = (m[1] - centre[0], m[2] - centre[1]);
+            let x = |v| model.get_vertex(v).unwrap().point[0].to_f64();
+            let seam = !near(x(edge.start_vertex), x(edge.end_vertex))
+                && !near(m[2], 0.0)
+                && !near(m[2], 1.0);
+            (dy.hypot(dz) - radius).abs() < 1e-6
+                && !seam
+                && (model.faces_of_edge(id).into_iter().flatten())
+                    .any(|f| part.solid_of_face(f, "").ok() == Some(solid))
+        })
+        .map(|(&id, _)| part.name_of(id).unwrap().to_string())
+        .collect();
+    edges.sort();
+    edges
+}
+
+/// The operations of [`blade_registry`], and the chamfer.
+fn sketch_chamfer_registry() -> GeopResult<OperationRegistry> {
+    blade_registry()?.with(crate::Chamfer)
+}
+
+/// The cross hole's edges of every solid `program` builds blended, each
+/// edge alone and all of a solid's together, by fillet and by chamfer, at
+/// each of `sizes`: panics listing every case that did not build valid.
+fn assert_cross_hole_blends(program: &Program, centre: [f64; 2], radius: f64, sizes: &[f64]) {
+    use geop_ops_model::testing::{Cases, outcome};
+    let part = program.build_model(sketch_chamfer_registry).unwrap();
+    assert_valid(&part);
+    let mut cases = Cases::default();
+    for solid in part.solid_names() {
+        let edges = cross_hole_edges(&part, &solid, centre, radius);
+        assert!(!edges.is_empty(), "{solid}");
+        let mut groups: Vec<(String, Vec<String>)> =
+            edges.iter().map(|e| (e.clone(), vec![e.clone()])).collect();
+        groups.push((format!("all of {solid}"), edges));
+        for &size in sizes {
+            for (what, edges) in &groups {
+                let args = FilletArgs::constant(edges.clone(), size);
+                cases.record(
+                    format!("fillet {size} {what}"),
+                    outcome::<Fillet>(&part, &args, crate::stress_tests::is_refusal),
+                );
+                let args = crate::ChamferArgs::even(edges.clone(), size);
+                cases.record(
+                    format!("chamfer {size} {what}"),
+                    outcome::<crate::Chamfer>(&part, &args, crate::stress_tests::is_refusal),
+                );
+            }
+        }
+    }
+    cases.assert_none_wrong();
+}
+
+/// The first report: a 2.70 x 2.14 x 1 block, a hole of radius 0.665
+/// across it along `x`, wider than the block is high: it cuts through the
+/// top and the bottom, and cuts the block in two.
+fn report_1() -> Program {
+    block_with_cross_hole(
+        [-0.9010450613588369, -0.5338339365307662],
+        [1.8001942734550729, 1.6023892809932008],
+        REPORT_1_CENTRE,
+        REPORT_1_RADIUS,
+        -3.2,
+    )
+}
+const REPORT_1_CENTRE: [f64; 2] = [0.48362997231174, 0.5234027925254698];
+const REPORT_1_RADIUS: f64 = 0.6649955754567488;
+
+/// The second report: a 1.27 x 1.42 x 1 block, a hole of radius 0.243
+/// through it along `x`.
+fn report_2() -> Program {
+    block_with_cross_hole(
+        [-0.42121108371481825, -0.4362003537393587],
+        [0.8484682595403755, 0.9826159282473974],
+        REPORT_2_CENTRE,
+        REPORT_2_RADIUS,
+        -1.99,
+    )
+}
+const REPORT_2_CENTRE: [f64; 2] = [0.35780028078490433, 0.5123847954419268];
+const REPORT_2_RADIUS: f64 = 0.2434952239614807;
+
+/// Every edge of the first report's cross hole blended, alone and all
+/// together, by 0.05, 0.1 and 0.2: the rim's arcs on both sides, the
+/// extrusion's own and those the boolean traced, and the lines along the
+/// top and bottom. By 0.2 a rim's blend is refused: the rim rises only
+/// 0.19 above the top, and the blend run on past it does not clear the
+/// top before the circle turns back down (see the fast tests below).
+#[test]
+#[ignore = "slow: every edge of a reported part blended at three sizes — run with `cargo test -- --ignored`"]
+fn blends_of_a_cross_hole_through_the_top_and_bottom() {
+    assert_cross_hole_blends(
+        &report_1(),
+        REPORT_1_CENTRE,
+        REPORT_1_RADIUS,
+        &[0.05, 0.1, 0.2],
+    );
+}
+
+/// Every edge of the second report's hole blended, alone and all
+/// together, by 0.025, 0.05 and 0.1 (a tenth to four tenths of the hole's
+/// radius). These built already; kept as the user's part.
+#[test]
+#[ignore = "slow: every edge of a reported part blended at three sizes — run with `cargo test -- --ignored`"]
+fn blends_of_a_cross_hole_rim() {
+    assert_cross_hole_blends(
+        &report_2(),
+        REPORT_2_CENTRE,
+        REPORT_2_RADIUS,
+        &[0.025, 0.05, 0.1],
+    );
+}
+
+/// The first report's rim on the side `c6` (see [`report_1`]): the arcs
+/// where the hole meets that side, a tangent chain from the block's top
+/// down to its bottom, which the hole breaks out through.
+const REPORT_1_RIM: &str = "extrude(extrude2,sketch2,c1#1,start)";
+
+/// The first report's rim bevelled by 0.1. The rim's arcs end where the
+/// hole breaks out through the top and the bottom, at the vertices where
+/// the side `c6`, the hole's wall and the top (or bottom) meet; the top
+/// stands at an angle to the wall there. Three things failed in turn:
+///
+/// - "the chamfer cannot meet the face 0.1 from the edge … beyond the
+///   face's surface", at the rim's first vertex, on the side: the bevel's
+///   edge on the side is the circle 0.1 out from the rim, which at the top
+///   is above the block, past the side's surface. A ball's contact there
+///   was looked for on the face carried on; a chamfer's was not
+///   (`chamfer_point` now is).
+/// - Then "face … does not stand square to face … : a rolling-ball blend
+///   only ends at a plane its section lies in": a chamfer ended only at a
+///   plane square to it, run straight out; one through a plane at an angle
+///   is now run on along the edge carried on, as a fillet is (`run_ons`,
+///   `Across::Chord`).
+/// - A fillet's run-on past the bottom found the hole's quarter carried on
+///   too short: whether a side of a patch is within reach was told by the
+///   speed at the vertex, and a quarter arc is faster in its middle than
+///   at its ends (`carried_on_past` now takes the least speed on the way).
+#[test]
+fn chamfer_of_a_cross_hole_rim_breaking_out_through_the_top() {
+    let mut program = report_1();
+    program.push(
+        "bevel",
+        crate::ChamferArgs::even(vec![REPORT_1_RIM.to_string()], 0.1),
+    );
+    let part = program.build_model(sketch_chamfer_registry).unwrap();
+    assert_valid(&part);
+    // Half way down the rim, by its corner: bevelled away.
+    let [y, z] = [
+        REPORT_1_CENTRE[0] - REPORT_1_RADIUS - 0.02,
+        REPORT_1_CENTRE[1],
+    ];
+    let solid = part.solid_names().into_iter().next().unwrap();
+    assert_eq!(
+        where_in(&part, &solid, [1.78, y, z]),
+        PointClassification::Outside
+    );
+    assert_eq!(
+        where_in(&part, &solid, [1.6, y, z]),
+        PointClassification::Inside
+    );
+}
+
+/// The first report's block and, of its cross hole's rim on the side the
+/// cut ran out through (`c10`, at `x = -0.90`), the arcs on the same side
+/// of the hole as [`REPORT_1_RIM`]: those the boolean traced, where the
+/// cut's wall crossed that side.
+fn report_1_far_rim() -> (Program, Vec<String>) {
+    let program = report_1();
+    let part = program.build_model(sketch_chamfer_registry).unwrap();
+    let solid = part.solid_names().into_iter().next().unwrap();
+    let rim: Vec<String> = cross_hole_edges(&part, &solid, REPORT_1_CENTRE, REPORT_1_RADIUS)
+        .into_iter()
+        .filter(|name| {
+            let edge = part
+                .topology()
+                .get_edge(part.edge_id(name).unwrap())
+                .unwrap();
+            let m = geop_ops_model::testing::middle(edge);
+            near(m[0].to_f64(), -0.9010450613588369) && m[1].to_f64() < REPORT_1_CENTRE[0]
+        })
+        .collect();
+    assert_eq!(rim.len(), 2, "{rim:?}");
+    (program, rim)
+}
+
+/// The rim on the side the cut ran out through bevelled by 0.1. Its arcs
+/// are the boolean's, fitted cubics, and carried on past the rim's end
+/// they drift off the hole's wall — `5e-4` a fifth of the way round — so
+/// the bevel run on along them could not meet the faces. The edge carried
+/// on is now put back where its faces carried on meet, and so is a
+/// chamfer's point along the chain (`where_faces_meet`): at the chain's end
+/// the two would otherwise jump by the cubic's own error, `4e-8`, and the
+/// skin through the stations then converged by a factor of 1.6 per
+/// doubling, not sixteen, and was refused at 0.05 as straying.
+#[test]
+fn chamfer_of_a_traced_cross_hole_rim_breaking_out_through_the_top() {
+    let (mut program, rim) = report_1_far_rim();
+    program.push("bevel", crate::ChamferArgs::even(rim, 0.1));
+    assert_builds_valid_with(&program, sketch_chamfer_registry);
+}
+
+/// The same rim rounded by 0.1. Run on past the bottom, the blend's
+/// contact on the hole's wall goes on past the end of the wall's quarter
+/// (the circle's lowest point, `2°` on), along the quarter's surface below
+/// the block. Past the bottom the stations were free, their contacts not
+/// enclosed by the contact curve: a hair off the quarter's surface there,
+/// the curve was found neither on it nor clear of it, and the boolean's
+/// search for crossings along it ran out of nodes. Every station's contact
+/// is now enclosed (`contact_checks`).
+#[test]
+fn fillet_of_a_traced_cross_hole_rim_breaking_out_through_the_top() {
+    let (mut program, rim) = report_1_far_rim();
+    program.push("round", FilletArgs::constant(rim, 0.1));
+    assert_builds_valid_with(&program, sketch_chamfer_registry);
+}
+
+/// The first report's rim rounded by 0.2: the circle rises only 0.19
+/// above the block's top, so no section of the blend run on along it is
+/// clear of the top before the circle turns back down, and carried on
+/// farther the hole's quarter has no section left (its weight runs to
+/// zero). Refused, naming the face and the vertex.
+#[test]
+fn fillet_larger_than_a_cross_hole_rim_rises_above_the_top_is_refused() {
+    let mut program = report_1();
+    program.push(
+        "round",
+        FilletArgs::constant(vec![REPORT_1_RIM.to_string()], 0.2),
+    );
+    let error = geop_ops_model::testing::error(program.build_model(sketch_chamfer_registry));
+    let root = error.root_message();
+    assert!(
+        root.contains("too large to run on through face"),
+        "{error:?}"
+    );
+}
+
+/// The first report's rim rounded by 0.1: the fillet's run-on past the
+/// bottom (see [`chamfer_of_a_cross_hole_rim_breaking_out_through_the_top`])
+/// failed with "the point … is not -0.1 from surface 0", its foot on the
+/// hole's quarter clamped to the quarter's end.
+#[test]
+fn fillet_of_a_cross_hole_rim_breaking_out_through_the_top() {
+    let mut program = report_1();
+    program.push(
+        "round",
+        FilletArgs::constant(vec![REPORT_1_RIM.to_string()], 0.1),
+    );
+    assert_builds_valid_with(&program, sketch_chamfer_registry);
 }

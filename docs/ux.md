@@ -1,6 +1,7 @@
 # The editor's UX rules
 
-What every front end (web, VS Code, desktop) follows, and why. Behaviour
+What every front end (the web app — in the browser, `geop open` and
+`geop app` — and VS Code) follows, and why. Behaviour
 belongs in the kernel's editor layer (`geop-core-editor`), so the front ends
 agree; a front end only draws what it is sent and sends what the user did.
 
@@ -32,7 +33,7 @@ agree; a front end only draws what it is sent and sends what the user did.
   answer's row lights is decided once, by the kernel (`view::lit::Lit`),
   and sent as `Update::lit` — a `Lit` per drawn part, only when it
   changed; a list item or a row pointed at is sent as `Command::Light`. A
-  front end draws it and classifies nothing, so web, VS Code and desktop
+  front end draws it and classifies nothing, so the web app and VS Code
   light the same faces, edges, sketches and datums.
 - **Show what is only for picking only while it can be picked.** The
   datums of placed parts (`Drawer::hidden`) are shown while a field that
@@ -61,8 +62,7 @@ agree; a front end only draws what it is sent and sends what the user did.
   front end offers besides the operations has its key in the kernel too
   (`geop_core_editor::keys::APP_KEYS`, sent as `ProgramState::keys`): the
   palette, the key list, commit, cancel, undo, redo, fit (`F`), reset
-  (`Home`) and the projection (`O`). The desktop app's own extras (theme,
-  files, section) hold the command key.
+  (`Home`) and the projection (`O`).
 - **A key with Shift is another key.** `Shift+B` never starts what `B`
   does; a symbol (`?`) is the symbol, whatever Shift it takes to type.
 - **The palette ranks alike everywhere**: the label starting with the
@@ -127,11 +127,11 @@ agree; a front end only draws what it is sent and sends what the user did.
   home button beside it frames the whole part from the home corner, as
   `Home` does. It works in a plane worked in too.
 - **The view moves alike everywhere.** The wheel zooms towards what is
-  under the pointer, which stays under it (`gestures.ts` `zoomToward`,
-  the desktop app's `Camera::zoom`: 0.85 of the distance a notch). A
+  under the pointer, which stays under it (`gestures.ts` `zoomToward`:
+  0.85 of the distance a notch). A
   tumble or a pan let go keeps 0.85 of its momentum per sixtieth of a
   second, whatever the display's rate. A focus move eases in and out over
-  0.55 s (smoothstep) in both apps.
+  0.55 s (smoothstep).
 - **Hover and selection look alike everywhere**: lit faces tinted 70 %
   towards `#ffc94a`, lit edges and points drawn over everything in it;
   visuals hovered `#ffe0a0`, selected `#ffd84a`, a point three pixels
@@ -147,8 +147,8 @@ agree; a front end only draws what it is sent and sends what the user did.
   by its field's step (Shift ten steps, Alt a tenth), applied at once;
   dragging a number's label sideways scrubs it, a step per 4 px, the
   newest value sent once the last is answered. A formula is followed,
-  never moved. Web (`nudge.ts`) and desktop (`dialog.rs` `nudge`) round
-  alike, tested with the same cases.
+  never moved. The web app rounds it (`nudge.ts`,
+  tested in `web/test/nudge.test.ts`).
 - A field keeps what is typed while it has the focus; the kernel's value
   shows once it has not.
 

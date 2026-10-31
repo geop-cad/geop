@@ -3,7 +3,10 @@
 //! for an open one.
 //!
 //! The step holds the cage itself, not a history of edits: edits are made
-//! in the editor and leave the cage they made behind. Its vertices, edges
+//! in the editor and leave the cage they made behind. A new cage is a
+//! basic shape — a box, a cylinder, a sphere or a plane — [`SIZE`] across,
+//! whose width, depth and height (or radius) are typed in the dialog while
+//! the cage is still that shape (see [`Basic::of`]). Its vertices, edges
 //! and faces are drawn, and picked by clicking them — an edge's loop by
 //! double-clicking it, its ring with shift held, everything in a window
 //! dragged after `b`; what is selected is moved, turned and scaled about
@@ -90,11 +93,13 @@ pub struct Amounts {
 }
 
 impl Default for Amounts {
+    /// For a cage [`SIZE`] across: an extrude a quarter of it, an inset and
+    /// a bevel a tenth.
     fn default() -> Self {
         Self {
-            distance: 0.5,
-            thickness: 0.2,
-            width: 0.2,
+            distance: SIZE / 4.0,
+            thickness: SIZE / 10.0,
+            width: SIZE / 10.0,
             cut: 0.5,
             slide: 0.25,
         }
@@ -117,15 +122,136 @@ pub struct SubdSession {
     problem: Option<String>,
 }
 
-/// The primitives a cage starts from, by the value of their action.
-fn primitive(name: &str) -> Option<Cage> {
-    Some(match name {
-        "box" => Cage::cuboid([2.0, 2.0, 2.0]),
-        "cylinder" => Cage::cylinder(1.0, 2.0, 8),
-        "sphere" => Cage::sphere(1.0),
-        "plane" => Cage::plane(2.0, 3),
-        _ => return None,
-    })
+/// How large a basic shape a cage starts from is: across, in each
+/// direction.
+pub const SIZE: f64 = 100.0;
+
+/// How many quads round a basic cylinder's cage.
+const CYLINDER_SEGMENTS: usize = 8;
+
+/// How many quads along each side of a basic plane's cage.
+const PLANE_QUADS: usize = 3;
+
+/// A basic shape a cage starts from, with its dimensions.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum Basic {
+    Box { width: f64, depth: f64, height: f64 },
+    Cylinder { radius: f64, height: f64 },
+    Sphere { radius: f64 },
+    Plane { width: f64 },
+}
+
+impl Basic {
+    /// The basic shape the action `name` starts from, [`SIZE`] across.
+    pub fn named(name: &str) -> Option<Basic> {
+        Some(match name {
+            "box" => Basic::Box {
+                width: SIZE,
+                depth: SIZE,
+                height: SIZE,
+            },
+            "cylinder" => Basic::Cylinder {
+                radius: SIZE / 2.0,
+                height: SIZE,
+            },
+            "sphere" => Basic::Sphere { radius: SIZE / 2.0 },
+            "plane" => Basic::Plane { width: SIZE },
+            _ => return None,
+        })
+    }
+
+    /// Its cage, around the origin.
+    pub fn cage(self) -> Cage {
+        match self {
+            Basic::Box {
+                width,
+                depth,
+                height,
+            } => Cage::cuboid([width, depth, height]),
+            Basic::Cylinder { radius, height } => Cage::cylinder(radius, height, CYLINDER_SEGMENTS),
+            Basic::Sphere { radius } => Cage::sphere(radius),
+            Basic::Plane { width } => Cage::plane(width, PLANE_QUADS),
+        }
+    }
+
+    /// Its cage, mirrored in `mirror`'s plane: the half the step holds.
+    fn cage_in(self, mirror: Mirror) -> GeopResult<Cage> {
+        let mut cage = self.cage();
+        if let Some(axis) = mirror.axis() {
+            cage.halve(axis)?;
+        }
+        Ok(cage)
+    }
+
+    /// The basic shape the cage `cage` — the half `mirror` mirrors, if it
+    /// does — is, as it was started from: each kind built with the
+    /// dimensions the whole cage's extent gives it, and compared. A cage
+    /// edited since is none: its dimensions are no longer the shape's to
+    /// set.
+    fn of(cage: &Cage, mirror: Mirror) -> Option<Basic> {
+        let whole = cage.unmirrored(mirror).ok()?;
+        let (mut lo, mut hi) = ([f64::INFINITY; 3], [f64::NEG_INFINITY; 3]);
+        for v in &whole.vertices {
+            for k in 0..3 {
+                lo[k] = lo[k].min(v.at[k]);
+                hi[k] = hi[k].max(v.at[k]);
+            }
+        }
+        let [w, d, h] = [0, 1, 2].map(|k| hi[k] - lo[k]);
+        [
+            Basic::Box {
+                width: w,
+                depth: d,
+                height: h,
+            },
+            Basic::Cylinder {
+                radius: w / 2.0,
+                height: h,
+            },
+            Basic::Sphere { radius: w / 2.0 },
+            Basic::Plane { width: w },
+        ]
+        .into_iter()
+        .find(|basic| basic.cage_in(mirror).is_ok_and(|c| c == *cage))
+    }
+
+    /// Its dimensions: each one's key in the dialog, its label and its
+    /// value.
+    fn dimensions(self) -> Vec<(&'static str, &'static str, f64)> {
+        match self {
+            Basic::Box {
+                width,
+                depth,
+                height,
+            } => vec![
+                ("shape_width", "width", width),
+                ("shape_depth", "depth", depth),
+                ("shape_height", "height", height),
+            ],
+            Basic::Cylinder { radius, height } => vec![
+                ("shape_radius", "radius", radius),
+                ("shape_height", "height", height),
+            ],
+            Basic::Sphere { radius } => vec![("shape_radius", "radius", radius)],
+            Basic::Plane { width } => vec![("shape_width", "width", width)],
+        }
+    }
+
+    /// It with the dimension keyed `key` set to `value`.
+    fn with(mut self, key: &str, value: f64) -> Basic {
+        match (&mut self, key) {
+            (Basic::Box { width, .. } | Basic::Plane { width }, "shape_width") => *width = value,
+            (Basic::Box { depth, .. }, "shape_depth") => *depth = value,
+            (Basic::Box { height, .. } | Basic::Cylinder { height, .. }, "shape_height") => {
+                *height = value
+            }
+            (Basic::Cylinder { radius, .. } | Basic::Sphere { radius }, "shape_radius") => {
+                *radius = value
+            }
+            _ => {}
+        }
+        self
+    }
 }
 
 fn vector(p: [f64; 3]) -> Vector3 {
@@ -450,20 +576,41 @@ fn form<'a>(
         })
         .collect();
     f.actions("start", start, |edit, value| {
-        let Some(mut cage) = primitive(value) else {
+        let Some(basic) = Basic::named(value) else {
             return;
         };
-        edit.session.problem = None;
-        if let Some(axis) = edit.args.mirror.axis()
-            && let Err(e) = cage.halve(axis)
-        {
-            edit.session.problem = Some(e.root_message().to_string());
-            return;
+        match basic.cage_in(edit.args.mirror) {
+            Ok(cage) => {
+                edit.args.cage = cage;
+                edit.session.problem = None;
+                edit.session.relative = None;
+                edit.selection.clear();
+            }
+            Err(e) => edit.session.problem = Some(e.root_message().to_string()),
         }
-        edit.args.cage = cage;
-        edit.session.relative = None;
-        edit.selection.clear();
     });
+    // While the cage is the basic shape it started from, its dimensions
+    // are set: the shape built again with them.
+    if let Some(basic) = Basic::of(&args.cage, args.mirror) {
+        for (key, label, value) in basic.dimensions() {
+            let number = Number::new(label, value, Unit::Length);
+            f.number(key, number, move |edit, value| {
+                if value <= 0.0 {
+                    edit.session.problem = Some(format!("the {label} has to be more than 0"));
+                    return;
+                }
+                match basic.with(key, value).cage_in(edit.args.mirror) {
+                    Ok(cage) => {
+                        edit.args.cage = cage;
+                        edit.session.problem = None;
+                        edit.session.relative = None;
+                        prune(edit.selection, &edit.args.cage);
+                    }
+                    Err(e) => edit.session.problem = Some(e.root_message().to_string()),
+                }
+            });
+        }
+    }
     // Each choice of mirror: what the dialog sends, and what it shows.
     const MIRRORS: [(Mirror, &str, &str); 4] = [
         (Mirror::None, "none", "none"),
@@ -943,10 +1090,16 @@ impl PartOperation for Subd {
     type Args = SubdArgs;
     type Session = SubdSession;
 
-    /// A box cage, two units a side, around the origin.
+    /// A box cage, [`SIZE`] a side, around the origin: its dimensions
+    /// set in the dialog.
     fn new_args(_: &Context) -> SubdArgs {
         SubdArgs {
-            cage: Cage::cuboid([2.0, 2.0, 2.0]),
+            cage: Basic::Box {
+                width: SIZE,
+                depth: SIZE,
+                height: SIZE,
+            }
+            .cage(),
             mirror: Mirror::None,
         }
     }

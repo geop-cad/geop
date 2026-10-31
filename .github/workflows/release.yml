@@ -100,13 +100,20 @@ jobs:
         if: matrix.cross
         run: cargo install cross --locked
 
+      # `geop app` (feature `app`) shows the page in the system's webview:
+      # WKWebView and WebView2 come with macOS and Windows, so their
+      # builds have it. On Linux it links WebKitGTK 4.1, which cross's
+      # images do not have, and which is no older than Ubuntu 22.04
+      # (glibc 2.35, past the 2.31 the binary must run on); a binary with
+      # it would not even start `geop compile` without the library. Linux
+      # users build it from source (README).
       - name: Build
         shell: bash
         run: |
           if [ "${{ matrix.cross }}" = "true" ]; then
             cross build --release --locked -p geop-cad-cli --features frontend --target ${{ matrix.target }}
           else
-            cargo build --release --locked -p geop-cad-cli --features frontend --target ${{ matrix.target }}
+            cargo build --release --locked -p geop-cad-cli --features frontend,app --target ${{ matrix.target }}
           fi
 
       # A Linux binary must not need a newer glibc than the oldest

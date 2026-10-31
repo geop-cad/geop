@@ -218,7 +218,7 @@ fn runs(program: &Program, part: &Reader, id: &str) -> GeopResult<bool> {
     Ok(match &step.active {
         None => true,
         Some(formula) => {
-            evaluate(formula, |name| read_parameter(part, name)).map_or(true, |value| value != 0.0)
+            !matches!(evaluate(formula, |name| read_parameter(part, name)), Ok(value) if value == 0.0)
         }
     })
 }

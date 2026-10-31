@@ -57,7 +57,7 @@ apart (see Scripts).
 | `ops/geop-ops-bom` | bills of materials, an inspector and a CSV exporter |
 | `cad/geop-cad-base` | composition: `registry()`, one `register` line per crate, the editor of all of it beside the standard parts, and the composition's tests |
 | `cad/geop-cad-web` | the wasm bindings the web app loads (package `geop`), and the check of `web/src/geop.ts` against the protocol |
-| `cad/geop-cad-cli` | the `geop` command line: `compile`, `examples`, `serve`, `open`, `mcp` |
+| `cad/geop-cad-cli` | the `geop` command line: `compile`, `examples`, `serve`, `open`, `app`, `mcp` |
 
 #### How an operation plugs in
 
@@ -206,7 +206,11 @@ Every run is capped with `timeout` and `prlimit`, as `AGENTS.md` asks.
 `.github/workflows/release.yml`: it builds the two pages for a native
 kernel once (`web` in modes `open` and `vscode`), the `geop` CLI with the
 `open` page built in (feature `frontend`) for Linux (x86_64, aarch64
-through `cross`), macOS (x86_64, aarch64) and Windows (x86_64), one VS
+through `cross`), macOS (x86_64, aarch64) and Windows (x86_64) — with
+`geop app` too (feature `app`) on macOS and Windows, whose webviews come
+with the system; the Linux builds leave it out, since WebKitGTK 4.1 is
+neither in `cross`'s images nor on every distribution the binary must
+run on (glibc 2.31) — one VS
 Code extension per platform with that platform's `geop` in its `bin/`
 (`geop-vscode-<version>-<linux-x64|linux-arm64|darwin-x64|darwin-arm64|win32-x64>.vsix`),
 zips the web app's static build (`web/dist`), writes `SHA256SUMS` and
@@ -249,6 +253,23 @@ path must be relative, of an extension the explorer shows, and resolve
 (links followed) inside `DIR`. One editor session serves every
 connection (`SessionHandle`): `geop mcp --attach` would be another sender
 of commands to it.
+
+`geop app [DIR | program.geop]` is `geop open` in a window of its own
+(`src/app.rs`, feature `app`, which takes `frontend` with it): the same
+page and server, shown in the system's webview through `wry` and `tao`
+(WebKitGTK 4.1 on Linux — `libwebkit2gtk-4.1-dev` to build — WKWebView
+on macOS, WebView2 on Windows). The window adds only what a tab cannot
+do: its title is the page's (the program and the folder, set by
+`backend.local.ts`), links out of the page open in the default browser,
+downloads are saved where the system's save dialog says, a folder is
+asked for in the system's dialog when none is given or by the File
+menu's "Open folder…" (the page sees `window.geopApp`, and the backend
+exports `openFolder`), the window's size is kept in the user's config
+folder (`geop/app-window.json`), and one app edits a folder: it claims
+the folder in a file in the runtime folder (port and token, mode 0600),
+and a second `geop app` of the folder raises the first through
+`POST /api/raise` and ends. The tests drive the app's server without a
+window, as the page would (`app::tests`).
 
 `geop vscode [--editor CMD]` installs the extension of the CLI's own
 version and platform from its release (`src/vscode.rs`, file names and

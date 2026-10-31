@@ -270,6 +270,79 @@ fn an_editor_of_a_registry_of_its_own_edits_programs() -> Result<(), GeopError> 
     Ok(())
 }
 
+/// A bug report attaches what the user was doing: the step being edited,
+/// which a failing step never is committed, with its arguments and its
+/// error as the dialog shows it — besides the program and the kernel.
+/// Asking changes nothing.
+#[test]
+fn a_report_carries_the_step_being_edited() -> Result<(), GeopError> {
+    let registry = (Registry::default().operation(Place))
+        .and_then(|r| r.operation(Raise))
+        .and_then(|r| r.drawer(Points))?;
+    let mut editor = editor_with(registry, Default::default());
+    put(&mut editor, "place", 2.0, 3.0);
+    // Raising a point no step put down: it does not build.
+    handled(
+        &mut editor,
+        Command::New {
+            kind: "raise".into(),
+        },
+    );
+    let args = serde_json::json!({ "from": "nowhere", "by": 2.5 });
+    let program = editor.program().clone();
+    let shown = handled(&mut editor, Command::Report);
+    let report = shown.report.expect("a report");
+    let step = report.step.expect("the step being edited");
+    assert_eq!(step.step.operation, "raise");
+    assert_eq!((&step.id, step.index, &step.placed), (&None, 1, &None));
+    assert_eq!(step.step.args["from"], "place1");
+    assert!(step.error.is_none() && step.missing.is_empty(), "{step:?}");
+    assert_eq!(report.program, program);
+    assert_eq!(report.version, env!("CARGO_PKG_VERSION"));
+    // Still editing it: the report changed nothing.
+    assert!(shown.step.is_some() && shown.program.is_none());
+
+    // Committed and opened again with an argument it fails with: the
+    // error as the dialog says it.
+    handled(&mut editor, Command::Commit);
+    let mut failing = editor.program().clone();
+    failing.steps[1].args = args.clone();
+    handled(
+        &mut editor,
+        Command::Load {
+            program: failing,
+            path: None,
+        },
+    );
+    handled(
+        &mut editor,
+        Command::Open {
+            id: "raise1".into(),
+            placed: None,
+        },
+    );
+    let shown = handled(&mut editor, Command::Report);
+    let report = shown.report.expect("a report");
+    let step = report.step.expect("the step being edited");
+    assert_eq!(step.id.as_deref(), Some("raise1"));
+    assert_eq!(step.step.args, args);
+    let error = step.error.expect("it does not build");
+    assert_eq!(
+        Some(&error),
+        shown.step.as_ref().and_then(|s| s.error.as_ref())
+    );
+    assert!(error.contains("nowhere"), "{error}");
+
+    // With no step open, the report is of the program alone.
+    handled(&mut editor, Command::Cancel);
+    let report = handled(&mut editor, Command::Report)
+        .report
+        .expect("a report");
+    assert!(report.step.is_none());
+    assert_eq!(report.program, *editor.program());
+    Ok(())
+}
+
 /// A step edited with its preview off is not built — however long it would
 /// take — and its dialog says nothing of whether it builds; the part shown
 /// is the part before it. Committed, it is built then, once; previewed
