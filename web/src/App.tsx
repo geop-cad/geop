@@ -7,6 +7,7 @@ import {
   type Command,
   type EditEvent,
   type PickedElement,
+  type Lighting,
   type Inspection,
   type OperationInfo,
   type PartView,
@@ -54,11 +55,14 @@ import { AssistantPanel } from "./Assistant";
 import { ASSISTANT_CONFIGURED, useAssistant } from "./useAssistant";
 import type { ToolResult } from "./agent";
 import { CommandPalette, ShortcutsOverlay } from "./CommandPalette";
-import { matches, parseChord, pressed, type PaletteEntry } from "./shortcuts";
+import { matches, parseChord, pressed, withShortcut, type PaletteEntry } from "./shortcuts";
 
 /** What the pointer sends as it moves: answered as often as it moves, never "busy". */
 function following(command: Command): boolean {
-  return command.command === "event" && ["hover", "leave", "drag", "view"].includes(command.event.type);
+  return (
+    command.command === "light" ||
+    (command.command === "event" && ["hover", "leave", "drag", "view"].includes(command.event.type))
+  );
 }
 
 /** Whether a key press belongs to a field being typed into rather than to the step. */
@@ -128,8 +132,8 @@ function App() {
   const [inspecting, setInspecting] = useState(false);
   /** The section view, if one is on: the view only, never the model. */
   const [section, setSection] = useState<Section | null>(null);
-  /** What the inspect panel lights, beyond what the kernel does. */
-  const [lights, setLights] = useState<PickedElement[]>([]);
+  /** What the kernel says is lit: kept until it sends it again. */
+  const [lit, setLit] = useState<Lighting>({});
 
   // A drag selects text only within the dialog or panel it starts in (see selection.ts).
   const appRef = useRef<HTMLDivElement>(null);
@@ -222,6 +226,10 @@ function App() {
     // kept as it was: nothing it is drawn by renders again.
     setStep((shown) => same(shown, update.step));
     setTool((shown) => same(shown, update.tool));
+    if (update.lit) setLit(update.lit);
+    // How many updates were shown: what the latency checks (`e2e/perf.mjs`) wait for.
+    const counted = window as unknown as { geopUpdates?: number };
+    counted.geopUpdates = (counted.geopUpdates ?? 0) + 1;
     if (kind === "agent") return;
     // An answer asked for is kept; the pick tool's comes with every update.
     const inspection = update.inspection;
@@ -315,10 +323,11 @@ function App() {
     },
   });
 
-  // Any command, run as the app runs it: for the end-to-end checks
-  // (`e2e/`) and the browser's console.
+  // Any command, run as the app runs it, and what is lit now: for the
+  // end-to-end checks (`e2e/`) and the browser's console.
   useEffect(() => {
     (window as unknown as { geopCommand: typeof dispatch }).geopCommand = dispatch;
+    (window as unknown as { geopLit: Lighting }).geopLit = lit;
   });
 
   useEffect(() => {
@@ -756,6 +765,8 @@ function App() {
   // reach it: the operations by the kernel's keys, the steps, examples,
   // tools, inspectors and exports, and the app's own actions.
   const idle = wasmReady && step == null;
+  /** The key the kernel gives the app's `action` (see `geop_core_editor::keys`). */
+  const appKey = (action: string) => program?.keys.find((k) => k.action === action)?.key ?? null;
   const firstSentence = (doc: string) => doc.split(/(?<=\.)\s/)[0];
   const paletteEntries: PaletteEntry[] = [
     ...tools.map((t) => ({
@@ -771,7 +782,7 @@ function App() {
       id: "edit:commit",
       label: "OK: put the step into the program",
       group: "Edit",
-      shortcut: "Mod+Enter",
+      shortcut: appKey("commit"),
       disabled: step == null || step.missing.length > 0 || step.error != null,
       run: () => void close({ command: "commit" }),
     },
@@ -779,8 +790,8 @@ function App() {
       id: "edit:cancel",
       label: "Cancel the step",
       group: "Edit",
-      // As the desktop app has it: Escape is the step's own first.
-      shortcut: "Mod+Backspace",
+      // Whatever is in progress: Escape is the step's own first.
+      shortcut: appKey("cancel"),
       disabled: step == null,
       run: () => void close({ command: "cancel" }),
     },
@@ -788,7 +799,7 @@ function App() {
       id: "edit:undo",
       label: "Undo",
       group: "Edit",
-      shortcut: "Mod+Z",
+      shortcut: appKey("undo"),
       disabled: !(step ? step.can_undo : (program?.can_undo ?? false)),
       run: () => void dispatch({ command: "undo" }),
     },
@@ -796,7 +807,7 @@ function App() {
       id: "edit:redo",
       label: "Redo",
       group: "Edit",
-      shortcut: "Mod+Shift+Z",
+      shortcut: appKey("redo"),
       disabled: !(step ? step.can_redo : (program?.can_redo ?? false)),
       run: () => void dispatch({ command: "redo" }),
     },
@@ -819,12 +830,12 @@ function App() {
       disabled: step == null,
       run: () => void dispatch({ command: "preview", preview: !(step?.preview ?? true) }),
     },
-    { id: "view:fit", label: "Fit the part in the view", group: "View", shortcut: "F", disabled: !idle, run: () => fitView() },
+    { id: "view:fit", label: "Fit the part in the view", group: "View", shortcut: appKey("fit"), disabled: !idle, run: () => fitView() },
     {
       id: "view:home",
       label: "Reset the view",
       group: "View",
-      shortcut: "Home",
+      shortcut: appKey("home"),
       disabled: !idle,
       run: () => fitView(DEFAULT_POSE),
     },
@@ -832,7 +843,7 @@ function App() {
       id: "view:projection",
       label: projection === "perspective" ? "Orthographic view" : "Perspective view",
       group: "View",
-      shortcut: "O",
+      shortcut: appKey("projection"),
       disabled: !idle,
       run: () => setProjection(projection === "perspective" ? "orthographic" : "perspective"),
     },
@@ -886,8 +897,8 @@ function App() {
       disabled: !idle,
       run: () => void loadWorkspaceExample(name),
     })),
-    { id: "help:palette", label: "Command palette", group: "Help", shortcut: "Mod+K", run: () => setPalette("palette") },
-    { id: "help:keys", label: "Keyboard shortcuts", group: "Help", shortcut: "?", run: () => setPalette("keys") },
+    { id: "help:palette", label: "Command palette", group: "Help", shortcut: appKey("palette"), run: () => setPalette("palette") },
+    { id: "help:keys", label: "Keyboard shortcuts", group: "Help", shortcut: appKey("keys"), run: () => setPalette("keys") },
   ];
   const entriesRef = useRef(paletteEntries);
   entriesRef.current = paletteEntries;
@@ -899,7 +910,8 @@ function App() {
   // tools, Escape, Enter, Delete).
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if (matches(parseChord("Mod+K"), e)) {
+      const palettes = entriesRef.current.find((entry) => entry.id === "help:palette");
+      if (palettes?.shortcut && matches(parseChord(palettes.shortcut), e)) {
         e.preventDefault();
         setPalette((open) => (open === "palette" ? null : "palette"));
         return;
@@ -907,7 +919,7 @@ function App() {
       if (palette != null || e.defaultPrevented) return;
       // Ctrl+Enter commits from a field too, after the field took its Enter.
       const commit = entriesRef.current.find((entry) => entry.id === "edit:commit");
-      if (commit && !commit.disabled && matches(parseChord("Mod+Enter"), e)) {
+      if (commit?.shortcut && !commit.disabled && matches(parseChord(commit.shortcut), e)) {
         e.preventDefault();
         commit.run();
         return;
@@ -915,7 +927,7 @@ function App() {
       if (typing(e)) return;
       // While a step is edited, its tools take the plain keys.
       const usable = entriesRef.current.filter(
-        (entry) => !editing || entry.shortcut?.startsWith("Mod+") || entry.shortcut === "?",
+        (entry) => !editing || entry.shortcut?.startsWith("Mod+") || entry.id === "help:keys",
       );
       const entry = pressed(usable, e);
       if (entry) {
@@ -970,6 +982,9 @@ function App() {
     setInspecting(false);
   }
 
+  /** Light what a list item or an answer's row points at, while it is pointed at: the kernel says what that lights. */
+  const light = (elements: PickedElement[]) => void dispatch({ command: "light", elements });
+
   const structurePanel = (
     <>
       <section className="panel structure-panel">
@@ -979,7 +994,7 @@ function App() {
           details={program?.details ?? {}}
           enabled={wasmReady}
           onVisibility={(name, visible) => dispatch({ command: "visibility", name, visible })}
-          onLight={setLights}
+          onLight={light}
         />
       </section>
       <section className="panel inspect-panel">
@@ -1000,7 +1015,7 @@ function App() {
           section={section}
           onSection={setSection}
           size={scene?.part.extent.size ?? 1}
-          onLight={setLights}
+          onLight={light}
         />
       </section>
     </>
@@ -1030,6 +1045,7 @@ function App() {
       onCommit={() => void close({ command: "commit" })}
       onCancel={() => void close({ command: "cancel" })}
       onDownload={(exporter, format) => void exportWith(exporter, format)}
+      onEnter={() => void event({ type: "key", key: "Enter" })}
     />
   );
 
@@ -1049,6 +1065,8 @@ function App() {
         onLoadExample={(name) => void loadExample(name)}
         workspaceExampleNames={host ? [] : (program?.workspace_examples ?? [])}
         onLoadWorkspaceExample={(name) => void loadWorkspaceExample(name)}
+        undoKey={appKey("undo")}
+        redoKey={appKey("redo")}
         canUndo={step ? step.can_undo : (program?.can_undo ?? false)}
         onUndo={() => dispatch({ command: "undo" })}
         canRedo={step ? step.can_redo : (program?.can_redo ?? false)}
@@ -1105,7 +1123,7 @@ function App() {
                 components={components}
                 visuals={presentation?.visuals}
                 gizmo={presentation?.gizmo ?? null}
-                highlights={[...(presentation?.highlights ?? []), ...lights]}
+                lit={lit}
                 section={section && sectionPlane(section, scene.part.extent.center)}
                 pickable={presentation?.pickable}
                 hidden={scene.hidden}
@@ -1135,6 +1153,9 @@ function App() {
                 workspaceExamples={program.workspace_examples}
                 onExample={(name) => void loadExample(name)}
                 onWorkspaceExample={(name) => void loadWorkspaceExample(name)}
+                keyOf={(kind) =>
+                  program.operations.find((o) => o.kind === kind)?.shortcut ?? appKey(kind)
+                }
               />
             )}
             {(!wasmReady || pending > 0) && !wasmError && (
@@ -1154,14 +1175,17 @@ function App() {
               </span>
             )}
             <div className="view-buttons">
-              <button title="Frame the whole part in the view (F)" onClick={() => fitView()}>
+              <button title={withShortcut("Frame the whole part in the view", appKey("fit"))} onClick={() => fitView()}>
                 Fit
               </button>
-              <button title="Back to the standard view of the whole part (Home)" onClick={() => fitView(DEFAULT_POSE)}>
+              <button
+                title={withShortcut("Back to the standard view of the whole part", appKey("home"))}
+                onClick={() => fitView(DEFAULT_POSE)}
+              >
                 Reset view
               </button>
               <button
-                title="Switch between a perspective and an orthographic view"
+                title={withShortcut("Switch between a perspective and an orthographic view", appKey("projection"))}
                 onClick={() => setProjection(projection === "perspective" ? "orthographic" : "perspective")}
               >
                 {projection === "perspective" ? "Perspective" : "Orthographic"}

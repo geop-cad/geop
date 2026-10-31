@@ -52,14 +52,18 @@ use std::{
     rc::Rc,
 };
 
+use crate::keys::APP_KEYS;
 use crate::{
     editable::Against,
-    editing::{Extent, Presentation, StepEditEvent},
+    editing::{Extent, Presentation, Shape, StepEditEvent, Style},
     output::{Content, Export, Inspection, Output},
     registry::{Drawings, Registry},
     step_editor::{Editing, StepEditor},
     tools::Tool,
-    view::{EMPTY_EXTENT, PartView, ViewInstance, Visible, drawn},
+    view::{
+        EMPTY_EXTENT, PartView, ViewInstance, Visible, drawn,
+        lit::{Lighting, lighting},
+    },
 };
 use build::Build;
 use geop_core_math::{
@@ -253,6 +257,10 @@ pub struct Editor {
     /// drawn with other sketches than before — the part before a sketch
     /// opened — draws its sketches again, not its faces.
     drawings: Drawings,
+    /// What [`Command::Light`] lights.
+    lights: Vec<PickedElement>,
+    /// What the viewer was last sent to draw lit (see [`Update::lit`]).
+    lit: Option<Lighting>,
     /// The steps of the parts placed, as listed, by file and build (see
     /// [`Editor::placed_steps`]).
     listed: RefCell<HashMap<(String, *const Part), ListedBuild>>,
@@ -310,6 +318,8 @@ impl Editor {
             views: RefCell::default(),
             drawings: Drawings::default(),
             listed: RefCell::default(),
+            lights: Vec::new(),
+            lit: None,
         }
     }
 
@@ -541,17 +551,51 @@ impl Editor {
         {
             cache.flush();
         }
+        let tool = self.tool_presentation(step.is_none());
+        let lit = self.lit(
+            step.as_ref().map(|s| &s.presentation).or(tool.as_ref()),
+            &scene,
+        );
         Update {
             error,
             program,
             scene,
-            tool: self.tool_presentation(step.is_none()),
+            tool,
+            lit,
             step,
             files: self.added.take(),
             written: (!self.written.is_empty()).then(|| std::mem::take(&mut self.written)),
             inspection,
             export: self.exported.take(),
         }
+    }
+
+    /// What to draw lit now, as `presentation` — the step's, or the tool's —
+    /// and [`Command::Light`] light it: if it is not what the viewer was
+    /// last sent, or the viewer was sent a `scene` afresh.
+    fn lit(
+        &mut self,
+        presentation: Option<&Presentation>,
+        scene: &Option<SceneState>,
+    ) -> Option<Lighting> {
+        let part = self.drawn.as_ref()?;
+        let mut elements = presentation.map_or_else(Vec::new, |p| p.highlights.clone());
+        elements.extend(self.lights.iter().cloned());
+        let whole: BTreeSet<&str> = (presentation.iter())
+            .flat_map(|p| &p.visuals)
+            .filter(|v| matches!(v.style, Style::Hover | Style::Selected))
+            .filter_map(|v| match &v.shape {
+                Shape::Instance { name } => Some(name.as_str()),
+                _ => None,
+            })
+            .collect();
+        let lit = lighting(part, &elements, &whole);
+        let afresh = scene.as_ref().is_some_and(|s| s.all);
+        if !afresh && self.lit.as_ref() == Some(&lit) {
+            return None;
+        }
+        self.lit = Some(lit.clone());
+        Some(lit)
     }
 
     /// What to draw, `shown`: the part, and of the parts placed in it what
@@ -1147,6 +1191,10 @@ impl Editor {
                 self.file.display.isolated = names.into_iter().collect();
                 Changed::Display
             }
+            Command::Light { elements } => {
+                self.lights = elements;
+                Changed::Nothing
+            }
             #[expect(
                 clippy::panic,
                 reason = "the command is a panic on purpose, to check front ends recover"
@@ -1375,20 +1423,28 @@ impl Editor {
         let open = self.open.as_ref()?;
         let listed = self.registry.editors().info(&open.step().ok()?.operation)?;
         let info = listed.info;
-        let presentation = self.presentation(open).ok()?;
+        let mut presentation = self.presentation(open).ok()?;
         let missing: Vec<String> = (presentation.dialog.missing().into_iter())
             .map(str::to_string)
             .collect();
+        // A step not previewed is not built, so whether it builds is not
+        // known until it is committed.
+        let error = (missing.is_empty() && self.preview)
+            .then(|| self.step_error(open))
+            .flatten();
+        // Said beside the field whose value it fails with, too.
+        if error.is_some()
+            && open.within.is_none()
+            && let Some((key, why)) = self.build.arguments.get(&open.id)
+        {
+            presentation.dialog.concerning(key, why);
+        }
         Some(StepState {
             kind: listed.kind,
             label: info.label,
             doc: info.doc,
             id: (!open.new).then(|| open.id.clone()),
-            // A step not previewed is not built, so whether it builds is not
-            // known until it is committed.
-            error: (missing.is_empty() && self.preview)
-                .then(|| self.step_error(open))
-                .flatten(),
+            error,
             missing,
             presentation,
             preview: self.preview,
@@ -1772,6 +1828,7 @@ impl Editor {
             workspace_examples: self.registry.workspace_example_names().collect(),
             panels,
             details,
+            keys: APP_KEYS,
         })
     }
 }

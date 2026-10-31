@@ -106,8 +106,8 @@ async function pickAnEdge() {
     if (c.x < box.x || c.x > box.x + box.width || c.y < box.y || c.y > box.y + box.height) continue;
     await page.mouse.move(c.x, c.y);
     await settle(page);
-    const highlights = (await presented())?.highlights ?? [];
-    if (!highlights.some((h) => h.kind === "edge")) continue;
+    const lit = await page.evaluate(() => window.geopLit ?? {});
+    if (!Object.values(lit).some((l) => l.edges.length > 0)) continue;
     await page.mouse.click(c.x, c.y);
     await settle(page);
     const edges = (await presented())?.dialog.find((f) => f.key === "edges")?.value ?? [];

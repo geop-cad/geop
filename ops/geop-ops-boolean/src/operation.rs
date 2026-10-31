@@ -9,7 +9,7 @@ use geop_core_editor::{
     part_operation::PartOperation,
 };
 use geop_core_math::{
-    geop_error::{GeopError, GeopResult},
+    geop_error::{GeopError, GeopResult, WithContext},
     primitives::FrameAxis,
 };
 use geop_core_program::{element::ElementReference, part::StepContext, reader::Reader};
@@ -298,13 +298,14 @@ impl ModelOperation for Imprint {
         args: &ImprintArgs,
     ) -> GeopResult<()> {
         let namer = Namer::new("imprint", step)?;
-        let body = reader.retrieve_element(&args.body)?;
-        let tool = reader.retrieve_element(&args.tool)?;
+        let body = reader.retrieve_element(&args.body).concerning("body")?;
+        let tool = reader.retrieve_element(&args.tool).concerning("tool")?;
         if body == tool {
             return Err(GeopError::new(format!(
                 "{:?} is imprinted on itself: pick another body as the tool",
                 args.tool.name()
-            )));
+            ))
+            .concerning("tool"));
         }
         let params = RemeshParams::default();
         let Some(face) = &args.face else {
@@ -317,7 +318,8 @@ impl ModelOperation for Imprint {
                 "the face {:?} is not of the body {:?}: pick a face of the body imprinted on",
                 face.name(),
                 args.body.name()
-            )));
+            ))
+            .concerning("face"));
         }
         // The tool stays as it is: a copy of it is imprinted, and consumed.
         let copy = model

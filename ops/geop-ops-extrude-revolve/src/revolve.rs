@@ -281,7 +281,7 @@ impl ModelOperation for Revolve {
         args: &RevolveArgs,
     ) -> GeopResult<()> {
         let namer = Namer::new("revolve", step)?;
-        let placed = reader.retrieve_element(&args.sketch)?;
+        let placed = reader.retrieve_element(&args.sketch).concerning("sketch")?;
         let sketch = &placed.sketch;
         let Some(axis) = &args.axis else {
             return Err(GeopError::new("pick a line to revolve around"));

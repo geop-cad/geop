@@ -6,12 +6,11 @@ import { CAMERA_FOV, DEFAULT_POSE, REACH_PX, fitPose, worldPerPixel, type Camera
 import { DatumLayer } from "./datums3d";
 import {
   litDatums,
-  locate,
   locatedKey,
   parseKey,
   type DatumInfo,
   type DatumKind,
-  type PickedElement,
+  type Lighting,
   type Frame,
   type PartView,
   type Pointer,
@@ -23,13 +22,13 @@ import {
   type Visual,
   type GizmoView,
 } from "./geop";
-import { CAP_COLOR, applyHighlight, buildSceneGroup, disposeGroup, flatten, frameMatrix, localTo, type Scene } from "./partScene";
+import { CAP_COLOR, applyHighlight, buildSceneGroup, disposeGroup, flatten, frameMatrix, type Scene } from "./partScene";
 import { PlacedLayer, type PlacedLook } from "./placed3d";
 import type { SectionPlane } from "./section";
 import { PlaneGrid } from "./planeGrid";
 import { VisualLayer } from "./visuals3d";
 import { GizmoLayer } from "./gizmo3d";
-import { isDoubleClick, movedFromPress } from "./gestures";
+import { isDoubleClick, movedFromPress, wheelSteps, zoomToward } from "./gestures";
 
 /** The kinds of datum a click can pick something of, picking elements of the kinds `pickable`: every kind, if it picks datums or frames on them. */
 function datumKinds(pickable: string[]): DatumKind[] {
@@ -50,8 +49,8 @@ interface Props {
   visuals?: Visual[];
   /** A gizmo to move, turn or scale by, drawn over everything. */
   gizmo?: GizmoView | null;
-  /** What to draw highlighted — what is picked, what a click would pick. */
-  highlights?: PickedElement[];
+  /** What to draw lit, as the kernel says: what is picked, what a click would pick, what a list points at. */
+  lit: Lighting;
   /** What a click picks right now: reference geometry of these kinds stands out, the rest fades. */
   pickable?: string[];
   /** Sketches and datums, by name, not to draw. */
@@ -145,7 +144,7 @@ export function SceneViewer({
   components,
   visuals,
   gizmo,
-  highlights,
+  lit,
   pickable,
   hidden,
   plane,
@@ -171,8 +170,8 @@ export function SceneViewer({
   visualsRef.current = visuals ?? [];
   const gizmoRef = useRef(gizmo ?? null);
   gizmoRef.current = gizmo ?? null;
-  const highlightsRef = useRef(highlights ?? []);
-  highlightsRef.current = highlights ?? [];
+  const litRef = useRef(lit);
+  litRef.current = lit;
   const pickableRef = useRef(pickable ?? []);
   pickableRef.current = pickable ?? [];
   const partRef = useRef(part);
@@ -267,6 +266,8 @@ export function SceneViewer({
       made.zoomSpeed = 1.2;
       made.panSpeed = 0.6;
       made.dynamicDampingFactor = 0.15;
+      // The wheel zooms towards the pointer (see `onWheel`), not the target.
+      made.noZoom = true;
       // Its keys switch what a drag does — and are the sketch's tools'.
       made.keys = ["", "", ""];
       made.target.copy(target);
@@ -427,6 +428,7 @@ export function SceneViewer({
         return [rect.left + ((ndc.x + 1) / 2) * rect.width, rect.top + ((1 - ndc.y) / 2) * rect.height];
       },
       reach: (p: Vec3) => worldPerPixel(camera, vec(p), Math.max(container.clientHeight, 1)) * REACH_PX,
+      pose: () => pose(),
     };
 
     // A press: a click if it does not move, else the camera's — or, where
@@ -567,6 +569,40 @@ export function SceneViewer({
       lastHover = null;
     };
     const onContextMenu = (e: Event) => e.preventDefault();
+    // A press in the view is work in the view: a dialog's field it leaves
+    // gives the keys back to the step.
+    const onPress = () => {
+      const focused = document.activeElement;
+      if (focused instanceof HTMLInputElement || focused instanceof HTMLTextAreaElement) {
+        focused.setSelectionRange(focused.selectionEnd, focused.selectionEnd);
+        focused.blur();
+      }
+    };
+    container.addEventListener("pointerdown", onPress, { capture: true });
+    // The wheel zooms towards what is under the pointer, which stays under
+    // it — as the desktop app zooms — and the view is told once it rests.
+    let wheelRest: ReturnType<typeof setTimeout> | null = null;
+    const onWheel = (e: WheelEvent) => {
+      e.preventDefault();
+      if (moveRef.current || !controls.enabled) return;
+      const rect = container.getBoundingClientRect();
+      const ndc = new THREE.Vector2(((e.clientX - rect.left) / rect.width) * 2 - 1, -((e.clientY - rect.top) / rect.height) * 2 + 1);
+      const raycaster = new THREE.Raycaster();
+      raycaster.setFromCamera(ndc, camera);
+      const back = camera.position.clone().sub(controls.target).normalize();
+      const plane = new THREE.Plane().setFromNormalAndCoplanarPoint(back, controls.target);
+      const under = raycaster.ray.intersectPlane(plane, new THREE.Vector3()) ?? controls.target.clone();
+      const zoomed = zoomToward(arr(camera.position), arr(controls.target), arr(under), wheelSteps(e.deltaY, e.deltaMode));
+      camera.position.set(...zoomed.position);
+      controls.target.set(...zoomed.target);
+      if (wheelRest) clearTimeout(wheelRest);
+      wheelRest = setTimeout(() => {
+        wheelRest = null;
+        onPoseRef.current?.(pose());
+        sendView();
+      }, 150);
+    };
+    container.addEventListener("wheel", onWheel, { passive: false });
     // In the capture phase: a grab must be taken before the controls see
     // the press.
     container.addEventListener("pointerdown", onPointerDown, { capture: true });
@@ -579,7 +615,15 @@ export function SceneViewer({
 
     /** What the datums were last drawn from (see the loop below), and which of them are lit. */
     const datumsDrawn: { inputs: unknown[]; lit: string[] } = { inputs: [], lit: [] };
+    let lastFrame = performance.now();
     let frame = requestAnimationFrame(function animate() {
+      const now = performance.now();
+      // Momentum keeps 0.85 of itself per sixtieth of a second, whatever
+      // the display's rate: a tumble let go glides as far at 120 Hz as at
+      // 60, and as far as in the desktop app.
+      const dt = Math.min(0.1, (now - lastFrame) / 1000);
+      lastFrame = now;
+      controls.dynamicDampingFactor = 1 - Math.pow(0.85, dt * 60);
       applyProjection();
       // A focus move drives the camera itself; the controls take over again
       // the moment it lands.
@@ -644,7 +688,7 @@ export function SceneViewer({
       // Which datums are drawn, and lit, only when what decides it
       // changed: not every frame — an assembly has a datum per part.
       const datumInputs = [
-        highlightsRef.current,
+        litRef.current,
         instancesRef.current,
         componentsRef.current,
         partRef.current,
@@ -652,16 +696,11 @@ export function SceneViewer({
         datumsRef.current,
       ];
       if (datumInputs.some((input, k) => input !== datumsDrawn.inputs[k])) {
-        const highlighted = highlightsRef.current;
-        const lit = [
-          ...litDatums(partRef.current, "", highlighted),
-          ...instancesRef.current.flatMap((i) => {
-            const view = componentsRef.current[i.component];
-            return view ? litDatums(view, i.name, highlighted) : [];
-          }),
-        ];
-        const shown = new Set(lit);
-        const hidden = new Set(hiddenRef.current.filter((name) => !shown.has(name)));
+        const lit = litDatums(litRef.current);
+        // A hidden datum is shown while it, or a component of it (its
+        // axis, its plane), is lit — as the desktop app shows it.
+        const litShows = (name: string) => lit.some((l) => l === name || l.startsWith(`${name}:`));
+        const hidden = new Set(hiddenRef.current.filter((name) => !litShows(name)));
         const { extent } = partRef.current;
         datumLayer.sync(datumsRef.current, hidden, extent.size, vec(extent.center));
         datumsDrawn.inputs = datumInputs;
@@ -702,6 +741,9 @@ export function SceneViewer({
       container.removeEventListener("pointerleave", onPointerLeave);
       container.removeEventListener("pointerenter", sendView);
       container.removeEventListener("contextmenu", onContextMenu);
+      container.removeEventListener("wheel", onWheel);
+      container.removeEventListener("pointerdown", onPress, { capture: true });
+      if (wheelRest) clearTimeout(wheelRest);
       window.removeEventListener("keydown", onShift);
       window.removeEventListener("keyup", onShift);
       controls.dispose();
@@ -773,18 +815,14 @@ export function SceneViewer({
     builtRef.current = scene;
     groupRef.current = group;
     threeScene.add(group);
-    applyHighlight(group, scene, highlightsRef.current, hiddenRef.current);
+    applyHighlight(group, scene, litRef.current[""] ?? null, hiddenRef.current);
   }, [scene]);
 
   // The placed parts: each component built once, its placed parts drawn
   // together, and those lit or partly hidden on their own (see `placed3d.ts`).
-  /** How each placed part looks, as the highlights, what is hidden and the visuals lighting them say. */
+  /** How each placed part looks, as what is lit and what is hidden say. */
   const placedLook = (): ((name: string) => PlacedLook) => {
-    const lit = new Set(
-      visualsRef.current.flatMap((v) =>
-        v.shape === "instance" && (v.style === "hover" || v.style === "selected") ? [v.name] : [],
-      ),
-    );
+    const lit = litRef.current;
     const hidden = new Set(hiddenRef.current);
     // What is hidden of each placed part, by its name: what follows its
     // name — of the sketches it draws, the only thing of it a name hides.
@@ -797,16 +835,11 @@ export function SceneViewer({
       hiddenIn.set(instance, list);
     }
     const component = new Map(instancesRef.current.map((i) => [i.name, components[i.component]]));
-    const highlighted = highlightsRef.current;
     return (name) => {
       const view = component.get(name);
-      const highlights = highlighted.length > 0 ? localTo(name, highlighted) : [];
-      if (lit.has(name)) {
-        highlights.push(...(view?.solids ?? []).map((name) => ({ target: locate("", view?.model ?? ""), kind: "solid", name })));
-      }
       const sketches = new Set(view?.sketches.map((sketch) => sketch.name));
       return {
-        highlights,
+        lit: lit[name] ?? null,
         hidden: (hiddenIn.get(name) ?? []).filter((h) => sketches.has(h)),
         // Hidden with the part it is placed in, as the kernel picks it.
         visible: !name.split("/").some((_, k, path) => hidden.has(path.slice(0, k + 1).join("/"))),
@@ -818,19 +851,14 @@ export function SceneViewer({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [instances, components]);
 
-  // Re-tint in place when the highlights, what is hidden or what the
-  // visuals light change: nothing is rebuilt.
-  const appearanceKey = JSON.stringify([
-    highlights ?? [],
-    hidden ?? [],
-    (visuals ?? []).flatMap((v) => (v.shape === "instance" ? [[v.name, v.style]] : [])),
-  ]);
+  // Re-tint in place when what is lit or what is hidden changes — sent
+  // anew only when it changed, so compared by identity: nothing is rebuilt.
   useEffect(() => {
-    if (groupRef.current) applyHighlight(groupRef.current, scene, highlightsRef.current, hiddenRef.current);
+    if (groupRef.current) applyHighlight(groupRef.current, scene, litRef.current[""] ?? null, hiddenRef.current);
     placedRef.current?.light(placedLook());
     // `scene` is the one the group was built from: a new one rebuilds it above.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [appearanceKey]);
+  }, [lit, hidden]);
 
   // No touch is the browser's to scroll or zoom the page by: every one is the view's.
   return (

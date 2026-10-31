@@ -32,6 +32,7 @@ pub mod edit_form;
 pub mod editable;
 pub mod editing;
 pub mod editor;
+pub mod keys;
 pub mod output;
 pub mod part_operation;
 pub mod registry;

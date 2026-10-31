@@ -9,7 +9,7 @@ use geop_core_editor::{
     part_operation::PartOperation,
 };
 use geop_core_math::{
-    geop_error::{GeopError, GeopResult},
+    geop_error::{GeopError, GeopResult, WithContext},
     scalars::Scalar,
 };
 use geop_core_program::{
@@ -162,14 +162,15 @@ impl ModelOperation for Shell {
         args: &ShellArgs,
     ) -> GeopResult<()> {
         let namer = Namer::new("shell", step)?;
-        let thickness = args.thickness.resolve(reader)?;
+        let thickness = args.thickness.resolve(reader).concerning("thickness")?;
         if !thickness.is_finite() {
-            return Err(GeopError::new("the thickness is not a number"));
+            return Err(GeopError::new("the thickness is not a number").concerning("thickness"));
         }
-        let solid = model.solid_id(args.solid.name())?;
+        let solid = model.solid_id(args.solid.name()).concerning("solid")?;
         let faces = (args.faces.iter())
             .map(|face| model.face_id(face.name()))
-            .collect::<GeopResult<Vec<_>>>()?;
+            .collect::<GeopResult<Vec<_>>>()
+            .concerning("faces")?;
         let other = args.other_thickness.resolve(reader)?;
         if !other.is_finite() {
             return Err(GeopError::new("the other thickness is not a number"));

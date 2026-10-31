@@ -11,7 +11,7 @@
 
 import * as THREE from "three";
 import { worldPerPixel } from "./camera";
-import type { PickedElement, PartView, ViewInstance } from "./geop";
+import type { Lit, PartView, ViewInstance } from "./geop";
 import { boxed, sameNames } from "./lod";
 import {
   applyHighlight,
@@ -25,8 +25,8 @@ import {
 
 /** How a placed part is to be drawn: what of it is lit, and hidden. */
 export interface PlacedLook {
-  /** Its entities to light, as it names them. */
-  highlights: PickedElement[];
+  /** What of it is lit, as the kernel says: none if nothing is. */
+  lit: Lit | null;
   /** Its sketches, solids and faces not to draw, as it names them. */
   hidden: string[];
   /** Whether it is drawn at all. */
@@ -192,7 +192,7 @@ export class PlacedLayer {
   private singles = new Map<string, Single>();
   private instances: ViewInstance[] = [];
   private components: Record<string, PartView> = {};
-  private look: (name: string) => PlacedLook = () => ({ highlights: [], hidden: [], visible: true });
+  private look: (name: string) => PlacedLook = () => ({ lit: null, hidden: [], visible: true });
   /** The placed parts drawn as boxes now (see [[PlacedLayer.detail]]). */
   private boxed = new Set<string>();
 
@@ -229,7 +229,7 @@ export class PlacedLayer {
       if (!view) continue;
       const seen = look(instance.name);
       if (!seen.visible) continue;
-      if (seen.highlights.length > 0 || seen.hidden.length > 0) {
+      if (seen.lit != null || seen.hidden.length > 0) {
         alone.set(instance.name, { instance, look: seen });
       } else {
         const into = this.boxed.has(instance.name) ? boxes : batched;
@@ -308,7 +308,7 @@ export class PlacedLayer {
       }
       single.group.matrix.copy(frameMatrix(instance.frame));
       single.group.matrixWorldNeedsUpdate = true;
-      applyHighlight(single.group, shared.scene, seen.highlights, seen.hidden);
+      applyHighlight(single.group, shared.scene, seen.lit, seen.hidden);
     }
   }
 

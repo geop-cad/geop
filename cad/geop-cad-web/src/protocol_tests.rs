@@ -24,7 +24,7 @@ const SAMPLES: &str = concat!(
 );
 
 /// How many kinds of [`Command`] there are: what [`kind`] tells apart.
-const COMMAND_KINDS: usize = 27;
+const COMMAND_KINDS: usize = 28;
 
 /// The kind of `command`. A kind added to [`Command`] does not compile
 /// here until it is named, and [`COMMAND_KINDS`] counted up, and then
@@ -54,6 +54,7 @@ fn kind(command: &Command) -> &'static str {
         Command::Visibility { .. } => "visibility",
         Command::Appearance { .. } => "appearance",
         Command::Isolate { .. } => "isolate",
+        Command::Light { .. } => "light",
         Command::Tool { .. } => "tool",
         Command::Inspect { .. } => "inspect",
         Command::Export { .. } => "export",
@@ -86,6 +87,9 @@ fn session(kinds: &[&str]) -> Vec<Value> {
     }
     commands.extend([
         json!({ "command": "open", "id": "hole" }),
+        // A draft past square: the step fails, said at the draft.
+        dialog("draft", json!({ "type": "number", "value": 95.0 })),
+        dialog("draft", json!({ "type": "number", "value": 0.0 })),
         event(json!({ "type": "hover", "pointer": above, "shift": false })),
         event(json!({ "type": "hover", "pointer": tube, "shift": true })),
         event(json!({ "type": "click", "pointer": above, "button": "primary", "double": false, "shift": false })),
@@ -127,6 +131,8 @@ fn session(kinds: &[&str]) -> Vec<Value> {
         json!({ "command": "seek", "marker": 2 }),
         json!({ "command": "seek", "marker": null }),
         json!({ "command": "visibility", "name": "origin", "visible": false }),
+        json!({ "command": "light", "elements": [{ "target": "/:model", "kind": "face", "name": "extrude(box,end)" }] }),
+        json!({ "command": "light", "elements": [] }),
         json!({ "command": "inspect", "inspector": "mass_properties" }),
         json!({ "command": "inspect", "inspector": "measure", "picked": [{ "target": "/:model", "kind": "face", "name": "extrude(box,end)" }] }),
         json!({ "command": "tool", "key": "pick:mass_properties" }),

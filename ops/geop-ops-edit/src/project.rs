@@ -12,7 +12,7 @@ use geop_core_geometry::{
     nurb_curve::NurbCurve3D, nurb_surface::NurbSurface3D, search::PROJECT_ITERATIONS,
 };
 use geop_core_math::{
-    geop_error::{GeopError, GeopResult},
+    geop_error::{GeopError, GeopResult, WithContext},
     plain,
     primitives::CoordinateSystem,
     scalars::Scalar,
@@ -164,7 +164,7 @@ impl ModelOperation for ProjectCurve {
         args: &ProjectCurveArgs,
     ) -> GeopResult<()> {
         let namer = Namer::new("project", step)?;
-        let placed = reader.retrieve_element(&args.sketch)?;
+        let placed = reader.retrieve_element(&args.sketch).concerning("sketch")?;
         let face = model.face_id(args.face.name())?;
         let sketch = &placed.sketch;
         let geometry = sketch.enclose()?;
