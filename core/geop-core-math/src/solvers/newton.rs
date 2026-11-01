@@ -70,7 +70,12 @@ pub fn refine<const N: usize>(
         ITERATIONS,
         Repeat::Cycle,
         |next| (clamp(next.map(|s| s.sharpen())), clamp(*next)),
-        |x| Ok(step(*x).map_or(Step::Stuck, Step::Next)),
+        // A step over a singular Jacobian can come back as everything: there
+        // is no seed in that, and its middle is no number.
+        |x| {
+            let next = step(*x).filter(|next| next.iter().all(|s| s.is_finite()));
+            Ok(next.map_or(Step::Stuck, Step::Next))
+        },
     )
     else {
         return start;
@@ -188,6 +193,16 @@ pub fn newton_1d<T: Newton1d, E: From<GeopError>>(
 
 #[cfg(test)]
 mod tests {
+    /// A step that comes back as everything, as one over a singular Jacobian
+    /// does, leaves the box as it was: refinement only tightens.
+    #[test]
+    fn refining_past_a_singular_step_gives_the_box_back() {
+        let start = [Scalar::new(0.25, 0.75)];
+        let domain = [(Scalar::ZERO, Scalar::ONE)];
+        let refined = super::refine(start, domain, |_| Some([Scalar::ENTIRE]));
+        assert_eq!(refined, start);
+    }
+
     use super::*;
 
     /// Each stopping rule ends where it says: at a value that could be

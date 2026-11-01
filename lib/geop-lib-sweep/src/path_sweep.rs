@@ -9,6 +9,11 @@
 //! - a **line** moves the profile straight on — a [`Span::Line`], exact;
 //! - a **circular arc** turns it about the arc's axis — a [`Span::arc`],
 //!   exact: the wall is a piece of a torus, as a revolve sweeps it;
+//! - a **helix** turns it about the helix's axis as it rises, a piece of a
+//!   screw motion per quarter turn at most — a [`Span::arc`] too, exact:
+//!   every point of the profile stays on a cylinder of its own, so it keeps
+//!   facing the axis as it was drawn. Carried by a rotation minimizing frame,
+//!   it rolled over turn by turn, and its walls left their cylinders;
 //! - **any other curve** — a spline — has no swept surface that is a
 //!   NURBS, so it is approximated: sections of the profile at samples
 //!   along the curve, joined by cubic Hermite interpolation of the frames
@@ -43,7 +48,7 @@ use std::collections::HashMap;
 
 use geop_core_geometry::{
     intersection::crossing_points,
-    nurb_curve::{NurbCurve2D, NurbCurve3D},
+    nurb_curve::{NurbCurve2D, NurbCurve3D, bezier_knots, sqrt2_over_2},
     nurb_surface::NurbSurface3D,
     search::{MAX_NODES, PROJECT_ITERATIONS, min_subdivision_size},
 };
@@ -197,13 +202,15 @@ enum Kind {
     Line,
     /// A circular arc from `start` to `end`, its tangents meeting at
     /// `middle`, turning by `rotation`; `weight` is the cosine of half its
-    /// angle.
+    /// angle. Seen down the axis, that is: it goes `rise` along the axis as
+    /// it turns, a piece of a helix, or none, an arc in a plane.
     Arc {
         start: Vector3,
         middle: Vector3,
         end: Vector3,
         rotation: Rotation,
         weight: Scalar,
+        rise: Scalar,
     },
     Other,
 }
@@ -251,7 +258,179 @@ fn kind(curve: &NurbCurve3D) -> GeopResult<Kind> {
             sin: cross.norm().div(la.mul(lb).sqrt()?)?,
         },
         weight: w,
+        rise: Scalar::ZERO,
     })
+}
+
+/// The middle weight of a rational quadratic Bézier, its ends weighted one.
+fn middle_weight(curve: &NurbCurve3D) -> GeopResult<Scalar> {
+    let cp = &curve.control_points;
+    cp[1][3].div(cp[0][3].mul(cp[2][3]).sqrt()?)
+}
+
+/// `a` as a piece of the helix it goes on along into `b`, a piece following
+/// it: two rational quadratic Béziers turning alike about one axis, each
+/// rising alike along it. One piece alone does not say: its legs fit a
+/// helix turning either way about one of two axes, but `P0 + P2 - 2 P1`
+/// lies square to the axis, whatever the rise, and points where the piece
+/// is turning, so two of them span the plane it turns in.
+fn screw_between(a: &NurbCurve3D, b: &NurbCurve3D) -> GeopResult<Option<Kind>> {
+    let quadratic = |c: &NurbCurve3D| c.degree == 2 && c.control_points.len() == 3;
+    if !(quadratic(a) && quadratic(b)) {
+        return Ok(None);
+    }
+    let points = |c: &NurbCurve3D| -> GeopResult<[Vector3; 3]> {
+        Ok([c.start()?, c.control_points[1].dehomogenized()?, c.end()?])
+    };
+    let ([a0, am, a1], [b0, bm, b1]) = (points(a)?, points(b)?);
+    let (wa, wb) = (middle_weight(a)?, middle_weight(b)?);
+    if !(wa.could_be_equal(wb)
+        && wa.definitely_less(Scalar::ONE)
+        && wa.definitely_greater(Scalar::ZERO)
+        && a1.could_be_equal(&b0))
+    {
+        return Ok(None);
+    }
+    let turning = |p0: &Vector3, m: &Vector3, p1: &Vector3| p0.add(p1).sub(&m.add(m));
+    let (da, db) = (turning(&a0, &am, &a1), turning(&b0, &bm, &b1));
+    let Ok(axis) = da.prod_cross(&db).normalize() else {
+        return Ok(None);
+    };
+    let (rise, next) = (a1.sub(&a0).prod_dot(&axis), b1.sub(&b0).prod_dot(&axis));
+    // A quarter turn, as every helix's span nearly is, is exact: rounding
+    // its cosine and sine at each span would widen the profile with every
+    // turn, and leave a wall on a cylinder no longer on it.
+    let (cos, sin) = if wa.could_be_equal(sqrt2_over_2()) {
+        (Scalar::ZERO, Scalar::ONE)
+    } else {
+        (
+            Scalar::TWO.mul(wa).mul(wa).sub(Scalar::ONE),
+            Scalar::TWO.mul(wa).mul(Scalar::ONE.sub(wa.mul(wa)).sqrt()?),
+        )
+    };
+    let is_screw = !rise.could_be_equal(Scalar::ZERO)
+        && rise.could_be_equal(next)
+        && da.prod_dot(&axis).could_be_equal(Scalar::ZERO)
+        && db.prod_dot(&axis).could_be_equal(Scalar::ZERO)
+        && da.norm_sq().could_be_equal(db.norm_sq())
+        && (da.prod_dot(&db).div(da.norm_sq())?).could_be_equal(cos)
+        && am.sub(&a0).norm_sq().could_be_equal(a1.sub(&am).norm_sq());
+    Ok(is_screw.then_some(Kind::Arc {
+        start: a0,
+        middle: am,
+        end: a1,
+        rotation: Rotation { axis, cos, sin },
+        weight: wa,
+        rise,
+    }))
+}
+
+/// What every curve of `chain` is. A piece of a helix is told by the piece
+/// next to it (see [`screw_between`]).
+fn kinds(chain: &Chain<NurbCurve3D>) -> GeopResult<Vec<Kind>> {
+    let n = chain.curves.len();
+    (0..n)
+        .map(|k| {
+            let found = kind(&chain.curves[k])?;
+            if !matches!(found, Kind::Other) {
+                return Ok(found);
+            }
+            if k + 1 < n
+                && let Some(screw) = screw_between(&chain.curves[k], &chain.curves[k + 1])?
+            {
+                return Ok(screw);
+            }
+            if k > 0 {
+                // Read backwards, it goes on into the piece before it, turning
+                // the other way about the axis and going down: along the axis
+                // reversed, the rise it has forwards.
+                let (before, this) = (chain.curves[k - 1].reverse(), chain.curves[k].reverse());
+                if let Some(Kind::Arc {
+                    rotation,
+                    weight,
+                    rise,
+                    ..
+                }) = screw_between(&this, &before)?
+                {
+                    let cp = &chain.curves[k];
+                    return Ok(Kind::Arc {
+                        start: cp.start()?,
+                        middle: cp.control_points[1].dehomogenized()?,
+                        end: cp.end()?,
+                        rotation: Rotation {
+                            axis: rotation.axis.neg(),
+                            ..rotation
+                        },
+                        weight,
+                        rise,
+                    });
+                }
+            }
+            Ok(found)
+        })
+        .collect()
+}
+
+/// `chain` with every helix cut into its pieces of at most a quarter turn,
+/// `c8.q0`, `c8.q1`, ...: each is a span carried exactly (see [`carry`]),
+/// and a wall a turn long would wrap round its own axis. A curve is one if
+/// it is a chain of rational quadratics at double knots, and each goes on
+/// into the next as a helix does ([`screw_between`]). A chain of arcs in a
+/// plane rises nothing, and is as it was.
+fn cut_helices(chain: &Chain<NurbCurve3D>) -> GeopResult<Chain<NurbCurve3D>> {
+    let n = chain.curves.len();
+    let mut cut = Chain {
+        name: chain.name.clone(),
+        curves: Vec::new(),
+        curve_names: Vec::new(),
+        joint_names: Vec::new(),
+    };
+    for (k, curve) in chain.curves.iter().enumerate() {
+        cut.joint_names.push(chain.joint_names[k].clone());
+        let pieces = helix_pieces(curve)?;
+        let Some(pieces) = pieces else {
+            cut.curves.push(curve.clone());
+            cut.curve_names.push(chain.curve_names[k].clone());
+            continue;
+        };
+        let name = &chain.curve_names[k];
+        for (j, piece) in pieces.into_iter().enumerate() {
+            if j > 0 {
+                cut.joint_names.push(format!("{name}.a{j}"));
+            }
+            cut.curves.push(piece);
+            cut.curve_names.push(format!("{name}.q{j}"));
+        }
+    }
+    if chain.joint_names.len() > n {
+        cut.joint_names.push(chain.joint_names[n].clone());
+    }
+    Ok(cut)
+}
+
+/// The pieces of `curve`, if it is a helix (see [`cut_helices`]): its own
+/// control points, three to a piece, not cut anew, which would round them.
+fn helix_pieces(curve: &NurbCurve3D) -> GeopResult<Option<Vec<NurbCurve3D>>> {
+    let n = curve.control_points.len();
+    if curve.degree != 2 || n < 5 || n.is_multiple_of(2) {
+        return Ok(None);
+    }
+    let knots = &curve.knot_vector;
+    let doubled = (3..n)
+        .step_by(2)
+        .all(|i| knots[i].could_be_equal(knots[i + 1]));
+    if !doubled {
+        return Ok(None);
+    }
+    let pieces = (curve.control_points.windows(3).step_by(2))
+        .map(|rows| NurbCurve3D::try_new(2, rows.to_vec(), bezier_knots(2)))
+        .collect::<GeopResult<Vec<_>>>()?;
+    for pair in pieces.windows(2) {
+        if screw_between(&pair[0], &pair[1])?.is_none() {
+            return Ok(None);
+        }
+    }
+    Ok(Some(pieces))
 }
 
 /// Whether the path goes on smoothly at a joint — told from the tangents
@@ -300,11 +479,7 @@ fn followed(
             chain.joint_names.len()
         )));
     }
-    let kinds = chain
-        .curves
-        .iter()
-        .map(kind)
-        .collect::<GeopResult<Vec<_>>>()?;
+    let kinds = kinds(chain)?;
     // The tangents each curve leaves its start with and arrives at its end
     // with, and whether the path turns a corner where each curve starts.
     let leaving = chain
@@ -328,6 +503,13 @@ fn followed(
     let mut rebuilt = Vec::new();
     for k in 0..n {
         let Some(b) = before(k) else { continue };
+        // Two pieces of a helix go on into each other, to the last bit or
+        // not: the rows they share were rounded each where it lies.
+        let rises =
+            |kind: &Kind| matches!(kind, Kind::Arc { rise, .. } if !rise.is_exactly(Scalar::ZERO));
+        if rises(&kinds[b]) && rises(&kinds[k]) {
+            continue;
+        }
         // A profile that never turns needs no mitre: it meets itself at
         // any corner.
         if !is_smooth(&arriving[b], &leaving[k])? && follow {
@@ -524,6 +706,7 @@ fn carry(curve: &NurbCurve3D, kind: &Kind, start: &Frame) -> GeopResult<(Span, F
             end: to,
             rotation,
             weight,
+            ..
         } => {
             // The rigid motion along the arc turns about its axis and takes
             // its start to its end: a point `from + r` goes to
@@ -994,16 +1177,23 @@ fn carried_samples(
             start: p0,
             middle: corner,
             rotation,
+            rise,
             ..
         } => {
             let axis = rotation.axis.to_f64_array();
+            // What it rises along the axis, all of the span; the turn is
+            // of the rest.
+            let rise = scale(axis, rise.to_f64());
             let angle = rotation.sin.to_f64().atan2(rotation.cos.to_f64());
             // The centre lies square to the tangent at the start, towards
             // the turn (a velocity `axis x (p - centre)` points along the
             // tangent), a tangent leg's length over tan(angle / 2) away.
             let (p0, tangent) = (
                 p0.to_f64_array(),
-                sub(corner.to_f64_array(), p0.to_f64_array()),
+                sub(
+                    sub(corner.to_f64_array(), p0.to_f64_array()),
+                    scale(rise, 0.5),
+                ),
             );
             let towards = cross(axis, tangent);
             let towards = scale(towards, 1.0 / dot(towards, towards).sqrt());
@@ -1020,8 +1210,9 @@ fn carried_samples(
                             scale(axis, dot(axis, v) * (1.0 - cos)),
                         )
                     };
+                    let risen = scale(rise, fraction(i));
                     let frame = Plain {
-                        origin: add(center, turn(sub(begin.origin, center))),
+                        origin: add(add(center, turn(sub(begin.origin, center))), risen),
                         e1: turn(begin.e1),
                         e2: turn(begin.e2),
                     };
@@ -1029,11 +1220,11 @@ fn carried_samples(
                     Sample {
                         frame,
                         derivative: Plain {
-                            origin: spin(sub(frame.origin, center)),
+                            origin: add(spin(sub(sub(frame.origin, risen), center)), rise),
                             e1: spin(frame.e1),
                             e2: spin(frame.e2),
                         },
-                        point: add(center, turn(sub(c0, center))),
+                        point: add(add(center, turn(sub(c0, center))), risen),
                     }
                 })
                 .collect())
@@ -1308,19 +1499,26 @@ fn controlled(
 /// enough that a profile is only refused where it comes within a hair of
 /// the axis.
 fn clear_of_bends(chain: &Chain<NurbCurve3D>, path: &Path, loops: &[SweepLoop]) -> GeopResult<()> {
+    let kinds = kinds(chain)?;
     for (k, curve) in chain.curves.iter().enumerate() {
         let Kind::Arc {
             start,
             middle,
             rotation,
+            rise,
             ..
-        } = kind(curve)?
+        } = &kinds[k]
         else {
             continue;
         };
         // Square to the tangent at the start, towards the turn, the tangent
-        // leg's length over tan(angle / 2) = sin / (1 + cos) away.
-        let leg = middle.sub(&start);
+        // leg's length over tan(angle / 2) = sin / (1 + cos) away: of the
+        // leg as seen down the axis, half the rise being along it.
+        let leg = middle.sub(start);
+        let leg = match rise.is_exactly(Scalar::ZERO) {
+            true => leg,
+            false => leg.sub(&rotation.axis.prod_scalar(rise.div(Scalar::TWO)?)),
+        };
         let radius = leg
             .norm()
             .mul(Scalar::ONE.add(rotation.cos))
@@ -1444,6 +1642,10 @@ pub fn sweep_along(
     control: &Control,
     rebuild: Option<Rebuild>,
 ) -> GeopResult<BuiltBody> {
+    let chain = &match control.orientation {
+        Orientation::FollowPath => cut_helices(chain)?,
+        Orientation::FixedNormal => chain.clone(),
+    };
     let along = followed(chain, plane, control)?;
     let path = &along.path;
     // Whether a bend is tighter than the profile reaches is a question

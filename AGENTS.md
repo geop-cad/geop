@@ -1299,6 +1299,22 @@ to infinity. A sketch every point of which a formula places — lines,
 Béziers, arcs whose sweep does not change — is placed in one step for any
 size.
 
+## A helix is a screw motion, not a spline
+
+A rectangle swept along a sketch's helix looked wrong and would not join the
+cylinder it stood on, and the two were one bug. The helix was any other curve
+to the sweep: carried by a rotation minimizing frame, which along a helix
+turns against the axis, so the rectangle rolled over as it rose; and skinned
+in cubics, whose edge wobbled `1e-5` about the cylinder for five turns. The
+boolean ran out of nodes there; with twenty times the nodes it lost the march
+along the next curve, among crossings closer than its strides. Each is honest:
+telling those crossings apart would take a tolerance. Carried by the screw
+motion instead (`path_sweep::cut_helices`, the arc's own span with a rise), a
+wall lies exactly on its cylinder, and the join takes seconds. When a boolean
+fails on near-coincidence, look first at why the geometry is near rather than
+on. A spline laid along a cylinder still fails so
+(`a_rectangle_swept_along_a_spline_on_a_cylinder_joins_it`, ignored).
+
 ## Carrying a patch on must leave it as it was
 
 A face that moves needs room on its neighbours' surfaces, so the
