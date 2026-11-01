@@ -25,6 +25,7 @@
 pub mod icons;
 pub mod kept;
 pub mod lit;
+pub mod picture;
 #[cfg(test)]
 mod tests;
 mod tree;

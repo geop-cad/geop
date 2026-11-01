@@ -1036,6 +1036,7 @@ version = "0.12.0"
 dependencies = [
  "geop-core-math",
  "geop-core-program",
+ "png",
  "serde",
  "serde_json",
 ]

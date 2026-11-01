@@ -9,6 +9,8 @@ geop-core-math.workspace = true
 geop-core-program.workspace = true
 serde.workspace = true
 serde_json.workspace = true
+# What a picture of the part is written as (see `view::picture`).
+png = "=0.17.16"
 
 [features]
 # What tests of editing share: an editor over a registry of a few
