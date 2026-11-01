@@ -2,10 +2,10 @@
 
 use geop_core_math::scalars::Scalar;
 use geop_core_topology::{Body, SolidId, contains::shell::solid_lumps, validation::validate};
-use geop_lib_sweep::shapes::{block, sphere_solid, v3};
+use geop_lib_sweep::shapes::{block, cylinder, extruded_cylinder, sphere_solid, v3};
 use geop_ops_model::{BooleanOp, NamedModel, Namer};
 
-use crate::{boolean, faces_classified, remesh::RemeshParams, scenes::validation};
+use crate::{boolean, faces_classified, imprint_on_face, remesh::RemeshParams, scenes::validation};
 
 /// The block spanning `[min, max]` with its top face bulged into a dome
 /// rising `rise` above it in the middle: the top's plane raised to a
@@ -382,6 +382,21 @@ fn a_slot_cut_into_a_slotted_disc_classifies_the_faces_it_touches() {
     );
 }
 
+/// Making one what a cut left in two asks only of the faces the cut touches:
+/// each slot of twelve as many pairs as each slot of four, the disc's other
+/// faces, whose edges it was given, not asked again.
+#[test]
+fn a_slot_cut_into_a_slotted_disc_compares_the_surfaces_it_touches() {
+    let compared = |n: usize| {
+        let before = geop_core_topology::merge::surfaces_compared();
+        slotted_disc(n);
+        (geop_core_topology::merge::surfaces_compared() - before) / n
+    };
+    let (four, twelve) = (compared(4), compared(12));
+    assert!(four > 0);
+    assert!(twelve <= four, "{twelve} pairs a slot of 12, {four} of 4");
+}
+
 /// The slotted disc with thirty-two slots, eight to a quarter of its rim.
 /// The 32nd cut once left the slot's footprint on the cap's quarter
 /// straddling the slot, its corner on the rim `4e-10` below the cap: each
@@ -456,4 +471,325 @@ fn the_rims_of_a_slotted_disc_stay_as_narrow_as_cut_once() {
     let (model, disc, _) = slotted_disc(16);
     let (width, edge) = widest_edge(&model, disc, |curve| curve.degree == 2);
     assert!(width < 1e-13, "{edge}: {width:e}");
+}
+
+/// How many faces, edges and vertices the model holds.
+fn counts(model: &NamedModel) -> (usize, usize, usize) {
+    let topology = model.topology();
+    (
+        topology.faces.len(),
+        topology.edges.len(),
+        topology.vertices.len(),
+    )
+}
+
+/// Two blocks standing flush, one on the end of the other: four walls in
+/// two planes each, made one box.
+#[test]
+fn blocks_united_end_to_end_are_one_box() {
+    let mut model = NamedModel::new();
+    let a = block(&mut model, "a", [0.0, 0.0, 0.0], [1.0, 1.0, 1.0]);
+    let b = block(&mut model, "b", [1.0, 0.0, 0.0], [2.0, 1.0, 1.0]);
+    let result = combined(&mut model, a, b, BooleanOp::Union);
+    assert_eq!(counts(&model), (6, 12, 8));
+    assert!(volume(&model, result).could_be_equal(Scalar::from_f64(2.0)));
+}
+
+/// The same, overlapping: each block's walls run on past the other's end
+/// before the boolean drops what lies inside.
+#[test]
+fn overlapping_blocks_united_are_one_box() {
+    let mut model = NamedModel::new();
+    let a = block(&mut model, "a", [0.0, 0.0, 0.0], [1.0, 1.0, 1.0]);
+    let b = block(&mut model, "b", [0.5, 0.0, 0.0], [1.5, 1.0, 1.0]);
+    let result = combined(&mut model, a, b, BooleanOp::Union);
+    assert_eq!(counts(&model), (6, 12, 8));
+    assert!(volume(&model, result).could_be_equal(Scalar::from_f64(1.5)));
+}
+
+/// A taller block overlapping a block, flush along three sides: what is
+/// left of the taller one's wall is an L, split off the part lying on the
+/// first's wall under a piece's name, and runs on into the first's wall.
+/// The wall's name finds what it became, as a lone piece's does.
+#[test]
+fn a_wall_trimmed_and_run_into_another_keeps_its_name() {
+    let mut model = NamedModel::new();
+    let a = block(&mut model, "a", [0.0, 0.0, 0.0], [1.0, 1.0, 1.0]);
+    let b = block(&mut model, "b", [0.5, 0.0, 0.0], [1.5, 1.0, 2.0]);
+    let topology = model.topology();
+    let mut names = Vec::new();
+    for solid in [a, b] {
+        for face in topology.solid_faces(solid).unwrap() {
+            names.push(model.name_of(face).unwrap().to_string());
+        }
+    }
+    combined(&mut model, a, b, BooleanOp::Union);
+    let lost: Vec<_> = (names.iter())
+        .filter(|name| model.face_id(name).is_err())
+        .collect();
+    // Of the twelve only the first's far end, wholly inside the second.
+    assert_eq!(lost.len(), 1, "{lost:?}");
+}
+
+/// `model`'s block `[0, 3] x [0, 1] x [0, 1]` with its top divided in three
+/// across `x = 1.5` and `x = 2`, as a step splitting a face does: the pieces
+/// and the edges between them are what the part was given.
+fn block_with_a_divided_top(model: &mut NamedModel) -> SolidId {
+    let a = block(model, "a", [0.0, 0.0, 0.0], [3.0, 1.0, 1.0]);
+    let topology = model.topology();
+    let top = (topology.solid_faces(a).unwrap().into_iter())
+        .find(|f| {
+            (topology.get_face(*f).unwrap().surface.control_points.iter())
+                .all(|p| p[2].div(p[3]).unwrap().could_be_equal(Scalar::ONE))
+        })
+        .unwrap();
+    let knife = block(model, "knife", [1.5, -1.0, 0.0], [2.0, 2.0, 2.0]);
+    let namer = Namer::new("imprint", "i").unwrap();
+    imprint_on_face(model, &namer, top, &[knife.into()], RemeshParams::default()).unwrap();
+    a
+}
+
+/// A face a step divided stays divided through a boolean elsewhere on the
+/// body: the edge between the pieces lies on one surface, but the boolean
+/// did not leave it there, so it has no say over it.
+#[test]
+fn a_face_a_step_divided_stays_divided_through_a_boolean_elsewhere() {
+    let mut model = NamedModel::new();
+    let a = block_with_a_divided_top(&mut model);
+    let (faces, edges, _) = counts(&model);
+    assert!(faces > 6, "the top is divided: {faces} faces");
+    let pocket = block(&mut model, "pocket", [0.25, 0.25, -1.0], [0.5, 0.75, 0.5]);
+    combined(&mut model, a, pocket, BooleanOp::Difference);
+    // The pocket's four walls and its ceiling, its rim four edges and its
+    // uprights and ceiling eight.
+    assert_eq!(counts(&model).0, faces + 5);
+    assert_eq!(counts(&model).1, edges + 12);
+}
+
+/// A plate on the end of that block, flush with the divided top: it runs on
+/// into the piece it stands beside, and that piece stays parted from the
+/// other, along the edge the step drew.
+#[test]
+fn a_flush_union_does_not_undo_a_step_dividing_the_face_beside_it() {
+    let mut model = NamedModel::new();
+    let a = block_with_a_divided_top(&mut model);
+    let (faces, ..) = counts(&model);
+    let plate = block(&mut model, "plate", [3.0, 0.0, 0.0], [4.0, 1.0, 1.0]);
+    let result = combined(&mut model, a, plate, BooleanOp::Union);
+    // Of the plate's six only its far end is a face of its own, in place of
+    // the block's end, gone inside.
+    assert_eq!(counts(&model).0, faces);
+    assert!(volume(&model, result).could_be_equal(Scalar::from_f64(4.0)));
+}
+
+/// A plate standing flush with one side of the block under it only: that
+/// side is one face, every other face of either stays, a step all round.
+#[test]
+fn a_plate_flush_with_one_side_is_one_wall_there() {
+    let mut model = NamedModel::new();
+    let a = block(&mut model, "a", [0.0, 0.0, 0.0], [2.0, 2.0, 1.0]);
+    let b = block(&mut model, "b", [0.0, 0.5, 1.0], [1.0, 1.5, 2.0]);
+    let result = combined(&mut model, a, b, BooleanOp::Union);
+    // The block's six, and the plate's top and three sides: its bottom is
+    // gone and its side at x = 0 is one with the block's.
+    assert_eq!(counts(&model).0, 10);
+    assert!(volume(&model, result).could_be_equal(Scalar::from_f64(5.0)));
+}
+
+/// Two pockets of one depth overlapping: the second's floor runs on from
+/// the first's, one floor.
+#[test]
+fn two_pockets_of_one_depth_share_one_floor() {
+    let mut model = NamedModel::new();
+    let a = block(&mut model, "a", [0.0, 0.0, 0.0], [4.0, 4.0, 2.0]);
+    let first = block(&mut model, "first", [1.0, 1.0, 1.0], [2.5, 3.0, 3.0]);
+    let pocket = combined(&mut model, a, first, BooleanOp::Difference);
+    let second = block(&mut model, "second", [2.0, 1.0, 1.0], [3.0, 3.0, 3.0]);
+    let result = combined(&mut model, pocket, second, BooleanOp::Difference);
+    // The block's six, a floor, and four walls round the one pocket: those
+    // at y = 1 and y = 3 run on from the first into the second.
+    assert_eq!(counts(&model).0, 11);
+    assert!(volume(&model, result).could_be_equal(Scalar::from_f64(28.0)));
+}
+
+/// A slot across a block's top leaves the top in two; a block filling it
+/// flush makes all three one again, though the two pieces meet only
+/// through what filled the slot.
+#[test]
+fn a_slot_filled_flush_is_a_whole_top_again() {
+    let mut model = NamedModel::new();
+    let a = block(&mut model, "a", [0.0, 0.0, 0.0], [3.0, 1.0, 1.0]);
+    let slot = block(&mut model, "slot", [1.0, -1.0, 0.5], [2.0, 2.0, 2.0]);
+    let cut = combined(&mut model, a, slot, BooleanOp::Difference);
+    let fill = block(&mut model, "fill", [1.0, 0.0, 0.5], [2.0, 1.0, 1.0]);
+    let result = combined(&mut model, cut, fill, BooleanOp::Union);
+    assert_eq!(counts(&model), (6, 12, 8));
+    assert!(volume(&model, result).could_be_equal(Scalar::from_f64(3.0)));
+}
+
+/// A plug filling a bored hole flush: its caps lie in the box's top and
+/// bottom, and the hole in each goes with the edges round it.
+#[test]
+fn a_plugged_bore_is_a_box_again() {
+    let mut model = NamedModel::new();
+    let (r, six) = (Scalar::from_f64(0.5), 6);
+    let a = block(&mut model, "a", [0.0, 0.0, 0.0], [2.0, 2.0, 1.0]);
+    let bore = extruded_cylinder(
+        &mut model,
+        "bore",
+        v3(1.0, 1.0, 2.0),
+        r,
+        Scalar::from_f64(3.0),
+        six,
+    )
+    .unwrap();
+    let drilled = combined(&mut model, a, bore, BooleanOp::Difference);
+    let plug =
+        extruded_cylinder(&mut model, "plug", v3(1.0, 1.0, 1.0), r, Scalar::ONE, six).unwrap();
+    let result = combined(&mut model, drilled, plug, BooleanOp::Union);
+    assert_eq!(counts(&model), (6, 12, 8));
+    assert!(volume(&model, result).could_be_equal(Scalar::from_f64(4.0)));
+}
+
+/// The same with a revolved plug, whose caps are four sectors parametrized
+/// by radius and turn: they lie in the box's plane, but no shift and scale of
+/// `(u, v)` takes one to the other (`NurbSurface3D::carrying`), so they stay
+/// sectors in the box's holes. Valid and whole, only not one face: what it
+/// takes to make them one is pcurves mapped through a rational map.
+#[test]
+fn a_revolved_plugs_caps_stay_sectors() {
+    let mut model = NamedModel::new();
+    let a = block(&mut model, "a", [0.0, 0.0, 0.0], [2.0, 2.0, 1.0]);
+    let bore = cylinder(&mut model, "bore", [1.0, 1.0, -1.0], 0.5, 3.0);
+    let drilled = combined(&mut model, a, bore, BooleanOp::Difference);
+    let plug = cylinder(&mut model, "plug", [1.0, 1.0, 0.0], 0.5, 1.0);
+    let result = combined(&mut model, drilled, plug, BooleanOp::Union);
+    assert_eq!(counts(&model).0, 6 + 8);
+    let got = volume(&model, result);
+    assert!(got.could_be_equal(Scalar::from_f64(4.0)), "{got:?}");
+}
+
+/// A bar turned in the plane of a block's top, its own top flush with it:
+/// one plane, but its `(u, v)` turned against the block's, which
+/// `NurbSurface3D::carrying` does not map (each parameter has to go to one
+/// parameter). The tops stay apart, and what is built is whole.
+#[test]
+fn a_top_turned_in_its_plane_stays_a_face_of_its_own() {
+    use geop_core_math::primitives::Pose;
+    let mut model = NamedModel::new();
+    let a = block(&mut model, "a", [-1.0, -1.0, 0.0], [1.0, 1.0, 1.0]);
+    let b = block(&mut model, "b", [-2.0, -0.25, 0.0], [2.0, 0.25, 1.0]);
+    let turn = Pose::rotation_about(
+        &v3(0.0, 0.0, 0.0),
+        &v3(0.0, 0.0, 1.0),
+        Scalar::from_f64(0.5),
+    )
+    .unwrap();
+    model
+        .transform_body(Body::Solid(b), &turn.motion())
+        .unwrap();
+    let result = combined(&mut model, a, b, BooleanOp::Union);
+    let topology = model.topology();
+    let tops = (topology.solid_faces(result).unwrap().iter())
+        .filter(|f| {
+            (topology
+                .get_face(**f)
+                .unwrap()
+                .surface
+                .control_points
+                .iter())
+            .all(|p| p[2].div(p[3]).unwrap().could_be_equal(Scalar::ONE))
+        })
+        .count();
+    assert!(tops > 1, "{tops}");
+}
+
+/// The names of what a union makes one: every face's name of either block
+/// still finds its face, but for the two faces between them, gone inside;
+/// the walls' names of both find the one wall. An edge between two faces
+/// made one is gone and asking for it says so by name, and an edge joined
+/// to one running on from it is found by the name of either piece.
+#[test]
+fn names_of_what_a_union_made_one_still_find_it() {
+    let mut model = NamedModel::new();
+    let a = block(&mut model, "a", [0.0, 0.0, 0.0], [1.0, 1.0, 1.0]);
+    let b = block(&mut model, "b", [1.0, 0.0, 0.0], [2.0, 1.0, 1.0]);
+    let topology = model.topology();
+    let mut face_names = Vec::new();
+    let mut edge_names = Vec::new();
+    for solid in [a, b] {
+        for face in topology.solid_faces(solid).unwrap() {
+            face_names.push(model.name_of(face).unwrap().to_string());
+            for edge in topology.face_edges(face) {
+                edge_names.push(model.name_of(edge).unwrap().to_string());
+            }
+        }
+    }
+    edge_names.sort();
+    edge_names.dedup();
+    combined(&mut model, a, b, BooleanOp::Union);
+    let faces: Vec<_> = (face_names.iter())
+        .filter_map(|name| model.face_id(name).ok())
+        .collect();
+    assert_eq!(faces.len(), 10, "{face_names:?}");
+    let distinct: std::collections::BTreeSet<_> = faces.iter().collect();
+    assert_eq!(distinct.len(), 6);
+    let edges: Vec<_> = (edge_names.iter())
+        .filter_map(|name| model.edge_id(name).ok())
+        .collect();
+    let distinct: std::collections::BTreeSet<_> = edges.iter().collect();
+    // Twelve edges of the box, all found: four along x, each of a piece of
+    // either block, and the eight round its ends. The four round the seam
+    // are gone, by the names of both blocks.
+    assert_eq!(distinct.len(), 12, "{edge_names:?}");
+    assert_eq!(edges.len(), 16, "{edge_names:?}");
+    let gone = (edge_names.iter())
+        .find(|name| model.edge_id(name).is_err())
+        .expect("an edge between the faces made one");
+    let message = model.edge_id(gone).unwrap_err().to_string();
+    assert!(message.contains(gone.as_str()), "{message}");
+}
+
+/// Two cylinders of one radius stacked: each quarter of the wall runs on
+/// into the one above, one surface, and the rim between them goes, its
+/// corners with it. The quarters stay quarters: each is a patch of its own,
+/// by design.
+#[test]
+fn stacked_cylinders_are_one_cylinder() {
+    let mut model = NamedModel::new();
+    let a = cylinder(&mut model, "a", [0.0, 0.0, 0.0], 1.0, 1.0);
+    let b = cylinder(&mut model, "b", [0.0, 0.0, 1.0], 1.0, 1.0);
+    let whole = {
+        let mut model = NamedModel::new();
+        cylinder(&mut model, "whole", [0.0, 0.0, 0.0], 1.0, 2.0);
+        counts(&model)
+    };
+    let result = combined(&mut model, a, b, BooleanOp::Union);
+    assert_eq!(counts(&model), whole);
+    let expected = Scalar::PI.mul(Scalar::from_f64(2.0));
+    let got = volume(&model, result);
+    assert!(
+        got.sub(expected).abs().to_f64() < 1e-6,
+        "{got:?} vs {expected:?}"
+    );
+}
+
+/// A block standing out of a cylinder's wall, of the cylinder's height: its
+/// top and bottom lie in the caps' planes and are one with them. The wall
+/// is cut by the block, and of its quarters, patches of their own by design
+/// that lie on one circle, none is made one with another.
+#[test]
+fn a_cylinders_quarters_stay_apart() {
+    let mut model = NamedModel::new();
+    let a = cylinder(&mut model, "a", [0.0, 0.0, 0.0], 1.0, 1.0);
+    let b = block(&mut model, "b", [0.5, -0.25, 0.0], [2.0, 0.25, 1.0]);
+    let result = combined(&mut model, a, b, BooleanOp::Union);
+    let topology = model.topology();
+    let curved = (topology.solid_faces(result).unwrap().iter())
+        .filter(|f| topology.get_face(**f).unwrap().surface.degree_u == 2)
+        .count();
+    assert!(curved >= 4, "{curved} curved faces");
+    // The caps and the block's top and bottom are two faces, and the block's
+    // three other sides are there too.
+    assert_eq!(counts(&model).0, curved + 2 + 3);
 }

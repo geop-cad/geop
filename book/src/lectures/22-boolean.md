@@ -99,7 +99,7 @@ So 5 + 1 + 4 + 1 = 11 faces, as the kernel reports. The floor's outward normal, 
 
 **Closing check.** Before assembling, `check_closed` confirms every edge is used an even number of times by the kept faces. Odd is a hole in the result, "so a face was kept or dropped wrongly, or remesh left a face straddling the other solid". The error lists every face along that edge with its name and classification, "which tells the two apart".
 
-**Merge.** Finally, faces split from one face which end up side by side, along an edge of the other solid that is no edge of the result, are made one again (`merge_faces_on_one_surface`, in `ops/geop-ops-model/src/edit.rs`, over `core/geop-core-topology/src/merge.rs`): the origin of both must agree, and they lie on the very surface they were cut from.
+**Merge.** Finally, faces the boolean left in two on one surface are made one (`merge_faces_on_one_surface`, in `ops/geop-ops-model/src/edit.rs`, over `core/geop-core-topology/src/merge.rs`): pieces of one face split along an edge of the other solid that is no edge of the result, and a face of each solid running on into the other's, two blocks standing flush. An edge that parted the same two faces in an operand stays, as the operand had it: a cylinder's quarters, and a face a step divided on purpose. The oldest's name stays and the others' stand for it.
 
 ## Names
 

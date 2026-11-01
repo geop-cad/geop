@@ -89,6 +89,7 @@ impl NamedModel {
                 let face = name(id.into());
                 ViewFace {
                     feature: features.of(&face).map(str::to_string),
+                    also: self.names.aliases_of(&face),
                     name: face,
                     solid: (model.solid_of_face(id).ok().flatten()).map(|s| name(s.into())),
                     mesh: FaceMesh::new(

@@ -66,7 +66,12 @@ export function colorHex(color: string | null | undefined, fallback: number): nu
  */
 export function flatten(part: PartView, hidden: string[] = [], faceColors = true): Scene {
   const partColor = colorHex(part.color, FACE_COLOR);
-  const colorOf = (face: string) => colorHex(faceColors ? part.face_colors?.[face] : null, partColor);
+  // By a face's name, or by what else it answers to: a face made one with it.
+  const colorOf = (face: { name: string; also?: string[] }) =>
+    colorHex(
+      faceColors ? [face.name, ...(face.also ?? [])].map((n) => part.face_colors?.[n]).find((c) => c != null) : null,
+      partColor,
+    );
   // An edge or a vertex bounds its faces: of no solid, it goes when they all do.
   const shown = (solid: string | null, faces: string[] = []) =>
     (solid == null || !hidden.includes(solid)) &&
@@ -108,7 +113,7 @@ export function flatten(part: PartView, hidden: string[] = [], faceColors = true
   part.faces.forEach((f) => {
     if (!shown(f.solid) || (f.solid == null && hidden.includes(f.name))) return;
     const index = scene.faces.length;
-    const color = colorOf(f.name);
+    const color = colorOf(f);
     scene.faces.push({ name: f.name, solid: f.solid, feature: f.feature, color });
     scene.face_meshes.push(f.triangles);
     f.triangles.forEach(([a, b, c], i) => {

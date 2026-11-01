@@ -432,10 +432,10 @@ fn hidden_of(scene: &SceneState) -> BTreeSet<&str> {
 impl Layer<'_> {
     /// The colour of its face `name`: its own, if it has one, unless a
     /// colour its instance is drawn in is over them all.
-    fn color_of(&self, name: &str) -> [f32; 3] {
+    fn color_of(&self, face: &super::ViewFace) -> [f32; 3] {
         match self.tinted {
             true => self.face,
-            false => parsed(self.view.face_colors.get(name)).unwrap_or(self.face),
+            false => parsed(self.view.color_of_face(face)).unwrap_or(self.face),
         }
     }
 
@@ -793,7 +793,7 @@ impl Raster {
             let lit = (layer.lit).is_some_and(|l| {
                 l.face(&face.name, face.solid.as_deref(), face.feature.as_deref())
             });
-            let own = layer.color_of(&face.name);
+            let own = layer.color_of(face);
             let color = match lit {
                 true => mix(own, highlight, LIT_TINT),
                 false => own,
@@ -1299,6 +1299,7 @@ mod tests {
                 let mut normal = [0.0; 3];
                 normal[k] = if side == 0 { -1.0 } else { 1.0 };
                 view.faces.push(ViewFace {
+                    also: Vec::new(),
                     name: format!("{}{}", ["x", "y", "z"][k], ["-", "+"][side]),
                     solid: Some("block".into()),
                     feature: None,

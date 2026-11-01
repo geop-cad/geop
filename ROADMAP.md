@@ -47,8 +47,9 @@ below is what was missing then, and where each item stands now.
   fillets, chains of them and cut corners healed over by the faces
   around them, or the solid left open; the solid rebuilt face by face
   around them, for any NURBS faces, every name kept. Faces that lie on
-  one surface (blocks united flush, a pattern of overlapping blocks) merged
-  into one, decided on the NURBS representation; merged names still find
+  one surface merged into one, decided on the NURBS representation, by every
+  boolean for what it left in two (blocks united flush, a pattern of
+  overlapping blocks) and on request for the rest; merged names still find
   the face.
 - Fillets on any edge (rolling ball), tangent chains, variable radius,
   rounded corners where three fillets meet; chamfers on any edge.

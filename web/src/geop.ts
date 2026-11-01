@@ -129,6 +129,8 @@ export interface ViewInstance {
 
 /** A face of the part, as drawn. */
 export interface ViewFace {
+  /** What else it answers to: the names of faces made one with it. */
+  also?: string[];
   name: string;
   solid: string | null;
   /** The step whose feature made it — a cut, a boss, a hole — if one did: what picking it as a feature picks. */

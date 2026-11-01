@@ -82,6 +82,17 @@ impl NameRegistry {
         Ok(())
     }
 
+    /// What else stands for the entity `name` names (see [`Self::alias`]), in
+    /// order.
+    pub fn aliases_of(&self, name: &str) -> Vec<String> {
+        let mut aliases: Vec<String> = (self.aliases.iter())
+            .filter(|(_, target)| *target == name)
+            .map(|(alias, _)| alias.clone())
+            .collect();
+        aliases.sort();
+        aliases
+    }
+
     /// Gives the already named `id` the name `new_name` instead.
     ///
     /// For an operation that can only tell what an entity should be called

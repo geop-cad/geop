@@ -114,7 +114,7 @@ impl ModelOperation for ImportStl {
 pub fn add_mesh(model: &mut NamedModel, namer: &Namer, file: &[u8]) -> GeopResult<()> {
     let (points, triangles) = read_stl(file)?;
     let spec = BodySpec::of_triangles(&points, &triangles)?;
-    let (spec, _) = spec.merged(|_, _| true)?;
+    let (spec, _) = spec.merged(|_| true, |_| true)?;
     let named = |prefix: &str, n: usize| -> Vec<String> {
         (0..n)
             .map(|k| namer.name(&[&format!("{prefix}{k}")]))

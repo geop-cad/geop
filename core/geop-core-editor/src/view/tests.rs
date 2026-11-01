@@ -40,6 +40,7 @@ fn grid(n: usize) -> PartView {
     let mut view = PartView::new();
     view.model = "model".into();
     view.faces.push(ViewFace {
+        also: Vec::new(),
         name: "grid".into(),
         solid: None,
         feature: None,
@@ -160,6 +161,7 @@ fn cube() -> PartView {
             normal[k] = if side == 0 { -1.0 } else { 1.0 };
             let normal = v3(normal[0], normal[1], normal[2]);
             view.faces.push(ViewFace {
+                also: Vec::new(),
                 name: face(k, side),
                 solid: Some("cube".into()),
                 feature: None,

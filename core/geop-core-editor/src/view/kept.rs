@@ -79,6 +79,8 @@ struct Edge {
 #[derive(Serialize, Deserialize)]
 struct Face {
     name: String,
+    #[serde(default)]
+    also: Vec<String>,
     solid: Option<String>,
     feature: Option<String>,
     mesh: String,
@@ -232,6 +234,7 @@ fn written(
     let faces = (view.faces.iter())
         .map(|face| {
             Ok(Face {
+                also: face.also.clone(),
                 name: face.name.clone(),
                 solid: face.solid.clone(),
                 feature: face.feature.clone(),
@@ -318,6 +321,7 @@ fn view_of(
             let mesh: Mesh = pool.get(&face.mesh)?;
             Ok(ViewFace {
                 name: face.name,
+                also: face.also,
                 solid: face.solid,
                 feature: face.feature,
                 mesh: Rc::new(mesh.mesh()?),

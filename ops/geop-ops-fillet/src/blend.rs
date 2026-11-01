@@ -1244,9 +1244,7 @@ fn blend_once(
                 for cut in &all_cuts[component[0]] {
                     tool = cut_off(model, &scope, tool, cut).with_context(ctx)?;
                 }
-                let flush = rolled.bend == Bend::Concave || rolled.trims[k].is_some();
-                target = apply_tool(model, &scope, target, tool, rolled.bend, flush)
-                    .with_context(ctx)?;
+                target = apply_tool(model, &scope, target, tool, rolled.bend).with_context(ctx)?;
             }
             continue;
         }
@@ -1278,18 +1276,14 @@ fn blend_once(
             }
         }
         let bend = tools.bend(component[0]);
-        let flush = bend == Bend::Concave
-            || (component.iter()).any(|&i| tools.rolled[i].1.trims.iter().any(Option::is_some));
-        target = apply_tool(model, &scope, target, tool, bend, flush).with_context(ctx)?;
+        target = apply_tool(model, &scope, target, tool, bend).with_context(ctx)?;
     }
     // The corners mitred, each cut or filled by its two tools run on past
     // it.
     for (scope, ctx, runs) in mitres {
         let ctx = with_context!("{ctx}");
         if let Some(tool) = mitre(model, &scope, &runs).with_context(ctx)? {
-            let bend = runs[0].bend;
-            target = apply_tool(model, &scope, target, tool, bend, bend == Bend::Concave)
-                .with_context(ctx)?;
+            target = apply_tool(model, &scope, target, tool, runs[0].bend).with_context(ctx)?;
         }
     }
     model.rename(target, namer.root())
@@ -1605,26 +1599,17 @@ fn section_contacts(
 /// Cuts `tool` away from `target`, or fills it in, as `bend` says — named
 /// by `scope`: the solid that is left. The blend face, the one piece of
 /// its tool kept, keeps its own name (see the naming of
-/// `geop_lib_booleans`).
-///
-/// A tool `flush` with a face it ends at — a pocket's upright edge filled up
-/// to the top, a cut cut off by the face it runs into — leaves its cap a face
-/// of its own in that face's surface, and the edges between them on the
-/// solid, where nothing bends:
-/// each such piece of the tool is made one with the face beside it, and the
-/// pieces the cap's outline leaves of that face with each other.
+/// `geop_lib_booleans`). A fill capped flush with a face it ends at, a
+/// pocket's upright edge filled up to the top, is made one with that face by
+/// the boolean.
 fn apply_tool(
     model: &mut NamedModel,
     scope: &Namer,
     target: SolidId,
     tool: SolidId,
     bend: Bend,
-    flush: bool,
 ) -> GeopResult<SolidId> {
-    let tool_faces: Vec<String> = (model.topology().solid_faces(tool)?.into_iter())
-        .filter_map(|f| model.name_of(f).map(str::to_string))
-        .collect();
-    let solid = boolean(
+    boolean(
         model,
         scope,
         target,
@@ -1632,42 +1617,5 @@ fn apply_tool(
         bend.op(),
         RemeshParams::default(),
     )?
-    .ok_or_else(|| GeopError::new("the blend cut the whole solid away"))?;
-    if !flush {
-        return Ok(solid);
-    }
-    let from_tool: Vec<FaceId> = (model.topology().solid_faces(solid)?.into_iter())
-        .filter(|&f| {
-            model.name_of(f).is_some_and(|name| {
-                tool_faces
-                    .iter()
-                    .any(|t| name == t || scope.is_piece_of(name, t))
-            })
-        })
-        .collect();
-    // A cap flush with a face overlaps it where the tool reaches into the
-    // solid, and leaves the face cut along the cap's outline, where nothing
-    // bends either: its pieces are made one again too.
-    let names: Vec<(FaceId, String)> = (model.topology().solid_faces(solid)?.into_iter())
-        .filter_map(|f| Some((f, model.name_of(f)?.to_string())))
-        .collect();
-    let name_of = |f: FaceId| names.iter().find(|(g, _)| *g == f).map(|(_, n)| n.as_str());
-    let pieces_of_one = |f: FaceId, g: FaceId| {
-        let (Some(a), Some(b)) = (name_of(f), name_of(g)) else {
-            return false;
-        };
-        scope.is_piece_of(a, b) || scope.is_piece_of(b, a)
-    };
-    match model
-        .merge_faces_on_one_surface(solid.into(), |f, g| {
-            from_tool.contains(&f) != from_tool.contains(&g) || pieces_of_one(f, g)
-        })
-        .with_context(with_context!(
-            "making the fill's faces one with those beside them in one surface"
-        ))? {
-        Body::Solid(solid) => Ok(solid),
-        Body::Sheet(_) => Err(GeopError::new(
-            "making the fill's faces one with those beside them left no solid",
-        )),
-    }
+    .ok_or_else(|| GeopError::new("the blend cut the whole solid away"))
 }

@@ -171,6 +171,13 @@ impl NamedModel {
         self.names.alias(current, earlier)
     }
 
+    /// Lets the name `earlier`, of something now part of `id`, stand for it,
+    /// `id` keeping its own name.
+    pub fn stand_for(&mut self, id: impl Into<RefId>, earlier: &str) -> GeopResult<()> {
+        let current = self.name(id.into())?.to_string();
+        self.names.alias(earlier, current)
+    }
+
     fn exists(&self, id: RefId) -> bool {
         let topology = &self.topology;
         match id {

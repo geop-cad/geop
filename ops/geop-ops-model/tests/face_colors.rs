@@ -346,3 +346,47 @@ fn a_face_a_cut_leaves_is_picked_from_before_it() {
     assert_ne!(name, "block(box,end)", "the floor, not the top");
     assert_eq!(drawn_colors(&picked), [pair(&name, "#d9483b")]);
 }
+
+/// A colour given by the name of a face a later union makes one with another
+/// still shows: the merged face answers to that name.
+#[test]
+fn a_colour_of_a_face_merged_with_another_still_shows() {
+    let second = "block(next,end)";
+    let mut program = Program::new();
+    program.push(
+        "properties",
+        PartPropertiesArgs {
+            face_colors: vec![colored(&[second], "#00ff00")],
+            ..PartPropertiesArgs::default()
+        },
+    );
+    program.push(
+        "box",
+        PrimitiveArgs::block([0.0, 0.0, 0.0], [2.0, 2.0, 1.0]),
+    );
+    program.push(
+        "next",
+        PrimitiveArgs::block([2.0, 0.0, 0.0], [4.0, 2.0, 1.0]).combined(
+            geop_ops_model::Combine::With {
+                op: geop_ops_model::BooleanOp::Union,
+                target: geop_ops_model::solid("block(box)"),
+            },
+        ),
+    );
+    let mut editor = editor(program);
+    let scene = editor
+        .handle(Command::Show)
+        .scene
+        .expect("the scene is sent");
+    let part = &scene.part;
+    assert_eq!(part.faces.len(), 6, "the union is one box");
+    let holding: Vec<_> = (part.faces.iter())
+        .filter(|f| part.color_of_face(f).is_some())
+        .map(|f| (f.name.clone(), f.also.clone()))
+        .collect();
+    assert_eq!(holding.len(), 1, "{holding:?}");
+    assert!(
+        holding[0].0 == second || holding[0].1.iter().any(|name| name == second),
+        "{holding:?}"
+    );
+}

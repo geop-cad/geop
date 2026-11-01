@@ -266,19 +266,23 @@ impl NamedModel {
     /// of; the names of the others stand for it from then on (see
     /// [`crate::names::NameRegistry::alias`]), so a step that refers to any
     /// of them still finds it. An edge between two faces made one is gone,
-    /// and so is its name; so is a vertex dropped. Only faces `may_merge`
-    /// lets are asked whether they lie on one surface.
+    /// and so is its name; so is a vertex dropped. Only an edge `edge_may_go`
+    /// lets and a vertex `vertex_may_go` lets are taken out.
     pub fn merge_faces_on_one_surface(
         &mut self,
         body: Body,
-        may_merge: impl Fn(FaceId, FaceId) -> bool,
+        edge_may_go: impl Fn(EdgeId) -> bool,
+        vertex_may_go: impl Fn(VertexId) -> bool,
     ) -> GeopResult<Body> {
         let (spec, names) = self.body_record(body)?;
         // The very entities `spec` was made from, index for index.
         let mut faces = self.topology().body_faces(body)?;
         faces.sort();
         let (_, sources) = self.topology().body_spec(&faces, false)?;
-        let (merged, map) = spec.merged(|f, g| may_merge(sources.faces[f], sources.faces[g]))?;
+        let (merged, map) = spec.merged(
+            |e| edge_may_go(sources.edges[e]),
+            |v| vertex_may_go(sources.vertices[v]),
+        )?;
         if merged.faces.len() == spec.faces.len() && merged.edges.len() == spec.edges.len() {
             return Ok(body);
         }

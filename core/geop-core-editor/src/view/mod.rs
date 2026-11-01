@@ -187,6 +187,10 @@ pub struct ViewEdge {
 #[derive(Clone, Debug, Serialize)]
 pub struct ViewFace {
     pub name: String,
+    /// What else it answers to: the names of faces made one with it, which
+    /// what was given by name, a colour, still means.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub also: Vec<String>,
     /// The solid the face bounds.
     pub solid: Option<String>,
     /// The step whose feature made it, if one did.
@@ -609,6 +613,12 @@ impl Layer<'_> {
 }
 
 impl PartView {
+    /// The colour of its own `face` has, if one was given: by its name, or by
+    /// what else it answers to.
+    pub fn color_of_face(&self, face: &ViewFace) -> Option<&String> {
+        (std::iter::once(&face.name).chain(&face.also)).find_map(|name| self.face_colors.get(name))
+    }
+
     /// Nothing drawn, reaching as far as `extent`: what a viewer is sent
     /// while a step is edited on a sheet of its own, which it frames.
     pub fn blank(extent: Extent) -> Self {

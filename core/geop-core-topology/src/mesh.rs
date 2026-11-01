@@ -224,7 +224,7 @@ mod tests {
         let mut model = Model::new();
         model.build_body(spec.clone()).unwrap();
         validate(&ValidationParameters::default(), &model).unwrap();
-        let (merged, _) = spec.merged(|_, _| true).unwrap();
+        let (merged, _) = spec.merged(|_| true, |_| true).unwrap();
         assert_eq!(merged.faces.len(), 6);
         assert_eq!(merged.edges.len(), 12);
         let mut model = Model::new();
