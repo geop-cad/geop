@@ -956,7 +956,7 @@ mod examples {
             let sheet = match compose(&built.current(), &args, "", &parts) {
                 Ok(sheet) => sheet,
                 Err(e) => {
-                    failures.push(format!("{name}: {e}"));
+                    failures.push(format!("{name}: {e:?}"));
                     continue;
                 }
             };
@@ -986,7 +986,7 @@ mod examples {
                 let v = match scene.project(&kind.frame().unwrap(), &ViewOptions::default()) {
                     Ok(v) => v,
                     Err(e) => {
-                        failures.push(format!("{name}, {} view: {e}", kind.name()));
+                        failures.push(format!("{name}, {} view: {e:?}", kind.name()));
                         continue;
                     }
                 };
