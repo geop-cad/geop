@@ -271,14 +271,24 @@ export function SceneViewer({
   const cubeRef = useRef<HTMLDivElement>(null);
   const [cubeTitle, setCubeTitle] = useState<string | null>(null);
   const [cycling, setCycling] = useState<{ x: number; y: number } | null>(null);
+  // Whether this computer gives the view no WebGL: a machine with no working
+  // graphics, as a remote desktop or a virtual one can be. The rest of the
+  // editor works without it, and is left standing.
+  const [noGraphics, setNoGraphics] = useState(false);
 
   useEffect(() => {
     const container = containerRef.current;
     if (!container) return;
+    let renderer: THREE.WebGLRenderer;
+    try {
+      renderer = new THREE.WebGLRenderer({ antialias: true, stencil: true, alpha: true });
+    } catch {
+      setNoGraphics(true);
+      return;
+    }
     const placed = new PlacedLayer();
     placedRef.current = placed;
 
-    const renderer = new THREE.WebGLRenderer({ antialias: true, stencil: true, alpha: true });
     renderer.localClippingEnabled = true;
     renderer.setPixelRatio(window.devicePixelRatio);
     container.appendChild(renderer.domElement);
@@ -1132,6 +1142,16 @@ export function SceneViewer({
       style={{ position: "relative", width: "100%", height: "100%", minHeight: 0, touchAction: "none" }}
     >
       <div ref={boxElRef} className="select-box" style={{ display: "none" }} aria-hidden="true" />
+      {noGraphics && (
+        <div className="viewport-no-graphics" role="alert">
+          <strong>The 3D view could not start</strong>
+          <p>
+            This computer is not giving geop any 3D graphics (WebGL). Updating its graphics drivers, or using it directly
+            rather than through a remote desktop or a virtual machine, usually helps. Your parts are safe, and you can
+            still edit, save and export them here.
+          </p>
+        </div>
+      )}
       <div className="view-cube-area">
         <button
           className="view-home"

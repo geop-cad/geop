@@ -186,6 +186,31 @@ export async function firstRunChecks(browser, url) {
   // The welcome shows the examples' previews, rendered from this build.
   if (previewsStale()) await renderPreviews(browser, url);
   const results = [];
+  {
+    // A computer with no working graphics: a virtual machine showed the app
+    // a white page, three.js throwing with the whole page in its hands.
+    const context = await browser.newContext({ viewport: { width: 1400, height: 900 } });
+    await context.addInitScript(() => {
+      const original = HTMLCanvasElement.prototype.getContext;
+      HTMLCanvasElement.prototype.getContext = function (kind, ...rest) {
+        return String(kind).startsWith("webgl") ? null : original.call(this, kind, ...rest);
+      };
+    });
+    const page = await context.newPage();
+    const failures = [];
+    page.on("pageerror", (e) => failures.push(e.message));
+    const checks = new Checks(page, [], "no-webgl-");
+    await checks.check("with no WebGL, the editor stands, says why there is no view, and opens a part", async () => {
+      await page.goto(`${url}?example=box_with_drill_hole`);
+      await page.locator(".viewport-no-graphics").waitFor({ timeout: 60000 });
+      expect(await page.locator(".viewport-no-graphics").innerText().then((t) => t.includes("could not start")), "no reason given");
+      await page.getByText("hole", { exact: false }).first().waitFor({ timeout: 60000 });
+      expect(failures.length === 0, `the page threw: ${failures.join("; ")}`);
+      return "the panels are up, and the program has its steps";
+    });
+    results.push(...checks.results);
+    await context.close();
+  }
   for (const { name: window, ...options } of WINDOWS) {
     const context = await browser.newContext(options);
     const page = await context.newPage();

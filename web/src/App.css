@@ -1388,6 +1388,23 @@ button.inline {
 
 /* A value typed in place in the viewport: a dimension's, as it is added
    or double-clicked. */
+.viewport-no-graphics {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  z-index: 5;
+  width: min(26rem, calc(100% - 2rem));
+  padding: 1rem 1.25rem;
+  background: var(--bg-deep);
+  color: #fff;
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  border-radius: 8px;
+  font: 13px/1.45 system-ui, sans-serif;
+}
+.viewport-no-graphics p {
+  margin: 0.4rem 0 0;
+}
 .viewport-prompt {
   position: absolute;
   top: 0;

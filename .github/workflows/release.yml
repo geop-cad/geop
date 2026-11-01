@@ -168,6 +168,7 @@ jobs:
           if ($app.HasExited) { throw "the app ended by itself, with $($app.ExitCode)" }
           Stop-Process -Id $app.Id
           if (-not (Test-Path (Join-Path $home2 "Documents\Geop"))) { throw "it made no folder" }
+          if (Test-Path "dist\*.WebView2") { throw "the webview wrote beside the program" }
 
       - uses: actions/upload-artifact@v4
         if: always()

@@ -340,7 +340,7 @@ mod window {
         event_loop::{ControlFlow, EventLoopBuilder},
         window::{Icon, Window, WindowBuilder},
     };
-    use wry::{NewWindowResponse, WebViewBuilder};
+    use wry::{NewWindowResponse, WebContext, WebViewBuilder};
 
     /// What reaches the window from elsewhere.
     #[derive(Debug)]
@@ -421,6 +421,17 @@ window.geopApp = { openFolder: () => window.ipc.postMessage("open-folder") };
         Ok(menu)
     }
 
+    /// Where the webview keeps what it keeps. WebView2 would otherwise make
+    /// a folder beside the program, wherever it was downloaded to, and fail
+    /// where it may not write. The other webviews keep theirs in the user's
+    /// own folders already.
+    fn webview_data() -> Option<PathBuf> {
+        cfg!(windows)
+            .then(|| std::env::var_os("LOCALAPPDATA"))
+            .flatten()
+            .map(|local| PathBuf::from(local).join("Geop").join("WebView2"))
+    }
+
     /// The window's icon: the logo the page shows, drawn at 256 pixels.
     fn icon() -> Option<Icon> {
         const LOGO: &str = include_str!("../../../web/src/assets/logo.svg");
@@ -490,7 +501,8 @@ window.geopApp = { openFolder: () => window.ipc.postMessage("open-folder") };
             .map_err(|e| GeopError::new(format!("opening a window: {e}")))?;
         let window = Rc::new(window);
 
-        let builder = WebViewBuilder::new()
+        let mut context = WebContext::new(webview_data());
+        let builder = WebViewBuilder::new_with_web_context(&mut context)
             .with_url(access.url())
             .with_initialization_script(IN_APP)
             .with_clipboard(true)
@@ -552,7 +564,7 @@ window.geopApp = { openFolder: () => window.ipc.postMessage("open-folder") };
         event_loop.run(move |event, _, control_flow| {
             *control_flow = ControlFlow::Wait;
             // Kept alive as long as the window is.
-            let _ = &webview;
+            let _ = (&webview, &context);
             #[cfg(target_os = "macos")]
             let _ = &menu;
             match event {
