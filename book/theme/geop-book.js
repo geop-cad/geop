@@ -50,9 +50,9 @@
     return m ? m.slice(0, 3).map(Number) : [255, 255, 255];
   }
   function colors() {
-    var bodyStyle = getComputedStyle(document.body);
-    var bg = bodyStyle.backgroundColor || cssVar("--bg", "#fff");
-    var fg = bodyStyle.color || cssVar("--fg", "#000");
+    
+    var bg = cssVar("--bg", "#fff");
+    var fg = cssVar("--fg", "#000");
     var c = parseColor(bg);
     var dark = 0.299 * c[0] + 0.587 * c[1] + 0.114 * c[2] < 128;
     return dark ? {

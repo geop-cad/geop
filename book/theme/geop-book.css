@@ -1,6 +1,10 @@
 /* What the lectures add to mdBook's theme: math, exercises, and the demos. */
 
 .gb-math-inline { white-space: normal; }
+/* KaTeX's hidden MathML is positioned absolutely; pinned to its formula, it
+   cannot widen the page past the text's edge at phone width. */
+.katex { position: relative; }
+.katex .katex-mathml { left: 0; }
 .gb-math-display { display: block; overflow-x: auto; overflow-y: hidden; padding: 0.25em 0; }
 
 /* Learning goals, recap, and "in the kernel" boxes. */
