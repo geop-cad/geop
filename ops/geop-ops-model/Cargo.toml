@@ -22,6 +22,10 @@ imbl.workspace = true
 testing = ["geop-core-topology/testing"]
 
 [dev-dependencies]
+# Parts whose faces are coloured, in `tests/`: the fixtures depend on this
+# crate, so these are no unit tests (they would hold a second copy of its
+# targets).
+geop-lib-fixtures.workspace = true
 geop-core-topology = { workspace = true, features = ["testing"] }
 # The datums, parameters and sketches drawn and picked as a front end does.
 geop-core-editor = { workspace = true, features = ["testing"] }

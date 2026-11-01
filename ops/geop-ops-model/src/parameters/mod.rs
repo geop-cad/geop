@@ -31,7 +31,7 @@ pub use instance::{
 };
 pub use program::{parameter_numbers, parameters_of, set_parameters};
 pub use steps::{
-    DefineParameters, DefineParametersArgs, LookupTable, LookupTableArgs, PartColor,
+    DefineParameters, DefineParametersArgs, FaceColor, LookupTable, LookupTableArgs, PartColor,
     PartProperties, PartPropertiesArgs, Properties, read_properties, stem,
 };
 

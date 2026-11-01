@@ -39,7 +39,7 @@ export interface Scene {
   triangles: [Vec3, Vec3, Vec3, number][];
   normals: [Vec3, Vec3, Vec3][];
   triangle_faces: number[];
-  faces: { name: string; solid: string | null; feature?: string }[];
+  faces: { name: string; solid: string | null; feature?: string; color: number }[];
   /** The triangles of each of `faces`, as the kernel sent them: the same for a face drawn alike again (see [[sameFaces]]). */
   face_meshes: unknown[];
 }
@@ -56,12 +56,15 @@ export function colorHex(color: string | null | undefined, fallback: number): nu
 }
 
 /**
- * `part` as a [[Scene]], its faces in its own colour if it has one, without
- * the solids and the faces standing on their own in `hidden` — nor the edges
- * and vertices of only those.
+ * `part` as a [[Scene]], its faces each in its own colour if it has one, else
+ * in the part's if that has one — in the part's alone, if not `faceColors`: a
+ * placed part drawn in a colour over them all — without the solids and the
+ * faces standing on their own in `hidden`, nor the edges and vertices of only
+ * those.
  */
-export function flatten(part: PartView, hidden: string[] = []): Scene {
-  const faceColor = colorHex(part.color, FACE_COLOR);
+export function flatten(part: PartView, hidden: string[] = [], faceColors = true): Scene {
+  const partColor = colorHex(part.color, FACE_COLOR);
+  const colorOf = (face: string) => colorHex(faceColors ? part.face_colors?.[face] : null, partColor);
   // An edge or a vertex bounds its faces: of no solid, it goes when they all do.
   const shown = (solid: string | null, faces: string[] = []) =>
     (solid == null || !hidden.includes(solid)) &&
@@ -101,10 +104,11 @@ export function flatten(part: PartView, hidden: string[] = []): Scene {
   part.faces.forEach((f) => {
     if (!shown(f.solid) || (f.solid == null && hidden.includes(f.name))) return;
     const index = scene.faces.length;
-    scene.faces.push({ name: f.name, solid: f.solid, feature: f.feature });
+    const color = colorOf(f.name);
+    scene.faces.push({ name: f.name, solid: f.solid, feature: f.feature, color });
     scene.face_meshes.push(f.triangles);
     f.triangles.forEach(([a, b, c], i) => {
-      scene.triangles.push([a, b, c, faceColor]);
+      scene.triangles.push([a, b, c, color]);
       scene.normals.push(f.normals[i]);
       scene.triangle_faces.push(index);
     });
@@ -182,16 +186,15 @@ export interface TriangleTags {
 
 /**
  * Whether `a` and `b` draw the same faces alike: the same meshes, in the
- * same order, named alike, in one colour — as a part shown again with
- * other sketches does.
+ * same order, named alike, each in the same colour — as a part shown again
+ * with other sketches does.
  */
 export function sameFaces(a: Scene, b: Scene): boolean {
   const same = (x: Scene["faces"][number], y: Scene["faces"][number]) =>
-    x.name === y.name && x.solid === y.solid && x.feature === y.feature;
+    x.name === y.name && x.solid === y.solid && x.feature === y.feature && x.color === y.color;
   return (
     a.faces.length === b.faces.length &&
-    a.faces.every((f, i) => same(f, b.faces[i]) && a.face_meshes[i] === b.face_meshes[i]) &&
-    (a.triangles.length === 0 || a.triangles[0][3] === b.triangles[0][3])
+    a.faces.every((f, i) => same(f, b.faces[i]) && a.face_meshes[i] === b.face_meshes[i])
   );
 }
 

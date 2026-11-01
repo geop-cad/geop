@@ -26,7 +26,8 @@ Every operation of a part implements `PartOperation` and is made an
   prominently it is offered there), its icon, the file extensions it reads
   beside programs (`reads`, a STEP file to import) and whether its picks
   are made in what it builds rather than the part before it
-  (`picks_built`: a placed part's mates).
+  (`picks_built`: a placed part's mates), or in the whole part, the steps
+  after it built too (`picks_whole`: the properties' colours of faces).
 - `Args`, the arguments a step is given and saved with: numbers, choices,
   sketches, and references to elements by name.
 - `new_args(context)`: the arguments of a new step, from what the part
@@ -440,7 +441,9 @@ It turns what the user did — a `StepEditEvent` (see
   part is shown as it stands, not the plane the step works in. Picks test
   against the part before the step, or — for an operation whose references
   point into what it adds itself (`OperationInfo::picks_built`), a placed
-  part's mates — against what it builds.
+  part's mates — against what it builds; for one saying something of the
+  finished part and reading none of it (`OperationInfo::picks_whole`),
+  against the whole part, kept built while the step is edited.
 - **Handles** of number fields are drawn by the editor and dragged along
   their direction, the value following how far the pointer has moved along
   the handle's track, from the ray where the drag started to the ray where

@@ -46,6 +46,13 @@ pub struct OperationInfo {
     /// rather than as it was before: a placed part's mates pick elements of
     /// the part it places.
     pub picks_built: bool,
+    /// Whether its reference fields pick in the part as the whole program
+    /// builds it, the steps after its own too — and its step is edited with
+    /// them built. For a step that says something of the finished part and
+    /// reads none of it, wherever in the program it stands: the properties'
+    /// colours of faces, usually the first step, of faces later steps make.
+    #[serde(skip)]
+    pub picks_whole: bool,
     /// The extensions of the files its steps read that are no programs —
     /// data a program keeps beside it, a STEP file: what a front end keeps
     /// in a workspace with the programs, and sends the editor.
@@ -84,6 +91,7 @@ impl OperationInfo {
             tier,
             experimental: false,
             picks_built: false,
+            picks_whole: false,
             reads: &[],
             icon: None,
             shortcut: None,
@@ -103,6 +111,14 @@ impl OperationInfo {
     pub const fn picks_built(self) -> Self {
         Self {
             picks_built: true,
+            ..self
+        }
+    }
+
+    /// The same, but picking in the part as the whole program builds it.
+    pub const fn picks_whole(self) -> Self {
+        Self {
+            picks_whole: true,
             ..self
         }
     }
@@ -200,6 +216,10 @@ pub struct Context<'a> {
     pub runner: &'a Runner,
     pub before: Reader<'a>,
     pub built: Option<Reader<'a>>,
+    /// The part as far as the last run built it: all of it, for a step that
+    /// picks in the whole part ([`OperationInfo::picks_whole`]), whose
+    /// fields read it here.
+    pub whole: Reader<'a>,
     /// The part as drawn for picks (see [`Scene`]): given with every event
     /// an editor passes on, and nothing else.
     pub scene: Option<&'a dyn Scene>,
@@ -471,6 +491,7 @@ impl Editors {
             runner,
             before: part.before(program, step)?,
             built: Some(part.after(step)),
+            whole: part.current(),
             scene: None,
         };
         Ok(Step {
@@ -502,6 +523,7 @@ impl Editors {
             runner,
             before,
             built: None,
+            whole: part.current(),
             scene: None,
         };
         Ok(ProgramStep {

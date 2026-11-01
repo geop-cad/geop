@@ -506,6 +506,39 @@ await check("a rectangle is sketched and extruded by clicks, and weighed", async
   return `${stats}, volume ${volume} mm³`;
 });
 
+await check("a face is picked and coloured in the properties, which come before it", async () => {
+  await fresh();
+  await fileMenu(page, "Parametric plate");
+  await builtCleanly();
+  // The properties come before the plate.
+  await page.locator(".timeline .step-box", { hasText: "properties" }).click();
+  await settle(page);
+  await popup.locator("button", { hasText: /^Add a colour of faces$/ }).click();
+  await settle(page);
+  // The front of the plate, beside the hole.
+  await clickView(-120, 60);
+  const faces = await popup.locator(".reference[data-field='Faces'] .reference-text").innerText();
+  expect(faces.trim() !== "", "the click picked no face");
+  /** That place in the view, with the pointer off it. */
+  const seen = async () => {
+    const box = await page.locator("main.viewport canvas").first().boundingBox();
+    await page.mouse.move(box.x + 4, box.y + box.height - 4);
+    await settle(page);
+    return pixelAt(page, box.x + box.width / 2 - 120, box.y + box.height / 2 + 60);
+  };
+  const [r, g, b] = await seen();
+  expect(r > g + 40 && r > b + 40, `picked, the face is rgb(${r}, ${g}, ${b}), not in the new colour`);
+  await popup.locator("[data-field-key='face_color:0:color'] input[type=color]").fill("#2fb344");
+  await settle(page);
+  const [r2, g2, b2] = await seen();
+  expect(g2 > r2 + 40 && g2 > b2 + 40, `set, the face is rgb(${r2}, ${g2}, ${b2}), not green`);
+  await popup.locator(".button-row button.primary").click();
+  await builtCleanly();
+  const [r3, g3, b3] = await seen();
+  expect(g3 > r3 + 40 && g3 > b3 + 40, `committed, the face is rgb(${r3}, ${g3}, ${b3}), not green`);
+  return faces;
+});
+
 await check("a 3-D sketch's point is clicked and measured, as a vertex", async () => {
   await fresh();
   await clickOperation(page, "3-D sketch");

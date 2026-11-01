@@ -12,7 +12,10 @@
 //! A view with sketches is not kept: a sketch is drawn from what it is,
 //! cheaply, and is drawn again ([`write`] refuses it).
 
-use std::{collections::HashMap, rc::Rc};
+use std::{
+    collections::{BTreeMap, HashMap},
+    rc::Rc,
+};
 
 use geop_core_math::{
     geop_error::{GeopError, GeopResult},
@@ -48,6 +51,7 @@ struct Written {
     #[serde(with = "geop_core_math::exact")]
     size: Scalar,
     color: Option<String>,
+    face_colors: BTreeMap<String, String>,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -295,6 +299,7 @@ fn written(
         center: view.extent.center,
         size: view.extent.size,
         color: view.color.clone(),
+        face_colors: view.face_colors.clone(),
     })
 }
 
@@ -383,6 +388,7 @@ fn view_of(
             size: written.size,
         },
         color: written.color,
+        face_colors: written.face_colors,
         faces_tree: std::cell::RefCell::default(),
     })
 }

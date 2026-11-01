@@ -15,13 +15,16 @@ use std::borrow::Cow;
 use geop_core_editor::{
     edit_form::{EditForm, FormState},
     editable::{Context, OperationGroup, OperationInfo, OperationTier},
-    editing::{Cell, Choice, Column, ColumnKind, Layout, Table, TableEdit, TableRow, Tone, Unit},
+    editing::{
+        Action, Cell, Choice, Column, ColumnKind, Control, Layout, Table, TableEdit, TableRow,
+        Tone, Unit,
+    },
     part_operation,
     part_operation::PartOperation,
     registry::{Drawer, StructureItem},
     view::PartView,
 };
-use geop_core_math::geop_error::{GeopError, GeopResult};
+use geop_core_math::geop_error::{GeopError, GeopResult, WithContext};
 use geop_core_program::{
     element::{ElementReference, HasElements, Kind, whole},
     numeric::{
@@ -35,8 +38,11 @@ use geop_core_program::{
 };
 use serde::{Deserialize, Serialize};
 
-use crate::parameters::definition::{
-    COLOR, Material, NumberParameter, Row, validate_color, validate_name,
+use crate::{
+    Face, NamedModel,
+    parameters::definition::{
+        COLOR, Material, NumberParameter, Row, validate_color, validate_name,
+    },
 };
 
 /// The kind of the step defining a program's parameters, and its id.
@@ -507,9 +513,16 @@ fn column_of(
         })
 }
 
-/// Defines what the part is called and ordered as, its colour, and what
+/// Defines what the part is called and ordered as, its colours, and what
 /// it is made of: its [`properties`]. The colour is the run's input
 /// [`COLOR`] where it is given one.
+///
+/// Its colours of faces name faces later steps make, and it comes first in
+/// most programs, so it reads none of them: it holds their names, and the
+/// viewer asks for a face's colour by the face's name. A name no face has
+/// now fails nothing, and its dialog says so; a colour changed builds
+/// nothing again. It is edited with the whole part built and picks in that
+/// ([`OperationInfo::picks_whole`]).
 #[derive(Clone, Copy, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub struct PartProperties;
 
@@ -534,6 +547,101 @@ pub struct PartPropertiesArgs {
     /// given, which has a volume and a centroid but no mass.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub material: Option<Material>,
+    /// Faces in a colour of their own, over the part's: of a face named
+    /// twice, the later.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub face_colors: Vec<FaceColor>,
+}
+
+/// Faces of the part in one colour.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct FaceColor {
+    pub faces: Vec<ElementReference<NamedModel, Face>>,
+    /// `#rrggbb`.
+    pub color: String,
+}
+
+impl FaceColor {
+    /// The list of `args`' colours of faces, each its faces picked, its
+    /// colour and a button taking it out, and a button adding one. Which
+    /// of the faces picked no longer are in `whole`, the part as built, or
+    /// are not the part's own, is said beside each; `whole` is only asked
+    /// for a dialog open (`open`), not for a list of steps.
+    fn fields<'a>(
+        f: &mut EditForm<'a, PartPropertiesArgs>,
+        whole: &Reader<'a>,
+        args: &PartPropertiesArgs,
+        open: bool,
+    ) {
+        f.form.dialog.heading("face_colors", "Colours of faces");
+        for (i, entry) in args.face_colors.iter().enumerate() {
+            let key = face_color_key(i, "faces");
+            f.pick(&key, "Faces", whole, &entry.faces, true, move |e, faces| {
+                if let Some(entry) = e.args.face_colors.get_mut(i) {
+                    entry.faces = faces;
+                }
+            });
+            let field = f.form.dialog.0.iter_mut().find(|field| field.key == key);
+            if let Some(Control::Reference(reference)) = field.map(|field| &mut field.control) {
+                for (picked, face) in reference.value.iter_mut().zip(&entry.faces) {
+                    // The face in its colour says that it is held: lit,
+                    // the colour would not show.
+                    picked.drawn.clear();
+                    if let Some(why) = open.then(|| not_drawn(face, whole)).flatten() {
+                        picked.tone = Tone::Error;
+                        picked.detail = Some(why);
+                    }
+                }
+            }
+            let color = face_color_key(i, "color");
+            f.color(&color, "Colour", &entry.color, move |e, c| {
+                if let Some(entry) = e.args.face_colors.get_mut(i) {
+                    entry.color = c.trim().to_string();
+                }
+            });
+            let actions = vec![Action::new(REMOVE, "Take out")];
+            f.actions(&face_color_key(i, "remove"), actions, move |e, _| {
+                if i < e.args.face_colors.len() {
+                    e.args.face_colors.remove(i);
+                }
+            });
+        }
+        let actions = vec![Action::new(ADD, "Add a colour of faces")];
+        f.actions("face_color_add", actions, |e, _| {
+            e.args.face_colors.push(FaceColor {
+                faces: Vec::new(),
+                color: NEW_FACE_COLOR.to_string(),
+            });
+        });
+    }
+}
+
+/// The key of the field `field` of the `i`th colour of faces.
+fn face_color_key(i: usize, field: &str) -> String {
+    format!("face_color:{i}:{field}")
+}
+
+/// The value of the button taking a colour of faces out.
+const REMOVE: &str = "remove";
+
+/// The value of the button adding a colour of faces.
+const ADD: &str = "add";
+
+/// The colour a new colour of faces starts in: one a face picked shows
+/// itself in at once, whatever the part's.
+const NEW_FACE_COLOR: &str = "#d9483b";
+
+/// Why the face `face` is drawn in no colour of the properties of the part
+/// `reader` reads, if it is not: it is not a face of that part.
+fn not_drawn(face: &ElementReference<NamedModel, Face>, reader: &Reader) -> Option<String> {
+    if !face.instance().is_empty() {
+        return Some(format!(
+            "of the placed part `{}`: give it a colour in that part's properties",
+            face.instance()
+        ));
+    }
+    (reader.retrieve_element(face).err())
+        .map(|_| "no face of the part has this name now: take it out, or pick another".into())
 }
 
 part_operation!(PartProperties(PartPropertiesArgs));
@@ -546,7 +654,8 @@ impl PartOperation for PartProperties {
         OperationGroup::Part,
         OperationTier::Small,
     )
-    .icon(crate::parameters::icons::PROPERTIES);
+    .icon(crate::parameters::icons::PROPERTIES)
+    .picks_whole();
     type Args = PartPropertiesArgs;
     type Session = ();
 
@@ -558,6 +667,11 @@ impl PartOperation for PartProperties {
         let step = ctx.step();
         if let Some(color) = &args.color {
             validate_color(color).map_err(|e| e.with_context(format!("properties({step})")))?;
+        }
+        for (i, entry) in args.face_colors.iter().enumerate() {
+            validate_color(&entry.color)
+                .map_err(|e| e.with_context(format!("properties({step}), colour of faces {i}")))
+                .concerning(&face_color_key(i, "color"))?;
         }
         if let Some(Material { name, density }) = &args.material
             && !(density.is_finite() && *density > 0.0)
@@ -580,15 +694,17 @@ impl PartOperation for PartProperties {
                 designation,
                 color,
                 material: args.material.clone(),
+                face_colors: args.face_colors.clone(),
             })
         })
     }
 
-    /// Its title and designation typed, its colour picked, and its
-    /// material chosen from the list ([`Material::listed`]), or none, or
-    /// any other by its name and density.
+    /// Its title and designation typed, its colour picked, some faces in
+    /// colours of their own, and its material chosen from the list
+    /// ([`Material::listed`]), or none, or any other by its name and
+    /// density.
     fn form<'a>(
-        _: &'a Context<'a>,
+        context: &'a Context<'a>,
         args: &PartPropertiesArgs,
         _: &FormState<()>,
     ) -> EditForm<'a, PartPropertiesArgs> {
@@ -616,6 +732,7 @@ impl PartOperation for PartProperties {
         );
         let color = args.color.clone().unwrap_or_default();
         f.color("color", "Colour", color, move |e, c| e.args.color = text(c));
+        FaceColor::fields(&mut f, &context.whole, args, context.built.is_some());
         let listed = |m: &Material| Material::named(&m.name).as_ref() == Some(m);
         let chosen = match &args.material {
             None => NO_MATERIAL,
@@ -717,6 +834,7 @@ pub struct Properties {
     pub designation: Option<String>,
     pub color: Option<String>,
     pub material: Option<Material>,
+    pub face_colors: Vec<FaceColor>,
 }
 
 /// Defined once, by the program's [`PartProperties`] step.
@@ -758,7 +876,7 @@ pub struct PartColor;
 
 impl Drawer for PartColor {
     fn draw(&self, reader: &Reader, view: &mut PartView) -> GeopResult<()> {
-        view.color = read_properties(reader)?.color().map(str::to_string);
+        read_properties(reader)?.draw(view);
         Ok(())
     }
 
@@ -777,6 +895,18 @@ impl Properties {
     /// Its part's colour, `#rrggbb`: none for the viewer's own.
     pub fn color(&self) -> Option<&str> {
         self.color.as_deref()
+    }
+
+    /// Its colours drawn: its part's, and its faces', by name, of the part's
+    /// own faces: nothing of the faces is read, so changing one draws
+    /// them again, and meshes nothing.
+    pub fn draw(&self, view: &mut PartView) {
+        view.color = self.color.clone();
+        view.face_colors = (self.face_colors.iter())
+            .flat_map(|entry| entry.faces.iter().map(|face| (face, &entry.color)))
+            .filter(|(face, _)| face.instance().is_empty())
+            .map(|(face, color)| (face.name().to_string(), color.clone()))
+            .collect();
     }
 
     /// What its part is called where it is listed: its title, else `stem`

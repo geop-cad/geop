@@ -335,6 +335,9 @@ struct Layer<'s> {
     lit: Option<&'s Lit>,
     /// Its faces' colour.
     face: [f32; 3],
+    /// Whether its instance is drawn in a colour of the user's: over the
+    /// colours of its faces too.
+    tinted: bool,
 }
 
 /// A rigid motion in plain numbers: where a placed part's origin and axes
@@ -401,6 +404,7 @@ fn layers<'s>(
         hidden,
         lit: lit_of(""),
         face: own(part),
+        tinted: false,
     }];
     for instance in part.instances.iter().filter(|i| !placed_hidden(&i.name)) {
         let view = instance.view.as_ref();
@@ -414,6 +418,7 @@ fn layers<'s>(
             hidden,
             lit: lit_of(&instance.name),
             face: tint.map_or(face, |t| times(face, t)),
+            tinted: tint.is_some(),
         });
     }
     layers
@@ -425,6 +430,15 @@ fn hidden_of(scene: &SceneState) -> BTreeSet<&str> {
 }
 
 impl Layer<'_> {
+    /// The colour of its face `name`: its own, if it has one, unless a
+    /// colour its instance is drawn in is over them all.
+    fn color_of(&self, name: &str) -> [f32; 3] {
+        match self.tinted {
+            true => self.face,
+            false => parsed(self.view.face_colors.get(name)).unwrap_or(self.face),
+        }
+    }
+
     /// Whether what this layer names `name` is hidden — a solid, a face of
     /// none, a sketch, a datum — by its key in the part drawn, as a pick
     /// asks it.
@@ -779,9 +793,10 @@ impl Raster {
             let lit = (layer.lit).is_some_and(|l| {
                 l.face(&face.name, face.solid.as_deref(), face.feature.as_deref())
             });
+            let own = layer.color_of(&face.name);
             let color = match lit {
-                true => mix(layer.face, highlight, LIT_TINT),
-                false => layer.face,
+                true => mix(own, highlight, LIT_TINT),
+                false => own,
             };
             for (t, n) in face.mesh.triangles.iter().zip(&face.mesh.normals) {
                 let t = t.map(|p| layer.place.apply(&p));
@@ -1444,6 +1459,50 @@ mod tests {
             let [px, _] = camera.pixel(&v3([x, 0.5, 1.0]));
             assert!(px > 10.0 && px < 390.0, "{px}");
         }
+    }
+
+    /// A face in a colour of its own is drawn in it, over the part's; a
+    /// colour its instance is drawn in is over them all, as over the part's:
+    /// the same view placed twice, once in a colour of the user's.
+    #[test]
+    fn a_face_is_drawn_in_its_colour_and_a_placed_parts_colour_is_over_it() {
+        let mut own = block([0.0, 0.0, 0.0]);
+        own.color = Some("#0000ff".into());
+        own.face_colors = BTreeMap::from([("z+".to_string(), "#00ff00".to_string())]);
+        let component = Rc::new(own.finish());
+        let placed = |name: &str, x: f64, color: Option<&str>| {
+            let at = v3([x, 0.0, 0.0]);
+            ViewInstance {
+                name: name.into(),
+                component: "block".into(),
+                frame: CoordinateSystem::world_at(at),
+                pose: Pose::identity().with_position(at),
+                view: component.clone(),
+                state: None,
+                fixed: true,
+                color: color.map(str::to_string),
+            }
+        };
+        let mut part = block([0.0, 0.0, 0.0]);
+        part.face_colors = BTreeMap::from([("z+".to_string(), "#00ff00".to_string())]);
+        part.instances = vec![
+            placed("own", 3.0, None),
+            placed("over", 6.0, Some("#ff0000")),
+        ];
+        let mut scene = scene(part);
+        scene.instances = scene.part.instances.clone();
+        let (look, up) = (v3([0.0, 0.0, -1.0]), v3([0.0, 1.0, 0.0]));
+        let camera = Camera::fitting(&scene, look, up, 400, 300).unwrap();
+        let pixels = decoded(&picture(&scene, None, &[], &camera).unwrap());
+        let seen = |x: f64| at(&pixels, camera.pixel(&v3([x + 0.8, 0.25, 1.0])));
+        for x in [0.0, 3.0] {
+            let [r, g, b] = seen(x);
+            assert!(g > r + 60 && g > b + 60, "{:?}", [r, g, b]);
+        }
+        // The part's blue times the placed part's red, as without a colour
+        // of the face: no green of the face's left.
+        let [_, g, _] = seen(6.0);
+        assert!(g < 20, "{g}");
     }
 
     #[test]

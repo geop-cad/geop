@@ -1425,6 +1425,7 @@ dependencies = [
  "geop-core-rasterize",
  "geop-core-sketch",
  "geop-core-topology",
+ "geop-lib-fixtures",
  "imbl",
  "serde",
  "serde_json",

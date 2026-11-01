@@ -30,7 +30,7 @@ pub mod picture;
 mod tests;
 mod tree;
 
-use std::{cell::RefCell, rc::Rc};
+use std::{cell::RefCell, collections::BTreeMap, rc::Rc};
 
 use crate::editing::{
     Extent, Pointer,
@@ -496,6 +496,13 @@ pub struct PartView {
     pub extent: Extent,
     /// The part's colour, `#rrggbb`; none for the viewer's own.
     pub color: Option<String>,
+    /// The colours of its faces drawn in one of their own, `#rrggbb`, by the
+    /// face's name: over [`Self::color`], and under a colour its instance
+    /// is drawn in ([`ViewInstance::color`]). Asked by name, so a name no
+    /// face has now is simply never asked for, and drawing them reads
+    /// nothing of the faces.
+    #[serde(skip_serializing_if = "BTreeMap::is_empty")]
+    pub face_colors: BTreeMap<String, String>,
     /// The tree of its faces' triangles a pick tests the ray against (see
     /// [`tree`]): built when it is first picked in, and again only for
     /// other faces.
@@ -613,6 +620,7 @@ impl PartView {
             instances: Vec::new(),
             extent,
             color: None,
+            face_colors: BTreeMap::new(),
             faces_tree: RefCell::default(),
         }
     }
@@ -638,6 +646,12 @@ impl PartView {
         if drawn.color.is_some() {
             self.color.clone_from(&drawn.color);
         }
+        (self.face_colors).extend(
+            drawn
+                .face_colors
+                .iter()
+                .map(|(k, v)| (k.clone(), v.clone())),
+        );
         self.vertices.extend_from_slice(&drawn.vertices);
         self.edges.extend_from_slice(&drawn.edges);
         self.faces.extend_from_slice(&drawn.faces);

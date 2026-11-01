@@ -38,6 +38,8 @@ interface Shared {
   scene: Scene;
   /** Its triangles: positions, normals and colors, shared by every instance in the batch. */
   faces: THREE.BufferGeometry | null;
+  /** The same in the part's colour alone, if its faces have colours of their own: what a part placed in a colour of the user's is tinted from, as that colour is over them (see `ViewInstance.color`). */
+  plain: THREE.BufferGeometry | null;
   /** Its edges and corners, in its own frame: `[x0, y0, z0, x1, y1, z1]` per segment, and the colour of each. */
   segments: Float32Array;
   segmentColors: Float32Array;
@@ -71,28 +73,32 @@ function repeat(hex: number, count: number): number[] {
   return Array.from({ length: count }, () => [c.r, c.g, c.b]).flat();
 }
 
+/** The triangles of `scene`, as a geometry: none if it has none. */
+function facesOf(scene: Scene): THREE.BufferGeometry | null {
+  if (scene.triangles.length === 0) return null;
+  const n = scene.triangles.length;
+  const positions = new Float32Array(n * 9);
+  const normals = new Float32Array(n * 9);
+  const colors = new Float32Array(n * 9);
+  scene.triangles.forEach(([a, b, c, hex], i) => {
+    positions.set([...a, ...b, ...c], i * 9);
+    normals.set(scene.normals[i].flat(), i * 9);
+    colors.set(repeat(hex, 3), i * 9);
+  });
+  const faces = new THREE.BufferGeometry();
+  faces.setAttribute("position", new THREE.BufferAttribute(positions, 3));
+  faces.setAttribute("normal", new THREE.BufferAttribute(normals, 3));
+  faces.setAttribute("color", new THREE.BufferAttribute(colors, 3));
+  return faces;
+}
+
 /** `view`'s buffers. */
 function share(view: PartView): Shared {
   const scene = flatten(view);
-  let faces: THREE.BufferGeometry | null = null;
-  if (scene.triangles.length > 0) {
-    const n = scene.triangles.length;
-    const positions = new Float32Array(n * 9);
-    const normals = new Float32Array(n * 9);
-    const colors = new Float32Array(n * 9);
-    scene.triangles.forEach(([a, b, c, hex], i) => {
-      positions.set([...a, ...b, ...c], i * 9);
-      normals.set(scene.normals[i].flat(), i * 9);
-      colors.set(repeat(hex, 3), i * 9);
-    });
-    faces = new THREE.BufferGeometry();
-    faces.setAttribute("position", new THREE.BufferAttribute(positions, 3));
-    faces.setAttribute("normal", new THREE.BufferAttribute(normals, 3));
-    faces.setAttribute("color", new THREE.BufferAttribute(colors, 3));
-  }
   return {
     scene,
-    faces,
+    faces: facesOf(scene),
+    plain: view.face_colors ? facesOf(flatten(view, [], false)) : null,
     segments: new Float32Array(scene.lines.flatMap(([x0, y0, z0, x1, y1, z1]) => [x0, y0, z0, x1, y1, z1])),
     segmentColors: new Float32Array(scene.lines.flatMap((l) => repeat(l[6], 2))),
     points: new Float32Array(scene.points.flatMap(([x, y, z]) => [x, y, z])),
@@ -152,16 +158,24 @@ function tint(mesh: THREE.InstancedMesh, parts: ViewInstance[]) {
 function batchOf(shared: Shared, parts: ViewInstance[]): THREE.Group {
   const group = new THREE.Group();
   const matrices = parts.map((p) => frameMatrix(p.frame));
-  if (shared.faces) {
+  const faces = (geometry: THREE.BufferGeometry, parts: ViewInstance[]) => {
+    if (parts.length === 0) return;
+    const matrices = parts.map((p) => frameMatrix(p.frame));
     // The geometry is the component's, shared: disposing the batch leaves it.
-    const mesh = new THREE.InstancedMesh(shared.faces, FACES, matrices.length);
+    const mesh = new THREE.InstancedMesh(geometry, FACES, matrices.length);
     matrices.forEach((m, i) => mesh.setMatrixAt(i, m));
     mesh.instanceMatrix.needsUpdate = true;
     tint(mesh, parts);
     mesh.computeBoundingSphere();
     group.add(mesh);
     // A section caps the placed parts as it does the part's own solids.
-    group.add(...stencilCounters(shared.faces, matrices));
+    group.add(...stencilCounters(geometry, matrices));
+  };
+  if (shared.faces) {
+    if (shared.plain) {
+      faces(shared.faces, parts.filter((p) => !p.color));
+      faces(shared.plain, parts.filter((p) => p.color));
+    } else faces(shared.faces, parts);
   }
   const merged = (coords: Float32Array, colors: Float32Array) => {
     const geometry = new THREE.BufferGeometry();
@@ -252,6 +266,7 @@ export class PlacedLayer {
         shared.boxes.dispose();
       }
       shared.faces?.dispose();
+      shared.plain?.dispose();
       this.shared.delete(key);
     }
     for (const key of used) {
@@ -319,6 +334,7 @@ export class PlacedLayer {
       if (shared.batch) disposeBatch(shared.batch);
       shared.boxes?.dispose();
       shared.faces?.dispose();
+      shared.plain?.dispose();
     }
     this.singles.clear();
     this.shared.clear();

@@ -231,10 +231,10 @@ what its parameters come to as defined.
 
 An editor edits them in their steps' dialogs, as any step: the numbers
 in the `parameters` step's table, each table in its `lookup_table` step,
-and the title, designation, colour and material in the `properties`
+and the title, designation, colours and material in the `properties`
 step. A name typed in the table renames the definition alone: a formula
 still reading the old name fails, naming it. `PartColor` draws the part
-in its colour.
+in its colours.
 
 ### Parameters
 
@@ -281,6 +281,18 @@ followed by its parameters' values (`ISO 4762 M4x12`) — its **colour**,
 its **material** (`Material`, a name and a density in kg/m³, picked from a
 list or given by its density). A part with no material has none: its
 solids have a volume and a centroid, but no mass.
+
+It also gives some faces **colours of their own** (`FaceColor`: faces
+picked, and a colour), over the part's. The step usually comes first and
+names faces later steps make, so it reads none of them: it holds their
+names, `PartColor` draws the names and colours as they are
+(`PartView::face_colors`) and a viewer asks for a face's by its name.
+Changing one builds nothing and meshes nothing. A name no face has now
+fails nothing; the open dialog says so beside it. A face of a part placed
+in the part is not the part's own to colour, and is told the same way.
+While the step is edited the whole program stays built, and its picks are
+made there (`OperationInfo::picks_whole`). A colour a placed part is drawn
+in (`Command::Appearance`) is over all of these.
 What a part is listed as without a title is the name of the file it is
 placed from (`stem`).
 
