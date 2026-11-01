@@ -234,9 +234,18 @@ impl<'a> Work<'a> {
     /// face's: one coedge leaving each vertex, each meeting the next where
     /// it starts in `(u, v)` too.
     fn loops(&self, coedges: Vec<CoedgeSpec>) -> GeopResult<Option<Vec<Vec<CoedgeSpec>>>> {
+        // A pole's row runs from its vertex to that vertex: the loop goes
+        // along it on arriving there, and only then on along the coedge
+        // leaving it.
         let mut leaving: std::collections::HashMap<usize, usize> = Default::default();
+        let mut rows: std::collections::HashMap<usize, usize> = Default::default();
         for (i, c) in coedges.iter().enumerate() {
-            if leaving.insert(self.ends(c.on).0, i).is_some() {
+            let at = if matches!(c.on, CoedgeOn::Vertex(_)) {
+                &mut rows
+            } else {
+                &mut leaving
+            };
+            if at.insert(self.ends(c.on).0, i).is_some() {
                 return Ok(None);
             }
         }
@@ -257,8 +266,13 @@ impl<'a> Work<'a> {
                 }
                 used[at] = true;
                 lp.push(at);
-                let Some(&next) = leaving.get(&self.ends(coedges[at].on).1) else {
-                    return Ok(None);
+                let arrives = self.ends(coedges[at].on).1;
+                let along_row = matches!(coedges[at].on, CoedgeOn::Vertex(_));
+                let next = match (rows.get(&arrives), leaving.get(&arrives)) {
+                    (Some(&row), _) if !along_row => row,
+                    (_, Some(&next)) => next,
+                    (Some(&row), None) => row,
+                    (None, None) => return Ok(None),
                 };
                 let (end, start) = (coedges[at].pcurve.ends()?.1, coedges[next].pcurve.ends()?.0);
                 if !end.could_be_equal(&start) {

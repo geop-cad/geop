@@ -36,6 +36,8 @@ geop-ops-shell.workspace = true
 # The examples, and the bodies no primitive makes: a slot, and lofts.
 geop-ops-extrude-revolve = { workspace = true, features = ["testing"] }
 geop-ops-sketch.workspace = true
+# The helix the square thread is swept along.
+geop-ops-sketch3d.workspace = true
 geop-lib-sweep = { workspace = true, features = ["testing"] }
 # The turbine example the regression tests round: a blade lofted
 # between datum planes, patterned round a revolved hub.

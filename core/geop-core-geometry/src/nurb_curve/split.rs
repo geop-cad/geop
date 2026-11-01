@@ -167,7 +167,7 @@ mod tests {
                 .unwrap();
             let t = piece.refine_parameter_at_point(t, &crossing);
             let vertex = piece.evaluate(t).unwrap();
-            let t = piece.split_parameter_at_point(t, &vertex).unwrap();
+            let t = piece.split_parameter_at_point(t, &vertex, &vertex).unwrap();
             piece = piece.split(t).unwrap().1;
             let widest = piece
                 .control_points

@@ -26,7 +26,7 @@ const FIT_DRIFT: f64 = 1e-5;
 
 /// The most legs a fit is refined to: the budget [`FIT_DRIFT`] is pursued
 /// with, each leg a point located and a row of the interpolation's system.
-const MAX_FITTED_LEGS: usize = 256;
+const MAX_FITTED_LEGS: usize = 1024;
 
 /// Where a fit's widest point between stations was, of its last attempt:
 /// leg, fraction, point, width.
@@ -44,9 +44,16 @@ impl NurbCurve3D {
     /// every fit has at least [`MIN_FITTED_LEGS`] legs. The cubic drifts
     /// from the curve between its points, which is enclosed as width,
     /// honestly (see [`NurbCurve3D::interpolate_enclosing`]); while that
-    /// width is more than [`FIT_DRIFT`] and halving the legs still halves
-    /// it, the legs are split finer. Once halving them no longer halves the
-    /// width, the width is the points' own, and the coarser fit is kept.
+    /// width is more than [`FIT_DRIFT`] and refining the legs still halves
+    /// it, the legs that drift are halved: those a halving of all, which
+    /// shrinks a cubic's drift sixteen times, would leave the widest. Where
+    /// the curve bends evenly that is every leg. Where it turns sharply in
+    /// one place — a blend's arc, tangent to a plane it is cut by at three
+    /// degrees, meets it in an ellipse nineteen times as long as it is wide,
+    /// its tip of radius `5e-3` — it is those at the tip, which legs of an
+    /// even length reach only when there are hundreds of them. Once
+    /// refining no longer halves the width, the width is the points' own,
+    /// and the coarser fit is kept.
     ///
     /// `widest_between` is told the widest point of the curve located
     /// between stations of the last attempt: the curve is widened to hold
@@ -59,27 +66,24 @@ impl NurbCurve3D {
         ctx: &dyn Fn(GeopError) -> GeopError,
     ) -> GeopResult<NurbCurve<4>> {
         let strides = stations.len() - 1;
-        let first = MIN_FITTED_LEGS.div_ceil(strides).max(2);
-        // With each step the legs it was split into and the fit before, to
-        // tell whether halving them still halved its width. The cap ends
-        // it: `pieces` doubles each step, so it passes any cap within as
-        // many steps as it has bits.
-        let first: (usize, Option<(NurbCurve<4>, Scalar)>) = (first, None);
+        let pieces = MIN_FITTED_LEGS.div_ceil(strides).max(2);
+        let mut dense = vec![stations[0].clone()];
+        for i in 0..strides {
+            for k in 1..pieces {
+                let frac = Scalar::from_ratio(k as i64, pieces as i64).with_context(&ctx)?;
+                dense.push(locate(&stations[i], &stations[i + 1], frac).with_context(&ctx)?);
+            }
+            dense.push(stations[i + 1].clone());
+        }
+        // With each step the fit before, to tell whether refining the legs
+        // still halved its width: each step halves it or is the last, so
+        // the steps' cap is never met before [`FIT_DRIFT`] is.
+        let first = (dense, None::<(NurbCurve<4>, Scalar)>);
         let refined = refine(
             first,
             usize::BITS as usize,
-            |(pieces, best)| -> GeopResult<_> {
-                let mut dense = vec![stations[0].clone()];
-                for i in 0..strides {
-                    for k in 1..pieces {
-                        let frac =
-                            Scalar::from_ratio(k as i64, pieces as i64).with_context(&ctx)?;
-                        dense
-                            .push(locate(&stations[i], &stations[i + 1], frac).with_context(&ctx)?);
-                    }
-                    dense.push(stations[i + 1].clone());
-                }
-                // Then the curve inside each of the new legs, which
+            |(dense, best)| -> GeopResult<_> {
+                // The curve inside each of the legs, which
                 // `interpolate_enclosing` widens the cubic to hold.
                 let legs = dense.len() - 1;
                 let mut between = Vec::with_capacity(legs);
@@ -114,12 +118,25 @@ impl NurbCurve3D {
                 if !halved {
                     return Ok(Refine::Done(best.expect("a fit to compare with").0));
                 }
-                if 2 * legs > MAX_FITTED_LEGS
-                    || !width.definitely_greater(Scalar::from_f64(FIT_DRIFT))
+                if legs >= MAX_FITTED_LEGS || !width.definitely_greater(Scalar::from_f64(FIT_DRIFT))
                 {
                     return Ok(Refine::Done(curve));
                 }
-                Ok(Refine::Finer((pieces * 2, Some((curve, width)))))
+                // The width is twice the drift it holds. Halved, a leg's
+                // drift falls sixteen times: those that would then still be
+                // the widest are all that need it.
+                let drifts =
+                    NurbCurve3D::drift_by_interval(&points, &between, 3).with_context(&ctx)?;
+                let enough = width.upper().to_f64() / (2.0 * 16.0);
+                let mut finer = vec![dense[0].clone()];
+                for i in 0..legs {
+                    if drifts[i] > enough {
+                        let half = Scalar::from_ratio(1, 2).with_context(&ctx)?;
+                        finer.push(locate(&dense[i], &dense[i + 1], half).with_context(&ctx)?);
+                    }
+                    finer.push(dense[i + 1].clone());
+                }
+                Ok(Refine::Finer((finer, Some((curve, width)))))
             },
         )?;
         let Refined::Done(curve) = refined else {
@@ -128,5 +145,69 @@ impl NurbCurve3D {
             )));
         };
         Ok(curve)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A quarter of an ellipse nineteen times as long as it is wide, marched
+    /// in legs of one length, ten times its tip's radius of curvature at the
+    /// tip: a blend's arc cut by a plane at three degrees to its contact.
+    /// Only the few legs at the tip drift. Halving them all would soon pass
+    /// the legs a fit may have; those few bring the width down.
+    #[test]
+    fn a_fit_refines_the_legs_where_the_curve_turns_sharply() {
+        let (a, b) = (1.9, 0.1);
+        let at = |t: f64| {
+            Vector3::from_array([
+                Scalar::from_f64(a * t.cos()),
+                Scalar::from_f64(b * t.sin()),
+                Scalar::ZERO,
+            ])
+        };
+        // Stations a length apart along it, from a table of its length.
+        let table = 20000;
+        let top = std::f64::consts::FRAC_PI_2;
+        let mut lengths = vec![0.0];
+        for k in 1..=table {
+            let (t0, t1) = (
+                top * (k - 1) as f64 / table as f64,
+                top * k as f64 / table as f64,
+            );
+            let d =
+                ((a * (t1.cos() - t0.cos())).powi(2) + (b * (t1.sin() - t0.sin())).powi(2)).sqrt();
+            lengths.push(lengths[k - 1] + d);
+        }
+        let strides = 108;
+        let stations: Vec<(Vector3, f64)> = (0..=strides)
+            .map(|k| {
+                let want = lengths[table] * k as f64 / strides as f64;
+                let i = lengths.partition_point(|&l| l < want).min(table);
+                let t = top * i as f64 / table as f64;
+                (at(t), t)
+            })
+            .collect();
+        let curve = NurbCurve3D::fit_enclosing(
+            &stations,
+            |from, to, frac| {
+                let t = from.1 + frac.to_f64() * (to.1 - from.1);
+                Ok((at(t), t))
+            },
+            &mut None,
+            &|e| e,
+        )
+        .unwrap();
+        let widest = (curve.control_points.iter())
+            .flat_map(|p| (0..3).map(move |k| p[k].width().to_f64()))
+            .fold(0.0, f64::max);
+        assert!(widest <= FIT_DRIFT, "{widest:e}");
+        // Two legs a stride, and a few more at the tip.
+        assert!(
+            curve.control_points.len() < 300,
+            "{}",
+            curve.control_points.len()
+        );
     }
 }

@@ -64,11 +64,15 @@ impl<const D: usize> NurbCurve<D> {
     ///
     /// Refused if `t` could be an end of the domain — then `point` is an
     /// end of the curve, nothing to cut — or if the curve at the chosen
-    /// parameter does not reach `point`.
+    /// parameter does not reach `within`, the enclosure `point` was chosen
+    /// in: the vertex. Not `point` itself: a pcurve running from `u = 1`
+    /// has parameters a hair `1e-16` apart near its end, and a `point` of
+    /// `u = 1e-4`, sharper than that, no parameter reaches.
     pub fn split_parameter_at_point<const C: usize>(
         &self,
         t: Scalar,
         point: &Vector<C>,
+        within: &Vector<C>,
     ) -> GeopResult<Scalar>
     where
         NurbCurve<D>: ParameterRefinable<C>,
@@ -88,9 +92,9 @@ impl<const D: usize> NurbCurve<D> {
             })
             .map_or_else(|| refined.sharpen(), |k| k.sharpen());
         let reached = self.evaluate_cartesian(cut)?;
-        if !reached.could_be_equal(point) {
+        if !reached.could_be_equal(within) {
             return Err(GeopError::new(format!(
-                "the curve at {cut:?}, the middle of the refined parameter {refined:?}, is at {reached:?}, not at {point:?}"
+                "the curve at {cut:?}, the middle of the refined parameter {refined:?}, is at {reached:?}, not within {within:?}"
             )));
         }
         Ok(cut)

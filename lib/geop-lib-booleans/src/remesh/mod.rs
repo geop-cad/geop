@@ -114,7 +114,7 @@ pub(crate) fn split_at_crossing(
             naming.provisional(),
         )
         .with_context(with_context!(
-            "edge={edge}, t={t:?}, vertex={vertex}, crossing face={face}"
+            "edge={edge}, t={t:?}, vertex={vertex} at {point:?}, crossing face={face}"
         ))?;
     naming.edge_split(edge, new_edge, vertex)
 }

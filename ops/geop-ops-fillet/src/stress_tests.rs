@@ -26,7 +26,7 @@ use geop_lib_fixtures::bodies::{
 };
 use geop_ops_model::{
     NamedModel,
-    testing::{Cases, Outcome, edge_at, edges_where, middle, outcome},
+    testing::{Built, Cases, Outcome, edge_at, edges_where, middle, outcome},
 };
 
 use crate::{Chamfer, ChamferArgs, Fillet, FilletArgs};
@@ -116,6 +116,70 @@ fn stress_corners(program: Program, size: f64) {
 #[test]
 fn stress_block() {
     stress(block(), 0.1);
+}
+
+/// A thread that starts on the bottom rim of the cylinder it stands on and
+/// runs on above its top; and one edge of each of its chains: the flanks'
+/// corners on the wall, and clear of it below and above; the rims crossed by
+/// them.
+fn thread_chains() -> (NamedModel, Vec<String>) {
+    use crate::regression_tests::{square_thread, thread_registry};
+    let part = square_thread(1.5, 8.0)
+        .build_model(thread_registry)
+        .unwrap();
+    let model = part.topology();
+    let mut edges: Vec<EdgeId> = model.edges.keys().copied().collect();
+    edges.sort_by_key(|e| e.0);
+    let mut covered: Vec<EdgeId> = Vec::new();
+    let mut names = Vec::new();
+    for edge in edges {
+        if covered.contains(&edge) || model.faces_of_edge(edge).is_none() {
+            continue;
+        }
+        if let Ok(chain) = geop_ops_model::tangent::tangent_chain(&part, edge) {
+            covered.extend(chain.edges());
+        }
+        names.push(part.name_of(edge).unwrap().to_string());
+    }
+    (part, names)
+}
+
+#[test]
+#[ignore = "slow: part of the full stress set — run with `cargo test -- --ignored`"]
+fn stress_square_thread_fillets() {
+    let (part, chains) = thread_chains();
+    let mut cases = Cases::default();
+    for edge in chains {
+        let args = FilletArgs::constant(vec![edge.clone()], 0.1);
+        cases.record(
+            format!("fillet {edge}"),
+            outcome::<Fillet>(&part, &args, is_refusal),
+        );
+    }
+    cases.assert_none_wrong();
+}
+
+/// The chamfers of the same chains. Eight of them fail, fast, and none is a
+/// refusal saying why: `Scalar::div: divisor interval contains zero` where a
+/// chord moves onto the next quarter (`chamfer_crossing`, five of them; its
+/// Newton along the seam, by the look of it, from a seed at the chain's own
+/// point, which is not yet shown); the blend
+/// straying `0.1` from the chord over a span of one link (`sweep(thread,
+/// section,p0,route,c4.q5)`, which rounds); the boolean's search exhausted on
+/// the outer corner (`p2`); an invalid result at the start cap's edge.
+#[test]
+#[ignore = "bug: chamfers along a thread fail fast, without saying why, where the same edges round; see the comment"]
+fn stress_square_thread_chamfers() {
+    let (part, chains) = thread_chains();
+    let mut cases = Cases::default();
+    for edge in chains {
+        let args = ChamferArgs::even(vec![edge.clone()], 0.1);
+        cases.record(
+            format!("chamfer {edge}"),
+            outcome::<Chamfer>(&part, &args, is_refusal),
+        );
+    }
+    cases.assert_none_wrong();
 }
 
 #[test]

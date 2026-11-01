@@ -2,9 +2,10 @@
 //! reported with: a "clean" equivalent may not carry the same case at all.
 //! Each is the smallest program found that still fails.
 
-use geop_core_math::{geop_error::GeopResult, scalars::Scalar};
+use geop_core_math::{geop_error::GeopResult, scalars::Scalar, vector::Vector3};
 use geop_core_program::{operation_registry::OperationRegistry, program::Program};
 use geop_lib_fixtures::PrimitiveArgs;
+use geop_ops_model::sketch3d::{Sketch3d, sketch3d_path};
 use geop_ops_model::{
     NamedModel,
     tangent::tangent_chain,
@@ -14,20 +15,23 @@ use geop_ops_model::{
 use geop_core_math::primitives::FrameAxis;
 use geop_core_program::element::ElementReference;
 use geop_lib_fixtures::GivenDatumArgs;
+use geop_lib_sweep::Orientation;
 use geop_ops_extrude_revolve::{
-    Extents, LoftArgs, Output,
+    Extents, LoftArgs, Output, PathRef, RevolveArgs, RevolveAxis, SweepArgs,
     testing::{extrude, extrusion},
 };
 use geop_ops_model::{
-    Combine,
+    BooleanOp, Combine,
     datums::datums,
     sketch::{
         Constraint, Sketch, SketchPlane,
-        figures::{disc, n, on_face, on_origin},
-        whole_sketch,
+        figures::{disc, n, on_face, on_origin, polygon, rectangle_outline},
+        sketch_element, whole_sketch,
     },
+    solid,
 };
 use geop_ops_sketch::AddSketchArgs;
+use geop_ops_sketch3d::{AddSketch3d, AddSketch3dArgs};
 
 use geop_core_topology::contains::shell::PointClassification;
 
@@ -2038,4 +2042,178 @@ fn chamfer_of_two_feet_of_a_block_meeting_at_its_corner() {
     let lengths = 2.0 * (BOSS[0] + BOSS[1]);
     let expected = plate_and_block_volume() + 0.5 * lengths + 1.0 / 3.0;
     assert!((got - expected).abs() < 1e-6, "{got} is not {expected}");
+}
+
+/// A square thread as drawn in the editor (the example `square_thread`): a
+/// revolved cylinder about `y`, `height` high, a rectangle swept along a
+/// helix starting on its bottom rim, `turns` of it at the example's pitch,
+/// and joined to it. The thread starts below the cylinder and runs on above
+/// its top; its inner edges lie on the cylinder's wall, cut in quarter turns.
+pub(crate) fn square_thread(turns: f64, height: f64) -> Program {
+    let (radius, pitch, outer, below) = (
+        29.458436663535004_f64,
+        48.418982846502615 / 5.0,
+        35.97113966062063,
+        -3.4504680468347324,
+    );
+    let point = |p: [f64; 3]| Vector3::from_array(p.map(n));
+    let mut route = Sketch3d::new();
+    let start = route.add_point(point([radius, 0.0, 0.0]));
+    let base = route.add_point(point([0.0, 0.0, 0.0]));
+    let top = route.add_point(point([0.0, pitch * turns, 0.0]));
+    route.add_helix(start, base, top, n(turns), false).unwrap();
+    let mut body = Sketch::new();
+    let axis_a = body.add_fixed_point(n(0.0), n(0.0));
+    let axis_b = body.add_fixed_point(n(0.0), n(1.0));
+    let axis = body.add_line(axis_a, axis_b);
+    body.set_construction(axis, true);
+    polygon(
+        &mut body,
+        &[[0.0, 0.0], [radius, 0.0], [radius, height], [0.0, height]],
+    );
+    let mut program = Program::new();
+    program.push(
+        "body_sketch",
+        AddSketchArgs::on(on_origin(FrameAxis::Z), body),
+    );
+    program.push(
+        "body",
+        RevolveArgs {
+            sketch: whole_sketch("body_sketch"),
+            axis: Some(RevolveAxis::Sketch(sketch_element("body_sketch", axis))),
+            extent: Extents::blind(360.0),
+            output: Output::Solid(Combine::NewBody),
+        },
+    );
+    program.push(
+        "section",
+        AddSketchArgs::on(
+            on_origin(FrameAxis::Z),
+            rectangle_outline(radius, below, outer, 0.0),
+        ),
+    );
+    program.push(
+        "route",
+        AddSketch3dArgs {
+            sketch: route,
+            references: Vec::new(),
+        },
+    );
+    program.push(
+        "thread",
+        SweepArgs {
+            profile: whole_sketch("section"),
+            path: Some(PathRef::Sketch3d(sketch3d_path("route"))),
+            orientation: Orientation::FollowPath,
+            twist: 0.0,
+            end_scale: 1.0,
+            rails: Vec::new(),
+            output: Output::Solid(Combine::With {
+                op: BooleanOp::Union,
+                target: solid("revolve(body)"),
+            }),
+        },
+    );
+    program
+}
+
+/// The operations [`square_thread`] is written in, and the fillet.
+pub(crate) fn thread_registry() -> GeopResult<OperationRegistry> {
+    geop_ops_extrude_revolve::testing::registry()?
+        .with(AddSketch3d)?
+        .with(Fillet)
+}
+
+/// The volume of the one solid of `part`.
+fn volume(part: &NamedModel) -> f64 {
+    let model = part.topology();
+    let solid = *model.solids.keys().next().unwrap();
+    model.mass_properties(solid).unwrap().volume.to_f64()
+}
+
+/// `thread` with its edge at corner `corner` of the section, in quarter turn
+/// `quarter`, rounded by a radius of 0.1: valid, and bigger or smaller by the
+/// corner's `(1 - pi / 4) r^2` over a length about `along`.
+fn assert_thread_rounds(thread: Program, corner: &str, quarter: usize, along: f64, grows: bool) {
+    let before = volume(&thread.build_model(thread_registry).unwrap());
+    let mut program = thread;
+    let edge = format!("sweep(thread,section,{corner},route,c4.q{quarter})");
+    program.push("round", FilletArgs::constant(vec![edge], 0.1));
+    let part = program.build_model(thread_registry).unwrap();
+    assert_valid(&part);
+    let change = volume(&part) - before;
+    let expected = (1.0 - std::f64::consts::FRAC_PI_4) * 0.01 * along;
+    let change = if grows { change } else { -change };
+    assert!(
+        (change - expected).abs() < 0.1 * expected,
+        "the volume changed by {change} where the round takes about {expected}"
+    );
+}
+
+/// How long a turn of the thread's outer corner is, and of its inner one.
+const OUTER_TURN: f64 = 226.0;
+const INNER_TURN: f64 = 185.1;
+
+/// A chain along a thread is a tangent chain of a quarter turn per link: the
+/// picked edge reaches every other, whichever is picked.
+#[test]
+fn a_thread_edge_runs_in_one_chain_of_its_quarters() {
+    let part = square_thread(1.5, 10.0)
+        .build_model(thread_registry)
+        .unwrap();
+    let t = part.topology();
+    let chain = |name: &str| tangent_chain(&part, part.edge_id(name).unwrap()).unwrap();
+    let outer = chain("sweep(thread,section,p2,route,c4.q3)");
+    assert_eq!((outer.links.len(), outer.closed), (6, false));
+}
+
+/// Rounding the thread's outer corner (the ends run out past its end caps).
+/// Every joint of the chain's quarters puts a contact a hair into the next
+/// quarter, where the ball's own faces do not hold it: it was then sought on
+/// every pair of faces along the chain, each from a nearest point, so that
+/// the five turns' 20 quarters took 218012 nearest points for 853 balls, in
+/// 300 s, in the first of the blend's refinements. It now tries those within
+/// the ball's reach. The surface of the tool's cap also crosses the
+/// cylinder's top rim `1e-4` of a turn from its seam, where the rim's pcurve
+/// has parameters coarser than its `u`: its cut could not reach a point
+/// sharper than that, though it ended within the vertex.
+#[test]
+fn a_short_thread_outer_edge_is_rounded() {
+    assert_thread_rounds(square_thread(1.5, 8.0), "p2", 3, 1.5 * OUTER_TURN, false);
+}
+
+/// Rounding the thread's inner corner above the cylinder's top: a cut, clear
+/// of the wall, that runs into the top at the vertex where the corner leaves
+/// the wall. It is cut off by the top, flush with it, and the piece of the
+/// cut in the top's plane is made one with the top.
+#[test]
+fn a_short_thread_inner_edge_above_the_cylinder_is_rounded() {
+    assert_thread_rounds(square_thread(1.5, 8.0), "p3", 5, 0.67 * INNER_TURN, false);
+}
+
+/// Rounding the thread's inner corner where it stands on the cylinder's
+/// wall: a fill, between the flank and the wall. It ends at the start cap,
+/// where the flank ends and the wall goes on across a seam: flush with the
+/// cap, though the bottom's two quarters and the thread's inner wall meet
+/// at that vertex too. And at the cylinder's top, where the wall ends and
+/// the flank goes on, flush with the top.
+#[test]
+fn a_short_thread_inner_edge_is_rounded() {
+    assert_thread_rounds(square_thread(1.5, 8.0), "p3", 1, 0.83 * INNER_TURN, true);
+}
+
+/// The example `square_thread`, five turns, as a user rounded it.
+#[test]
+#[ignore = "slow: a minute, a tool of 20 quarters applied by a boolean — run with `cargo test -- --ignored`"]
+fn square_thread_outer_edge_is_rounded() {
+    let thread = square_thread(5.0, 38.54318130590188);
+    assert_thread_rounds(thread, "p2", 12, 5.0 * OUTER_TURN, false);
+}
+
+/// The same thread's inner edge, by its quarter the user picked.
+#[test]
+#[ignore = "slow: a minute, a tool of 16 quarters applied by a boolean — run with `cargo test -- --ignored`"]
+fn square_thread_inner_edge_is_rounded() {
+    let thread = square_thread(5.0, 38.54318130590188);
+    assert_thread_rounds(thread, "p3", 12, 3.98 * INNER_TURN, true);
 }

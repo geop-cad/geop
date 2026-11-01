@@ -1,5 +1,5 @@
 use crate::{Coedge, CoedgeGeometry, Edge, EdgeId, Model, Sense, VertexId};
-use geop_core_geometry::contains::curve::curve_could_contain;
+use geop_core_geometry::{contains::curve::curve_could_contain, search::PROJECT_ITERATIONS};
 use geop_core_math::{
     geop_error::{GeopError, GeopResult, WithContext},
     scalars::Scalar,
@@ -49,7 +49,7 @@ impl Model {
         // is a caller bug, reported rather than quietly ignored.
         let edge_t = edge
             .curve
-            .split_parameter_at_point(edge_t, &vertex_point)
+            .split_parameter_at_point(edge_t, &vertex_point, &vertex_point)
             .with_context(&ctx)?;
         // Where the pieces will meet: a point within the vertex, and the one
         // every pcurve is cut at too. Cut each at a point of the vertex of
@@ -100,9 +100,16 @@ impl Model {
                             "could not locate vertex {vertex_id} on coedge {coedge_id}'s pcurve"
                         )))))
                     })?;
+            // The vertex there: the pcurve is cut at the split point, and has
+            // only to end within the vertex.
+            let (vertex_u, vertex_v) = surface
+                .project(vertex_point, u.sharpen(), v.sharpen(), PROJECT_ITERATIONS)
+                .with_context(&ctx)
+                .with_context(&coedge_ctx)?;
+            let within = Vector2::from_array([u.union(vertex_u), v.union(vertex_v)]);
             let pcurve_t = coedge
                 .pcurve
-                .split_parameter_at_point(pcurve_t, &uv)
+                .split_parameter_at_point(pcurve_t, &uv, &within)
                 .with_context(&ctx)
                 .with_context(&coedge_ctx)
                 .with_context(&uv_ctx)?;
