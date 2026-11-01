@@ -242,6 +242,108 @@ fn beyond<PA: Piece, PB: Piece>(pair: &Pair<PA, PB>, best: &Best<PA::At, PB::At>
         .is_some_and(|(d, ..)| pair.lower.definitely_greater(*d))
 }
 
+/// Whether the set `a` is pieces of could come within `reach` of the set
+/// `b` is pieces of: [`least_distance`]'s search for a question that needs
+/// no least distance. A pair whose lower bound is definitely beyond `reach`
+/// is dropped before anything is asked of it, attaining a point being what
+/// costs on a trimmed face, and the first points attained within it end the
+/// search. So two parts a hair apart cost a few cuts, and two lying on each
+/// other one look. What the search cannot tell apart, at the handoff or at
+/// `max_nodes` pairs, could be within it.
+pub fn could_come_within<PA: Piece + Clone, PB: Piece + Clone>(
+    a: Vec<PA>,
+    b: Vec<PB>,
+    reach: Scalar,
+    handoff: Scalar,
+    max_nodes: usize,
+) -> GeopResult<bool> {
+    let mut pending = BinaryHeap::new();
+    let mut visited = 0usize;
+    // Keeps a pair that could still be within reach, answering at once if
+    // the points it attains are.
+    let look = |pending: &mut BinaryHeap<Pair<PA, PB>>, pa: PA, pb: PB| -> GeopResult<bool> {
+        let pair = Pair::new(pa, pb)?;
+        if pair.lower.definitely_greater(reach) {
+            return Ok(false);
+        }
+        if let (Some((_, p)), Some((_, q))) = (pair.a.point()?, pair.b.point()?)
+            && !p.sub(&q).norm().definitely_greater(reach)
+        {
+            return Ok(true);
+        }
+        pending.push(pair);
+        Ok(false)
+    };
+    for pa in &a {
+        for pb in &b {
+            if look(&mut pending, pa.clone(), pb.clone())? {
+                return Ok(true);
+            }
+        }
+    }
+    while let Some(pair) = pending.pop() {
+        if visited >= max_nodes {
+            return Ok(true);
+        }
+        visited += 1;
+        let Some(children) = cut(&pair, handoff)? else {
+            return Ok(true);
+        };
+        for (ca, cb) in children {
+            if look(&mut pending, ca, cb)? {
+                return Ok(true);
+            }
+        }
+    }
+    Ok(false)
+}
+
+/// `pair` cut in two, its larger piece, or the other if it cannot be: a
+/// piece is not cut below the handoff, nor once its data resolves nothing
+/// finer (see the module docs). `None`, if neither can.
+#[allow(clippy::type_complexity)]
+fn cut<PA: Piece + Clone, PB: Piece + Clone>(
+    pair: &Pair<PA, PB>,
+    handoff: Scalar,
+) -> GeopResult<Option<Vec<(PA, PB)>>> {
+    let size = |hull: &[Vector3]| -> f64 {
+        bounds(hull)
+            .iter()
+            .map(|x| x.width().to_f64().powi(2))
+            .sum::<f64>()
+    };
+    let a_first = size(&pair.hull_a) >= size(&pair.hull_b);
+    let cut_a = |pair: &Pair<PA, PB>| -> GeopResult<Option<Vec<(PA, PB)>>> {
+        if resolved(&pair.hull_a) {
+            return Ok(None);
+        }
+        Ok(pair
+            .a
+            .split(handoff)?
+            .map(|halves| halves.into_iter().map(|h| (h, pair.b.clone())).collect()))
+    };
+    let cut_b = |pair: &Pair<PA, PB>| -> GeopResult<Option<Vec<(PA, PB)>>> {
+        if resolved(&pair.hull_b) {
+            return Ok(None);
+        }
+        Ok(pair
+            .b
+            .split(handoff)?
+            .map(|halves| halves.into_iter().map(|h| (pair.a.clone(), h)).collect()))
+    };
+    if a_first {
+        match cut_a(pair)? {
+            Some(c) => Ok(Some(c)),
+            None => cut_b(pair),
+        }
+    } else {
+        match cut_b(pair)? {
+            Some(c) => Ok(Some(c)),
+            None => cut_a(pair),
+        }
+    }
+}
+
 /// The least distance between the set `a` is pieces of and the set `b` is
 /// pieces of (see the module docs).
 ///
@@ -281,45 +383,7 @@ pub fn least_distance<PA: Piece + Clone, PB: Piece + Clone>(
             break;
         }
         visited += 1;
-        // Cut the larger piece of the pair, or the other if it cannot be:
-        // a piece is not cut below the handoff, nor once its data resolves
-        // nothing finer (see the module docs).
-        let size = |hull: &[Vector3]| -> f64 {
-            bounds(hull)
-                .iter()
-                .map(|x| x.width().to_f64().powi(2))
-                .sum::<f64>()
-        };
-        let a_first = size(&pair.hull_a) >= size(&pair.hull_b);
-        let cut_a = |pair: &Pair<PA, PB>| -> GeopResult<Option<Vec<(PA, PB)>>> {
-            if resolved(&pair.hull_a) {
-                return Ok(None);
-            }
-            Ok(pair
-                .a
-                .split(handoff)?
-                .map(|halves| halves.into_iter().map(|h| (h, pair.b.clone())).collect()))
-        };
-        let cut_b = |pair: &Pair<PA, PB>| -> GeopResult<Option<Vec<(PA, PB)>>> {
-            if resolved(&pair.hull_b) {
-                return Ok(None);
-            }
-            Ok(pair
-                .b
-                .split(handoff)?
-                .map(|halves| halves.into_iter().map(|h| (pair.a.clone(), h)).collect()))
-        };
-        let children = if a_first {
-            match cut_a(&pair)? {
-                Some(c) => Some(c),
-                None => cut_b(&pair)?,
-            }
-        } else {
-            match cut_b(&pair)? {
-                Some(c) => Some(c),
-                None => cut_a(&pair)?,
-            }
-        };
+        let children = cut(&pair, handoff)?;
         let Some(children) = children else {
             leaves.push(pair);
             continue;

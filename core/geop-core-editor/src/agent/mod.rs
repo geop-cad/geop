@@ -30,6 +30,7 @@ use geop_core_program::{
     element::PickedElement,
     placed::Located,
     program::{Program, ProgramStep},
+    values::{StateValue, StateValues},
 };
 use serde::Serialize;
 use serde_json::{Value, json};
@@ -42,6 +43,7 @@ use crate::{
     editing::{Pointer, Presentation, StepEditEvent, Value as DialogValue},
     editor::{Command, Editor, ProgramState, SceneState, StepState, Update},
     view::{
+        PartView,
         lit::Lighting,
         picture::{Camera, picture},
     },
@@ -90,7 +92,7 @@ pub fn tools() -> Vec<AgentTool> {
     vec![
         tool(
             "new_part",
-            "Start a new, empty part. Every part has the coordinate-system datum `origin`, whose planes a sketch is drawn on, as `add_sketch`'s `plane`: {\"datum\": \"origin:xy\"}, {\"datum\": \"origin:yz\"} or {\"datum\": \"origin:zx\"}.",
+            "Start a new, empty part. Every part has the coordinate-system datum `origin`, whose planes a sketch is drawn on, as `add_sketch`'s `plane`: {\"datum\": \"origin:xy\"}, {\"datum\": \"origin:yz\"} or {\"datum\": \"origin:zx\"}. A point (a, b) of a sketch lies in the world at (a, b, 0) on `origin:xy` (normal +z), (0, a, b) on `origin:yz` (normal +x), and (a, 0, -b) on `origin:zx` (normal +y): there, the sketch's y runs along -z. A sketch's normal is the way an extent goes (see `add_step`). y is up in the world.",
             json!({}),
             &[],
             false,
@@ -111,7 +113,7 @@ pub fn tools() -> Vec<AgentTool> {
         ),
         tool(
             "add_step",
-            "Add a step of the operation `kind` with `args` (its saved JSON, see `list_operations` with `kind`) at the end of the program, or before the step `before`. A step whose arguments do not read is refused and not added; one that reads but does not build is added, and its error says why. Answers with every step's status: an error names the step and what went wrong.",
+            "Add a step of the operation `kind` with `args` (its saved JSON, see `list_operations` with `kind`) at the end of the program, or before the step `before`. A step whose arguments do not read is refused and not added; one that reads but does not build is added, and its error says why. Answers with every step's status: an error names the step and what went wrong, and `moved` lists the parts the solver moved from where they were loaded or saved, the furthest first: mates that hold only because a part jumped are no error, so read it. An extent runs from the sketch's plane: `side1` along the normal (against it if `reversed` or negative) and `side2` the other way, a negative `side2` being that far along the normal, so that the solid starts away from the plane. Its `start` cap is at the `side2` end (the plane, with no `side2`) and its `end` cap at the `side1` end, whichever way that is in the world.",
             json!({ "kind": string("The operation, e.g. `add_sketch`, `extrude`, `fillet`."), "args": object("The step's arguments as saved in a .geop file."), "id": string("The step's id (letters, digits, `_`, `-`, `.`); chosen from the operation's label if left out. Later steps refer to what this one builds by it, e.g. `extrude(<id>)`."), "before": string("The step to add it before; the end of the program if left out.") }),
             &["kind", "args"],
             false,
@@ -139,22 +141,22 @@ pub fn tools() -> Vec<AgentTool> {
         ),
         tool(
             "list_elements",
-            "The names of the part's elements as they are now, for typed references: solids, faces (with their solid), edges (with their faces), vertices, sketches, datums and what else the part lists (threads, placed parts). A face is referred to by its name, as a sketch's plane {\"face\": ...}; an edge by its name, as in a fillet's `edges`.",
-            json!({}),
+            "The names of the part's elements as they are now, for typed references: solids, faces (with their solid), edges (with their faces), vertices, sketches, datums and what else the part lists (threads, placed parts). A face is referred to by its name, as a sketch's plane {\"face\": ...}; an edge by its name, as in a fillet's `edges`. In a swept feature's names, `start` and `end` say which cap: `extrude(box,end)` is the end cap, `extrude(box,sketch,c4,end)` the edge of the side face swept by the curve c4 on that cap, and `extrude(box,sketch,p1,end)` the vertex over the point p1. Given `placed` (a placed part's path, `hip` or `hip/servo`), the elements of that part instead, in its own frame, with where it is placed (`frame`), its size (`extent`), its datums (the frames to mount by) and the `target` to refer to them by.",
+            json!({ "placed": string("The placed part to list, e.g. `hip/servo`.") }),
             &[],
             false,
         ),
         tool(
             "inspect",
-            "Ask about the part: `mass_properties` (volume, area and centroid of every solid; its mass and inertia if its part has a material, null if not), `interference` (which solids overlap), or `measure` with `elements` (a point, a length, an area, a radius; the distance and angle between two).",
-            json!({ "inspector": { "type": "string", "enum": ["mass_properties", "interference", "measure"] }, "elements": { "type": "array", "description": "For `measure`: one or two elements, each {\"kind\": \"vertex\"|\"edge\"|\"face\"|\"datum\", \"name\": ...}.", "items": { "type": "object", "properties": { "kind": string("vertex, edge, face or datum"), "name": string("Its name, from list_elements") }, "required": ["kind", "name"] } } }),
+            "Ask about the part: `mass_properties` (volume, area and centroid of every solid; its mass and inertia if its part has a material, null if not), `interference` (which solids overlap), or `measure` with `elements` (a point, a length, an area, a radius; the distance and angle between two). On an assembly the first two can take minutes, and calls wait their turn behind them: narrow them with `options` {\"parts\": [\"left_leg\", \"hip/servo\"]}, the solids of those placed parts and what is placed in them (`interference`: each against everything, or, with \"only_among\": true, only against each other), and give `limit_seconds`: past it, the answer is what was found so far, with `stopped` saying how far it got. A cancelled call stops likewise, at the next pair or solid.",
+            json!({ "inspector": { "type": "string", "enum": ["mass_properties", "interference", "measure"] }, "elements": { "type": "array", "description": "For `measure`: one or two elements, each {\"kind\": \"vertex\"|\"edge\"|\"face\"|\"datum\", \"name\": ...}.", "items": { "type": "object", "properties": { "kind": string("vertex, edge, face or datum"), "name": string("Its name, from list_elements") }, "required": ["kind", "name"] } }, "options": object("The inspector's own options: `parts`, `only_among`."), "limit_seconds": { "type": "number", "description": "How long it may take, where the front end keeps time (`geop mcp`; not in the browser)." } }),
             &["inspector"],
             false,
         ),
         tool(
             "export",
             "Write what the program builds to `path`, in the format its extension names unless `format` says otherwise: stl, step, svg or dxf (drawings and flat patterns), csv (bill of materials), zip (URDF).",
-            json!({ "path": string("Where to write the file."), "format": string("The format, if not the path's extension."), "options": object("The exporter's own options, e.g. {\"quality\": 8} for STL.") }),
+            json!({ "path": string("Where to write the file."), "format": string("The format, if not the path's extension."), "options": object("The exporter's own options, e.g. {\"quality\": 8} for STL."), "limit_seconds": { "type": "number", "description": "How long an STL of placed parts may take: past it, the export fails and nothing is written." } }),
             &["path"],
             true,
         ),
@@ -243,6 +245,10 @@ const VIEWS: [(&str, [f64; 3], [f64; 3]); 7] = [
     ("top", [0.0, 1.0, 0.0], [0.0, 0.0, -1.0]),
     ("bottom", [0.0, -1.0, 0.0], [0.0, 0.0, 1.0]),
 ];
+
+/// How far a part has to have moved, in length or radians, for the status
+/// to say so: well above what a solve leaves of a part that stayed.
+const MOVED: f64 = 1e-6;
 
 /// The size of a picture, unless `look` is told otherwise.
 const PICTURE: (u32, u32) = (800, 600);
@@ -335,6 +341,9 @@ pub struct Session {
     camera: Option<Camera>,
     /// Whether the step open has been told which way is up in `camera`.
     told: bool,
+    /// The program's state as it was loaded or saved, which the status
+    /// says what moved from.
+    saved: StateValues,
 }
 
 impl Session {
@@ -353,6 +362,7 @@ impl Session {
             images: Vec::new(),
             camera: None,
             told: false,
+            saved: StateValues::new(),
         };
         session.handle(Command::Show);
         // That scene was the session's to know, not the viewer's to have:
@@ -503,6 +513,7 @@ impl Session {
         }
         match (name, files) {
             ("new_part", _) => {
+                self.saved = StateValues::new();
                 self.load(Program::new())?;
                 self.status()
             }
@@ -510,7 +521,9 @@ impl Session {
                 if let Some(path) = args.get("path").and_then(Value::as_str) {
                     self.load_file(path, files)
                 } else {
-                    self.load(Program::from_json(&text("text")?)?)?;
+                    let program = Program::from_json(&text("text")?)?;
+                    self.saved = program.state.clone();
+                    self.load(program)?;
                     self.status()
                 }
             }
@@ -564,11 +577,15 @@ impl Session {
                 self.send(Command::Seek { marker: None })?;
                 self.status()
             }
-            ("list_elements", _) => self.list_elements(),
+            ("list_elements", _) => match args.get("placed").and_then(Value::as_str) {
+                Some(placed) => self.list_placed_elements(placed),
+                None => self.list_elements(),
+            },
             ("inspect", _) => {
                 let inspector = text("inspector")?;
                 let elements = args.get("elements").cloned().unwrap_or(json!([]));
-                self.inspect(&inspector, &elements)
+                let options = args.get("options").cloned().unwrap_or(Value::Null);
+                self.inspect(&inspector, &elements, options)
             }
             ("export", Some(files)) => {
                 let path = text("path")?;
@@ -587,6 +604,7 @@ impl Session {
                 let program = self.editor.program().clone();
                 let json = program.to_json()?;
                 files.write(&path, json.as_bytes())?;
+                self.saved = program.state.clone();
                 if self.path.as_deref() != Some(path.as_str()) {
                     self.send(Command::Load {
                         program,
@@ -1030,6 +1048,7 @@ impl Session {
     /// it, which the parts it places are read from.
     fn load_file(&mut self, path: &str, files: &mut dyn Files) -> GeopResult<Value> {
         let program = Program::from_json(&files.read(path)?)?;
+        self.saved = program.state.clone();
         let beside = files.programs_beside(path);
         if !beside.is_empty() {
             self.send(Command::Files { files: beside })?;
@@ -1070,12 +1089,41 @@ impl Session {
             "solids": solids,
             "path": program.path,
             "open_step": self.step.as_ref().map(|s| json!({ "id": s.id, "kind": s.kind })),
+            "moved": self.moved(),
             "tool": program.tool,
             "tools": tools,
             "panels": panels,
             "can_undo": program.can_undo,
             "can_redo": program.can_redo,
         }))
+    }
+
+    /// The poses in the program's state that are not where they were
+    /// loaded or saved, the furthest first: how far each went and turned.
+    /// Lengths are read to [`MOVED`], which is only what is worth saying:
+    /// it decides nothing else.
+    fn moved(&self) -> Vec<Value> {
+        let mut moved: Vec<(f64, f64, &str)> = (self.editor.program().state.iter())
+            .filter_map(|(name, now)| {
+                let (StateValue::Pose(now), Some(StateValue::Pose(saved))) =
+                    (now, self.saved.get(name))
+                else {
+                    return None;
+                };
+                let relative = saved.inverse().compose(now);
+                let by = relative.position().to_array().map(|x| x.to_f64());
+                let by = by.iter().map(|x| x * x).sum::<f64>().sqrt();
+                let turn = relative.rotation();
+                let across = [turn.x, turn.y, turn.z].map(|x| x.to_f64());
+                let across = across.iter().map(|x| x * x).sum::<f64>().sqrt();
+                let turned = 2.0 * across.atan2(turn.w.to_f64().abs());
+                (by > MOVED || turned > MOVED).then_some((by, turned.to_degrees(), name.as_str()))
+            })
+            .collect();
+        moved.sort_by(|a, b| b.0.total_cmp(&a.0).then(b.1.total_cmp(&a.1)));
+        (moved.into_iter())
+            .map(|(by, turned, name)| json!({ "state": name, "moved": by, "turned_degrees": turned }))
+            .collect()
     }
 
     /// Every operation, by kind, label, group and what it does; or the one
@@ -1142,7 +1190,54 @@ impl Session {
 
     fn list_elements(&self) -> GeopResult<Value> {
         let scene = self.scene()?;
-        let part = &scene.part;
+        let mut listed = Self::elements_of(&scene.part);
+        let structure: Vec<Value> = (scene.structure.iter().flatten())
+            .map(|item| json!({ "kind": item.kind, "name": item.name }))
+            .collect();
+        listed.insert("structure".into(), json!(structure));
+        Ok(Value::Object(listed))
+    }
+
+    /// The elements of the part placed at `placed`, in its own frame, and
+    /// how to refer to them from the part it is placed in.
+    fn list_placed_elements(&self, placed: &str) -> GeopResult<Value> {
+        let part = &self.scene()?.part;
+        let instance = (part.instances.iter())
+            .find(|instance| instance.name == placed)
+            .ok_or_else(|| {
+                let names: Vec<&str> = part.instances.iter().map(|i| i.name.as_str()).collect();
+                GeopError::new(format!(
+                    "no part is placed as `{placed}`; there are {}",
+                    names.join(", ")
+                ))
+            })?;
+        let view = &instance.view;
+        let vector = |v: &Vector3| v.to_array().map(|x| x.to_f64());
+        let mut listed = Self::elements_of(view);
+        listed.insert("placed".into(), json!(placed));
+        let target = Located::in_instance(placed, &view.model).key();
+        listed.insert("target".into(), json!(target));
+        listed.insert(
+            "frame".into(),
+            json!({
+                "origin": vector(instance.frame.origin()),
+                "x": vector(instance.frame.u()),
+                "y": vector(instance.frame.v()),
+                "z": vector(instance.frame.w()),
+            }),
+        );
+        listed.insert(
+            "extent".into(),
+            json!({
+                "center": vector(&view.extent.center),
+                "size": view.extent.size.to_f64(),
+            }),
+        );
+        Ok(Value::Object(listed))
+    }
+
+    /// The elements of `part`, by name.
+    fn elements_of(part: &PartView) -> serde_json::Map<String, Value> {
         let faces: Vec<Value> = (part.faces.iter())
             .map(|f| json!({ "name": f.name, "solid": f.solid, "feature": f.feature }))
             .collect();
@@ -1159,25 +1254,24 @@ impl Session {
         let datums: Vec<Value> = (part.datums.iter())
             .map(|d| json!({ "name": d.name, "kind": d.kind }))
             .collect();
-        let structure: Vec<Value> = (scene.structure.iter().flatten())
-            .map(|item| json!({ "kind": item.kind, "name": item.name }))
-            .collect();
         // Every part placed, not only those the last scene sent anew.
         let placed: Vec<&str> = part.instances.iter().map(|i| i.name.as_str()).collect();
-        Ok(json!({
-            "solids": part.solids,
-            "faces": faces,
-            "edges": edges,
-            "vertices": vertices,
-            "sketches": sketches,
-            "datums": datums,
-            "structure": structure,
-            "placed_parts": placed,
-        }))
+        [
+            ("solids", json!(part.solids)),
+            ("faces", json!(faces)),
+            ("edges", json!(edges)),
+            ("vertices", json!(vertices)),
+            ("sketches", json!(sketches)),
+            ("datums", json!(datums)),
+            ("placed_parts", json!(placed)),
+        ]
+        .into_iter()
+        .map(|(key, value)| (key.to_string(), value))
+        .collect()
     }
 
     /// Asks `inspector` about the part — of `elements`, for one that picks.
-    fn inspect(&mut self, inspector: &str, elements: &Value) -> GeopResult<Value> {
+    fn inspect(&mut self, inspector: &str, elements: &Value, options: Value) -> GeopResult<Value> {
         let elements = (elements.as_array())
             .ok_or_else(|| GeopError::new("`elements` (a list of {kind, name}) is required"))?;
         let picked: Vec<PickedElement> = (elements.iter())
@@ -1197,7 +1291,7 @@ impl Session {
             .collect::<GeopResult<_>>()?;
         let update = self.send(Command::Inspect {
             inspector: inspector.to_string(),
-            options: Value::Null,
+            options,
             picked,
         })?;
         let inspection = (update.inspection)

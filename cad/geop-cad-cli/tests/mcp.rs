@@ -17,6 +17,8 @@ struct Server {
     stdin: ChildStdin,
     stdout: BufReader<ChildStdout>,
     next_id: u64,
+    /// The notifications it sent, in order.
+    notified: Vec<Value>,
 }
 
 impl Server {
@@ -35,6 +37,7 @@ impl Server {
             stdin,
             stdout,
             next_id: 1,
+            notified: Vec::new(),
         }
     }
 
@@ -44,13 +47,20 @@ impl Server {
         self.next_id += 1;
         let message = json!({ "jsonrpc": "2.0", "id": id, "method": method, "params": params });
         writeln!(self.stdin, "{message}").unwrap();
-        let mut line = String::new();
-        self.stdout.read_line(&mut line).unwrap();
-        assert!(!line.is_empty(), "the server closed its output");
-        let answer: Value = serde_json::from_str(&line).unwrap_or_else(|e| panic!("{e}: {line}"));
-        assert_eq!(answer["id"], json!(id), "{answer}");
-        assert_eq!(answer["jsonrpc"], "2.0");
-        answer
+        loop {
+            let mut line = String::new();
+            self.stdout.read_line(&mut line).unwrap();
+            assert!(!line.is_empty(), "the server closed its output");
+            let answer: Value =
+                serde_json::from_str(&line).unwrap_or_else(|e| panic!("{e}: {line}"));
+            assert_eq!(answer["jsonrpc"], "2.0");
+            if answer.get("id").is_none() {
+                self.notified.push(answer);
+                continue;
+            }
+            assert_eq!(answer["id"], json!(id), "{answer}");
+            return answer;
+        }
     }
 
     /// Sends a notification, which is not answered.
@@ -405,4 +415,73 @@ fn resources_prompts_and_pictures_are_served() {
             .unwrap()
             .starts_with("iVBORw0KGgo")
     );
+}
+
+/// A slow check given a limit answers with what it has and how far it got;
+/// a call told how to report its progress reports it; and a call cancelled
+/// before its turn is never run, nor answered.
+#[test]
+fn checks_are_limited_report_progress_and_are_cancelled() {
+    let mut server = Server::start();
+    server.request(
+        "initialize",
+        json!({ "protocolVersion": "2025-06-18", "capabilities": {}, "clientInfo": { "name": "test", "version": "0" } }),
+    );
+    let steps = drilled_box().steps;
+    for step in &steps {
+        server.ok(
+            "add_step",
+            json!({ "kind": step.operation, "args": step.args, "id": step.id }),
+        );
+    }
+    let block = steps.iter().find(|step| step.id == "box").unwrap();
+    server.ok(
+        "add_step",
+        json!({ "kind": block.operation, "args": block.args, "id": "second" }),
+    );
+
+    let stopped = server.ok(
+        "inspect",
+        json!({ "inspector": "interference", "limit_seconds": 0 }),
+    );
+    assert_eq!(
+        stopped["stopped"],
+        json!({ "checked": 0, "of": 1 }),
+        "{stopped}"
+    );
+    let answered = server.request(
+        "tools/call",
+        json!({
+            "name": "inspect",
+            "arguments": { "inspector": "interference" },
+            "_meta": { "progressToken": "watched" },
+        }),
+    );
+    let text = answered["result"]["content"][0]["text"].as_str().unwrap();
+    let whole: Value = serde_json::from_str(text).unwrap();
+    assert!(whole["stopped"].is_null(), "{whole}");
+    assert_eq!(whole["found"].as_array().unwrap().len(), 1, "{whole}");
+    let told = &server.notified.last().expect("its progress was reported")["params"];
+    assert_eq!(told["progressToken"], "watched", "{told}");
+    assert!(told["message"].as_str().unwrap().contains("of 1"), "{told}");
+
+    let refused = server.call(
+        "inspect",
+        json!({ "inspector": "interference", "limit_seconds": -1 }),
+    );
+    assert!(
+        refused.1 && refused.0.contains("limit_seconds"),
+        "{}",
+        refused.0
+    );
+
+    // Cancelled before it came: the next answer is the next request's.
+    let cancel = json!({ "jsonrpc": "2.0", "method": "notifications/cancelled", "params": { "requestId": 9999 } });
+    writeln!(server.stdin, "{cancel}").unwrap();
+    // The reader hears it before the call, as they are read in order.
+    let cancelled = json!({ "jsonrpc": "2.0", "id": 9999, "method": "tools/call", "params": { "name": "new_part", "arguments": {} } });
+    writeln!(server.stdin, "{cancelled}").unwrap();
+    let (status, is_error) = server.call("run", json!({}));
+    assert!(!is_error, "{status}");
+    assert!(status.contains("second"), "new_part did not run: {status}");
 }

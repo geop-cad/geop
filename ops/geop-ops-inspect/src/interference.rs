@@ -7,17 +7,17 @@ use geop_core_editor::output::{Answer, Block, Bounded, Row};
 use geop_core_math::{
     geop_error::{GeopError, GeopResult, WithContext},
     primitives::Pose,
-    scalars::Scalar,
     vector::{Vector, Vector3},
 };
 use geop_core_program::{
     element::PickedElement,
     placed::{INSTANCE_SEPARATOR, instance_path},
     reader::Reader,
+    watch,
 };
 use geop_core_topology::{
     Body, SolidId,
-    distance::{Feature, PlacedFace, closest_points},
+    distance::{Feature, PlacedFace, could_touch},
 };
 use geop_ops_model::placed::{
     locate,
@@ -26,7 +26,7 @@ use geop_ops_model::placed::{
 use geop_ops_model::{BodyNames, NamedModel, Namer};
 use std::collections::HashMap;
 
-use crate::mass::drawn;
+use crate::{Scope, mass::drawn, scope::Stopped};
 use geop_lib_booleans::{RemeshParams, boolean};
 use geop_ops_model::BooleanOp;
 use serde::Serialize;
@@ -114,6 +114,9 @@ pub struct InterferenceReport {
     pub unchecked: Vec<Unchecked>,
     /// What finding them took.
     pub work: Work,
+    /// How far it got, if it was stopped before the end (see
+    /// [`geop_core_program::watch`]): the pairs not looked at may meet.
+    pub stopped: Option<Stopped>,
 }
 
 impl InterferenceReport {
@@ -121,7 +124,12 @@ impl InterferenceReport {
     /// pointed at, how — and each that could not be checked, why.
     pub fn shown(&self) -> Answer {
         let mut blocks = Vec::new();
-        if self.found.is_empty() && self.unchecked.is_empty() {
+        if let Some(Stopped { checked, of }) = self.stopped {
+            blocks.push(Block::Text {
+                text: format!("Stopped after {checked} of {of} pairs: the rest may meet."),
+                tone: Tone::Error,
+            });
+        } else if self.found.is_empty() && self.unchecked.is_empty() {
             let plural = if self.solids == 1 { "" } else { "s" };
             blocks.push(Block::Text {
                 text: format!("No interference among {} solid{plural}.", self.solids),
@@ -182,24 +190,35 @@ pub struct Work {
 /// not by comparing every pair. Any other pair is intersected, as copies in
 /// a part of their own: a solid left is their overlap, measured by its
 /// volume. Nothing left, the two touch if the least distance between their
-/// faces could be zero (see [`closest_points`]), and are apart otherwise.
+/// faces could be zero (see [`could_touch`]), and are apart otherwise.
 ///
 /// A pair is checked in the frame of its first solid, the second moved
 /// relative to it; a pair of the same two shapes at the same relative pose
 /// — every screw in its nut — is checked once ([`Checked`]).
-pub fn interference_report(reader: &Reader) -> GeopResult<InterferenceReport> {
+///
+/// Only the pairs `scope` asks about are looked at. Stopped part way (see
+/// [`geop_core_program::watch`]), it says what it found and how far it got.
+pub fn interference_report(reader: &Reader, scope: &Scope) -> GeopResult<InterferenceReport> {
     let solids = placed_solids(reader)?;
+    scope.check(&solids)?;
     let mut local = LocalBoxes::default();
     let boxes = (solids.iter())
         .map(|s| local.placed(s))
         .collect::<GeopResult<Vec<_>>>()?;
     let mut work = Work::default();
-    let pairs = candidate_pairs(&boxes, &mut work.boxes_compared);
+    let mut pairs = candidate_pairs(&boxes, &mut work.boxes_compared);
+    pairs.retain(|&(i, j)| scope.holds_pair(&solids[i].instance, &solids[j].instance));
+    let of = pairs.len();
+    let mut stopped = None;
     let mut checked = Checked::default();
     let mut poses = LocalPoses::default();
     let mut found = Vec::new();
     let mut unchecked = Vec::new();
-    for (i, j) in pairs {
+    for (at, (i, j)) in pairs.into_iter().enumerate() {
+        if !watch::go_on("checking pairs of solids", at, of) {
+            stopped = Some(Stopped { checked: at, of });
+            break;
+        }
         work.candidates += 1;
         let (a, b) = (&solids[i], &solids[j]);
         let relative = poses.relative(reader, a, b)?;
@@ -224,6 +243,7 @@ pub fn interference_report(reader: &Reader) -> GeopResult<InterferenceReport> {
         found,
         unchecked,
         work,
+        stopped,
     })
 }
 
@@ -473,16 +493,17 @@ fn touch(a: &PlacedSolid, b: &PlacedSolid) -> GeopResult<bool> {
             .collect()
     };
     let (fa, fb) = (faces(a)?, faces(b)?);
-    for (face_a, box_a) in &fa {
+    for (at, (face_a, box_a)) in fa.iter().enumerate() {
+        watch::checkpoint("looking for where two solids touch", at, fa.len())?;
         for (face_b, box_b) in &fb {
             if apart(box_a, box_b) {
                 continue;
             }
-            let closest = closest_points(
+            let touching = could_touch(
                 &Feature::Face(PlacedFace::new(a.model.topology(), *face_a, a.pose)?),
                 &Feature::Face(PlacedFace::new(b.model.topology(), *face_b, b.pose)?),
             )?;
-            if closest.distance.could_be_equal(Scalar::ZERO) {
+            if touching {
                 return Ok(true);
             }
         }

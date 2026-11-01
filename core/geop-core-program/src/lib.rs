@@ -67,4 +67,5 @@ mod test;
 #[cfg(any(test, feature = "testing"))]
 pub mod testing;
 pub mod values;
+pub mod watch;
 pub mod workspace;

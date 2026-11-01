@@ -100,7 +100,7 @@ fn assert_near(what: &str, bounded: Bounded, exact: f64, relative: f64) {
 /// The one solid's summary of a report, of `model` made of steel.
 fn only(model: &NamedModel) -> MassSummary {
     let part = built(model, steel());
-    let report = mass_report(&part.current()).unwrap();
+    let report = mass_report(&part.current(), &Default::default()).unwrap();
     assert_eq!(report.bodies.len(), 1, "{report:?}");
     let body = &report.bodies[0];
     assert!(body.error.is_none(), "{body:?}");
@@ -203,7 +203,7 @@ fn two_boxes_combine() {
     cube_solid(&mut part, "a", v3(0.0, 0.0, 0.0), v3(1.0, 1.0, 1.0)).unwrap();
     cube_solid(&mut part, "b", v3(3.0, 0.0, 0.0), v3(4.0, 1.0, 1.0)).unwrap();
     let part = built(&part, steel());
-    let report = mass_report(&part.current()).unwrap();
+    let report = mass_report(&part.current(), &Default::default()).unwrap();
     assert_eq!(report.bodies.len(), 2);
     let total = report.total.unwrap();
     let m = 7850.0e-9;
@@ -227,7 +227,7 @@ fn a_box_of_no_material_has_no_mass() {
     let mut part = NamedModel::new();
     cube_solid(&mut part, "b", v3(1.0, 2.0, 3.0), v3(3.0, 6.0, 4.0)).unwrap();
     let part = built(&part, None);
-    let report = mass_report(&part.current()).unwrap();
+    let report = mass_report(&part.current(), &Default::default()).unwrap();
     let body = &report.bodies[0];
     assert!(body.material.is_none(), "{body:?}");
     let summary = body.properties.as_ref().unwrap();
@@ -259,7 +259,10 @@ fn two_boxes_of_no_material_combine_by_volume() {
     cube_solid(&mut part, "a", v3(0.0, 0.0, 0.0), v3(1.0, 1.0, 1.0)).unwrap();
     cube_solid(&mut part, "b", v3(3.0, 0.0, 0.0), v3(5.0, 1.0, 1.0)).unwrap();
     let part = built(&part, None);
-    let total = mass_report(&part.current()).unwrap().total.unwrap();
+    let total = mass_report(&part.current(), &Default::default())
+        .unwrap()
+        .total
+        .unwrap();
     assert!(total.inertial.is_none(), "{total:?}");
     assert_near("volume", total.volume, 3.0, 1e-9);
     // 1 at 0.5, 2 at 4.
@@ -299,7 +302,7 @@ fn a_total_of_some_materials_has_only_volume_and_area() {
     let runner = runner(shelf, "top.geop");
     let mut part = Part::default();
     (root.run(&runner, &mut part)).unwrap();
-    let report = mass_report(&part.current()).unwrap();
+    let report = mass_report(&part.current(), &Default::default()).unwrap();
     let weighed: Vec<bool> = (report.bodies.iter())
         .map(|b| b.properties.as_ref().unwrap().inertial.is_some())
         .collect();
@@ -401,7 +404,7 @@ fn overlapping_and_touching_boxes() {
     cube_solid(&mut part, "b", v3(1.0, 1.0, 1.0), v3(3.0, 3.5, 3.0)).unwrap();
     cube_solid(&mut part, "c", v3(-1.0, 0.0, 0.0), v3(0.0, 1.0, 1.0)).unwrap();
     cube_solid(&mut part, "d", v3(10.0, 0.0, 0.0), v3(11.0, 1.0, 1.0)).unwrap();
-    let report = interference_report(&built(&part, None).current()).unwrap();
+    let report = interference_report(&built(&part, None).current(), &Default::default()).unwrap();
     assert!(report.unchecked.is_empty(), "{report:?}");
     assert_eq!(report.solids, 4);
     assert_eq!(report.found.len(), 2, "{report:?}");
@@ -450,7 +453,7 @@ fn long_bars_overlap() {
     let mut part = NamedModel::new();
     cube_solid(&mut part, "a", v3(0.0, 0.0, 0.0), v3(50.0, 10.0, 10.0)).unwrap();
     cube_solid(&mut part, "b", v3(10.0, 5.0, 5.0), v3(60.0, 15.0, 15.0)).unwrap();
-    let report = interference_report(&built(&part, None).current()).unwrap();
+    let report = interference_report(&built(&part, None).current(), &Default::default()).unwrap();
     assert!(report.unchecked.is_empty(), "{report:?}");
     assert_eq!(report.found.len(), 1, "{report:?}");
     assert_near(
@@ -576,7 +579,7 @@ fn placed_parts_are_measured_where_they_are() {
     assert!(measured.error.is_none(), "{measured:?}");
     let x = measured.values.iter().find(|m| m.label == "X").unwrap();
     assert!(x.value.contains(10.0), "{measured:?}");
-    let report = mass_report(&part.current()).unwrap();
+    let report = mass_report(&part.current(), &Default::default()).unwrap();
     let body = &report.bodies[0];
     assert!(
         body.drawn
@@ -616,7 +619,7 @@ fn copies_of_one_pair_are_checked_once() {
     let runner = runner(shelf, "top.geop");
     let mut part = Part::default();
     top.run(&runner, &mut part).unwrap();
-    let report = interference_report(&part.current()).unwrap();
+    let report = interference_report(&part.current(), &Default::default()).unwrap();
     assert!(report.unchecked.is_empty(), "{report:?}");
     assert_eq!(report.solids, 2 * copies);
     assert_eq!(report.found.len(), copies, "{report:?}");
@@ -629,6 +632,76 @@ fn copies_of_one_pair_are_checked_once() {
     assert_eq!(work.booleans, 1, "{work:?}");
     // Each box meets the sweep beside its own copy's and its neighbours'.
     assert!(work.boxes_compared <= 3 * copies, "{work:?}");
+}
+
+/// A question narrowed to one placed part looks only at what it asks, and
+/// refuses a part there is not; stopped part way, it says how far it got.
+#[test]
+fn checks_are_narrowed_to_parts_and_stopped_part_way() {
+    use crate::{Scope, scope::Stopped};
+    use geop_core_math::primitives::Quaternion;
+    use geop_core_program::watch::{Progress, watching};
+    use geop_ops_assembly::testing::{Shelf, given_model, place, runner};
+    let mut pinned = NamedModel::new();
+    cube_solid(&mut pinned, "block", v3(0.0, 0.0, 0.0), v3(4.0, 4.0, 4.0)).unwrap();
+    cube_solid(&mut pinned, "pin", v3(1.0, 1.0, -1.0), v3(2.0, 2.0, 5.0)).unwrap();
+    let copies = 3;
+    let mut top = Program::default();
+    for k in 0..copies {
+        let id = format!("p{k}");
+        top.steps.push(place(&id, "pinned.geop", &Settings::new()));
+        let at = v3(10.0 * k as f64, 0.0, 0.0);
+        let pose = Pose::new(at, Quaternion::identity()).unwrap();
+        top.state.insert(pose_state(&id), StateValue::Pose(pose));
+    }
+    let pinned = Program {
+        steps: vec![given_model("model", pinned, None)],
+        ..Program::default()
+    };
+    let shelf = Shelf::default()
+        .with("pinned.geop", pinned)
+        .with("top.geop", top.clone());
+    let runner = runner(shelf, "top.geop");
+    let mut part = Part::default();
+    top.run(&runner, &mut part).unwrap();
+    let reader = part.current();
+    let one = Scope {
+        parts: vec!["p1".into()],
+        only_among: false,
+    };
+
+    let report = interference_report(&reader, &one).unwrap();
+    assert_eq!(report.work.candidates, 1, "{report:?}");
+    assert_eq!(report.found.len(), 1, "{report:?}");
+    assert!(report.found[0].a.contains("p1"), "{report:?}");
+    assert_eq!(report.stopped, None);
+    assert_eq!(mass_report(&reader, &one).unwrap().bodies.len(), 2);
+
+    let misspelt = Scope {
+        parts: vec!["p9".into()],
+        only_among: false,
+    };
+    let refused = interference_report(&reader, &misspelt)
+        .unwrap_err()
+        .to_string();
+    assert!(
+        refused.contains("p9") && refused.contains("p1"),
+        "{refused}"
+    );
+
+    let after_one = |progress: &Progress| progress.done < 1;
+    let everything = Scope::default();
+    let stopped = watching(after_one, || interference_report(&reader, &everything)).unwrap();
+    let said = Stopped { checked: 1, of: 3 };
+    assert_eq!(stopped.stopped, Some(said), "{stopped:?}");
+    assert_eq!(stopped.found.len(), 1, "what it found so far is kept");
+    let stopped = watching(after_one, || mass_report(&reader, &everything)).unwrap();
+    assert_eq!(stopped.stopped, Some(Stopped { checked: 1, of: 6 }));
+    assert_eq!(stopped.bodies.len(), 1);
+    assert!(
+        stopped.total.is_none(),
+        "a total missing a body would mislead"
+    );
 }
 
 /// Two boxes half a unit apart are nearer than a clearance of one, at their

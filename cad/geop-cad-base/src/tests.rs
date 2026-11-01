@@ -1083,7 +1083,7 @@ mod examples {
         for (example, program) in examples() {
             let part = program.built().unwrap();
             let reader = part.current();
-            let report = mass_report(&reader).unwrap();
+            let report = mass_report(&reader, &Default::default()).unwrap();
             let mut shapes = Shapes::default();
             for (body, placed) in report.bodies.iter().zip(placed_solids(&reader).unwrap()) {
                 let name = format!("{example}/{}", body.name);
@@ -1513,6 +1513,209 @@ mod agent {
             session.editor().program().state,
             before,
             "undo puts it back"
+        );
+    }
+
+    /// What the tool descriptions say of planes and extents, on real
+    /// geometry: an agent working these out by experiment is what they are
+    /// written for, and a description that goes stale is worse than none.
+    #[test]
+    fn planes_extents_and_caps_are_as_the_tools_describe_them() {
+        let description = |name: &str| {
+            let tool = tools().into_iter().find(|t| t.name == name).unwrap();
+            tool.description
+        };
+        assert!(description("new_part").contains("(a, 0, -b) on `origin:zx`"));
+        assert!(description("add_step").contains("a negative `side2`"));
+        let mut session = Session::new(crate::editor());
+        let (sketch, _) = ok(
+            &mut session,
+            "list_operations",
+            json!({ "kind": "add_sketch" }),
+        );
+        let (extrude, _) = ok(
+            &mut session,
+            "list_operations",
+            json!({ "kind": "extrude" }),
+        );
+        let mut drawn = sketch["default_args"]["sketch"].clone();
+        let base = drawn["next_id"].as_u64().unwrap();
+        for (k, (x, y)) in [(1, 2), (2, 2), (2, 4), (1, 4)].into_iter().enumerate() {
+            let k = k as u64;
+            drawn["points"][(base + k).to_string()] = json!({ "x": x, "y": y });
+            drawn["curves"][(base + 4 + k).to_string()] = json!({
+                "start": base + k, "end": base + (k + 1) % 4, "type": "Line", "construction": false,
+            });
+        }
+        drawn["next_id"] = json!(base + 8);
+        // The box of a cap's corners, and of the whole solid's, rounded to
+        // what a test can write.
+        let mut built = |plane: &str, extent: Value| {
+            ok(&mut session, "new_part", json!({}));
+            let mut args = sketch["default_args"].clone();
+            args["plane"] = json!({ "datum": plane });
+            args["sketch"] = drawn.clone();
+            ok(
+                &mut session,
+                "add_step",
+                json!({ "kind": "add_sketch", "args": args, "id": "s" }),
+            );
+            let mut args = extrude["default_args"].clone();
+            args["sketch"] = json!({ "target": "/:sketch:s" });
+            args["extent"] = extent;
+            let (status, _) = ok(
+                &mut session,
+                "add_step",
+                json!({ "kind": "extrude", "args": args, "id": "b" }),
+            );
+            assert_eq!(status["failed"], 0, "{status}");
+            let (elements, _) = ok(&mut session, "list_elements", json!({}));
+            let span = |cap: &str| -> [[f64; 2]; 3] {
+                let corners: Vec<&Value> = (elements["vertices"].as_array().unwrap().iter())
+                    .filter(|v| v["name"].as_str().unwrap().ends_with(&format!(",{cap})")))
+                    .collect();
+                std::array::from_fn(|k| {
+                    let along = corners.iter().map(|v| v["at"][k].as_f64().unwrap());
+                    let round = |x: f64| (x * 1e6).round() / 1e6 + 0.0;
+                    [
+                        round(along.clone().fold(f64::INFINITY, f64::min)),
+                        round(along.fold(f64::NEG_INFINITY, f64::max)),
+                    ]
+                })
+            };
+            (span("start"), span("end"))
+        };
+        let blind = |side: f64| json!({ "side1": { "blind": side }, "symmetric": false, "reversed": false });
+        let (x, y, flat) = ([1.0, 2.0], [2.0, 4.0], |h: f64| [h, h]);
+        assert_eq!(
+            built("origin:xy", blind(1.0)),
+            ([x, y, flat(0.0)], [x, y, flat(1.0)])
+        );
+        assert_eq!(
+            built("origin:yz", blind(1.0)),
+            ([flat(0.0), x, y], [flat(1.0), x, y])
+        );
+        let down = [-4.0, -2.0];
+        assert_eq!(
+            built("origin:zx", blind(1.0)),
+            ([x, flat(0.0), down], [x, flat(1.0), down])
+        );
+        assert_eq!(
+            built("origin:xy", blind(-1.0)),
+            ([x, y, flat(0.0)], [x, y, flat(-1.0)]),
+            "a negative side goes against the normal, and its far cap is still the end"
+        );
+        let sides = |second: f64| json!({ "side1": { "blind": 3.0 }, "side2": { "blind": second }, "symmetric": false, "reversed": false });
+        assert_eq!(
+            built("origin:xy", sides(-1.0)),
+            ([x, y, flat(1.0)], [x, y, flat(3.0)]),
+            "a negative second side starts the solid away from the plane"
+        );
+        assert_eq!(
+            built("origin:xy", sides(1.0)),
+            ([x, y, flat(-1.0)], [x, y, flat(3.0)])
+        );
+    }
+
+    /// Files of nothing: for a tool that takes its text in the call.
+    struct NoFiles;
+    impl geop_core_editor::agent::Files for NoFiles {
+        fn read(&mut self, path: &str) -> geop_core_math::geop_error::GeopResult<String> {
+            Err(geop_core_math::geop_error::GeopError::new(format!(
+                "no file {path}"
+            )))
+        }
+        fn programs_beside(
+            &mut self,
+            _: &str,
+        ) -> std::collections::BTreeMap<String, Option<String>> {
+            Default::default()
+        }
+        fn write(&mut self, _: &str, _: &[u8]) -> geop_core_math::geop_error::GeopResult<()> {
+            Ok(())
+        }
+        fn today(&self) -> String {
+            "2026-01-01".into()
+        }
+    }
+
+    /// A program whose saved pose does not satisfy its mates builds with no
+    /// failure: the solver moves the part. The status says so, the furthest
+    /// first, and says nothing of one that stays; a saved file is where
+    /// they then are. A placed part's own elements are listed, by the name
+    /// to refer to them with.
+    #[test]
+    fn a_part_the_solver_moved_is_reported_and_placed_elements_are_listed() {
+        use geop_core_math::{primitives::Pose, scalars::Scalar, vector::Vector3};
+        use geop_core_program::{program::Program, values::StateValue};
+        let mut session = Session::new(crate::editor());
+        let loaded = session.handle(geop_core_editor::editor::Command::LoadWorkspaceExample {
+            name: "press".into(),
+            folder: None,
+        });
+        assert!(loaded.error.is_none(), "{:?}", loaded.error);
+        let mut program: Program = session.editor().program().clone();
+        let json = program.to_json().unwrap();
+        let load = |session: &mut Session, text: String| {
+            let answer = session.call("load_program", &json!({ "text": text }), Some(&mut NoFiles));
+            assert!(!answer.is_error, "{}", answer.text);
+            serde_json::from_str::<Value>(&answer.text).unwrap()
+        };
+        let status = load(&mut session, json.clone());
+        assert_eq!(
+            status["moved"],
+            json!([]),
+            "as saved, nothing moved: {status}"
+        );
+
+        let (name, shifted) = (program.state.iter())
+            .find_map(|(name, value)| match value {
+                StateValue::Pose(pose) if name.ends_with(".pose") => {
+                    let at = pose.position().to_array().map(|x| x.to_f64() + 4.0);
+                    let at = Vector3::from_array(at.map(Scalar::from_f64));
+                    Some((name.clone(), Pose::new(at, pose.rotation()).unwrap()))
+                }
+                _ => None,
+            })
+            .expect("the press has poses");
+        program.state.insert(name, StateValue::Pose(shifted));
+        let status = load(&mut session, program.to_json().unwrap());
+        assert_eq!(status["failed"], 0, "{status}");
+        let moved = status["moved"].as_array().unwrap();
+        assert!(
+            !moved.is_empty(),
+            "the solve moved a part 4 off its mates: {status}"
+        );
+        let far: Vec<f64> = moved.iter().map(|m| m["moved"].as_f64().unwrap()).collect();
+        assert!(
+            far.windows(2).all(|w| w[0] >= w[1]),
+            "the furthest first: {far:?}"
+        );
+        assert!(far[0] > 1.0, "{far:?}");
+
+        let saved = session.call("save", &json!({ "path": "part.geop" }), Some(&mut NoFiles));
+        assert!(!saved.is_error, "{}", saved.text);
+        let (status, _) = ok(&mut session, "run", json!({}));
+        assert_eq!(
+            status["moved"],
+            json!([]),
+            "saved, that is where they are: {status}"
+        );
+
+        let (elements, _) = ok(&mut session, "list_elements", json!({}));
+        let placed = elements["placed_parts"][0].as_str().unwrap().to_string();
+        let (listed, _) = ok(&mut session, "list_elements", json!({ "placed": placed }));
+        assert!(!listed["faces"].as_array().unwrap().is_empty(), "{listed}");
+        assert!(!listed["edges"].as_array().unwrap().is_empty(), "{listed}");
+        assert!(listed["extent"]["size"].as_f64().unwrap() > 0.0, "{listed}");
+        assert!(listed["frame"]["origin"].is_array(), "{listed}");
+        let target = listed["target"].as_str().unwrap();
+        assert!(target.starts_with(&format!("/{placed}:")), "{target}");
+        let wrong = session.call("list_elements", &json!({ "placed": "nothing" }), None);
+        assert!(
+            wrong.is_error && wrong.text.contains(&placed),
+            "{}",
+            wrong.text
         );
     }
 

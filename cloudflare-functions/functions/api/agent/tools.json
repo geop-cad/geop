@@ -1,6 +1,6 @@
 [
   {
-    "description": "Start a new, empty part. Every part has the coordinate-system datum `origin`, whose planes a sketch is drawn on, as `add_sketch`'s `plane`: {\"datum\": \"origin:xy\"}, {\"datum\": \"origin:yz\"} or {\"datum\": \"origin:zx\"}.",
+    "description": "Start a new, empty part. Every part has the coordinate-system datum `origin`, whose planes a sketch is drawn on, as `add_sketch`'s `plane`: {\"datum\": \"origin:xy\"}, {\"datum\": \"origin:yz\"} or {\"datum\": \"origin:zx\"}. A point (a, b) of a sketch lies in the world at (a, b, 0) on `origin:xy` (normal +z), (0, a, b) on `origin:yz` (normal +x), and (a, 0, -b) on `origin:zx` (normal +y): there, the sketch's y runs along -z. A sketch's normal is the way an extent goes (see `add_step`). y is up in the world.",
     "input_schema": {
       "additionalProperties": false,
       "properties": {},
@@ -25,7 +25,7 @@
     "name": "list_operations"
   },
   {
-    "description": "Add a step of the operation `kind` with `args` (its saved JSON, see `list_operations` with `kind`) at the end of the program, or before the step `before`. A step whose arguments do not read is refused and not added; one that reads but does not build is added, and its error says why. Answers with every step's status: an error names the step and what went wrong.",
+    "description": "Add a step of the operation `kind` with `args` (its saved JSON, see `list_operations` with `kind`) at the end of the program, or before the step `before`. A step whose arguments do not read is refused and not added; one that reads but does not build is added, and its error says why. Answers with every step's status: an error names the step and what went wrong, and `moved` lists the parts the solver moved from where they were loaded or saved, the furthest first: mates that hold only because a part jumped are no error, so read it. An extent runs from the sketch's plane: `side1` along the normal (against it if `reversed` or negative) and `side2` the other way, a negative `side2` being that far along the normal, so that the solid starts away from the plane. Its `start` cap is at the `side2` end (the plane, with no `side2`) and its `end` cap at the `side1` end, whichever way that is in the world.",
     "input_schema": {
       "additionalProperties": false,
       "properties": {
@@ -104,17 +104,22 @@
     "name": "run"
   },
   {
-    "description": "The names of the part's elements as they are now, for typed references: solids, faces (with their solid), edges (with their faces), vertices, sketches, datums and what else the part lists (threads, placed parts). A face is referred to by its name, as a sketch's plane {\"face\": ...}; an edge by its name, as in a fillet's `edges`.",
+    "description": "The names of the part's elements as they are now, for typed references: solids, faces (with their solid), edges (with their faces), vertices, sketches, datums and what else the part lists (threads, placed parts). A face is referred to by its name, as a sketch's plane {\"face\": ...}; an edge by its name, as in a fillet's `edges`. In a swept feature's names, `start` and `end` say which cap: `extrude(box,end)` is the end cap, `extrude(box,sketch,c4,end)` the edge of the side face swept by the curve c4 on that cap, and `extrude(box,sketch,p1,end)` the vertex over the point p1. Given `placed` (a placed part's path, `hip` or `hip/servo`), the elements of that part instead, in its own frame, with where it is placed (`frame`), its size (`extent`), its datums (the frames to mount by) and the `target` to refer to them by.",
     "input_schema": {
       "additionalProperties": false,
-      "properties": {},
+      "properties": {
+        "placed": {
+          "description": "The placed part to list, e.g. `hip/servo`.",
+          "type": "string"
+        }
+      },
       "required": [],
       "type": "object"
     },
     "name": "list_elements"
   },
   {
-    "description": "Ask about the part: `mass_properties` (volume, area and centroid of every solid; its mass and inertia if its part has a material, null if not), `interference` (which solids overlap), or `measure` with `elements` (a point, a length, an area, a radius; the distance and angle between two).",
+    "description": "Ask about the part: `mass_properties` (volume, area and centroid of every solid; its mass and inertia if its part has a material, null if not), `interference` (which solids overlap), or `measure` with `elements` (a point, a length, an area, a radius; the distance and angle between two). On an assembly the first two can take minutes, and calls wait their turn behind them: narrow them with `options` {\"parts\": [\"left_leg\", \"hip/servo\"]}, the solids of those placed parts and what is placed in them (`interference`: each against everything, or, with \"only_among\": true, only against each other), and give `limit_seconds`: past it, the answer is what was found so far, with `stopped` saying how far it got. A cancelled call stops likewise, at the next pair or solid.",
     "input_schema": {
       "additionalProperties": false,
       "properties": {
@@ -146,6 +151,14 @@
             "measure"
           ],
           "type": "string"
+        },
+        "limit_seconds": {
+          "description": "How long it may take, where the front end keeps time (`geop mcp`; not in the browser).",
+          "type": "number"
+        },
+        "options": {
+          "description": "The inspector's own options: `parts`, `only_among`.",
+          "type": "object"
         }
       },
       "required": [

@@ -176,10 +176,10 @@ fn a_cable_bundle_is_no_body_to_weigh_or_check() {
         .collect();
     assert!(!solids.iter().any(|s| s.contains("route")), "{solids:?}");
 
-    let mass = geop_ops_inspect::mass_report(view).unwrap();
+    let mass = geop_ops_inspect::mass_report(view, &Default::default()).unwrap();
     let names: Vec<&str> = mass.bodies.iter().map(|b| b.name.as_str()).collect();
     assert_eq!(names.len(), 2, "the plates alone: {names:?}");
-    let interference = geop_ops_inspect::interference_report(view).unwrap();
+    let interference = geop_ops_inspect::interference_report(view, &Default::default()).unwrap();
     assert_eq!(interference.solids, 2, "{:?}", interference.found);
 
     let bill = geop_ops_model::placed::bom::bom(

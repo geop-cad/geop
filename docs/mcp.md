@@ -63,6 +63,24 @@ step with its plane, `open_step` it, press `l` for lines, click at points
 of the plane (`{"at": [x, y, 0]}`), `Escape`, `commit_step` — the
 sketcher's snapping and constraints are those a user gets.
 
+## Long checks
+
+The kernel asks one thing at a time, so a call waits behind whatever runs
+before it: a long call's answer ends by saying how long it took and waited.
+`inspect` takes `options` (`{"parts": ["left_leg"]}`, the solids of those
+placed parts; `interference`: each against everything, or with
+`"only_among": true` only against each other) and `limit_seconds`: past it,
+the answer is what was found so far, with `stopped` saying how far it got.
+So does a call a client cancels (`notifications/cancelled`), at its next pair
+or solid; one still waiting never starts. A call with a `progressToken` is
+told how far it is, once a second (`notifications/progress`). A build runs to
+its end.
+
+Every status has `moved`: the parts the solver moved from where they were
+loaded or saved, the furthest first. Mates that hold only because a part
+jumped are no failure, so read it. `list_elements` given `placed` lists a
+placed part's own elements, size, frame and mounting datums.
+
 ## Resources and prompts
 
 | resource | what it holds |

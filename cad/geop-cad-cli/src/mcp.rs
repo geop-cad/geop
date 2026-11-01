@@ -12,11 +12,19 @@
 //! `resources/list`, `resources/templates/list` and `resources/read`,
 //! `prompts/list` and `prompts/get`, and notifications, which are not
 //! answered. See `docs/mcp.md`.
+//!
+//! The kernel asks one thing at a time. Calls wait their turn on a queue,
+//! and a thread reads the input meanwhile, so that `ping` is answered and a
+//! cancellation heard while a long call runs: it tells the call to stop at
+//! its next turn (see [`geop_core_program::watch`]), or a call waiting not
+//! to start. A long call's answer says how long it took and waited.
 
 use std::{
-    collections::BTreeMap,
+    collections::{BTreeMap, HashSet},
     io::{BufRead, Write},
     path::Path,
+    sync::{Arc, Mutex, mpsc},
+    time::{Duration, Instant},
 };
 
 use geop_cad_base::editor;
@@ -24,10 +32,15 @@ use geop_core_editor::agent::{
     AgentResource, Contents, Files, Session, prompts, resource_templates, resources, tools,
 };
 use geop_core_math::geop_error::{GeopError, GeopResult};
+use geop_core_program::watch::{Progress, watching};
 use serde_json::{Value, json};
 
 /// The MCP revision answered to `initialize`.
 const PROTOCOL_VERSION: &str = "2025-06-18";
+
+/// How long a call has to have taken, waiting included, for its answer to
+/// say so.
+const WORTH_SAYING: Duration = Duration::from_secs(1);
 
 /// What the server tells a client about itself at `initialize`.
 const INSTRUCTIONS: &str = "geop is a parametric CAD kernel. A part is a program of steps, each an \
@@ -91,6 +104,11 @@ impl Files for Disk {
 /// One editor, driven by tools.
 pub struct McpServer {
     session: Session,
+    /// What is cancelled, and where to say how far a call is, as `serve`
+    /// has them.
+    heard: Option<(Cancelled, Out)>,
+    /// When the message being answered came: how long it waited.
+    came: Instant,
 }
 
 impl Default for McpServer {
@@ -103,6 +121,8 @@ impl McpServer {
     pub fn new() -> Self {
         Self {
             session: Session::new(editor()),
+            heard: None,
+            came: Instant::now(),
         }
     }
 
@@ -132,7 +152,8 @@ impl McpServer {
             "tools/call" => {
                 let name = params.get("name").and_then(Value::as_str).unwrap_or("");
                 let arguments = params.get("arguments").cloned().unwrap_or(json!({}));
-                Ok(self.call(name, &arguments))
+                let token = params.pointer("/_meta/progressToken").cloned();
+                Ok(self.call(name, &arguments, &id, token))
             }
             "resources/list" => Ok(
                 json!({ "resources": resources().iter().map(|r| described(r, "uri")).collect::<Vec<_>>() }),
@@ -196,9 +217,22 @@ impl McpServer {
     /// result as text, or why it failed as an error result. A kernel that
     /// panics leaves the editor in an unknown state: a fresh one takes
     /// over, with the program as it was before the call.
-    fn call(&mut self, name: &str, arguments: &Value) -> Value {
-        let answer = self.guarded(name, |session| {
-            Ok(session.call(name, arguments, Some(&mut Disk)))
+    fn call(&mut self, name: &str, arguments: &Value, id: &Value, token: Option<Value>) -> Value {
+        let started = Instant::now();
+        let waited = started.duration_since(self.came);
+        let limit = (arguments.get("limit_seconds").and_then(Value::as_f64))
+            .map(|seconds| {
+                Duration::try_from_secs_f64(seconds)
+                    .map_err(|e| format!("`limit_seconds` is {seconds}: {e}"))
+            })
+            .transpose();
+        let answer = limit.and_then(|limit| {
+            let watcher = self.watcher(id, token, limit.map(|limit| started + limit));
+            self.guarded(name, |session| {
+                Ok(watching(watcher, || {
+                    session.call(name, arguments, Some(&mut Disk))
+                }))
+            })
         });
         let (text, is_error, images) = match answer {
             Ok(answer) => (answer.text, answer.is_error, answer.images),
@@ -208,7 +242,52 @@ impl McpServer {
         content.extend(images.iter().map(|image| {
             json!({ "type": "image", "data": image.base64(), "mimeType": image.media_type })
         }));
+        let took = started.elapsed();
+        if took + waited >= WORTH_SAYING {
+            let said = format!(
+                "Took {:.1} s, after waiting {:.1} s behind other calls: the kernel asks one thing at a time.",
+                took.as_secs_f64(),
+                waited.as_secs_f64()
+            );
+            content.push(json!({ "type": "text", "text": said }));
+        }
         json!({ "content": content, "isError": is_error })
+    }
+
+    /// What watches the call `id`: it tells the client how far it is, if
+    /// the client gave a `token` to say it by, no more than once a second,
+    /// and stops it once it is cancelled, or at `deadline`.
+    fn watcher(
+        &self,
+        id: &Value,
+        token: Option<Value>,
+        deadline: Option<Instant>,
+    ) -> impl FnMut(&Progress) -> bool + 'static {
+        let heard = self.heard.clone();
+        let id = id.to_string();
+        let (mut last, mut told) = (None::<Instant>, 0_u64);
+        move |progress: &Progress| {
+            let now = Instant::now();
+            if let (Some(token), Some((_, out))) = (&token, &heard)
+                && last.is_none_or(|last| now.duration_since(last) >= Duration::from_secs(1))
+            {
+                last = Some(now);
+                told += 1;
+                out.send(&json!({
+                    "jsonrpc": "2.0",
+                    "method": "notifications/progress",
+                    "params": {
+                        "progressToken": token,
+                        "progress": told,
+                        "message": format!("{}: {} of {}", progress.what, progress.done, progress.total),
+                    },
+                }));
+            }
+            let cancelled = heard.as_ref().is_some_and(|(cancelled, _)| {
+                (cancelled.lock().unwrap_or_else(|e| e.into_inner())).contains(&id)
+            });
+            !cancelled && deadline.is_none_or(|deadline| now < deadline)
+        }
     }
 
     /// `f` on the session, or why it failed. A kernel that panics leaves
@@ -249,25 +328,79 @@ fn described(resource: &AgentResource, uri: &str) -> Value {
     })
 }
 
-/// Runs the server until stdin closes: one JSON-RPC message per line in,
-/// one answer per line out, nothing for a notification.
-pub fn serve() -> GeopResult<()> {
-    let io_err = |e: std::io::Error| GeopError::new(format!("serving MCP: {e}"));
-    // The default hook prints every panic to stderr, which MCP clients log:
-    // what crashed is answered in the tool's result instead.
-    std::panic::set_hook(Box::new(|_| {}));
-    let mut server = McpServer::new();
-    let stdin = std::io::stdin().lock();
-    let mut stdout = std::io::stdout().lock();
-    for line in stdin.lines() {
-        let line = line.map_err(io_err)?;
+/// The ids of the requests a client cancelled.
+type Cancelled = Arc<Mutex<HashSet<String>>>;
+
+/// Where answers and notifications go: one message per line, whichever
+/// thread sends it.
+#[derive(Clone)]
+struct Out(Arc<Mutex<std::io::Stdout>>);
+
+impl Out {
+    fn send(&self, message: &Value) {
+        let mut stdout = self.0.lock().unwrap_or_else(|e| e.into_inner());
+        // Nobody left to tell, if the client has gone: stdin closes next.
+        let _ = writeln!(stdout, "{message}").and_then(|()| stdout.flush());
+    }
+}
+
+/// Reads the input until it closes: `ping` and cancellations at once, the
+/// rest onto the queue, each with when it came.
+fn read_input(queue: mpsc::Sender<(String, Instant)>, cancelled: Cancelled, out: Out) {
+    for line in std::io::stdin().lock().lines() {
+        let Ok(line) = line else { return };
         if line.trim().is_empty() {
             continue;
         }
-        if let Some(answer) = server.handle(&line) {
-            writeln!(stdout, "{answer}")
-                .and_then(|()| stdout.flush())
-                .map_err(io_err)?;
+        let message: Value = serde_json::from_str(&line).unwrap_or(Value::Null);
+        match message.get("method").and_then(Value::as_str) {
+            Some("notifications/cancelled") => {
+                let id = &message["params"]["requestId"];
+                (cancelled.lock().unwrap_or_else(|e| e.into_inner())).insert(id.to_string());
+            }
+            Some("ping") if message.get("id").is_some() => out.send(&json!({
+                "jsonrpc": "2.0", "id": message["id"], "result": {},
+            })),
+            _ => {
+                if queue.send((line, Instant::now())).is_err() {
+                    return;
+                }
+            }
+        }
+    }
+}
+
+/// Runs the server until stdin closes: one JSON-RPC message per line in,
+/// one answer per line out, nothing for a notification.
+pub fn serve() -> GeopResult<()> {
+    // The default hook prints every panic to stderr, which MCP clients log:
+    // what crashed is answered in the tool's result instead.
+    std::panic::set_hook(Box::new(|_| {}));
+    let out = Out(Arc::new(Mutex::new(std::io::stdout())));
+    let cancelled = Cancelled::default();
+    let (queue, queued) = mpsc::channel();
+    let reader = (cancelled.clone(), out.clone());
+    std::thread::spawn(move || read_input(queue, reader.0, reader.1));
+    let mut server = McpServer::new();
+    server.heard = Some((cancelled.clone(), out.clone()));
+    for (line, came) in queued {
+        let id = (serde_json::from_str::<Value>(&line).ok())
+            .and_then(|message| message.get("id").map(Value::to_string));
+        let is_cancelled = || {
+            id.as_ref().is_some_and(|id| {
+                (cancelled.lock().unwrap_or_else(|e| e.into_inner())).contains(id)
+            })
+        };
+        // Cancelled, it is answered with nothing, as MCP asks: waiting, it
+        // does not start, and running, what it had found goes nowhere.
+        if is_cancelled() {
+            continue;
+        }
+        server.came = came;
+        if let Some(answer) = server.handle(&line)
+            && !is_cancelled()
+        {
+            out.send(&answer);
         }
     }
     Ok(())
