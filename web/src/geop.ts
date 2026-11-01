@@ -167,7 +167,7 @@ export interface PartView {
    * them.
    */
   vertices: { name: string; solid: string | null; faces: string[]; at: Vec3 }[];
-  edges: { name: string; solid: string | null; faces: string[]; polyline: Vec3[]; smooth: boolean }[];
+  edges: { name: string; solid: string | null; faces: string[]; polyline: Vec3[]; within_a_surface: boolean }[];
   /** Triangulated: each with its mesh. */
   faces: (ViewFace & FaceMesh)[];
   /** Curves in their plane's `u`/`v` coordinates. */

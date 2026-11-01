@@ -26,6 +26,42 @@ fn editor() -> Editor {
     editor_with(registry(), drilled_box())
 }
 
+/// Where a fillet leaves a face it is tangent to, but curves where the face
+/// does not: a line is drawn. Only an edge within one smooth surface has none.
+#[test]
+fn where_a_fillet_leaves_a_face_a_line_is_drawn() {
+    let mut editor = editor();
+    let before = model_of(&built(&editor).unwrap());
+    let rim = before
+        .topology()
+        .edges
+        .iter()
+        .find(|(_, e)| e.curve.as_arc().unwrap().is_some())
+        .map(|(&id, _)| before.name_of(id).unwrap().to_string())
+        .unwrap();
+    let mut program = editor.program().clone();
+    program.push("round", crate::FilletArgs::constant(vec![rim], 0.1));
+    handled(
+        &mut editor,
+        Command::Load {
+            program,
+            path: None,
+        },
+    );
+    let scene = editor
+        .handle(Command::Show)
+        .scene
+        .expect("the scene is sent");
+    let blend = |face: &String| face.starts_with("fillet(round");
+    let leaving: Vec<_> = (scene.part.edges.iter())
+        .filter(|e| e.faces.iter().any(blend) && !e.faces.iter().all(blend))
+        .collect();
+    assert!(!leaving.is_empty(), "the blend has edges on its faces");
+    for edge in leaving {
+        assert!(!edge.within_a_surface, "{} shows no line", edge.name);
+    }
+}
+
 /// Seeking back before a fillet and forward again runs the steps up to the
 /// marker each time, the fillet's part shown only once it runs.
 #[test]

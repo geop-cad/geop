@@ -81,7 +81,7 @@ impl NamedModel {
                 faces: faces_of_edge.get(&id).cloned().unwrap_or_default(),
                 name: name(id.into()),
                 polyline: polyline.clone(),
-                smooth: meets_smoothly(model, id),
+                within_a_surface: within_a_surface(model, id),
             })
             .collect();
         view.faces = (raster.faces.iter())
@@ -135,15 +135,20 @@ impl Drawer for ModelDrawer {
 }
 
 /// How far apart, as the sine of the angle, the faces either side of an edge
-/// may lie for it to show no crease. What it decides is only what is drawn:
-/// a blend tilted a millionth of a radian off its face is smooth to the eye,
-/// and to no other question.
+/// may lie for it to show no crease, and how far apart, as a share of the
+/// larger, their curvatures across it. What they decide is only what is
+/// drawn: a blend tilted a millionth of a radian off its face is smooth to
+/// the eye, and to no other question.
 const CREASE: f64 = 0.0175;
+const CURVATURE: f64 = 1e-3;
 
-/// Whether `edge` shows no crease: its two faces' normals agree where looked
-/// at. A line is drawn by samples anyway, so that is what this asks of too;
-/// an edge it cannot tell about is drawn.
-fn meets_smoothly(model: &Model, edge: EdgeId) -> bool {
+/// Whether `edge` lies within one smooth surface, its faces pieces of it: they
+/// are tangent where looked at, and curve alike across it. So a cylinder's
+/// seam has no line, and where a fillet leaves a flat face, tangent to it but
+/// curving where the face does not, keeps one. A line is drawn by samples
+/// anyway, so that is what this asks of too; an edge it cannot tell about is
+/// drawn.
+fn within_a_surface(model: &Model, edge: EdgeId) -> bool {
     let holds = || -> GeopResult<bool> {
         let coedges = model.coedges_of_edge(edge);
         let [a, b] = coedges.as_slice() else {
@@ -151,23 +156,30 @@ fn meets_smoothly(model: &Model, edge: EdgeId) -> bool {
         };
         let curve = &model.get_edge(edge)?.curve;
         let (t0, t1) = curve.domain();
-        let normal = |coedge: CoedgeId, point: Vector3| -> GeopResult<[f64; 3]> {
-            let coedge = model.get_coedge(coedge)?;
-            let surface = &model.get_face(coedge.face)?.surface;
-            let seed = coedge.pcurve.evaluate(coedge.pcurve.mid_parameter()?)?;
-            let (u, v) = surface.project(point, seed[0], seed[1], PROJECT_ITERATIONS)?;
-            Ok(surface.normal(u, v)?.to_array().map(|x| x.to_f64()))
-        };
+        // The face's surface at `point`: its unit normal, and how it curves
+        // towards the side the edge does not run along.
+        let side =
+            |coedge: CoedgeId, point: Vector3, along: &Vector3| -> GeopResult<(Vector3, f64)> {
+                let coedge = model.get_coedge(coedge)?;
+                let surface = &model.get_face(coedge.face)?.surface;
+                let seed = coedge.pcurve.evaluate(coedge.pcurve.mid_parameter()?)?;
+                let (u, v) = surface.project(point, seed[0], seed[1], PROJECT_ITERATIONS)?;
+                let normal = surface.normal(u, v)?;
+                let across = normal.prod_cross(along);
+                Ok((normal, surface.normal_curvature(u, v, &across)?.to_f64()))
+            };
         for fraction in [0.25, 0.5, 0.75] {
             let t = Scalar::interpolate(t0, t1, Scalar::from_f64(fraction)).sharpen();
             let point = curve.evaluate(t)?;
-            let (p, q) = (normal(*a, point)?, normal(*b, point)?);
-            let across = [
-                p[1] * q[2] - p[2] * q[1],
-                p[2] * q[0] - p[0] * q[2],
-                p[0] * q[1] - p[1] * q[0],
-            ];
-            if across.iter().map(|x| x * x).sum::<f64>().sqrt() > CREASE {
+            let along = curve.tangent(t)?.normalize()?;
+            let ((n, k), (m, l)) = (side(*a, point, &along)?, side(*b, point, &along)?);
+            let turned = n.prod_cross(&m).norm().to_f64();
+            if turned > CREASE {
+                return Ok(false);
+            }
+            // Curvature is signed by the normal, and the two may point apart.
+            let l = if n.prod_dot(&m).to_f64() < 0.0 { -l } else { l };
+            if (k - l).abs() > CURVATURE * k.abs().max(l.abs()) {
                 return Ok(false);
             }
         }

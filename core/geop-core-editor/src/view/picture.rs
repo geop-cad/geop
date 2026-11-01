@@ -802,7 +802,7 @@ impl Raster {
         };
         let place = &layer.place;
         for edge in &layer.view.edges {
-            if !edge.smooth && layer.shows_boundary(&edge.solid, &edge.faces) {
+            if !edge.within_a_surface && layer.shows_boundary(&edge.solid, &edge.faces) {
                 self.polyline(edge.polyline.iter().map(|p| place.apply(p)), &pen(EDGE));
             }
         }
@@ -1302,7 +1302,7 @@ mod tests {
                         solid: Some("block".into()),
                         faces: vec![],
                         polyline: vec![corner(c), corner(d)],
-                        smooth: false,
+                        within_a_surface: false,
                         ends: [String::new(), String::new()],
                     });
                 }

@@ -33,8 +33,8 @@ export interface Scene {
   line_sketches: (string | null)[];
   line_curves: (string | null)[];
   line_edges: (string | null)[];
-  /** Per line: whether it is of an edge showing no crease, drawn only lit. */
-  line_smooth: boolean[];
+  /** Per line: whether it is of an edge within one smooth surface, drawn only lit. */
+  line_within: boolean[];
   /** Every sketch's points, by the sketch and their id in it. */
   sketch_points: { sketch: string; id: string; at: Vec3 }[];
   /** Per triangle: its corners, its color, its corners' normals, and the index in `faces` of its face. */
@@ -75,7 +75,7 @@ export function flatten(part: PartView, hidden: string[] = []): Scene {
     line_sketches: [],
     line_curves: [],
     line_edges: [],
-    line_smooth: [],
+    line_within: [],
     sketch_points: [],
     triangles: [],
     normals: [],
@@ -88,16 +88,16 @@ export function flatten(part: PartView, hidden: string[] = []): Scene {
     scene.points.push([...v.at, VERTEX_COLOR]);
     scene.point_names.push(v.name);
   }
-  const line = (a: Vec3, b: Vec3, color: number, sketch: string | null, curve: string | null, edge: string | null, smooth = false) => {
+  const line = (a: Vec3, b: Vec3, color: number, sketch: string | null, curve: string | null, edge: string | null, within = false) => {
     scene.lines.push([...a, ...b, color]);
     scene.line_sketches.push(sketch);
     scene.line_curves.push(curve);
     scene.line_edges.push(edge);
-    scene.line_smooth.push(smooth);
+    scene.line_within.push(within);
   };
   for (const e of part.edges) {
     if (!shown(e.solid, e.faces)) continue;
-    for (let i = 1; i < e.polyline.length; i++) line(e.polyline[i - 1], e.polyline[i], EDGE_COLOR, null, null, e.name, e.smooth);
+    for (let i = 1; i < e.polyline.length; i++) line(e.polyline[i - 1], e.polyline[i], EDGE_COLOR, null, null, e.name, e.within_a_surface);
   }
   for (const t of part.annotations) {
     for (let i = 1; i < t.polyline.length; i++) line(t.polyline[i - 1], t.polyline[i], ANNOTATION_COLOR, null, null, null);
@@ -257,7 +257,7 @@ export function buildSceneGroup(scene: Scene, previous?: { scene: Scene; group: 
   // the model's edges), so a sketch can be highlighted on its own.
   const byOwner = new Map<string, { hex: number; sketch: string | null; coords: number[] }>();
   scene.lines.forEach(([x0, y0, z0, x1, y1, z1, hex], i) => {
-    if (scene.line_smooth[i]) return;
+    if (scene.line_within[i]) return;
     const sketch = scene.line_sketches[i];
     const key = `${sketch ?? ""}:${hex}`;
     const entry = byOwner.get(key) ?? { hex, sketch, coords: [] };

@@ -171,10 +171,11 @@ pub struct ViewEdge {
     /// face hit does not hide it (see [`PartView::pick`]).
     pub faces: Vec<String>,
     pub polyline: Vec<Vector3>,
-    /// Whether its faces meet smoothly there, so that it shows no crease: a
-    /// viewer draws no line for it, until it is lit. It can still be
+    /// Whether it lies within one smooth surface, its two faces pieces of it:
+    /// a cylinder's seam between its quarters, not where a fillet leaves a
+    /// face. A viewer draws no line for it, until it is lit. It can still be
     /// pointed at and picked like any other.
-    pub smooth: bool,
+    pub within_a_surface: bool,
     /// The vertices it runs between, by name.
     #[serde(skip)]
     pub ends: [String; 2],

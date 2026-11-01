@@ -563,33 +563,31 @@ fn revolve_axes_are_picked() {
     assert!(!axis.armed, "one axis is picked, and done");
 }
 
-/// A viewer draws no line where faces meet smoothly: the box keeps its edges,
-/// and the seams of the hole's round wall show no crease, though it keeps
-/// the circles at its rim. They are all still there to point at.
+/// A viewer draws no line within one smooth surface: the seams of the hole's
+/// round wall have none. The box keeps its edges and the hole its rim, and
+/// the seams are still there to point at.
 #[test]
-fn edges_with_no_crease_are_told_from_the_rest() {
+fn edges_within_a_surface_are_told_from_the_rest() {
     let (mut editor, _) = editor();
     let scene = editor
         .handle(Command::Show)
         .scene
         .expect("the scene is sent");
-    let smooth: Vec<&str> = (scene.part.edges.iter())
-        .filter(|e| e.smooth)
+    let within: Vec<&str> = (scene.part.edges.iter())
+        .filter(|e| e.within_a_surface)
         .map(|e| e.name.as_str())
         .collect();
-    assert!(!smooth.is_empty(), "the round wall's seams are smooth");
+    assert!(!within.is_empty(), "the round wall's seams");
     assert!(
-        smooth.iter().all(|name| name.starts_with("extrude(hole,")),
-        "only the hole's: {smooth:?}"
+        within.iter().all(|name| name.starts_with("extrude(hole,")),
+        "only the hole's: {within:?}"
     );
-    let sharp = |name: &str| (scene.part.edges.iter()).any(|e| e.name == name && !e.smooth);
+    let drawn =
+        |name: &str| (scene.part.edges.iter()).any(|e| e.name == name && !e.within_a_surface);
+    assert!(drawn("extrude(box,outline,c4,end)"));
     assert!(
-        sharp("extrude(box,outline,c4,end)"),
-        "{:?}",
-        scene.part.edges.len()
-    );
-    assert!(
-        (scene.part.edges.iter()).any(|e| e.name.starts_with("extrude(hole,") && !e.smooth),
+        (scene.part.edges.iter())
+            .any(|e| e.name.starts_with("extrude(hole,") && !e.within_a_surface),
         "the hole's rim is a crease"
     );
 }

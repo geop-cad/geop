@@ -67,7 +67,7 @@ struct Edge {
     #[serde(with = "geop_core_math::exact")]
     polyline: Vec<Vector3>,
     #[serde(default)]
-    smooth: bool,
+    within_a_surface: bool,
     ends: [String; 2],
 }
 
@@ -272,7 +272,7 @@ fn written(
                 solid: e.solid.clone(),
                 faces: e.faces.clone(),
                 polyline: e.polyline.clone(),
-                smooth: e.smooth,
+                within_a_surface: e.within_a_surface,
                 ends: e.ends.clone(),
             })
             .collect(),
@@ -358,7 +358,7 @@ fn view_of(
                 solid: e.solid,
                 faces: e.faces,
                 polyline: e.polyline,
-                smooth: e.smooth,
+                within_a_surface: e.within_a_surface,
                 ends: e.ends,
             })
             .collect(),
