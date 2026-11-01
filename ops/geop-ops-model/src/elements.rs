@@ -90,7 +90,7 @@ impl HasElements<EdgeChain> for NamedModel {
     const SINGLETON: Option<&'static str> = Some(MODEL);
 
     fn element(&self, name: &str) -> GeopResult<ChainElement<'_>> {
-        let chain = tangent_chain(self.topology(), self.edge_id(name)?)?;
+        let chain = tangent_chain(self, self.edge_id(name)?)?;
         Ok(ChainElement { model: self, chain })
     }
 }

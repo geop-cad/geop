@@ -67,7 +67,13 @@
 //!   which leaves the corner between the walls uncut. What either blend
 //!   cuts beyond the other's wall is what both would: the corner is cut by
 //!   the two tools run on past it, intersected (see [`mitre`]) — for any
-//!   two blends, of any radius, the walls at any angle.
+//!   two blends, of any radius, the walls at any angle;
+//! - two concave edges leaving the solid at a corner, the feet of a boss's
+//!   walls round its upright edge, are that corner seen from the air: each
+//!   tool ends flush with the other's wall, and the air outside the corner
+//!   is filled by the two tools run on past it, intersected. Their faces
+//!   meet in a crease that runs on from the upright edge tangentially, and
+//!   vanishes where both turn flat onto the face they stand on.
 //!
 //! Tools joined at corners are built whole, each such set one solid, and
 //! applied by one boolean. Two of them ending on their own at one vertex
@@ -139,18 +145,19 @@ pub(crate) enum End {
     /// squarely the edge leaves the solid there. What a cut does where the
     /// edge leaves the solid.
     RunOut,
-    /// Flush with the face at the end: what material added does, which
-    /// must not stick out past it. Why it cannot be capped in the face,
-    /// `unless` the face is a plane square to the edge: then the blend runs
-    /// on through the face and is cut off by it (see
-    /// [`crate::rolling::RunOn`]).
+    /// Flush with a face a fill runs into: it must not stick out past it.
+    /// Why it cannot be capped in the face, `unless` the face is a plane
+    /// square to the edge: then the blend runs on through the face and is
+    /// cut off by it (see [`crate::rolling::RunOn`]).
     Flush { unless: Option<String> },
-    /// Flush with a wall the edge runs into: what a cut does there, which
-    /// must not cut what lies behind the wall — and where the wall's own
-    /// edge along the same face is blended too, the corner between them is
-    /// cut by a [`mitre`]. Why it cannot be capped in the wall, `unless` the
-    /// wall is a plane square to the edge: then the blend runs on through
-    /// the wall and is cut off by it.
+    /// Flush with a wall the blend must not go past: what a cut does at a
+    /// wall the edge runs into, which must not cut what lies behind it, and
+    /// what a fill does at a face the edge leaves the solid through, the
+    /// same corner seen from the air. Where the wall's own edge along the
+    /// same face is blended too, the same way, the corner between them is
+    /// cut or filled by a [`mitre`]. Why it cannot be capped in the wall,
+    /// `unless` the wall is a plane square to the edge: then the blend runs
+    /// on through the wall and is cut off by it.
     Wall { unless: Option<String> },
     /// At the ball rounding a corner every edge of which is filleted: where
     /// the tool is joined to the corner's (see [`crate::corner`]).
@@ -223,7 +230,9 @@ pub(crate) fn bend(bend: Scalar) -> GeopResult<Bend> {
 /// out past it where the edge leaves the solid through it and the tool
 /// cuts — any face, the tool running on into the air — flush with it
 /// otherwise — where the tool fills, or the edge runs into it — which needs
-/// it a plane square to the edge.
+/// it a plane square to the edge. A flush end is a wall ([`End::Wall`])
+/// where a cut runs into the face or a fill leaves through it, and
+/// [`End::Flush`] where a fill runs into it.
 /// Anything else, and a tool along the edge would cut or fill what it
 /// should not: it is said `unless`, for a rolled tool to run on through the
 /// face and be cut off by it. The end, and that third face. Where more
@@ -335,7 +344,9 @@ pub(crate) fn tool_end(
     } else if squareness.definitely_less(Scalar::ZERO) {
         false
     } else {
-        return unsupported("the third face could run along the edge");
+        return unsupported(
+            "the third face could run along the edge (where it is a blend of an earlier step ending there, round the edges meeting at the corner in one step)",
+        );
     };
     let why = if plane.is_none() {
         Some("the third face is not planar")
@@ -358,15 +369,20 @@ pub(crate) fn tool_end(
     // corner — the fill ends flush with it, touching the corner's other
     // edge, the one between that face and the face the fill runs along. In
     // the plane of a face square to the edge, that is the face's own
-    // business; anywhere else, the end would be a face of its own ending on
-    // that edge, the very place no boolean can cut (a blade's root, filled
-    // round to its sharp trailing edge, ended in a notch along the edge).
-    if leaves && let Some(why) = why {
-        return unsupported(&format!(
-            "{why}, and the edge leaves the solid there, an outward corner: a fill up to it would end on the corner's edge between the third face and the face it is filled along"
-        ));
+    // business, and it is a cut running into a wall, seen from the air: the
+    // corner past the wall is a mitre's, when another fill comes round it.
+    // Anywhere else, the end would be a face of its own ending on that
+    // edge, the very place no boolean can cut (a blade's root, filled round
+    // to its sharp trailing edge, ended in a notch along the edge).
+    if leaves {
+        return match why {
+            None => Ok((End::Wall { unless: None }, Some(*other))),
+            Some(why) => unsupported(&format!(
+                "{why}, and the edge leaves the solid there, an outward corner: a fill up to it would end on the corner's edge between the third face and the face it is filled along"
+            )),
+        };
     }
-    if leaves || bend == Bend::Concave {
+    if bend == Bend::Concave {
         let unless = why.map(|why| {
             format!(
                 "the edge ends at vertex {vertex}, where {why}: a straight edge between planes is filled up to the third face only where it is a plane square to the edge — an edge rolled between curved faces up to any face it runs into"
@@ -744,19 +760,20 @@ pub(crate) fn check_touch_at(model: &Model, face: FaceId, u: Scalar, v: Scalar) 
     }
 }
 
-/// A tool's end running into a wall (see [`End::Wall`]): which tool — by
-/// index into the plans, and past them the chains — at its end or its
-/// start, the vertex, and the faces either side.
+/// A tool's end at a wall (see [`End::Wall`]): which tool — by index into
+/// the plans, and past them the chains — at its end or its start, which way
+/// it bends, the vertex, and the faces either side.
 struct WallEnd {
     tool: usize,
     at_end: bool,
+    bend: Bend,
     vertex: VertexId,
     faces: [FaceId; 2],
 }
 
-/// The inward corners between `walls`: every two ends running into each
-/// other's walls at a vertex, along a face they share (see the module
-/// docs) — by index into `walls`. More than two there is refused.
+/// The corners a mitre closes between `walls`: every two ends bending one
+/// way at each other's walls at a vertex, along a face they share (see the
+/// module docs) — by index into `walls`. More than two there is refused.
 fn inward_corners(walls: &[WallEnd]) -> GeopResult<Vec<[usize; 2]>> {
     let mut pairs = Vec::new();
     let mut used = vec![false; walls.len()];
@@ -764,12 +781,12 @@ fn inward_corners(walls: &[WallEnd]) -> GeopResult<Vec<[usize; 2]>> {
         for b in a + 1..walls.len() {
             let (wa, wb) = (&walls[a], &walls[b]);
             let shares = wa.faces.iter().any(|f| wb.faces.contains(f));
-            if !shares || wa.vertex != wb.vertex || wa.tool == wb.tool {
+            if !shares || wa.vertex != wb.vertex || wa.tool == wb.tool || wa.bend != wb.bend {
                 continue;
             }
             if used[a] || used[b] {
                 return Err(GeopError::new(format!(
-                    "more than two blended edges run into each other's walls at vertex {}: only two meet at an inward corner",
+                    "more than two blended edges end at each other's walls at vertex {}: only two meet at a corner a mitre closes",
                     wa.vertex
                 )));
             }
@@ -779,6 +796,12 @@ fn inward_corners(walls: &[WallEnd]) -> GeopResult<Vec<[usize; 2]>> {
         }
     }
     Ok(pairs)
+}
+
+/// The tangent chain of `edge`, what is refused of it said with the faces
+/// meeting at its ends.
+fn chain_of(model: &NamedModel, edge: EdgeId) -> GeopResult<Chain> {
+    tangent_chain(model, edge).map_err(|e| e.with_context(corners_of(model, edge)))
 }
 
 /// Which faces meet at each end of `edge`, by name: what a blend that
@@ -905,7 +928,7 @@ fn passes(
             c.0.push(name.clone());
             continue;
         }
-        let chain = tangent_chain(topology, edge)?;
+        let chain = chain_of(model, edge)?;
         let bend = rolling::chain_bend(topology, &chain)?;
         chains.push((vec![name.clone()], chain, bend));
     }
@@ -1028,19 +1051,18 @@ fn blend_once(
         if covered.contains(&edge) {
             continue;
         }
-        let chain = tangent_chain(model.topology(), edge)
-            .map_err(|e| e.with_context(corners_of(model, edge)))
-            .with_context(ctx)?;
+        let chain = chain_of(model, edge).with_context(ctx)?;
         covered.extend(chain.edges());
         chains.push((name.clone(), chain));
     }
     let topology = model.topology();
     let corners = corner::plan_corners(model, namer, &chains, &covered, shape)?;
 
-    // Inward corners: the ends running into a wall where another does.
+    // The corners a mitre closes: the ends at a wall where another is.
     let mut walls = Vec::new();
     for (c, (name, chain)) in chains.iter().enumerate() {
         let ctx = with_context!("edge {name:?}");
+        let bend = rolling::chain_bend(topology, chain).with_context(ctx)?;
         for (k, wall) in rolling::chain_walls(topology, chain)
             .with_context(ctx)?
             .into_iter()
@@ -1050,6 +1072,7 @@ fn blend_once(
                 walls.push(WallEnd {
                     tool: c,
                     at_end: k == 1,
+                    bend,
                     vertex,
                     faces,
                 });
@@ -1086,13 +1109,14 @@ fn blend_once(
         corners: &corners.corners,
     };
     // The tools joined at corners are built whole, each such component one
-    // solid, and applied by one boolean. The inward corners' tools run on
-    // past them, planned on the solid as it is before the first tool.
+    // solid, and applied by one boolean. The tools of the corners a mitre
+    // closes run on past them, planned on the solid as it is before the
+    // first tool.
     let mut mitres = Vec::new();
     for &[a, b] in &inward {
         let (a, b) = (&walls[a], &walls[b]);
         let ctx = format!(
-            "the inward corner of edges {:?} and {:?} at vertex {}",
+            "the mitre of edges {:?} and {:?} at vertex {}",
             tools.edge(a.tool),
             tools.edge(b.tool),
             a.vertex
@@ -1172,18 +1196,19 @@ fn blend_once(
         let bend = tools.bend(component[0]);
         target = apply_tool(model, &scope, target, tool, bend).with_context(ctx)?;
     }
-    // The inward corners, each cut by its two tools run on past it.
+    // The corners mitred, each cut or filled by its two tools run on past
+    // it.
     for (scope, ctx, runs) in mitres {
         let ctx = with_context!("{ctx}");
         if let Some(tool) = mitre(model, &scope, &runs).with_context(ctx)? {
-            target = apply_tool(model, &scope, target, tool, Bend::Convex).with_context(ctx)?;
+            target = apply_tool(model, &scope, target, tool, runs[0].bend).with_context(ctx)?;
         }
     }
     model.rename(target, namer.root())
 }
 
-/// The two tools cutting the inward corner where the tools ending at the
-/// walls `ends` meet (see [`mitre`]): each replanned run on past its wall —
+/// The two tools of the mitre where the tools ending at the walls `ends`
+/// meet (see [`mitre`]): each replanned run on past its wall —
 /// out through it, as where it left the solid — while the solid is as it
 /// was before the first tool, which the rolling reads.
 fn mitre_runs(
@@ -1217,11 +1242,12 @@ fn mitre_runs(
     Ok([a, b])
 }
 
-/// What cuts an inward corner (see the module docs), named by `namer`: the
-/// two tools `runs` run on past their walls, intersected. Each tool ends
-/// flush with the other's wall, so what each would cut past it is cut
-/// where both would: in front of both walls each cuts on its own, behind
-/// both only where both do. None where they do nowhere.
+/// What cuts an inward corner, or fills the air outside a fill's outward
+/// corner (see the module docs), named by `namer`: the two tools `runs` run
+/// on past their walls, intersected. Each tool ends flush with the other's
+/// wall, so what each would cut or fill past it is where both would: on the
+/// near side of both walls each does on its own, past both only where both
+/// do. None where they do nowhere.
 fn mitre(model: &mut NamedModel, namer: &Namer, runs: &[Rolled; 2]) -> GeopResult<Option<SolidId>> {
     let mut solids = Vec::new();
     for (run, side) in runs.iter().zip(["a", "b"]) {

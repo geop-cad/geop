@@ -8,7 +8,7 @@ use geop_lib_fixtures::PrimitiveArgs;
 use geop_ops_model::{
     NamedModel,
     tangent::tangent_chain,
-    testing::{Built, assert_valid, edges_with_middle_where},
+    testing::{Built, assert_valid, edges_with_middle_where, error},
 };
 
 use geop_core_math::primitives::FrameAxis;
@@ -372,7 +372,7 @@ fn assert_rounds(
     let before = program.build_model(registry).unwrap();
     let mut chained: Vec<geop_core_topology::EdgeId> = Vec::new();
     for edge in &edges {
-        let chain = tangent_chain(before.topology(), before.edge_id(edge).unwrap()).unwrap();
+        let chain = tangent_chain(&before, before.edge_id(edge).unwrap()).unwrap();
         chained.extend(chain.edges());
     }
     chained.sort_by_key(|e| e.0);
@@ -1632,6 +1632,24 @@ fn fillet_of_a_cross_hole_rim_breaking_out_through_the_top() {
     assert_builds_valid_with(&program, sketch_chamfer_registry);
 }
 
+/// The rectangle from `[x1, y1]` round to `[x0, y1]`, `[x0, y0]` and
+/// `[x1, y0]`, as the reports drew it: points `p0` to `p3`, lines `c4`,
+/// `c6`, `c8` and `c10`.
+fn reported_rectangle([x0, y0]: [f64; 2], [x1, y1]: [f64; 2]) -> Sketch {
+    let mut sketch = Sketch::new();
+    let corners =
+        [[x1, y1], [x0, y1], [x0, y0], [x1, y0]].map(|[x, y]| sketch.add_point(n(x), n(y)));
+    for k in 0..4 {
+        let line = sketch.add_line(corners[k], corners[(k + 1) % 4]);
+        sketch.constrain(if k % 2 == 0 {
+            Constraint::Horizontal { line }
+        } else {
+            Constraint::Vertical { line }
+        });
+    }
+    sketch
+}
+
 /// A plate 10 thick with a pocket 6.91 deep, at the report's coordinates,
 /// one of the pocket's upright edges rounded with the floor edge it stands
 /// on, by 1 (the report rounded the next upright edge too). The floor
@@ -1643,28 +1661,12 @@ fn fillet_of_a_cross_hole_rim_breaking_out_through_the_top() {
 /// `cap_face`).
 #[test]
 fn fillet_of_a_pockets_upright_edge_and_the_floor_edge_it_stands_on() {
-    // The rectangle from `[x1, y1]` round to `[x0, y1]`, `[x0, y0]` and
-    // `[x1, y0]`, as the report drew it.
-    let rectangle = |[x0, y0]: [f64; 2], [x1, y1]: [f64; 2]| {
-        let mut sketch = Sketch::new();
-        let corners =
-            [[x1, y1], [x0, y1], [x0, y0], [x1, y0]].map(|[x, y]| sketch.add_point(n(x), n(y)));
-        for k in 0..4 {
-            let line = sketch.add_line(corners[k], corners[(k + 1) % 4]);
-            sketch.constrain(if k % 2 == 0 {
-                Constraint::Horizontal { line }
-            } else {
-                Constraint::Vertical { line }
-            });
-        }
-        sketch
-    };
     let mut program = Program::new();
     program.push(
         "sketch1",
         AddSketchArgs::on(
             on_origin(FrameAxis::Z),
-            rectangle(
+            reported_rectangle(
                 [-80.93526558639849, -79.24911422001517],
                 [80.93526558639849, 79.24911422001517],
             ),
@@ -1675,7 +1677,7 @@ fn fillet_of_a_pockets_upright_edge_and_the_floor_edge_it_stands_on() {
         "sketch2",
         AddSketchArgs::on(
             on_face("extrude(extrude1,end)"),
-            rectangle(
+            reported_rectangle(
                 [-51.98918128689173, -13.256205587095899],
                 [17.191641620765004, 48.468001677819366],
             ),
@@ -1724,4 +1726,316 @@ fn chamfer_of_a_steps_floor_corner() {
     )
     .unwrap();
     assert_valid(&chamfered);
+}
+
+/// The block standing on a plate of the report of a fillet at a boss's
+/// foot: the plate's top at `y = 10`, the block up to `y = 20`. The block's
+/// corner `extrude(extrude2,sketch2,p3)` stands at `x = BOSS[0]`,
+/// `z = BOSS[1]`, between its walls `c8` (facing `+z`) and `c10` (facing
+/// `+x`).
+fn block_on_a_plate() -> Program {
+    let mut program = Program::new();
+    program.push(
+        "sketch1",
+        AddSketchArgs::on(
+            on_origin(FrameAxis::Y),
+            reported_rectangle(
+                [-27.652895735784533, -22.587761368338874],
+                [27.652895735784533, 22.587761368338874],
+            ),
+        ),
+    );
+    program.push("extrude1", extrude("sketch1", 10.0, false));
+    program.push(
+        "sketch2",
+        AddSketchArgs::on(
+            on_face("extrude(extrude1,end)"),
+            reported_rectangle([-BOSS[0], -BOSS[1]], BOSS),
+        ),
+    );
+    program.push(
+        "extrude2",
+        extrusion(
+            "sketch2",
+            Extents::blind(10.0),
+            Combine::join("extrude(extrude1)"),
+        ),
+    );
+    program
+}
+
+const BOSS: [f64; 2] = [15.794011890087855, 11.74679634325286];
+
+/// The feet of the block's walls `c8` and `c10`, meeting at its corner.
+const TWO_FEET: [&str; 2] = [
+    "extrude(extrude2,sketch2,c8,start)",
+    "extrude(extrude2,sketch2,c10,start)",
+];
+
+/// The block's two feet rounded by 1: a fill of each, and where they meet.
+fn block_with_two_feet_rounded() -> Program {
+    let mut program = block_on_a_plate();
+    program.push(
+        "fillet1",
+        FilletArgs::constant(TWO_FEET.map(String::from).to_vec(), 1.0),
+    );
+    program
+}
+
+/// Checks the kernel's mass properties give the solid `fillet(fillet1)` of
+/// `part` the volume `expected`: a mesh is off by more than the shape in
+/// question, its faces sampled each on its own.
+#[track_caller]
+fn assert_filleted_volume(part: &NamedModel, expected: f64) {
+    let solid = part.solid_id("fillet(fillet1)").unwrap();
+    let got = part
+        .topology()
+        .mass_properties(solid)
+        .unwrap()
+        .volume
+        .to_f64();
+    assert!((got - expected).abs() < 1e-6, "{got} is not {expected}");
+}
+
+/// The volume of the plate and the block, without any fill.
+fn plate_and_block_volume() -> f64 {
+    let plate = 4.0 * 27.652895735784533 * 22.587761368338874 * 10.0;
+    plate + 4.0 * BOSS[0] * BOSS[1] * 10.0
+}
+
+/// A fill's section, of radius 1: the corner less a quarter disc.
+const FILL_SECTION: f64 = 1.0 - std::f64::consts::FRAC_PI_4;
+
+/// What fills the air outside a boss's corner between two fills meeting
+/// there, of radius 1: both run on past it, up to where they cross. Over
+/// `(dx, dz)` from the corner its height is the arc's at the greater of the
+/// two, so its volume is `2 ∫ s h(s) ds` for `s` from 0 to 1, with
+/// `h(s) = 1 - sqrt(1 - (1 - s)²)`.
+const MITRE_VOLUME: f64 = 2.0 * (5.0 / 6.0 - std::f64::consts::FRAC_PI_4);
+
+/// Two feet of a block on a plate rounded, meeting at the block's corner:
+/// a fill of each wall, the upright edge between them left sharp. Each fill
+/// ended flush with the other's wall, so the air outside the corner between
+/// them stayed air: a notch down to the plate, two faces in the walls'
+/// planes meeting along the upright edge, between two fills that should
+/// meet. This is the outward corner of a fill, the inward corner of a cut
+/// (a pocket's rim) seen from the air: filled the same way, by the two run
+/// on past it, intersected.
+#[test]
+fn fillet_of_two_feet_of_a_block_meeting_at_its_corner() {
+    let part = block_with_two_feet_rounded()
+        .build_model(blade_registry)
+        .unwrap();
+    assert_valid(&part);
+    let solid = "fillet(fillet1)";
+    assert_eq!(
+        where_in(&part, solid, [BOSS[0] + 0.2, 10.1, BOSS[1] + 0.2]),
+        PointClassification::Inside,
+        "the air outside the block's corner is filled up to the arc"
+    );
+    assert_eq!(
+        where_in(&part, solid, [BOSS[0] + 0.2, 10.6, BOSS[1] + 0.2]),
+        PointClassification::Outside,
+        "above the arc, it is not"
+    );
+    let lengths = 2.0 * (BOSS[0] + BOSS[1]);
+    assert_filleted_volume(
+        &part,
+        plate_and_block_volume() + FILL_SECTION * lengths + MITRE_VOLUME,
+    );
+}
+
+/// The upright edge above where two fills reach it. Below it the crease
+/// between the two fills runs on tangentially, down to the plate, where
+/// the two fills turn flat and it vanishes. Before the two fills met, the
+/// edge reached the arcs ending each fill, both tangent to it between faces
+/// tangent to its own, two ways on and no chain.
+const UPRIGHT_ABOVE_THE_FILLS: &str = "fillet(fillet1,extrude(extrude2,sketch2,c8,start),extrude(extrude2,sketch2,p3),fillet(fillet1,extrude(extrude2,sketch2,c8,start),tb,st0))";
+
+/// The upright edge above the fills, rounded by `radius`, with the crease.
+fn assert_rounds_upright_above_two_feet(radius: f64) {
+    let mut program = block_with_two_feet_rounded();
+    program.push(
+        "fillet2",
+        FilletArgs::constant(vec![UPRIGHT_ABOVE_THE_FILLS.to_string()], radius),
+    );
+    assert_valid(&program.build_model(blade_registry).unwrap());
+}
+
+#[test]
+fn fillet_of_a_blocks_upright_edge_above_two_rounded_feet() {
+    assert_rounds_upright_above_two_feet(0.1);
+}
+
+/// With the radius of the fills it runs into.
+#[test]
+fn fillet_of_a_blocks_upright_edge_above_two_rounded_feet_of_its_radius() {
+    assert_rounds_upright_above_two_feet(1.0);
+}
+
+/// Every foot of the block rounded: four corners like the one above.
+#[test]
+fn fillet_of_every_foot_of_a_block() {
+    let mut program = block_on_a_plate();
+    let feet = ["c4", "c6", "c8", "c10"].map(|c| format!("extrude(extrude2,sketch2,{c},start)"));
+    program.push("fillet1", FilletArgs::constant(feet.to_vec(), 1.0));
+    let part = program.build_model(blade_registry).unwrap();
+    assert_valid(&part);
+    let lengths = 4.0 * (BOSS[0] + BOSS[1]);
+    assert_filleted_volume(
+        &part,
+        plate_and_block_volume() + FILL_SECTION * lengths + 4.0 * MITRE_VOLUME,
+    );
+}
+
+/// Then every upright edge above them, each with the crease it runs on
+/// into.
+#[test]
+#[ignore = "slow: four chains between fills — run with `cargo test -- --ignored`"]
+fn fillet_of_every_upright_edge_above_every_rounded_foot() {
+    let mut program = block_on_a_plate();
+    let feet = ["c4", "c6", "c8", "c10"].map(|c| format!("extrude(extrude2,sketch2,{c},start)"));
+    program.push("fillet1", FilletArgs::constant(feet.to_vec(), 1.0));
+    let part = program.build_model(blade_registry).unwrap();
+    let uprights = edges_with_middle_where(&part, |m| {
+        near(m[0].abs(), BOSS[0]) && near(m[2].abs(), BOSS[1]) && m[1] > 11.0
+    });
+    assert_eq!(uprights.len(), 4, "{uprights:?}");
+    program.push("fillet2", FilletArgs::constant(uprights, 1.0));
+    assert_valid(&program.build_model(blade_registry).unwrap());
+}
+
+/// A block on a plate, its corner at the origin, with a fill at the foot of
+/// each wall at that corner, each drawn and extruded on its own and ending
+/// flush with the other wall: the notch [`fillet_of_two_feet_of_a_block_meeting_at_its_corner`]
+/// used to leave. The upright edge above runs on tangentially into the arc
+/// ending each fill, between faces tangent to its own. Which way it goes on
+/// is a real fork: nothing in the geometry chooses between them.
+fn notched_block_corner() -> Program {
+    // The fill's section in a sketch of the origin's plane: from the
+    // contact on the plate, a quarter circle about `(1, 1)` to the contact
+    // on the wall.
+    let section = |floor: [f64; 2], wall: [f64; 2], sweep: f64| {
+        let mut sketch = Sketch::new();
+        let [corner, floor, wall] =
+            [[0.0, 0.0], floor, wall].map(|[x, y]| sketch.add_point(n(x), n(y)));
+        sketch.add_line(corner, floor);
+        sketch.add_arc(floor, wall, n(sweep));
+        sketch.add_line(wall, corner);
+        sketch
+    };
+    let quarter = std::f64::consts::FRAC_PI_2;
+    let mut program = Program::new();
+    program.push(
+        "plate",
+        PrimitiveArgs::block([-20.0, -5.0, -20.0], [20.0, 0.0, 20.0]),
+    );
+    program.push(
+        "post",
+        PrimitiveArgs::block([-10.0, 0.0, -10.0], [0.0, 5.0, 0.0]).join("block(plate)"),
+    );
+    // The origin's plane normal to `x` is drawn in `(y, z)`, and normal to
+    // `z` in `(x, y)`.
+    program.push(
+        "section1",
+        AddSketchArgs::on(
+            on_origin(FrameAxis::X),
+            section([0.0, 1.0], [1.0, 0.0], quarter),
+        ),
+    );
+    program.push(
+        "fill1",
+        extrusion(
+            "section1",
+            Extents::blind(-3.0),
+            Combine::join("block(post)"),
+        ),
+    );
+    program.push(
+        "section2",
+        AddSketchArgs::on(
+            on_origin(FrameAxis::Z),
+            section([1.0, 0.0], [0.0, 1.0], -quarter),
+        ),
+    );
+    program.push(
+        "fill2",
+        extrusion(
+            "section2",
+            Extents::blind(-3.0),
+            Combine::join("extrude(fill1)"),
+        ),
+    );
+    program
+}
+
+/// The edges at the block's corner on the fork: the upright edge above the
+/// fills, and the arcs ending them.
+fn upright_and_arcs(part: &NamedModel) -> (String, Vec<String>) {
+    let upright = edges_at(part, [0.0, 3.0, 0.0]);
+    assert_eq!(upright.len(), 1, "{upright:?}");
+    let on_plane = |m: [f64; 3]| near(m[0], 0.0) != near(m[2], 0.0);
+    let arcs = edges_with_middle_where(part, |m| {
+        on_plane(m) && m[1] > 0.0 && m[1] < 1.0 && m[0] > -1.0 && m[2] > -1.0
+    });
+    assert_eq!(arcs.len(), 2, "{arcs:?}");
+    (upright[0].clone(), arcs)
+}
+
+/// An edge that forks is refused, and says where, and into which edges,
+/// and what to pick.
+#[test]
+fn fillet_of_an_edge_forking_into_two_tangent_arcs_is_refused_by_name() {
+    let mut program = notched_block_corner();
+    let part = program.build_model(blade_registry).unwrap();
+    assert_valid(&part);
+    let (upright, arcs) = upright_and_arcs(&part);
+    program.push("round", FilletArgs::constant(vec![upright.clone()], 0.1));
+    let refusal = error(program.build_model(blade_registry));
+    let message = refusal.root_message();
+    assert!(message.contains(&upright), "{message}");
+    assert!(arcs.iter().all(|arc| message.contains(arc)), "{message}");
+    assert!(message.contains("Pick the one of them"), "{message}");
+}
+
+/// From an arc, the chain does not fork, and takes the upright edge along:
+/// the one picked says which way it goes. This arc's own end cannot be
+/// blended, its fill turning tangent to the plate there, and is refused for
+/// that, by name.
+#[test]
+fn chain_from_one_arc_of_a_fork_takes_the_edge_along() {
+    let mut program = notched_block_corner();
+    let part = program.build_model(blade_registry).unwrap();
+    let (upright, arcs) = upright_and_arcs(&part);
+    let chain = tangent_chain(&part, part.edge_id(&arcs[0]).unwrap()).unwrap();
+    assert!(chain.edges().contains(&part.edge_id(&upright).unwrap()));
+    program.push("round", FilletArgs::constant(vec![arcs[0].clone()], 0.1));
+    let refusal = error(program.build_model(blade_registry));
+    let message = refusal.root_message();
+    assert!(message.contains("could run along the edge"), "{message}");
+}
+
+/// The two feet bevelled instead: the same corner, the two chords crossing
+/// in a hip. Over `(dx, dz)` its height is `1 - max(dx, dz)`, a third.
+#[test]
+fn chamfer_of_two_feet_of_a_block_meeting_at_its_corner() {
+    let mut program = block_on_a_plate();
+    program.push(
+        "chamfer1",
+        crate::ChamferArgs::even(TWO_FEET.map(String::from).to_vec(), 1.0),
+    );
+    let part = program
+        .build_model(|| blade_registry()?.with(crate::Chamfer))
+        .unwrap();
+    assert_valid(&part);
+    let solid = part.solid_id("chamfer(chamfer1)").unwrap();
+    let got = part
+        .topology()
+        .mass_properties(solid)
+        .unwrap()
+        .volume
+        .to_f64();
+    let lengths = 2.0 * (BOSS[0] + BOSS[1]);
+    let expected = plate_and_block_volume() + 0.5 * lengths + 1.0 / 3.0;
+    assert!((got - expected).abs() < 1e-6, "{got} is not {expected}");
 }

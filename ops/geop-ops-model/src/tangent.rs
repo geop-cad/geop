@@ -13,6 +13,8 @@ use geop_core_math::{
 };
 use geop_core_topology::{EdgeId, FaceId, Model, VertexId};
 
+use crate::NamedModel;
+
 /// The faces either side of `edge`: an error for one that does not join
 /// two.
 fn faces(model: &Model, edge: EdgeId) -> GeopResult<[FaceId; 2]> {
@@ -188,7 +190,9 @@ fn same_direction(a: &Vector3, b: &Vector3) -> bool {
 
 /// The link the chain goes on along from `link`, past the vertex it leaves
 /// at: the one other edge there it runs on into tangentially, between faces
-/// tangent to its own — or none. An error if more than one could be.
+/// tangent to its own — or none. Where more than one is, the edge forks: an
+/// error naming them. Going the other way, from one of them, it does not
+/// fork, so the one picked says which way the chain goes.
 ///
 /// Tangency is asked of the faces, whose normals at the vertex the
 /// surfaces state exactly: where both faces either side go on tangentially,
@@ -203,7 +207,8 @@ fn same_direction(a: &Vector3, b: &Vector3) -> bool {
 /// runs along both tangent planes, and the chain ends: an edge between
 /// faces turning tangent vanishes there (see [`vanishes_at`]), and one
 /// between faces folding back onto each other is no chain's to go on.
-fn next_link(model: &Model, link: &Link) -> GeopResult<Option<Link>> {
+fn next_link(named: &NamedModel, link: &Link) -> GeopResult<Option<Link>> {
+    let model = named.topology();
     let vertex = link.vertices(model)?[1];
     let (_, arriving) = link.at(model, Scalar::ONE)?;
     let normals_at = |faces: [FaceId; 2]| -> GeopResult<[Vector3; 2]> {
@@ -245,17 +250,26 @@ fn next_link(model: &Model, link: &Link) -> GeopResult<Option<Link>> {
     match found.len() {
         0 => Ok(None),
         1 => Ok(found.pop()),
-        n => Err(GeopError::new(format!(
-            "at vertex {vertex}, the edge runs on tangentially into {n} edges: no one chain to blend"
-        ))),
+        _ => {
+            let name = |edge: EdgeId| named.name_of(edge).map_or(edge.to_string(), String::from);
+            let forks: Vec<String> = found.iter().map(|l| name(l.edge)).collect();
+            Err(GeopError::new(format!(
+                "edge {:?} forks at vertex {}: it runs on tangentially into each of the edges {forks:?}, between faces tangent to its own, so no one chain goes on from it. Pick the one of them the blend is to run on along, alone: a chain from it does not fork, and takes this edge along",
+                name(link.edge),
+                named
+                    .name_of(vertex)
+                    .map_or(vertex.to_string(), String::from),
+            )))
+        }
     }
 }
 
 /// The tangent chain of `edge` (see the module docs), running the way the
 /// edge does.
-pub fn tangent_chain(model: &Model, edge: EdgeId) -> GeopResult<TangentChain> {
+pub fn tangent_chain(named: &NamedModel, edge: EdgeId) -> GeopResult<TangentChain> {
+    let model = named.topology();
     let walk = |first: Link| -> GeopResult<(Vec<Link>, bool)> {
-        let chain = walk_by(first, |l| l.edge, |last| next_link(model, last))?;
+        let chain = walk_by(first, |l| l.edge, |last| next_link(named, last))?;
         match chain.end {
             Walked::Closed => Ok((chain.nodes, true)),
             Walked::Open => Ok((chain.nodes, false)),
