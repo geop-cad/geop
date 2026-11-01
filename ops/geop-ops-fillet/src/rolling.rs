@@ -2789,8 +2789,8 @@ fn chain_ends(
         }
         let ctx = with_context!("the blend's end at vertex {vertex}");
         let (mut kind, face) = tool_end(model, vertex, faces, &out, bend).with_context(ctx)?;
-        // Run on out through a wall, as through a face it left the solid
-        // by: for what it cuts at an inward corner (see [`crate::blend`]).
+        // Run on out through a wall, as through a face a cut left the solid
+        // by: for what a mitre does at the corner (see [`crate::blend`]).
         if let (true, End::Wall { .. }) = (run_out[k], &kind) {
             kind = End::RunOut;
         }

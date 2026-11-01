@@ -1220,6 +1220,22 @@ search. Four times in `geop-ops-fillet`:
   Growing every `around` was tried and is wrong: face and solid boxes come
   from the control points, and a sweep cap's wider box broke four tests.
 
+## A fill's outward corner is a cut's inward corner, seen from the air
+
+The feet of a boss's two walls rounded, the upright edge between them left
+sharp: each fill ended flush with the other's wall, and the air outside the
+corner stayed air. The model was valid and looked like a notch; only its
+volume, or looking, told. It also left the upright edge running on
+tangentially into both fills' end arcs, a fork the next fillet refused. A
+pocket's rim, whose corner is the same one with solid and air swapped, had
+been mitred all along (each run on past the wall, intersected). The fix was
+to call the fill's end what it is (`End::Wall`), not a new corner: the crease
+between the fills then runs on from the upright edge, tangent to it, and
+vanishes where both fills turn flat. Before writing a case for a blend that
+adds material, ask what the case is for the one that cuts. And weigh such a
+shape by `mass_properties`: the mesh's volume was off by 0.03 of a corner of
+0.096, each face sampled on its own.
+
 ## Newton needs the second derivatives where it is far from flat
 
 `NurbSurface::project` stepped by Gauss-Newton, the first fundamental form
