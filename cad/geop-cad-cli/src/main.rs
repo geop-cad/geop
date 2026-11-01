@@ -19,6 +19,10 @@
 //! a browser, editing a folder of files (see [`open`]), `geop app` shows
 //! it in a window of its own (see [`app`]), and `geop vscode` installs the
 //! VS Code extension of this release (see [`vscode`]).
+#![cfg_attr(
+    all(feature = "desktop", not(debug_assertions)),
+    windows_subsystem = "windows"
+)]
 
 mod app;
 mod mcp;
@@ -397,7 +401,10 @@ fn serve(args: &ServeArgs) -> GeopResult<()> {
 }
 
 fn main() -> ExitCode {
+    #[cfg(not(feature = "desktop"))]
     let cli = Cli::parse();
+    #[cfg(feature = "desktop")]
+    let cli = Cli::parse_from(app::desktop_args(std::env::args_os()));
     let result = match cli.command {
         Command::Serve(args) => serve(&args),
         Command::Mcp(McpArgs {}) => mcp::serve(),
@@ -453,6 +460,13 @@ fn main() -> ExitCode {
         Ok(()) => ExitCode::SUCCESS,
         Err(e) => {
             eprintln!("error: {e}");
+            // A window's program has no terminal to say it in.
+            #[cfg(feature = "desktop")]
+            rfd::MessageDialog::new()
+                .set_level(rfd::MessageLevel::Error)
+                .set_title("Geop could not start")
+                .set_description(e.root_message())
+                .show();
             ExitCode::FAILURE
         }
     }

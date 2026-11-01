@@ -33,6 +33,7 @@ use crate::open::{Access, folder_of, page_missing};
 use geop_core_math::geop_error::{GeopError, GeopResult};
 use sha2::Digest;
 use std::{
+    ffi::OsString,
     io::{Read, Write},
     net::{SocketAddr, TcpStream},
     path::{Path, PathBuf},
@@ -211,6 +212,50 @@ impl WindowState {
     }
 }
 
+// ── what a double click starts ─────────────────────────────────────────
+
+/// The arguments of the program a person double-clicks (the feature
+/// `desktop`): it is the app, whatever it is given. A file dropped on it is
+/// the path to open; `app ...` is what the app's "Open folder…" starts it
+/// with. An old macOS adds a `-psn_...` of its own.
+#[cfg_attr(not(feature = "desktop"), allow(dead_code))]
+pub fn desktop_args(args: impl IntoIterator<Item = OsString>) -> Vec<OsString> {
+    let mut args = (args.into_iter())
+        .filter(|a| !a.as_encoded_bytes().starts_with(b"-psn_"))
+        .collect::<Vec<_>>();
+    if args.get(1).is_none_or(|first| first != "app") {
+        args.insert(1.min(args.len()), "app".into());
+    }
+    args
+}
+
+/// The file the last folder edited is kept in.
+fn last_folder_file() -> Option<PathBuf> {
+    config_dir().map(|d| d.join("app-folder.txt"))
+}
+
+/// Keep `folder` as the one to open next time; a failure only loses it.
+fn keep_last_folder(folder: &Path) {
+    if let Some(file) = last_folder_file() {
+        let _ = file.parent().map(std::fs::create_dir_all);
+        let _ = std::fs::write(file, folder.as_os_str().as_encoded_bytes());
+    }
+}
+
+/// The folder to open with none asked for: the one edited last, while it
+/// is there; else `Geop` in the user's Documents, made if it has to be. A
+/// person who has only clicked on an icon has nothing to answer yet, and
+/// their parts are somewhere they will find them.
+#[cfg_attr(not(feature = "desktop"), allow(dead_code))]
+fn default_folder(last: Option<PathBuf>, home: Option<PathBuf>) -> Option<PathBuf> {
+    if let Some(last) = last.filter(|l| l.is_dir()) {
+        return Some(last);
+    }
+    let folder = home?.join("Documents").join("Geop");
+    std::fs::create_dir_all(&folder).ok()?;
+    Some(folder)
+}
+
 // ── the app ────────────────────────────────────────────────────────────
 
 /// The page's own address: what it may navigate to in the window. Any
@@ -249,12 +294,24 @@ pub fn run(args: &AppArgs) -> GeopResult<()> {
     }
     let path = match &args.path {
         Some(path) => path.clone(),
-        None => match window::pick_folder(&std::env::current_dir().unwrap_or_default()) {
-            Some(folder) => folder,
-            None => return Ok(()),
-        },
+        None => {
+            let kept = (last_folder_file())
+                .and_then(|f| std::fs::read_to_string(f).ok())
+                .map(PathBuf::from);
+            let home = std::env::var_os(if cfg!(windows) { "USERPROFILE" } else { "HOME" });
+            let chosen = cfg!(feature = "desktop")
+                .then(|| default_folder(kept, home.map(PathBuf::from)))
+                .flatten();
+            match chosen
+                .or_else(|| window::pick_folder(&std::env::current_dir().unwrap_or_default()))
+            {
+                Some(folder) => folder,
+                None => return Ok(()),
+            }
+        }
     };
     let (folder, active) = folder_of(&path)?;
+    keep_last_folder(folder.root());
     if raise_running(folder.root()) {
         eprintln!(
             "geop is editing {} already: brought its window to the front",
@@ -316,6 +373,54 @@ window.geopApp = { openFolder: () => window.ipc.postMessage("open-folder") };
             .pick_folder()
     }
 
+    /// The menu bar a Mac expects of an app: without one, ⌘Q does nothing,
+    /// and ⌘C and ⌘V reach no text field of the page, a webview having them
+    /// from the menu. Undo is left to the page, whose steps it undoes.
+    #[cfg(target_os = "macos")]
+    fn mac_menu() -> GeopResult<muda::Menu> {
+        use muda::{Menu, PredefinedMenuItem as Item, Submenu};
+        let failed = |e: muda::Error| GeopError::new(format!("making the menu: {e}"));
+        let app = Submenu::with_items(
+            "Geop",
+            true,
+            &[
+                &Item::about(None, None),
+                &Item::separator(),
+                &Item::hide(None),
+                &Item::hide_others(None),
+                &Item::show_all(None),
+                &Item::separator(),
+                &Item::quit(None),
+            ],
+        )
+        .map_err(failed)?;
+        let edit = Submenu::with_items(
+            "Edit",
+            true,
+            &[
+                &Item::cut(None),
+                &Item::copy(None),
+                &Item::paste(None),
+                &Item::select_all(None),
+            ],
+        )
+        .map_err(failed)?;
+        let window = Submenu::with_items(
+            "Window",
+            true,
+            &[
+                &Item::minimize(None),
+                &Item::maximize(None),
+                &Item::close_window(None),
+            ],
+        )
+        .map_err(failed)?;
+        let menu = Menu::new();
+        menu.append_items(&[&app, &edit, &window]).map_err(failed)?;
+        menu.init_for_nsapp();
+        Ok(menu)
+    }
+
     /// The window's icon: the logo the page shows, drawn at 256 pixels.
     fn icon() -> Option<Icon> {
         const LOGO: &str = include_str!("../../../web/src/assets/logo.svg");
@@ -363,6 +468,8 @@ window.geopApp = { openFolder: () => window.ipc.postMessage("open-folder") };
 
     pub fn run(folder: Folder, active: Option<String>) -> GeopResult<()> {
         let event_loop = EventLoopBuilder::<AppEvent>::with_user_event().build();
+        #[cfg(target_os = "macos")]
+        let menu = mac_menu()?;
         let proxy = Mutex::new(event_loop.create_proxy());
         let raise = Box::new(move || {
             let _ = proxy.lock().map(|p| p.send_event(AppEvent::Raise));
@@ -446,6 +553,8 @@ window.geopApp = { openFolder: () => window.ipc.postMessage("open-folder") };
             *control_flow = ControlFlow::Wait;
             // Kept alive as long as the window is.
             let _ = &webview;
+            #[cfg(target_os = "macos")]
+            let _ = &menu;
             match event {
                 Event::UserEvent(AppEvent::Raise) => {
                     window.set_minimized(false);
@@ -518,6 +627,40 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
         dir
+    }
+
+    /// A double click is the app, whatever comes with it; the app's own
+    /// "Open folder…" is not made `app app`.
+    #[test]
+    fn what_a_double_click_starts_is_the_app() {
+        let given = |args: &[&str]| -> Vec<String> {
+            desktop_args(args.iter().map(OsString::from))
+                .iter()
+                .map(|a| a.to_string_lossy().into_owned())
+                .collect()
+        };
+        assert_eq!(given(&["geop"]), ["geop", "app"]);
+        assert_eq!(given(&["geop", "part.geop"]), ["geop", "app", "part.geop"]);
+        assert_eq!(given(&["geop", "app", "dir"]), ["geop", "app", "dir"]);
+        assert_eq!(given(&["Geop", "-psn_0_12345"]), ["Geop", "app"]);
+    }
+
+    /// With nothing asked for, it opens the folder edited last while it is
+    /// there, else one in Documents, which it makes.
+    #[test]
+    fn the_folder_opened_with_none_asked_for() {
+        let home = scratch("home");
+        let made = home.join("Documents").join("Geop");
+        assert_eq!(default_folder(None, Some(home.clone())), Some(made.clone()));
+        assert!(made.is_dir());
+        let last = scratch("last");
+        assert_eq!(
+            default_folder(Some(last.clone()), Some(home.clone())),
+            Some(last)
+        );
+        let gone = home.join("gone");
+        assert_eq!(default_folder(Some(gone), Some(home)), Some(made));
+        assert_eq!(default_folder(None, None), None);
     }
 
     /// The server of the app answers the editor's protocol over its

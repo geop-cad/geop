@@ -37,6 +37,14 @@ tao = { version = "=0.37.1", optional = true }
 rfd = { version = "=0.17.2", default-features = false, features = ["gtk3"], optional = true }
 resvg = { version = "=0.45.1", default-features = false, optional = true }
 
+[target.'cfg(target_os = "macos")'.dependencies]
+# The menu bar a Mac expects of an app (see `app`).
+muda = { version = "0.17", default-features = false, optional = true }
+
+[target.'cfg(windows)'.build-dependencies]
+# The icon a Windows program shows in Explorer.
+winresource = "0.1"
+
 [dev-dependencies]
 # `tests/mcp.rs` models the drilled box the testing helpers describe,
 # through the MCP server, step by step.
@@ -50,4 +58,7 @@ frontend = ["dep:rust-embed"]
 # `geop app`: the page `frontend` embeds, in a native window. Needs the
 # system's webview: on Linux WebKitGTK 4.1 (`libwebkit2gtk-4.1-dev` to
 # build, `libwebkit2gtk-4.1-0` to run), nothing on macOS and Windows.
-app = ["frontend", "dep:wry", "dep:tao", "dep:rfd", "dep:resvg"]
+app = ["frontend", "dep:wry", "dep:tao", "dep:rfd", "dep:resvg", "dep:muda"]
+# What a person double-clicks: `app` whatever it is given, with no console
+# on Windows. See docs/desktop.md.
+desktop = ["app"]
