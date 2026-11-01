@@ -7,10 +7,11 @@ use geop_core_editor::{
     registry::{Drawer, StructureItem},
     view::{FaceMesh, PartView, RESOLUTION, ViewEdge, ViewFace, ViewVertex},
 };
-use geop_core_math::geop_error::GeopResult;
+use geop_core_geometry::search::PROJECT_ITERATIONS;
+use geop_core_math::{geop_error::GeopResult, scalars::Scalar, vector::Vector3};
 use geop_core_program::reader::Reader;
 use geop_core_rasterize::Rasterizer;
-use geop_core_topology::{EdgeId, Model, SolidId};
+use geop_core_topology::{CoedgeId, EdgeId, Model, SolidId};
 
 use crate::{NamedModel, RefId, read_model};
 
@@ -80,6 +81,7 @@ impl NamedModel {
                 faces: faces_of_edge.get(&id).cloned().unwrap_or_default(),
                 name: name(id.into()),
                 polyline: polyline.clone(),
+                smooth: meets_smoothly(model, id),
             })
             .collect();
         view.faces = (raster.faces.iter())
@@ -130,6 +132,48 @@ impl Drawer for ModelDrawer {
     fn kept(&self) -> bool {
         true
     }
+}
+
+/// How far apart, as the sine of the angle, the faces either side of an edge
+/// may lie for it to show no crease. What it decides is only what is drawn:
+/// a blend tilted a millionth of a radian off its face is smooth to the eye,
+/// and to no other question.
+const CREASE: f64 = 0.0175;
+
+/// Whether `edge` shows no crease: its two faces' normals agree where looked
+/// at. A line is drawn by samples anyway, so that is what this asks of too;
+/// an edge it cannot tell about is drawn.
+fn meets_smoothly(model: &Model, edge: EdgeId) -> bool {
+    let holds = || -> GeopResult<bool> {
+        let coedges = model.coedges_of_edge(edge);
+        let [a, b] = coedges.as_slice() else {
+            return Ok(false);
+        };
+        let curve = &model.get_edge(edge)?.curve;
+        let (t0, t1) = curve.domain();
+        let normal = |coedge: CoedgeId, point: Vector3| -> GeopResult<[f64; 3]> {
+            let coedge = model.get_coedge(coedge)?;
+            let surface = &model.get_face(coedge.face)?.surface;
+            let seed = coedge.pcurve.evaluate(coedge.pcurve.mid_parameter()?)?;
+            let (u, v) = surface.project(point, seed[0], seed[1], PROJECT_ITERATIONS)?;
+            Ok(surface.normal(u, v)?.to_array().map(|x| x.to_f64()))
+        };
+        for fraction in [0.25, 0.5, 0.75] {
+            let t = Scalar::interpolate(t0, t1, Scalar::from_f64(fraction)).sharpen();
+            let point = curve.evaluate(t)?;
+            let (p, q) = (normal(*a, point)?, normal(*b, point)?);
+            let across = [
+                p[1] * q[2] - p[2] * q[1],
+                p[2] * q[0] - p[0] * q[2],
+                p[0] * q[1] - p[1] * q[0],
+            ];
+            if across.iter().map(|x| x * x).sum::<f64>().sqrt() > CREASE {
+                return Ok(false);
+            }
+        }
+        Ok(true)
+    };
+    holds().unwrap_or(false)
 }
 
 #[cfg(test)]

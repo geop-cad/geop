@@ -138,9 +138,9 @@ impl PartOperation for Fillet {
     type Args = FilletArgs;
     type Session = ();
 
-    /// No edges yet, and a small radius.
+    /// No edges yet, and a radius of one.
     fn new_args(_: &Context) -> FilletArgs {
-        FilletArgs::constant(Vec::new(), 0.1)
+        FilletArgs::constant(Vec::new(), 1.0)
     }
 
     fn run(ctx: &mut StepContext, args: &FilletArgs) -> GeopResult<()> {

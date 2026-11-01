@@ -142,6 +142,7 @@ fn cube() -> PartView {
                 solid: Some("cube".into()),
                 faces: (0..3).filter(|&j| j != k).map(|j| face(j, a[j])).collect(),
                 polyline: vec![point(a), point(b)],
+                smooth: false,
                 ends: [corner(a), corner(b)],
             });
         }
