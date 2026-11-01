@@ -1551,17 +1551,35 @@ fn revolve_circle_clear_of_its_axis_is_a_torus() {
     assert_eq!(part.topology().faces.len(), 16);
 }
 
-/// A profile touching an axis from outside the sketch is refused: nothing
-/// says which of its edges lie on that axis.
+/// A square with a side along an axis from outside the sketch, which no
+/// constraint mentions: its corners lie on the axis, so they are poles, and
+/// it revolves into a cylinder. A square across the axis is still refused.
 #[test]
-fn revolve_touching_an_outside_axis_fails() {
+fn revolve_with_a_side_along_an_outside_axis_is_a_cylinder() {
     let mut s = Sketch::new();
     polygon(&mut s, &[[0.0, 0.0], [1.0, 0.0], [1.0, 1.0], [0.0, 1.0]]);
     let z = RevolveAxis::Datum(origin_axis(FrameAxis::Z));
-    let Err(error) = revolved_on_zx(s, z) else {
+    let part = revolved_on_zx(s, z).unwrap();
+    assert_valid(&part);
+    let solid = *part.topology().solids.keys().next().unwrap();
+    let volume = part
+        .topology()
+        .mass_properties(solid)
+        .unwrap()
+        .volume
+        .to_f64();
+    assert!((volume - std::f64::consts::PI).abs() < 1e-6, "{volume}");
+
+    let mut across = Sketch::new();
+    polygon(
+        &mut across,
+        &[[-1.0, 0.0], [1.0, 0.0], [1.0, 1.0], [-1.0, 1.0]],
+    );
+    let z = RevolveAxis::Datum(origin_axis(FrameAxis::Z));
+    let Err(error) = revolved_on_zx(across, z) else {
         panic!("revolved");
     };
-    assert!(error.root_message().contains("touches"), "{error:?}");
+    assert!(error.root_message().contains("crosses"), "{error:?}");
 }
 
 /// An arc tangent to its axis touches it at a point inside the curve, not

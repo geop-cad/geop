@@ -553,6 +553,16 @@ fixes, and one extra `surface_could_contain` in the error path separates them
 immediately. It turned this bug from a guess into a measurement: 32 failures,
 every one with exactly one endpoint on-surface and one off.
 
+The converse holds where nearness is all there is to ask. A revolve took a
+profile's corner as a pole only if a constraint named the axis line, and
+refused one that only touched it: a rectangle's corner fixed on the axis and
+another held level with it, or a side along a datum the sketch's own line lies
+on. Those were on the axis, and the user was told to say so. A corner the
+solved sketch cannot tell from the axis has no other meaning, and nothing it is
+assumed to have could be false: a point definitely off it stays off, and makes
+a wall. Ask what property the selection assumes, and if the measure answers it,
+do not ask the user to restate the geometry.
+
 ## Make the invariant a type, not a convention
 
 `Face` used to hold a flat `Vec<BoundaryRef>` with "index 0 is the outer loop"

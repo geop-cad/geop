@@ -127,8 +127,8 @@ struct SketchAxis {
     /// A point on it and its direction (of any length), as drawn: which side
     /// of it a region lies on is a question about the sketch as drawn.
     drawn: (Vector2, Vector2),
-    /// The points of the sketch the constraints put on it — none, unless it
-    /// is a line of the sketch.
+    /// The points of the sketch constrained onto it — none, unless it is a
+    /// line of the sketch.
     on_axis: BTreeSet<PointId>,
 }
 
@@ -290,7 +290,18 @@ impl ModelOperation for Revolve {
         let axis = SketchAxis::of(axis, reader, &args.sketch, placed, &geometry)?;
         let (a, dir) = axis.drawn;
         let axis_left = axis.direction.perp();
-        let on_axis = &axis.on_axis;
+        // A point is on the axis if the constraints say so, in so many
+        // words or not — fixed on it, held level with one that is — or a
+        // datum lies along the line it was constrained onto. What the
+        // solved sketch cannot tell from the axis is on it: a corner there
+        // is a pole however it got there, and could be nothing else.
+        let on_axis: BTreeSet<PointId> = (geometry.points.iter())
+            .filter(|(p, at)| {
+                let off = at.sub(&axis.point).prod_dot(&axis_left);
+                axis.on_axis.contains(p) || off.could_be_equal(Scalar::ZERO)
+            })
+            .map(|(&p, _)| p)
+            .collect();
 
         // What to sweep, each loop as the sketch runs it: an area's outer
         // loop counter-clockwise, its holes clockwise.
@@ -307,8 +318,7 @@ impl ModelOperation for Revolve {
         };
 
         // Which side of the axis the profile lies on; it must not cross. The
-        // points the constraints put on the axis are on it — known, not
-        // measured — so they and the edges between two of them say nothing;
+        // points on the axis, and the edges between two of them, say nothing;
         // every other point of a curve must lie definitely on one side, and
         // all on the same. A curve is furthest to either side at its ends or
         // where it runs parallel to the axis
@@ -356,7 +366,7 @@ impl ModelOperation for Revolve {
                     let side = side_at(t)?;
                     if side.could_be_equal(Scalar::ZERO) {
                         return Err(GeopError::new(format!(
-                            "the curve {},{} touches the revolve axis inside it, at parameter {t:?}: split it there at a point constrained onto the axis, or keep it clear of the axis",
+                            "the curve {},{} touches the revolve axis inside it, at parameter {t:?}: split it there at a point on the axis, or keep it clear of the axis",
                             placed.name, edge.curve
                         )));
                     }
@@ -380,8 +390,7 @@ impl ModelOperation for Revolve {
         // `(r, z)` coordinates: `r` towards the profile, `z` along the axis,
         // oriented like the sketch (`z` is `r` turned counter-clockwise), so
         // loops keep their winding — a rigid motion, which leaves sweeps and
-        // radii as they are. Points the constraints put on the axis get `r =
-        // 0` exactly: that is what the constraints say.
+        // radii as they are. Points on the axis get `r = 0` exactly.
         let r_dir = axis_left.prod_scalar(if left { Scalar::ONE } else { Scalar::ONE.neg() });
         let z_dir = r_dir.perp();
         let rz = Enclosure {
@@ -424,7 +433,7 @@ impl ModelOperation for Revolve {
                     let at = profile.joint(i)?;
                     if !is_pole && at[0].could_be_equal(Scalar::ZERO) {
                         return Err(GeopError::new(format!(
-                            "the profile touches the revolve axis at {}, which the constraints do not put on it: constrain it onto a line of the sketch to revolve around, or keep the profile clear of the axis",
+                            "the profile touches the revolve axis at {}, where no point of the sketch is: put one there, or keep the profile clear of the axis",
                             profile.joint_names[i]
                         )));
                     }
