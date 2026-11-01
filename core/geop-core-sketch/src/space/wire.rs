@@ -58,6 +58,10 @@ impl Sketch3d {
         class: &BTreeMap<PointId, PointId>,
     ) -> GeopResult<Vec<usize>> {
         let points = self.curve(curve)?.points();
+        // What defines a helix between its ends is its axis, off the curve.
+        if matches!(self.curve(curve)?.kind, CurveKind3d::Helix { .. }) {
+            return Ok(Vec::new());
+        }
         let others: BTreeSet<PointId> = self
             .drawn_curves()
             .filter(|(id, _)| **id != curve)
@@ -173,7 +177,7 @@ impl Sketch3d {
                     .collect::<GeopResult<_>>()
                     .with_context(ctx)?
             }
-            CurveKind3d::Line { .. } | CurveKind3d::Reference => {
+            CurveKind3d::Line { .. } | CurveKind3d::Helix { .. } | CurveKind3d::Reference => {
                 return Err(GeopError::new(format!(
                     "curve {curve} has no points between its ends to be cut at"
                 )))

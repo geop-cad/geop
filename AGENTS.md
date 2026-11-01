@@ -553,6 +553,16 @@ fixes, and one extra `surface_could_contain` in the error path separates them
 immediately. It turned this bug from a guess into a measurement: 32 failures,
 every one with exactly one endpoint on-surface and one off.
 
+The converse holds where nearness is all there is to ask. A revolve took a
+profile's corner as a pole only if a constraint named the axis line, and
+refused one that only touched it: a rectangle's corner fixed on the axis and
+another held level with it, or a side along a datum the sketch's own line lies
+on. Those were on the axis, and the user was told to say so. A corner the
+solved sketch cannot tell from the axis has no other meaning, and nothing it is
+assumed to have could be false: a point definitely off it stays off, and makes
+a wall. Ask what property the selection assumes, and if the measure answers it,
+do not ask the user to restate the geometry.
+
 ## Make the invariant a type, not a convention
 
 `Face` used to hold a flat `Vec<BoundaryRef>` with "index 0 is the outer loop"
@@ -1288,6 +1298,22 @@ solved for, with points far from where they were drawn, can be sent off
 to infinity. A sketch every point of which a formula places — lines,
 Béziers, arcs whose sweep does not change — is placed in one step for any
 size.
+
+## A helix is a screw motion, not a spline
+
+A rectangle swept along a sketch's helix looked wrong and would not join the
+cylinder it stood on, and the two were one bug. The helix was any other curve
+to the sweep: carried by a rotation minimizing frame, which along a helix
+turns against the axis, so the rectangle rolled over as it rose; and skinned
+in cubics, whose edge wobbled `1e-5` about the cylinder for five turns. The
+boolean ran out of nodes there; with twenty times the nodes it lost the march
+along the next curve, among crossings closer than its strides. Each is honest:
+telling those crossings apart would take a tolerance. Carried by the screw
+motion instead (`path_sweep::cut_helices`, the arc's own span with a rise), a
+wall lies exactly on its cylinder, and the join takes seconds. When a boolean
+fails on near-coincidence, look first at why the geometry is near rather than
+on. A spline laid along a cylinder still fails so
+(`a_rectangle_swept_along_a_spline_on_a_cylinder_joins_it`, ignored).
 
 ## Carrying a patch on must leave it as it was
 

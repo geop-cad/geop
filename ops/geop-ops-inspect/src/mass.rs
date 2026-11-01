@@ -1,12 +1,14 @@
 //! [`mass_report`]: the mass properties of every solid a part shows, and of
 //! all of them together.
 
+use crate::{Scope, scope::Stopped};
 use geop_core_editor::output::{Answer, Block, Bounded, Row};
 use geop_core_editor::{editing::Tone, selectable::SelectableElement};
 use geop_core_math::{geop_error::GeopResult, scalars::Scalar};
 use geop_core_program::{
     element::{ElementReference, PickedElement},
     reader::Reader,
+    watch,
 };
 use geop_core_topology::mass::MassProperties;
 use geop_ops_model::placed::solids::{PlacedSolid, Shapes, placed_solids};
@@ -173,6 +175,9 @@ pub struct MassReport {
     /// computed: a total missing a body would mislead. What it says
     /// depends on their materials (see [`MassSummary::center`]).
     pub total: Option<MassSummary>,
+    /// How far it got, if it was stopped before the end: then there is no
+    /// total.
+    pub stopped: Option<Stopped>,
 }
 
 impl MassReport {
@@ -181,6 +186,12 @@ impl MassReport {
     /// it needs to be weighed — and why it could not be computed.
     pub fn shown(&self) -> Answer {
         let mut blocks = Vec::new();
+        if let Some(Stopped { checked, of }) = self.stopped {
+            blocks.push(Block::Text {
+                text: format!("Stopped after {checked} of {of} solids: no total."),
+                tone: Tone::Error,
+            });
+        }
         if self.bodies.is_empty() {
             blocks.push(Block::Text {
                 text: "No solids.".into(),
@@ -245,15 +256,28 @@ const SOME_MATERIAL: &str =
 
 /// The mass properties of every solid of the part `reader` reads — its own,
 /// and those of the parts placed in it, where they are and of their own
-/// parts' materials — and of all of them together. A part placed many
-/// times is integrated once.
-pub fn mass_report(reader: &Reader) -> GeopResult<MassReport> {
+/// parts' materials — and of all of them together, those `scope` asks
+/// about. A part placed many times is integrated once. Stopped part way
+/// (see [`geop_core_program::watch`]), it says how far it got.
+pub fn mass_report(reader: &Reader, scope: &Scope) -> GeopResult<MassReport> {
+    let solids = placed_solids(reader)?;
+    scope.check(&solids)?;
+    let solids: Vec<_> = (solids.into_iter())
+        .filter(|solid| scope.holds(&solid.instance))
+        .collect();
+    let of = solids.len();
+    let mut stopped = None;
     let mut bodies = Vec::new();
     let (mut weighed, mut shapes_only) = (Vec::new(), Vec::new());
     let mut area = (Scalar::ZERO, true);
     let mut complete = true;
     let mut shapes = Shapes::default();
-    for placed in placed_solids(reader)? {
+    for (at, placed) in solids.into_iter().enumerate() {
+        if !watch::go_on("weighing solids", at, of) {
+            stopped = Some(Stopped { checked: at, of });
+            complete = false;
+            break;
+        }
         let material = placed.material();
         let computed = (placed.mass_properties(&mut shapes)).and_then(|p| {
             let known = match p {
@@ -305,7 +329,11 @@ pub fn mass_report(reader: &Reader) -> GeopResult<MassReport> {
             })
         }
     };
-    Ok(MassReport { bodies, total })
+    Ok(MassReport {
+        bodies,
+        total,
+        stopped,
+    })
 }
 
 /// What is drawn of `solid` where its part is placed, to light: its faces,

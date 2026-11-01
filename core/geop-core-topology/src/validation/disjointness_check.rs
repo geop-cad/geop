@@ -102,8 +102,12 @@ fn check_edges_of_body_disjoint(
 
             if intersections.is_coincident() {
                 errors.push(GeopError::new(format!(
-                    "edge {} and edge {} are coincident along an arc",
-                    ids[i].0, ids[j].0
+                    "edge {} and edge {} are coincident along an arc: {:?}, of domains {:?} and {:?}",
+                    ids[i].0,
+                    ids[j].0,
+                    intersections,
+                    edge_a.curve.domain(),
+                    edge_b.curve.domain(),
                 )));
                 continue;
             }

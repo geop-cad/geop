@@ -36,7 +36,7 @@ use serde::{Deserialize, Serialize};
 
 use super::{
     Constraint3d, CurveKind3d, Enclosure3d, End, Point3d, Sketch3d,
-    geometry::{Arc3, across},
+    geometry::{Arc3, Helix3, across},
 };
 use crate::{
     ConstraintId, CurveId, PointId,
@@ -212,7 +212,9 @@ impl<'a> Problem<'a> {
                     layout.points.point_vars(*a, &mut vars);
                     layout.points.point_vars(*b, &mut vars);
                 }
-                Length { line: c, .. } | Radius { arc: c, .. } => curve_vars(*c, &mut vars),
+                Length { line: c, .. } | Radius { arc: c, .. } | HelixEnd { helix: c } => {
+                    curve_vars(*c, &mut vars);
+                }
                 Parallel { a, b } => {
                     curve_vars(*a, &mut vars);
                     curve_vars(*b, &mut vars);
@@ -331,6 +333,27 @@ impl<'a> Problem<'a> {
             Radius { arc, value } => {
                 let arc = arc_of(sketch, layout, x, arc).expect("validated");
                 out.push(arc.radius()?.sub(c(value)));
+            }
+            HelixEnd { helix } => {
+                let CurveKind3d::Helix {
+                    start,
+                    base,
+                    top,
+                    end,
+                    turns,
+                    left,
+                } = sketch.curves[&helix].kind
+                else {
+                    unreachable!("validated to be a helix");
+                };
+                let helix = Helix3 {
+                    start: point(start),
+                    base: point(base),
+                    top: point(top),
+                    turns,
+                    left,
+                };
+                out.extend(point(end).sub(&helix.end()?).to_array());
             }
             Parallel { a, b } => {
                 let (sa, ea) = line_of(sketch, layout, x, a);
@@ -492,19 +515,66 @@ impl Sketch3d {
     /// Like [`Sketch3d::solve`], pulling each `(point, target)` towards its
     /// target as far as the constraints allow: dragging.
     pub fn solve_with_drag(&mut self, drags: &[(PointId, Vector3)]) -> GeopResult<Solve3dReport> {
-        let problem = Problem::new(self)?;
+        self.seat_helix_ends()?;
+        let mut problem = Problem::new(self)?;
+        // A helix's end follows from the rest of it, and gives way to
+        // nothing: as a row among the others, a drag of the top of its axis
+        // moved its start and the bottom of its axis to share the move.
+        let helices = (problem.constraints.iter())
+            .any(|c| matches!(c.constraint, Constraint3d::HelixEnd { .. }));
+        (problem.constraints).retain(|c| !matches!(c.constraint, Constraint3d::HelixEnd { .. }));
         let (_, solved, x) = Spatial::dragged(
             &problem,
             problem.start.clone(),
             &problem.layout.points.point_var,
             drags,
         )?;
-        let report = problem.report(x.clone(), solved.phases, Some(solved.enclosure))?;
+        let report = problem.report(x.clone(), solved.phases.clone(), Some(solved.enclosure))?;
         // Where the solve put the points is the sketch's state, and a free
         // choice: sharp.
         let x: Vec<Scalar> = x.into_iter().map(Scalar::sharpen).collect();
         problem.layout.points.write(&mut self.points, &x);
-        Ok(report)
+        if !helices {
+            return Ok(report);
+        }
+        self.seat_helix_ends()?;
+        let whole = Problem::new(self)?;
+        whole.report(whole.start.clone(), solved.phases, None)
+    }
+
+    /// Puts each helix's end where the rest of it says: a helix changed is
+    /// not a violation for its start and axis to give way to. Where a point
+    /// starts from is a free choice.
+    fn seat_helix_ends(&mut self) -> GeopResult<()> {
+        let helices: Vec<_> = (self.curves.values())
+            .filter_map(|curve| match curve.kind {
+                CurveKind3d::Helix {
+                    start,
+                    base,
+                    top,
+                    end,
+                    turns,
+                    left,
+                } => Some((start, base, top, end, turns, left)),
+                _ => None,
+            })
+            .collect();
+        for (start, base, top, end, turns, left) in helices {
+            let at = (Helix3 {
+                start: self.point(start)?.at,
+                base: self.point(base)?.at,
+                top: self.point(top)?.at,
+                turns,
+                left,
+            })
+            .end()?;
+            if let Some(end) = self.points.get_mut(&end)
+                && !end.fixed
+            {
+                end.at = at.sharpen();
+            }
+        }
+        Ok(())
     }
 
     /// Which constraints hold where the points are now, and what can still

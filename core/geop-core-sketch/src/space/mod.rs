@@ -46,7 +46,7 @@ mod tests;
 mod wire;
 
 pub use curves::{Chain3d, Piece3d};
-pub use geometry::Arc3;
+pub use geometry::{Arc3, Helix3};
 pub use solve::Solve3dReport;
 pub use wire::WireEdge;
 
@@ -75,7 +75,7 @@ pub struct Point3d {
 }
 
 /// What a curve of a 3-D sketch is.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "type")]
 pub enum CurveKind3d {
     Line {
@@ -92,12 +92,27 @@ pub enum CurveKind3d {
     Spline {
         points: Vec<PointId>,
     },
+    /// The helix round the axis from `base` to `top` from `start`, as far
+    /// up the axis as `top` is from `base`, in `turns` turns: right-handed,
+    /// or left-handed if `left`. Its radius is how far `start` is from the
+    /// axis. Where it arrives, `end`, follows from the rest, by a
+    /// [`Constraint3d::HelixEnd`] ([`Sketch3d::add_helix`] adds it).
+    Helix {
+        start: PointId,
+        base: PointId,
+        top: PointId,
+        end: PointId,
+        #[serde(with = "as_f64")]
+        turns: Scalar,
+        #[serde(default, skip_serializing_if = "is_false")]
+        left: bool,
+    },
     /// A curve given from outside — an edge of the part — whose geometry is
     /// in [`Sketch3d::references`]: only for points to be constrained onto.
     Reference,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct Curve3d {
     #[serde(flatten)]
     pub kind: CurveKind3d,
@@ -113,7 +128,7 @@ impl Uses for Curve3d {
 }
 
 impl Curve3d {
-    /// The points it is defined by.
+    /// The points it is defined by: its start first, its end last.
     pub fn points(&self) -> Vec<PointId> {
         match &self.kind {
             CurveKind3d::Line { start, end } => vec![*start, *end],
@@ -123,6 +138,13 @@ impl Curve3d {
                 end,
             } => vec![*start, *through, *end],
             CurveKind3d::Spline { points } => points.clone(),
+            CurveKind3d::Helix {
+                start,
+                base,
+                top,
+                end,
+                ..
+            } => vec![*start, *base, *top, *end],
             CurveKind3d::Reference => Vec::new(),
         }
     }
@@ -131,15 +153,16 @@ impl Curve3d {
     /// the sketch.
     pub fn endpoints(&self) -> Option<(PointId, PointId)> {
         match &self.kind {
-            CurveKind3d::Line { start, end } | CurveKind3d::Arc { start, end, .. } => {
-                Some((*start, *end))
-            }
+            CurveKind3d::Line { start, end }
+            | CurveKind3d::Arc { start, end, .. }
+            | CurveKind3d::Helix { start, end, .. } => Some((*start, *end)),
             CurveKind3d::Spline { points } => Some((*points.first()?, *points.last()?)),
             CurveKind3d::Reference => None,
         }
     }
 
-    /// Whether it is drawn — a line, an arc or a spline — rather than given.
+    /// Whether it is drawn — a line, an arc, a spline or a helix — rather
+    /// than given.
     pub fn is_drawn(&self) -> bool {
         !matches!(self.kind, CurveKind3d::Reference)
     }
@@ -230,6 +253,8 @@ pub enum Constraint3d {
     OnCurve { point: PointId, curve: CurveId },
     /// Two curves meeting at an end of each go on smoothly there.
     Tangent { a: CurveId, b: CurveId },
+    /// The end of a helix is where the rest of it says.
+    HelixEnd { helix: CurveId },
 }
 
 impl Uses for Constraint3d {
@@ -268,7 +293,8 @@ impl Constraint3d {
             | Radius { arc: c, .. }
             | ParallelTo { line: c, .. }
             | TangentTo { curve: c, .. }
-            | OnCurve { curve: c, .. } => vec![c],
+            | OnCurve { curve: c, .. }
+            | HelixEnd { helix: c } => vec![c],
             Parallel { a, b } | Tangent { a, b } => vec![a, b],
             Coincident { .. } | Coordinate { .. } | Distance { .. } => Vec::new(),
         }
@@ -402,6 +428,38 @@ impl Sketch3d {
         })
     }
 
+    /// A helix (see [`CurveKind3d::Helix`]) with its end where the rest of
+    /// it says, a new point.
+    pub fn add_helix(
+        &mut self,
+        start: PointId,
+        base: PointId,
+        top: PointId,
+        turns: Scalar,
+        left: bool,
+    ) -> GeopResult<CurveId> {
+        let at = |p: PointId| self.point(p).map(|p| p.at);
+        let end = (Helix3 {
+            start: at(start)?,
+            base: at(base)?,
+            top: at(top)?,
+            turns,
+            left,
+        })
+        .end()?;
+        let end = self.add_point(end);
+        let helix = self.add_curve(CurveKind3d::Helix {
+            start,
+            base,
+            top,
+            end,
+            turns,
+            left,
+        });
+        self.constrain(Constraint3d::HelixEnd { helix });
+        Ok(helix)
+    }
+
     pub fn add_spline(&mut self, points: Vec<PointId>) -> CurveId {
         self.add_curve(CurveKind3d::Spline { points })
     }
@@ -505,6 +563,20 @@ impl Sketch3d {
                         "spline {i} needs at least two points, each different from the one before"
                     )));
                 }
+                CurveKind3d::Helix {
+                    start,
+                    base,
+                    top,
+                    turns,
+                    ..
+                } if class[base] == class[top]
+                    || class[start] == class[base]
+                    || !turns.definitely_greater(Scalar::ZERO) =>
+                {
+                    return Err(GeopError::new(format!(
+                        "helix {i} needs an axis, a start off it and more than no turns"
+                    )));
+                }
                 CurveKind3d::Reference if !self.references.contains_key(&i) => {
                     return Err(GeopError::new(format!(
                         "reference curve {i} has no geometry handed in"
@@ -565,19 +637,28 @@ impl Sketch3d {
                 direction.normalize().map(|_| ())
             }
             OnCurve { curve, .. } => need(
-                !matches!(kind(*curve)?, CurveKind3d::Spline { .. }),
-                "a point and a line, an arc or an edge (a point on a spline is not supported)",
+                !matches!(
+                    kind(*curve)?,
+                    CurveKind3d::Spline { .. } | CurveKind3d::Helix { .. }
+                ),
+                "a point and a line, an arc or an edge (a point on a spline or a helix is not supported)",
             ),
             Tangent { a, b } => {
                 need(
                     self.curve(*a)?.is_drawn() && self.curve(*b)?.is_drawn(),
                     "two drawn curves",
                 )?;
+                let helix = |c: CurveId| matches!(kind(c), Ok(CurveKind3d::Helix { .. }));
+                need(!helix(*a) && !helix(*b), "curves other than a helix")?;
                 need(
                     self.shared_end(*a, *b)?.is_some(),
                     "two curves meeting at an end of each",
                 )
             }
+            HelixEnd { helix } => need(
+                matches!(kind(*helix)?, CurveKind3d::Helix { .. }),
+                "a helix",
+            ),
         }
     }
 

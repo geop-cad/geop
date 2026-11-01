@@ -214,7 +214,9 @@ pub fn placed_parts<'a>(reader: &Reader<'a>) -> GeopResult<Vec<Placed<'a>>> {
 pub fn solid_meshes(reader: &Reader, quality: usize) -> GeopResult<SolidMeshes> {
     let own = |reader: &Reader| read_model(reader)?.solid_meshes(quality);
     let mut out = own(reader)?;
-    for placed in placed_parts(reader)? {
+    let parts = placed_parts(reader)?;
+    for (at, placed) in parts.iter().enumerate() {
+        geop_core_program::watch::checkpoint("meshing placed parts", at, parts.len())?;
         let meshes = own(&placed.located.part)?;
         let motion = placed.located.world.motion();
         for (name, triangles) in meshes.iter() {

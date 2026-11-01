@@ -59,6 +59,7 @@ pub enum Tool {
     Line,
     Arc,
     Spline,
+    Helix,
 }
 
 impl Tool {
@@ -71,12 +72,19 @@ impl Tool {
         &'static str,
         &'static str,
         Option<&'static str>,
-    ); 5] = [
+    ); 6] = [
         (Tool::Select, "select", "Select", "Escape", None),
         (Tool::Point, "point", "Point", "p", Some(icons::POINT)),
         (Tool::Line, "line", "Line", "l", Some(icons::LINE)),
         (Tool::Arc, "arc", "3-point arc", "a", Some(icons::ARC)),
         (Tool::Spline, "spline", "Spline", "s", Some(icons::SPLINE)),
+        (
+            Tool::Helix,
+            "helix",
+            "Helix",
+            "h",
+            Some(crate::icons::HELIX),
+        ),
     ];
 
     fn draws(self) -> bool {
@@ -100,7 +108,14 @@ pub struct Sketch3dSession {
     hover: Option<Located>,
     /// The coordinates typed for the next point.
     typed: [f64; 3],
+    /// How the next helix turns, once told: how many times, and whether
+    /// left-handed.
+    turns: Option<f64>,
+    left: bool,
 }
+
+/// How many times a helix turns, until told otherwise.
+const TURNS: f64 = 5.0;
 
 impl Sketch3dSession {
     /// The tool in hand.
@@ -428,6 +443,22 @@ fn click(
                 s.placed.push(p);
             }
         }
+        Tool::Helix => {
+            if s.placed.iter().all(|&placed| !same(args, placed, p)) {
+                s.placed.push(p);
+            }
+            if let [base, top, start] = s.placed[..] {
+                let turns = Scalar::from_f64(s.turns.unwrap_or(TURNS));
+                if args
+                    .sketch
+                    .add_helix(start, base, top, turns, s.left)
+                    .is_ok()
+                {
+                    s.fresh.clear();
+                }
+                s.placed.clear();
+            }
+        }
     }
     solve(before, args, &[]);
 }
@@ -549,6 +580,9 @@ fn hint(tool: Tool, placed: usize) -> &'static str {
         (Tool::Arc, 1) => "Click a point it passes through",
         (Tool::Arc, _) => "Click where it ends",
         (Tool::Spline, _) => "Click the points it passes through · double-click or Enter finishes",
+        (Tool::Helix, 0) => "Click the bottom of its axis",
+        (Tool::Helix, 1) => "Click the top of its axis: how far it rises",
+        (Tool::Helix, _) => "Click where it starts: how far from the axis says its radius",
     }
 }
 
@@ -595,6 +629,7 @@ fn describe(args: &AddSketch3dArgs, id: ConstraintId, c: &Constraint3d) -> Strin
             None => format!("{point} on {curve}"),
         },
         Tangent { a, b } => format!("Tangent {a} {b}"),
+        HelixEnd { helix } => format!("End of {helix}"),
     }
 }
 
@@ -838,7 +873,7 @@ fn visuals(
         && let Some(hover) = located.at(args)
     {
         let mut draft: Vec<Vector3> = match s.tool(args) {
-            Tool::Spline | Tool::Arc => s.placed.iter().filter_map(at).collect(),
+            Tool::Spline | Tool::Arc | Tool::Helix => s.placed.iter().filter_map(at).collect(),
             _ => last.into_iter().collect(),
         };
         draft.push(hover);
@@ -981,6 +1016,49 @@ pub(crate) fn form<'a>(
             );
         }
         _ => {}
+    }
+
+    // How the one helix selected turns; else, with the tool in hand, how
+    // the next will.
+    let selected = match picks.curves[..] {
+        [c] if picks.points.is_empty() => match args.sketch.curves[&c].kind {
+            CurveKind3d::Helix { turns, left, .. } => Some((c, turns.to_f64(), left)),
+            _ => None,
+        },
+        _ => None,
+    };
+    let helix = selected
+        .map(|(_, turns, left)| (turns, left))
+        .or_else(|| (tool == Tool::Helix).then(|| (s.turns.unwrap_or(TURNS), s.left)));
+    if let Some((turns, left)) = helix {
+        let curve = selected.map(|(c, ..)| c);
+        let set = move |edit: Edit<'_, AddSketch3dArgs, Sketch3dSession>,
+                        to_turns: Option<f64>,
+                        to_left: Option<bool>| {
+            let Edit { args, session, .. } = edit;
+            match curve {
+                Some(c) => {
+                    if let Some(CurveKind3d::Helix { turns, left, .. }) =
+                        args.sketch.curves.get_mut(&c).map(|c| &mut c.kind)
+                    {
+                        *turns = to_turns.map_or(*turns, Scalar::from_f64);
+                        *left = to_left.unwrap_or(*left);
+                    }
+                    solve(before, args, &[]);
+                }
+                None => {
+                    session.turns = to_turns.or(session.turns);
+                    session.left = to_left.unwrap_or(session.left);
+                }
+            }
+        };
+        let number = Number::new("turns", turns, Unit::Count).range(0.25, 1000.0);
+        f.number("helix_turns", number, move |edit, v| {
+            set(edit, Some(v), None)
+        });
+        f.checkbox("helix_left", "Left-handed", left, move |edit, b| {
+            set(edit, None, Some(b));
+        });
     }
 
     // What the selection can be constrained by.

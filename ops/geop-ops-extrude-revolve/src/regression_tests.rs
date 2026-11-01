@@ -1079,20 +1079,9 @@ fn mug_handle_turned_up_to_next_both_ways_around_the_cup_seam() {
 /// XY plane with one side along the sketch's own `y` axis, its two ends
 /// constrained onto that axis, revolved a full turn around the `Y` axis of
 /// the origin, picked as a datum. That axis is the line the sketch's `y`
-/// axis lies on, and the constraints put the profile's side on it, yet the
-/// revolve refuses:
-///
-/// > the profile touches the revolve axis at s1,p5, which the constraints
-/// > do not put on it: constrain it onto a line of the sketch to revolve
-/// > around, or keep the profile clear of the axis
-///
-/// The refusal asks for what was done. `SketchAxis::of` collects the points
-/// on the axis only when the axis is a line of the sketch itself; for a
-/// datum (or an edge) lying in the sketch's plane it collects none, even
-/// where a line of the sketch runs along it. Revolved around the sketch's
-/// `y` axis line instead, the same profile builds (8795.6).
+/// axis lies on, so the profile's side is on it, though the constraints
+/// name another line: it was refused for that.
 #[test]
-#[ignore = "bug: a profile with its side constrained onto the sketch's y axis, revolved around the origin's Y datum axis (the same line), is refused: \"the profile touches the revolve axis at s1,p5, which the constraints do not put on it\"; around the sketch's own y line it builds"]
 fn knob_revolved_around_the_origin_y_axis() {
     let mut profile = Sketch::new();
     let origin = profile.add_fixed_point(n(0.0), n(0.0));
@@ -1137,4 +1126,69 @@ fn knob_revolved_around_the_origin_y_axis() {
         },
     );
     assert_builds_valid(&program);
+}
+
+/// A rectangle from a point projected onto the sketch's `x` axis, its first
+/// side horizontal from there and its next along the `y` axis, revolved a
+/// full turn around the `x` axis:
+///
+/// > the profile touches the revolve axis at sketch1,p6, which the
+/// > constraints do not put on it
+///
+/// They do put it there, the first side's other end too, though no
+/// constraint says "on this line": the point is fixed on it, the other held
+/// level with it. The axis is valid, and a cylinder comes of it.
+#[test]
+fn rectangle_with_a_side_on_the_axis_by_other_constraints() {
+    let (long, tall) = (29.458436663535007, 35.71167137480035);
+    let mut profile = Sketch::new();
+    let origin = profile.add_fixed_point(n(0.0), n(0.0));
+    let x = profile.add_fixed_point(n(1.0), n(0.0));
+    let y = profile.add_fixed_point(n(0.0), n(1.0));
+    let x_axis = profile.add_line(origin, x);
+    let y_axis = profile.add_line(origin, y);
+    for line in [x_axis, y_axis] {
+        profile.set_construction(line, true);
+    }
+    let projected = profile.add_fixed_point(n(long), n(0.0));
+    let near = profile.add_point(n(-8.881784197001252e-16), n(0.0));
+    let far = profile.add_point(n(3.552713678800501e-15), n(tall));
+    let beside = profile.add_point(n(long), n(tall));
+    let on_axis = profile.add_line(projected, near);
+    let up = profile.add_line(near, far);
+    let across = profile.add_line(far, beside);
+    let down = profile.add_line(beside, projected);
+    profile.constrain(Constraint::Horizontal { line: on_axis });
+    profile.constrain(Constraint::Vertical { line: up });
+    profile.constrain(Constraint::Horizontal { line: across });
+    profile.constrain(Constraint::Vertical { line: down });
+    profile.constrain(Constraint::Collinear { a: y_axis, b: up });
+    let mut program = Program::new();
+    program.push(
+        "sketch1",
+        AddSketchArgs::on(on_origin(FrameAxis::Z), profile),
+    );
+    program.push(
+        "revolve1",
+        RevolveArgs {
+            sketch: whole_sketch("sketch1"),
+            axis: Some(RevolveAxis::Sketch(sketch_element("sketch1", x_axis))),
+            extent: Extents::blind(360.0),
+            output: Output::Solid(Combine::NewBody),
+        },
+    );
+    assert_builds_valid(&program);
+    let part = program.build_model(crate::testing::registry).unwrap();
+    let solid = *part.topology().solids.keys().next().unwrap();
+    let volume = part
+        .topology()
+        .mass_properties(solid)
+        .unwrap()
+        .volume
+        .to_f64();
+    let expected = std::f64::consts::PI * tall * tall * long;
+    assert!(
+        (volume - expected).abs() < 1e-6 * expected,
+        "{volume} of {expected}"
+    );
 }

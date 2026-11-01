@@ -40,6 +40,7 @@ jobs:
             --only duck \
             --only turbine_blade \
             --only cool_flange \
+            --only square_thread \
             --only press \
             --only edge_part \
             --only bracket

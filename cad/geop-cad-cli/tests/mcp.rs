@@ -17,6 +17,8 @@ struct Server {
     stdin: ChildStdin,
     stdout: BufReader<ChildStdout>,
     next_id: u64,
+    /// The notifications it sent, in order.
+    notified: Vec<Value>,
 }
 
 impl Server {
@@ -35,6 +37,7 @@ impl Server {
             stdin,
             stdout,
             next_id: 1,
+            notified: Vec::new(),
         }
     }
 
@@ -44,13 +47,20 @@ impl Server {
         self.next_id += 1;
         let message = json!({ "jsonrpc": "2.0", "id": id, "method": method, "params": params });
         writeln!(self.stdin, "{message}").unwrap();
-        let mut line = String::new();
-        self.stdout.read_line(&mut line).unwrap();
-        assert!(!line.is_empty(), "the server closed its output");
-        let answer: Value = serde_json::from_str(&line).unwrap_or_else(|e| panic!("{e}: {line}"));
-        assert_eq!(answer["id"], json!(id), "{answer}");
-        assert_eq!(answer["jsonrpc"], "2.0");
-        answer
+        loop {
+            let mut line = String::new();
+            self.stdout.read_line(&mut line).unwrap();
+            assert!(!line.is_empty(), "the server closed its output");
+            let answer: Value =
+                serde_json::from_str(&line).unwrap_or_else(|e| panic!("{e}: {line}"));
+            assert_eq!(answer["jsonrpc"], "2.0");
+            if answer.get("id").is_none() {
+                self.notified.push(answer);
+                continue;
+            }
+            assert_eq!(answer["id"], json!(id), "{answer}");
+            return answer;
+        }
     }
 
     /// Sends a notification, which is not answered.
@@ -107,6 +117,8 @@ fn a_block_with_a_hole_is_modelled_inspected_exported_and_saved() {
     assert_eq!(init["result"]["serverInfo"]["name"], "geop", "{init}");
     assert_eq!(init["result"]["protocolVersion"], "2025-06-18");
     assert!(init["result"]["capabilities"]["tools"].is_object());
+    assert!(init["result"]["capabilities"]["resources"].is_object());
+    assert!(init["result"]["capabilities"]["prompts"].is_object());
     server.notify("notifications/initialized");
     assert_eq!(server.request("ping", json!({}))["result"], json!({}));
 
@@ -131,6 +143,15 @@ fn a_block_with_a_hole_is_modelled_inspected_exported_and_saved() {
             "inspect",
             "export",
             "save",
+            "look",
+            "undo",
+            "redo",
+            "open_step",
+            "step_event",
+            "commit_step",
+            "cancel_step",
+            "take_tool",
+            "panel",
         ]
     );
     for tool in tools["result"]["tools"].as_array().unwrap() {
@@ -315,4 +336,152 @@ fn a_step_is_added_before_another_and_a_wrong_target_names_the_right_ones() {
     assert!(is_error && text.contains("nothing"), "{text}");
     let (text, is_error) = server.call("list_operations", json!({ "kind": "nothing" }));
     assert!(is_error && text.contains("extrude"), "{text}");
+}
+
+/// What an agent reads besides the tools: the resources, a picture among
+/// them, and a prompt filled in; and `look`'s picture, as MCP's image
+/// content.
+#[test]
+fn resources_prompts_and_pictures_are_served() {
+    let mut server = Server::start();
+    server.request(
+        "initialize",
+        json!({ "protocolVersion": "2025-06-18", "capabilities": {}, "clientInfo": { "name": "test", "version": "0" } }),
+    );
+    for step in drilled_box().steps {
+        server.ok(
+            "add_step",
+            json!({ "kind": step.operation, "args": step.args, "id": step.id }),
+        );
+    }
+
+    let listed = server.request("resources/list", json!({}));
+    let uris: Vec<&str> = (listed["result"]["resources"].as_array().unwrap().iter())
+        .map(|r| r["uri"].as_str().unwrap())
+        .collect();
+    assert!(
+        uris.contains(&"geop://program") && uris.contains(&"geop://picture"),
+        "{listed}"
+    );
+    let templates = server.request("resources/templates/list", json!({}));
+    assert_eq!(
+        templates["result"]["resourceTemplates"][0]["uriTemplate"], "geop://operations/{kind}",
+        "{templates}"
+    );
+    let program = server.request("resources/read", json!({ "uri": "geop://program" }));
+    let contents = &program["result"]["contents"][0];
+    assert_eq!(contents["mimeType"], "application/json", "{program}");
+    assert!(contents["text"].as_str().unwrap().contains("\"hole\""));
+    let picture = server.request("resources/read", json!({ "uri": "geop://picture" }));
+    let blob = picture["result"]["contents"][0]["blob"].as_str().unwrap();
+    assert!(
+        blob.starts_with("iVBORw0KGgo"),
+        "a PNG, as base64: {}",
+        &blob[..16]
+    );
+    let missing = server.request("resources/read", json!({ "uri": "geop://nothing" }));
+    assert!(
+        missing["error"]["message"]
+            .as_str()
+            .unwrap()
+            .contains("geop://program"),
+        "{missing}"
+    );
+
+    let prompts = server.request("prompts/list", json!({}));
+    assert_eq!(
+        prompts["result"]["prompts"][0]["name"], "model_part",
+        "{prompts}"
+    );
+    let prompt = server.request(
+        "prompts/get",
+        json!({ "name": "model_part", "arguments": { "description": "a hinge" } }),
+    );
+    let text = prompt["result"]["messages"][0]["content"]["text"]
+        .as_str()
+        .unwrap();
+    assert!(text.contains("a hinge"), "{prompt}");
+
+    let looked = server.request(
+        "tools/call",
+        json!({ "name": "look", "arguments": { "view": "iso" } }),
+    );
+    let content = looked["result"]["content"].as_array().unwrap();
+    assert_eq!(content[1]["type"], "image", "{looked}");
+    assert_eq!(content[1]["mimeType"], "image/png");
+    assert!(
+        content[1]["data"]
+            .as_str()
+            .unwrap()
+            .starts_with("iVBORw0KGgo")
+    );
+}
+
+/// A slow check given a limit answers with what it has and how far it got;
+/// a call told how to report its progress reports it; and a call cancelled
+/// before its turn is never run, nor answered.
+#[test]
+fn checks_are_limited_report_progress_and_are_cancelled() {
+    let mut server = Server::start();
+    server.request(
+        "initialize",
+        json!({ "protocolVersion": "2025-06-18", "capabilities": {}, "clientInfo": { "name": "test", "version": "0" } }),
+    );
+    let steps = drilled_box().steps;
+    for step in &steps {
+        server.ok(
+            "add_step",
+            json!({ "kind": step.operation, "args": step.args, "id": step.id }),
+        );
+    }
+    let block = steps.iter().find(|step| step.id == "box").unwrap();
+    server.ok(
+        "add_step",
+        json!({ "kind": block.operation, "args": block.args, "id": "second" }),
+    );
+
+    let stopped = server.ok(
+        "inspect",
+        json!({ "inspector": "interference", "limit_seconds": 0 }),
+    );
+    assert_eq!(
+        stopped["stopped"],
+        json!({ "checked": 0, "of": 1 }),
+        "{stopped}"
+    );
+    let answered = server.request(
+        "tools/call",
+        json!({
+            "name": "inspect",
+            "arguments": { "inspector": "interference" },
+            "_meta": { "progressToken": "watched" },
+        }),
+    );
+    let text = answered["result"]["content"][0]["text"].as_str().unwrap();
+    let whole: Value = serde_json::from_str(text).unwrap();
+    assert!(whole["stopped"].is_null(), "{whole}");
+    assert_eq!(whole["found"].as_array().unwrap().len(), 1, "{whole}");
+    let told = &server.notified.last().expect("its progress was reported")["params"];
+    assert_eq!(told["progressToken"], "watched", "{told}");
+    assert!(told["message"].as_str().unwrap().contains("of 1"), "{told}");
+
+    let refused = server.call(
+        "inspect",
+        json!({ "inspector": "interference", "limit_seconds": -1 }),
+    );
+    assert!(
+        refused.1 && refused.0.contains("limit_seconds"),
+        "{}",
+        refused.0
+    );
+
+    // Cancelled before it came: the next answer is the next request's.
+    let cancel = json!({ "jsonrpc": "2.0", "method": "notifications/cancelled", "params": { "requestId": 9999 } });
+    writeln!(server.stdin, "{cancel}").unwrap();
+    // The reader hears it before the call, as they are read in order.
+    let cancelled = json!({ "jsonrpc": "2.0", "id": 9999, "method": "tools/call", "params": { "name": "new_part", "arguments": {} } });
+    writeln!(server.stdin, "{cancelled}").unwrap();
+    let (status, is_error) = server.call("run", json!({}));
+    assert!(!is_error, "{status}");
+    assert!(status.contains("second"), "new_part did not run: {status}");
 }

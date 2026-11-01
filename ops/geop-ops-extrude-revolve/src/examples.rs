@@ -23,7 +23,7 @@ use geop_ops_model::parameters::{
 };
 use geop_ops_model::sketch::{
     Constraint, Sketch, SketchPlane,
-    figures::{circle, n, polygon, rectangle, solved},
+    figures::{circle, n, polygon, rectangle, rectangle_outline, solved},
     sketch, sketch_element, whole_sketch,
 };
 use geop_ops_model::sketch3d::{Constraint3d, Sketch3d, sketch3d_path};
@@ -54,6 +54,8 @@ pub fn set() -> ExampleSet {
             ("motor_flange", motor_flange),
             ("edge_part", edge_part),
             ("name_plate", name_plate),
+            ("coil_spring", coil_spring),
+            ("square_thread", square_thread),
         ],
         workspaces: Vec::new(),
     }
@@ -81,6 +83,48 @@ fn on_face(name: impl Into<String>) -> SketchPlane {
 /// The plane of the origin normal to `normal`, as a plane to sketch on.
 fn on_origin(normal: FrameAxis) -> SketchPlane {
     SketchPlane::Datum(origin_plane(normal))
+}
+
+/// A coil spring: a 2 x 2 rectangle (`section`) on the origin's `y` plane,
+/// swept (`coil`) along a helix of radius 10 rising 20 in three turns round
+/// the `z` axis, drawn in a 3-D sketch (`route`).
+pub fn coil_spring() -> Program {
+    let mut program = Program::new();
+    program.push(
+        "section",
+        AddSketchArgs::on(
+            on_origin(FrameAxis::Y),
+            rectangle_outline(9.0, -1.0, 11.0, 1.0),
+        ),
+    );
+    let mut route = Sketch3d::new();
+    let at = |p: [f64; 3]| Vector3::from_array(p.map(n));
+    let start = route.add_point(at([10.0, 0.0, 0.0]));
+    let base = route.add_point(at([0.0, 0.0, 0.0]));
+    let top = route.add_point(at([0.0, 0.0, 20.0]));
+    route
+        .add_helix(start, base, top, n(3.0), false)
+        .expect("the helix has an axis and a start off it");
+    program.push(
+        "route",
+        AddSketch3dArgs {
+            sketch: route,
+            references: Vec::new(),
+        },
+    );
+    program.push(
+        "coil",
+        SweepArgs {
+            profile: whole_sketch("section"),
+            path: Some(PathRef::Sketch3d(sketch3d_path("route"))),
+            orientation: Orientation::FollowPath,
+            twist: 0.0,
+            end_scale: 1.0,
+            rails: Vec::new(),
+            output: Output::Solid(Combine::NewBody),
+        },
+    );
+    program
 }
 
 /// A name plate: a 40 x 14 x 3 plate sketched on the Z plane and
@@ -851,6 +895,15 @@ pub fn motor_flange() -> Program {
         },
     );
     program
+}
+
+/// A square thread, as drawn in the editor: a rectangle standing on a
+/// revolved cylinder, swept five turns along a helix in a 3-D sketch and
+/// joined to it, the wall it stands on lying in the cylinder's. Kept as the
+/// program it saved, as [`edge_part`] is.
+pub fn square_thread() -> Program {
+    Program::from_json(include_str!("drawn/square_thread.geop"))
+        .expect("a drawn example is a program")
 }
 
 /// Three outlines sketched on the origin's three planes, each extruded and

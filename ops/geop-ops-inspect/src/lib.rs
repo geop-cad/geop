@@ -22,11 +22,13 @@ pub mod clearance;
 pub mod interference;
 pub mod mass;
 pub mod measure;
+pub mod scope;
 
 pub use clearance::{ClearanceOptions, ClearanceReport, clearance_report};
 pub use interference::{InterferenceReport, interference_report};
 pub use mass::{MassReport, mass_report};
 pub use measure::{Measurement, measure};
+pub use scope::Scope;
 
 use geop_core_editor::editing::Visual;
 use geop_core_editor::output::{Answer, Inspector, InspectorInfo, Output, Picks};
@@ -76,15 +78,15 @@ impl Inspector for MassProperties {
         icon: Some(crate::icons::MASS),
         picks: None,
     };
-    type Options = ();
+    type Options = Scope;
     type Report = MassReport;
 
     fn inspect(
         output: &mut Output,
         _: &[PickedElement],
-        (): (),
+        scope: Scope,
     ) -> GeopResult<(MassReport, Vec<Visual>)> {
-        Ok((mass_report(&output.part())?, Vec::new()))
+        Ok((mass_report(&output.part(), &scope)?, Vec::new()))
     }
 
     fn show(report: &MassReport) -> Answer {
@@ -103,15 +105,15 @@ impl Inspector for Interference {
         icon: Some(crate::icons::INTERFERENCE),
         picks: None,
     };
-    type Options = ();
+    type Options = Scope;
     type Report = InterferenceReport;
 
     fn inspect(
         output: &mut Output,
         _: &[PickedElement],
-        (): (),
+        scope: Scope,
     ) -> GeopResult<(InterferenceReport, Vec<Visual>)> {
-        Ok((interference_report(&output.part())?, Vec::new()))
+        Ok((interference_report(&output.part(), &scope)?, Vec::new()))
     }
 
     fn show(report: &InterferenceReport) -> Answer {

@@ -1,6 +1,6 @@
 [
   {
-    "description": "Start a new, empty part. Every part has the coordinate-system datum `origin`, whose planes a sketch is drawn on, as `add_sketch`'s `plane`: {\"datum\": \"origin:xy\"}, {\"datum\": \"origin:yz\"} or {\"datum\": \"origin:zx\"}.",
+    "description": "Start a new, empty part. Every part has the coordinate-system datum `origin`, whose planes a sketch is drawn on, as `add_sketch`'s `plane`: {\"datum\": \"origin:xy\"}, {\"datum\": \"origin:yz\"} or {\"datum\": \"origin:zx\"}. A point (a, b) of a sketch lies in the world at (a, b, 0) on `origin:xy` (normal +z), (0, a, b) on `origin:yz` (normal +x), and (a, 0, -b) on `origin:zx` (normal +y): there, the sketch's y runs along -z. A sketch's normal is the way an extent goes (see `add_step`). y is up in the world.",
     "input_schema": {
       "additionalProperties": false,
       "properties": {},
@@ -25,7 +25,7 @@
     "name": "list_operations"
   },
   {
-    "description": "Add a step of the operation `kind` with `args` (its saved JSON, see `list_operations` with `kind`) at the end of the program, or before the step `before`. A step whose arguments do not read is refused and not added; one that reads but does not build is added, and its error says why. Answers with every step's status: an error names the step and what went wrong.",
+    "description": "Add a step of the operation `kind` with `args` (its saved JSON, see `list_operations` with `kind`) at the end of the program, or before the step `before`. A step whose arguments do not read is refused and not added; one that reads but does not build is added, and its error says why. Answers with every step's status: an error names the step and what went wrong, and `moved` lists the parts the solver moved from where they were loaded or saved, the furthest first: mates that hold only because a part jumped are no error, so read it. An extent runs from the sketch's plane: `side1` along the normal (against it if `reversed` or negative) and `side2` the other way, a negative `side2` being that far along the normal, so that the solid starts away from the plane. Its `start` cap is at the `side2` end (the plane, with no `side2`) and its `end` cap at the `side1` end, whichever way that is in the world.",
     "input_schema": {
       "additionalProperties": false,
       "properties": {
@@ -104,17 +104,22 @@
     "name": "run"
   },
   {
-    "description": "The names of the part's elements as they are now, for typed references: solids, faces (with their solid), edges (with their faces), vertices, sketches, datums and what else the part lists (threads, placed parts). A face is referred to by its name, as a sketch's plane {\"face\": ...}; an edge by its name, as in a fillet's `edges`.",
+    "description": "The names of the part's elements as they are now, for typed references: solids, faces (with their solid), edges (with their faces), vertices, sketches, datums and what else the part lists (threads, placed parts). A face is referred to by its name, as a sketch's plane {\"face\": ...}; an edge by its name, as in a fillet's `edges`. In a swept feature's names, `start` and `end` say which cap: `extrude(box,end)` is the end cap, `extrude(box,sketch,c4,end)` the edge of the side face swept by the curve c4 on that cap, and `extrude(box,sketch,p1,end)` the vertex over the point p1. Given `placed` (a placed part's path, `hip` or `hip/servo`), the elements of that part instead, in its own frame, with where it is placed (`frame`), its size (`extent`), its datums (the frames to mount by) and the `target` to refer to them by.",
     "input_schema": {
       "additionalProperties": false,
-      "properties": {},
+      "properties": {
+        "placed": {
+          "description": "The placed part to list, e.g. `hip/servo`.",
+          "type": "string"
+        }
+      },
       "required": [],
       "type": "object"
     },
     "name": "list_elements"
   },
   {
-    "description": "Ask about the part: `mass_properties` (volume, area and centroid of every solid; its mass and inertia if its part has a material, null if not), `interference` (which solids overlap), or `measure` with `elements` (a point, a length, an area, a radius; the distance and angle between two).",
+    "description": "Ask about the part: `mass_properties` (volume, area and centroid of every solid; its mass and inertia if its part has a material, null if not), `interference` (which solids overlap), or `measure` with `elements` (a point, a length, an area, a radius; the distance and angle between two). On an assembly the first two can take minutes, and calls wait their turn behind them: narrow them with `options` {\"parts\": [\"left_leg\", \"hip/servo\"]}, the solids of those placed parts and what is placed in them (`interference`: each against everything, or, with \"only_among\": true, only against each other), and give `limit_seconds`: past it, the answer is what was found so far, with `stopped` saying how far it got. A cancelled call stops likewise, at the next pair or solid.",
     "input_schema": {
       "additionalProperties": false,
       "properties": {
@@ -146,6 +151,14 @@
             "measure"
           ],
           "type": "string"
+        },
+        "limit_seconds": {
+          "description": "How long it may take, where the front end keeps time (`geop mcp`; not in the browser).",
+          "type": "number"
+        },
+        "options": {
+          "description": "The inspector's own options: `parts`, `only_among`.",
+          "type": "object"
         }
       },
       "required": [
@@ -154,5 +167,182 @@
       "type": "object"
     },
     "name": "inspect"
+  },
+  {
+    "description": "A picture of the part as the editor draws it — the placed parts, what is lit, and what the step open draws over it — as a PNG, seen orthographically from the view `view` (`iso`, `front` (from +z), `back`, `right` (from +x), `left`, `top` (from +y), `bottom`) or along `look`, with `up` up; with neither, as last seen, or, while a step works in a plane (a sketch's), facing it. y is up in the world. Framed to all of it. Its camera is what `step_event`'s pixels are in: answers with it, and where the world's origin is in it.",
+    "input_schema": {
+      "additionalProperties": false,
+      "properties": {
+        "height": {
+          "description": "In pixels; 600 if not given.",
+          "type": "integer"
+        },
+        "look": {
+          "description": "The direction to look along, [x, y, z].",
+          "items": {
+            "type": "number"
+          },
+          "type": "array"
+        },
+        "up": {
+          "description": "Which way is up in the picture, [x, y, z]; y, if not given.",
+          "items": {
+            "type": "number"
+          },
+          "type": "array"
+        },
+        "view": {
+          "enum": [
+            "iso",
+            "front",
+            "back",
+            "right",
+            "left",
+            "top",
+            "bottom"
+          ],
+          "type": "string"
+        },
+        "width": {
+          "description": "In pixels; 800 if not given.",
+          "type": "integer"
+        }
+      },
+      "required": [],
+      "type": "object"
+    },
+    "name": "look"
+  },
+  {
+    "description": "Go back one edit of the program — while a step is open, one edit of that step — as the editor's Ctrl+Z does.",
+    "input_schema": {
+      "additionalProperties": false,
+      "properties": {},
+      "required": [],
+      "type": "object"
+    },
+    "name": "undo"
+  },
+  {
+    "description": "Make the edit `undo` went back from again.",
+    "input_schema": {
+      "additionalProperties": false,
+      "properties": {},
+      "required": [],
+      "type": "object"
+    },
+    "name": "redo"
+  },
+  {
+    "description": "Open a step to edit it the way a user does in the editor — the step `id`, or a new step of the operation `kind` where new steps go — and keep it open across calls, for `step_event`, until `commit_step` or `cancel_step`. Given `placed` (a placed part's path, `neck` or `neck/head`), it is that placed part's step, or a new step of it, edited where it is placed. Answers with the step as the editor shows it: its form (each field's key, label and value), what it still needs picked, what a click picks now, a value asked for in place, and its error. While a step is open, the tools that change the program are refused.",
+    "input_schema": {
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "description": "The step to open.",
+          "type": "string"
+        },
+        "kind": {
+          "description": "The operation of a new step, e.g. `add_sketch`.",
+          "type": "string"
+        },
+        "placed": {
+          "description": "The placed part whose step it is.",
+          "type": "string"
+        }
+      },
+      "required": [],
+      "type": "object"
+    },
+    "name": "open_step"
+  },
+  {
+    "description": "Do something to the open step, as a user does in the editor — or, with no step open, with the tool in hand (with none taken, the drag tool: dragging a placed part moves it as far as its mates let it). `event.type` is one of: `dialog` (set the form's field `key` to `value`), `click` (at `pointer`; `double`, `shift`), `hover` (move the pointer to `pointer` with no button held), `drag` (press at `from`, move to `to` in `steps` moves, release), `select_box` (a box from the pixel `from` to the pixel `to`: left to right selects what lies wholly in it, right to left what it touches; `add` keeps the selection), `key` (a key as a browser names it: `l` for the sketch's line tool, `Escape`, `Enter`, `Delete`) or `leave` (the pointer leaves the view). A pointer is `{\"pixel\": [x, y]}` in the last picture `look` took, or `{\"at\": [x, y, z]}`, a point of the world seen along that picture's view (while a step works in a plane, a sketch's, the view faces it head on), with `cycle` to mean the n-th of what lies under it, front to back. Answers with the step or the tool as it then is.",
+    "input_schema": {
+      "additionalProperties": false,
+      "properties": {
+        "event": {
+          "description": "The event: {\"type\": \"dialog\", \"key\": ..., \"value\": ...}, {\"type\": \"click\", \"pointer\": {...}}, {\"type\": \"drag\", \"from\": {...}, \"to\": {...}}, {\"type\": \"key\", \"key\": \"Escape\"}, ...",
+          "properties": {
+            "type": {
+              "enum": [
+                "dialog",
+                "click",
+                "hover",
+                "drag",
+                "select_box",
+                "key",
+                "leave"
+              ],
+              "type": "string"
+            }
+          },
+          "required": [
+            "type"
+          ],
+          "type": "object"
+        }
+      },
+      "required": [
+        "event"
+      ],
+      "type": "object"
+    },
+    "name": "step_event"
+  },
+  {
+    "description": "Put the open step into the program, as the dialog's OK does: refused, and the step kept open, unless it builds.",
+    "input_schema": {
+      "additionalProperties": false,
+      "properties": {},
+      "required": [],
+      "type": "object"
+    },
+    "name": "commit_step"
+  },
+  {
+    "description": "Close the open step and leave the program as it was.",
+    "input_schema": {
+      "additionalProperties": false,
+      "properties": {},
+      "required": [],
+      "type": "object"
+    },
+    "name": "cancel_step"
+  },
+  {
+    "description": "Take the tool `key` in hand, as the editor's toolbar does, or put the one in hand down (no `key`). With no step open, `step_event` is the tool's: `pick:<inspector>` (e.g. `pick:measure`) picks elements to ask that inspector about, its answer coming with every event. `run` lists the tools there are.",
+    "input_schema": {
+      "additionalProperties": false,
+      "properties": {
+        "key": {
+          "description": "The tool, e.g. `pick:measure`; none puts the tool in hand down.",
+          "type": "string"
+        }
+      },
+      "required": [],
+      "type": "object"
+    },
+    "name": "take_tool"
+  },
+  {
+    "description": "What the panel `key` shows of the program — an assembly's joints and how free each placed part is, its configurations — or, given `payload`, something done in it first, as the panel reads it: `{\"command\": ..., ...}`. A payload the panel does not read is refused with what it expects. `run` lists the panels there are.",
+    "input_schema": {
+      "additionalProperties": false,
+      "properties": {
+        "key": {
+          "description": "The panel.",
+          "type": "string"
+        },
+        "payload": {
+          "description": "What was done in it, as the panel reads it."
+        }
+      },
+      "required": [
+        "key"
+      ],
+      "type": "object"
+    },
+    "name": "panel"
   }
 ]

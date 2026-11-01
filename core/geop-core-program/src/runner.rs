@@ -161,6 +161,7 @@ impl Runner {
         let mut step_errors = Vec::new();
         let mut ids = HashSet::new();
         for (at, step) in steps.iter().enumerate().take(end) {
+            crate::watch::report(&format!("building {}", step.id), at, end);
             STEPS_RUN.set(STEPS_RUN.get() + 1);
             part.begin_step(at);
             let ran = match ids.insert(step.id.as_str()) {

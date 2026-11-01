@@ -1034,8 +1034,10 @@ dependencies = [
 name = "geop-core-editor"
 version = "0.12.0"
 dependencies = [
+ "base64 0.22.1",
  "geop-core-math",
  "geop-core-program",
+ "png",
  "serde",
  "serde_json",
 ]

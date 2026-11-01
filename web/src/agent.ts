@@ -13,9 +13,12 @@ export type ContentBlock =
   | { type: "text"; text: string }
   | { type: "image"; source: { type: "base64"; media_type: "image/png"; data: string } }
   | { type: "tool_use"; id: string; name: string; input: unknown }
-  | { type: "tool_result"; tool_use_id: string; content: string; is_error?: boolean }
+  | { type: "tool_result"; tool_use_id: string; content: string | ToolResultContent[]; is_error?: boolean }
   | { type: "thinking"; thinking: string; signature: string }
   | { type: "redacted_thinking"; data: string };
+
+/** What a tool's result holds: its text, and the pictures it answered with (`look`). */
+export type ToolResultContent = Extract<ContentBlock, { type: "text" } | { type: "image" }>;
 
 export interface MessageParam {
   role: "user" | "assistant";
@@ -107,10 +110,11 @@ export function postTurn(messages: MessageParam[], signal?: AbortSignal, fetchFn
   return post<TurnAnswer>(fetchFn, "/api/agent/turn", { messages }, signal);
 }
 
-/** What a tool answered. */
+/** What a tool answered: its text, and any pictures (see `geop_core_editor::agent::Image`), as base64 PNG. */
 export interface ToolResult {
   text: string;
   isError: boolean;
+  images?: { media_type: "image/png"; data: string }[];
 }
 
 /** What the loop needs of the page. */
@@ -134,6 +138,34 @@ export const MAX_TURNS = 25;
 
 /** What a stopped answer tells the model of the tools it asked for and did not get. */
 const NOT_RUN = "Not run: the user stopped this answer.";
+
+/** What an earlier picture is sent as: the server takes one picture a request, and the latest is the part as it is. */
+export const EARLIER_PICTURE = "[An earlier picture of the part: look again to see it now.]";
+
+/**
+ * The conversation as sent: every picture but the latest a tool answered
+ * with said in words instead ([[EARLIER_PICTURE]]). The conversation kept
+ * is left as it is.
+ */
+export function withLatestPicture(messages: MessageParam[]): MessageParam[] {
+  let seen = false;
+  const kept = [...messages].reverse().map((message) => {
+    const content = [...message.content].reverse().map((block) => {
+      if (block.type !== "tool_result" || typeof block.content === "string") return block;
+      const parts = [...block.content].reverse().map((part): ToolResultContent => {
+        if (part.type !== "image") return part;
+        if (!seen) {
+          seen = true;
+          return part;
+        }
+        return { type: "text", text: EARLIER_PICTURE };
+      });
+      return { ...block, content: parts.reverse() };
+    });
+    return { ...message, content: content.reverse() };
+  });
+  return kept.reverse();
+}
 
 /**
  * Answer the conversation `messages`, which ends with the user's prompt:
@@ -159,7 +191,7 @@ export async function answer(
     if (signal.aborted) return { messages: history, ended: "stopped" };
     let answered: TurnAnswer;
     try {
-      answered = await loop.turn(history, signal);
+      answered = await loop.turn(withLatestPicture(history), signal);
     } catch (e) {
       if (signal.aborted) return { messages: history, ended: "stopped" };
       throw e;
@@ -188,10 +220,17 @@ export async function answer(
         }
         loop.onTool?.(use, result);
       }
+      const images = result.images ?? [];
       results.push({
         type: "tool_result",
         tool_use_id: use.id,
-        content: result.text,
+        content:
+          images.length === 0
+            ? result.text
+            : [
+                { type: "text", text: result.text },
+                ...images.map((image) => ({ type: "image" as const, source: { type: "base64" as const, ...image } })),
+              ],
         ...(result.isError ? { is_error: true } : {}),
       });
     }
@@ -268,6 +307,35 @@ export function describeTool(name: string, input: unknown, result: ToolResult): 
       break;
     case "inspect":
       said = `Inspected: ${String(args.inspector ?? "the part")}`;
+      break;
+    case "look":
+      said = args.view ? `Looked at the part from the ${String(args.view)}` : "Looked at the part";
+      break;
+    case "undo":
+      said = "Undid an edit";
+      break;
+    case "redo":
+      said = "Redid an edit";
+      break;
+    case "open_step":
+      said = id ? `Opened step ${quoted(id)}` : `Started a ${quoted(args.kind)} step`;
+      break;
+    case "step_event": {
+      const event = (args.event ?? {}) as Record<string, unknown>;
+      said = event.type === "key" ? `Pressed ${quoted(event.key)}` : `Edited the open step (${String(event.type ?? "event")})`;
+      break;
+    }
+    case "commit_step":
+      said = "Finished the step";
+      break;
+    case "cancel_step":
+      said = "Cancelled the step";
+      break;
+    case "take_tool":
+      said = args.key ? `Took the tool ${quoted(args.key)}` : "Put the tool down";
+      break;
+    case "panel":
+      said = args.payload === undefined ? `Read the ${quoted(args.key)} panel` : `Used the ${quoted(args.key)} panel`;
       break;
     default:
       said = `Used ${quoted(name)}`;

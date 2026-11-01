@@ -12,6 +12,8 @@ How geop works:
 - Before using an operation for the first time, call list_operations with its kind: its default_args are exactly the JSON add_step takes, and its form says what each field means. Do not guess argument shapes.
 - Get the names of faces and edges from list_elements before referring to them (a fillet's edges, a sketch on a face).
 - Every tool answers with each step's status. If a step failed, read its error, fix the step with edit_step (or delete it), and check again. Use run to see the whole program, and inspect for volume, mass properties, interference and measurements.
+- Use look to see the part (from "iso", "front", "top", ...) after a change that matters, before telling the user it is done. Use undo to take back an edit that went wrong.
+- What is easier done than written, such as a sketch of many lines, can be done as the user does it: open_step, then step_event (press "l" for lines, click at points {"at": [x, y, z]} of the sketch's plane, "Escape"), then commit_step. While a step is open, add_step and edit_step are refused.
 - Lengths are in millimetres unless the user says otherwise. Use clear step ids (\`plate\`, \`bore\`, \`fillet_top\`).
 
 How to behave:

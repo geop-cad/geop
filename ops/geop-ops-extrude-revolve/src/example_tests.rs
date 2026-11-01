@@ -29,9 +29,9 @@ use geop_ops_sketch3d::{AddSketch3d, AddSketch3dArgs};
 use crate::{
     Extents, ExtrudeArgs,
     examples::{
-        box_with_drill_hole, bracket, cross_drilled_shaft, edge_part, handle_with_hole, horn,
-        luggage_tag, motor_flange, name_plate, parametric_plate, pipe, pipe_route,
-        revolved_cone_on_box,
+        box_with_drill_hole, bracket, coil_spring, cross_drilled_shaft, edge_part,
+        handle_with_hole, horn, luggage_tag, motor_flange, name_plate, parametric_plate, pipe,
+        pipe_route, revolved_cone_on_box, square_thread,
     },
 };
 
@@ -181,6 +181,23 @@ fn handle_with_hole_builds_incrementally() {
     assert_edits_incremental(&handle_with_hole());
 }
 
+/// One solid: the thread's rectangle, swept round five turns, adds what it
+/// sweeps to the cylinder, the two sharing no volume.
+#[test]
+fn square_thread_round_trips() {
+    let part = build_and_round_trip("square_thread", &square_thread());
+    let model = part.topology();
+    assert_eq!(model.solids.len(), 1);
+    let solid = *model.solids.keys().next().unwrap();
+    let volume = model.mass_properties(solid).unwrap().volume.to_f64();
+    assert!((volume - 128175.03).abs() < 0.1, "{volume}");
+}
+
+#[test]
+fn square_thread_builds_incrementally() {
+    assert_edits_incremental(&square_thread());
+}
+
 /// The example drawn in the editor builds a valid part and round-trips, as
 /// the ones written in Rust do.
 #[test]
@@ -211,6 +228,24 @@ fn name_plate_round_trips() {
     assert_eq!(tops.len(), 4, "{tops:?}");
     let holes: usize = tops.iter().map(|t| description.faces[*t].holes.len()).sum();
     assert_eq!(holes, 2, "{tops:?}");
+}
+
+/// A rectangle swept along a helix: four walls and two caps, as many times
+/// over as the path has pieces.
+#[test]
+fn coil_spring_round_trips() {
+    let part = build_and_round_trip("coil_spring", &coil_spring());
+    let description = PartDescription::of(&part).unwrap();
+    assert_eq!(
+        description.solids.keys().collect::<Vec<_>>(),
+        ["sweep(coil)"]
+    );
+    assert!(description.faces.contains_key("sweep(coil,end)"));
+}
+
+#[test]
+fn coil_spring_builds_incrementally() {
+    assert_edits_incremental(&coil_spring());
 }
 
 #[test]

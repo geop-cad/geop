@@ -10,7 +10,7 @@
 //! boundary, which its edges' spans attain.
 
 use geop_core_geometry::{
-    nearest::{CurveSpan, Piece, SurfacePatch, least_distance},
+    nearest::{CurveSpan, Piece, SurfacePatch, could_come_within, least_distance},
     search::{MAX_NODES, min_subdivision_size},
 };
 use geop_core_math::{
@@ -324,15 +324,57 @@ pub fn closest_points(a: &Feature, b: &Feature) -> GeopResult<Closest> {
     })
 }
 
+/// Whether `a` and `b` could be at distance zero: what [`closest_points`]
+/// answers too, without finding the least distance between them (see
+/// [`could_come_within`]).
+pub fn could_touch(a: &Feature, b: &Feature) -> GeopResult<bool> {
+    could_come_within(
+        FeaturePiece::roots(a)?,
+        FeaturePiece::roots(b)?,
+        Scalar::ZERO,
+        min_subdivision_size(),
+        MAX_NODES,
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use geop_core_math::{primitives::Pose, scalars::Scalar, vector::Vector3};
 
-    use super::{Feature, PlacedFace, closest_points};
+    use super::{Feature, PlacedFace, closest_points, could_touch};
     use crate::{Model, test_fixtures::test_cube_solid};
 
     fn v(x: f64, y: f64, z: f64) -> Vector3 {
         Vector3::from_array([x, y, z].map(Scalar::from_f64))
+    }
+
+    /// Whether two faces could touch is what their least distance says,
+    /// for every pair of faces of two cubes lying on each other, a hair
+    /// apart, far apart and overlapping.
+    #[test]
+    fn could_touch_answers_as_the_least_distance_does() {
+        let mut model = Model::new();
+        test_cube_solid(&mut model);
+        let faces: Vec<_> = model.faces.keys().copied().collect();
+        let place = |x: f64| Some(Pose::identity().with_position(v(x, 0.0, 0.0)));
+        for x in [1.0, 1.0 + 1e-6, 1.5, 0.5, 50.0] {
+            let mut touching = 0;
+            for &fa in &faces {
+                for &fb in &faces {
+                    let a = Feature::Face(PlacedFace::new(&model, fa, None).unwrap());
+                    let b = Feature::Face(PlacedFace::new(&model, fb, place(x)).unwrap());
+                    let least = closest_points(&a, &b).unwrap();
+                    let answer = could_touch(&a, &b).unwrap();
+                    assert_eq!(
+                        answer,
+                        least.distance.could_be_equal(Scalar::ZERO),
+                        "x = {x}, {least:?}"
+                    );
+                    touching += usize::from(answer);
+                }
+            }
+            assert_eq!(touching > 0, x <= 1.0, "x = {x}: {touching} pairs touch");
+        }
     }
 
     /// A point off the unit cube is nearest its face in front of it, a
