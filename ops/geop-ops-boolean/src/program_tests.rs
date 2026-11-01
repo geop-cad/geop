@@ -30,6 +30,8 @@ use crate::{
     Boolean, BooleanArgs, Imprint, ImprintArgs, Section, SectionArgs, SectionWith, Split, SplitArgs,
 };
 
+mod split_face;
+
 /// The operations these tests' programs are written in: given solids, and
 /// the sketches and extrusions the tests of up to next are about.
 fn registry() -> GeopResult<OperationRegistry> {

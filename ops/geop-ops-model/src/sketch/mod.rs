@@ -47,8 +47,9 @@ use geop_core_program::{
 };
 use geop_core_sketch::{
     CurveId, Enclosure, PointId, Shape,
-    profile::{Piece, curve_nurbs, curve_polylines},
+    profile::{Piece, ProfileLoop, curve_nurbs, curve_polylines},
 };
+use std::collections::BTreeSet;
 
 /// A sketch as a program holds it.
 pub type Sketch = geop_core_sketch::Sketch;
@@ -236,6 +237,32 @@ impl PlacedSketch {
             curve_names,
             joint_names,
         })
+    }
+
+    /// Every run of the sketch's curves (see [`Sketch::runs`]) as a chain on
+    /// its plane, named after the sketch and its elements (see
+    /// [`chain_of_pieces`]). Where three or more curves meet, the runs share a
+    /// point but each has a name of its own for it: `K,p2` for the first run
+    /// there, `K,p2,c5` for the run starting with the curve `c5`.
+    pub fn runs(&self) -> GeopResult<Vec<Profile>> {
+        let name = &self.name;
+        let ctx = with_context!("the runs of curves of the sketch {name:?}");
+        let geometry = self.sketch.enclose().with_context(ctx)?;
+        let mut taken = BTreeSet::new();
+        let mut profiles = Vec::new();
+        for run in self.sketch.runs().with_context(ctx)? {
+            let lp = ProfileLoop { edges: run.edges };
+            let pieces = lp.to_nurbs(&self.sketch, &geometry).with_context(ctx)?;
+            let first = pieces[0].name();
+            let mut profile = chain_of_pieces(name, pieces, run.closed);
+            for joint in &mut profile.joint_names {
+                if !taken.insert(joint.clone()) {
+                    *joint = format!("{joint},{first}");
+                }
+            }
+            profiles.push(profile);
+        }
+        Ok(profiles)
     }
 
     /// The curve `curve` of the sketch, in space, as a chain of one curve

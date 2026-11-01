@@ -44,7 +44,7 @@ geop is missing almost the whole *direct-edit* toolbox:
 | Draft on non-planar faces, next to fillets or free-form, tangent neighbours | — (not in SMLib either) | refused (`draft.rs:194-258`) | gap in both; geop's refusals are good |
 | Tapered extrude (draft angle at construction) | `SmPrimitiveCreation.cpp:3604 CreateTaperExtrude` (offset profile, corners as linear extension or G1 fillet) | missing on extrude; sweep has taper and twist (`program_tests.rs:868,903` in extrude-revolve) | **Missing** on extrude |
 | Extend a surface | `SmBSplineSurfaceNLib.cpp:4469 CreateExtendedSurface` (G1/C2 via `N_SrfExtendByDist`); `SmBrep.cpp:4028 ExtendSurfaces` is **broken** (see §2.13) | `NurbSurface3D::extended` (polynomial continuation, `core/geop-core-geometry/src/nurb_surface/patch.rs:266`); `ExtendSurface` op (`ops/geop-ops-surface/src/extend.rs`): a lone four-sided face, one edge | geop's math is better (exact continuation); the op is narrow |
-| Trim surfaces by curves on them | `SmBrep.cpp:28988 TrimSurfaces` (`MergeCurvesOnSurface` + keep / delete / split by reference point) | `TrimSurface` (`ops/geop-ops-surface/src/trim.rs`): by a face, keep a side; `ProjectCurve` imprints a sketch | Comparable. Missing: trim by curves plus a pick point, and split-only |
+| Trim surfaces by curves on them | `SmBrep.cpp:28988 TrimSurfaces` (`MergeCurvesOnSurface` + keep / delete / split by reference point) | `TrimSurface` (`ops/geop-ops-surface/src/trim.rs`): by a face, keep a side; `SplitFace` imprints a sketch | Comparable. Missing: trim by curves plus a pick point, and split-only |
 | Merge faces that lie on one surface (remove "topological" edges and vertices) | `SmEdge.cpp:4986 IsTopological`, `SmBrep.cpp:26158 RemoveTopologicalEdgesAndVertices`, `SmMerge.cpp:827 BooleanPostProcess`, `SmBrep.cpp:7601 DeleteTopologicalVertex` | **missing**. AGENTS.md "Faces a union leaves in two are one wall": fillet works around it | **Missing**, high value |
 | Squeeze a degenerate face or edge | `SmBrep.cpp:27469 SqueezeFace`, 27526 `SqueezeFaceIfDegenerate`, 26985 `SqueezeEdge` | none; validation's `faces_have_interior` detects | **Missing** (as healing) |
 | Healer pipeline | `SmHealData.cpp:1716 HealTgts` (24 steps, 5 of them stubs, `Fix_BadLoops` disabled) | STEP import `heal` (`ops/geop-ops-step/src/import/body.rs:2918`): vertices re-met where the surfaces meet, edges re-traced, contradictory small faces rebuilt as Coons patches, edges widened to the file's uncertainty | **geop better in kind** (moves geometry onto the surfaces; SMLib only grows tolerances). Missing: SMLib's topological cleanups (degenerate edges and faces, coincident vertices, poles, unclosed loops) |
@@ -603,10 +603,10 @@ extension, `OperationInfo::reads`):
 - collect the connected faces without crossing the new edges;
 - keep or delete them.
 
-**geop.** `TrimSurface` (by a face) and `ProjectCurve` (sketch along a normal).
+**geop.** `TrimSurface` (by a face) and `SplitFace` (sketch along a normal).
 
 **Port.** Add an "imprint 3-D curves (from a 3-D sketch) onto a sheet" mode to
-`ProjectCurve`, keeping the piece a picked face is in:
+`SplitFace`, keeping the piece a picked face is in:
 - choose the piece by the picked *face* (a topological pick), not by the nearest point,
   which avoids SMLib's vertex/edge ambiguity;
 - refuse curves that do not lie on the face (`surface_could_contain` at curve points as

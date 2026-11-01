@@ -1243,14 +1243,18 @@ name = "geop-ops-boolean"
 version = "0.13.0"
 dependencies = [
  "geop-core-editor",
+ "geop-core-geometry",
  "geop-core-math",
  "geop-core-program",
  "geop-core-topology",
  "geop-lib-booleans",
  "geop-lib-fixtures",
+ "geop-lib-sweep",
  "geop-ops-edit",
  "geop-ops-extrude-revolve",
+ "geop-ops-fillet",
  "geop-ops-model",
+ "geop-ops-plastic",
  "geop-ops-sketch",
  "serde",
 ]
@@ -1292,15 +1296,12 @@ dependencies = [
  "geop-core-geometry",
  "geop-core-math",
  "geop-core-program",
- "geop-core-sketch",
  "geop-core-topology",
- "geop-lib-booleans",
  "geop-lib-fixtures",
  "geop-lib-shell",
  "geop-lib-sweep",
  "geop-ops-fillet",
  "geop-ops-model",
- "geop-ops-sketch",
  "serde",
 ]
 

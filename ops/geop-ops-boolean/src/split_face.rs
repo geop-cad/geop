@@ -1,6 +1,5 @@
-//! [`ProjectCurve`]: project a sketch's curves onto a face, along the
-//! sketch's normal or each point to its nearest on the face, dividing the
-//! face along them.
+//! [`SplitFace`]: divide a face along a sketch's curves, projected onto it,
+//! the solid otherwise unchanged.
 
 use geop_core_editor::{
     edit_form::{EditForm, FormState, choices, chosen},
@@ -17,6 +16,7 @@ use geop_core_math::{
     primitives::CoordinateSystem,
     scalars::Scalar,
     vector::{Vector3, Vector4},
+    with_context,
 };
 use geop_core_program::{element::ElementReference, part::StepContext, reader::Reader};
 use geop_core_topology::{
@@ -25,52 +25,53 @@ use geop_core_topology::{
 };
 use geop_lib_booleans::{RemeshParams, imprint_on_face};
 use geop_lib_sweep::{SweepLoop, extrude};
-use geop_ops_model::sketch::{PlacedSketch, SketchRef, shape_profiles};
+use geop_ops_model::sketch::{PlacedSketch, SketchRef, sketch};
 use geop_ops_model::{
-    BodyNames, Chain, Face, ModelOperation, NamedModel, Namer, build_model, model,
+    BodyNames, Chain, Face, ModelOperation, NamedModel, Namer, build_model, face_hull, spread_along,
 };
-use geop_ops_model::{face_hull, spread_along};
 use serde::{Deserialize, Serialize};
 
-/// Projects the curves of the sketch named `sketch` onto the face named
-/// `face`, and divides the face along what they project to: each curve the
-/// face is divided along becomes an edge of it, and the face splits into a
-/// piece on either side of a curve that crosses it, or a piece inside one
-/// that closes on it.
+/// Divides the face `face` along the curves of the sketch `sketch`,
+/// projected onto it: the one face becomes two or more on the same surface,
+/// and the solid keeps its shape. Every curve of the sketch that is no
+/// construction curve divides: its lines, arcs, circles and splines, however
+/// they join or cross, and the outlines of its text.
 ///
-/// The curves are what an extrude as a face would sweep: the outline of the
-/// sketch's area, or its one chain enclosing nothing. Projected
-/// [`Along::SketchNormal`], their projection is where that sweep, reaching
-/// past the face both ways, crosses the face — on a face that bends back
-/// over itself, every place it does. Projected [`Along::FaceNormal`], each
-/// point goes to the point of the face's surface nearest it (see
+/// Projected [`Along::SketchNormal`], a curve's projection is where its
+/// sweep, reaching past the face both ways, crosses the face: on a face that
+/// bends back over itself, every place it does, and only within the face, so
+/// a curve reaching past it is trimmed to it. Projected [`Along::FaceNormal`],
+/// each point goes to the point of the face's surface nearest it (see
 /// [`normal_sheets`]).
 ///
 /// Named as [`imprint_on_face`] names what it creates, with `N` being
-/// `project(P)` for the operation `P`: an edge is named after the face's
-/// copy `N(copy,F)` and the swept wall `N(K,X)` of the piece `X` of a curve
-/// of the sketch `K` it lies on, the pieces split off the face `F` along
-/// an edge `C` are `N(F,C)`, and the face's boundary edges split where a
-/// curve ends on them are named as a boolean names an edge split in two.
+/// `split_face(S)` for the step `S`: the edge along the piece `X` of a curve
+/// of the sketch `K` is `N(K,X)`, or `N(K,X,k)` for its `k`-th stretch across
+/// the face; a piece split off the face `F` along it is `N(F,K,X)` or
+/// `N(F,K,X,k)`, and the other piece keeps the name `F`, as what is left
+/// around a curve closing inside the face does. The face's boundary edges,
+/// split where a curve ends on them, are named as a boolean names an edge
+/// split in two.
 ///
-/// Fails unless every curve projected onto the face runs from boundary to
-/// boundary of it, or closes on itself: a curve ending inside the face
-/// divides nothing.
+/// Refuses a sketch with no curve to divide along, one that misses the face,
+/// a curve ending inside the face, a curve only joining two of the face's
+/// boundaries, each of which divides nothing, and a curve running along an
+/// edge of the face, which already bounds it.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Serialize, Deserialize)]
-pub struct ProjectCurve;
+pub struct SplitFace;
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub struct ProjectCurveArgs {
-    /// The sketch whose curves to project.
+pub struct SplitFaceArgs {
+    /// The face to divide; a new step waits for it to be picked.
+    pub face: Option<ElementReference<NamedModel, Face>>,
+    /// The sketch whose curves to divide it along.
     pub sketch: SketchRef,
-    /// The face to project them onto.
-    pub face: ElementReference<NamedModel, Face>,
-    /// Which way they are projected.
+    /// Which way they are projected onto it.
     #[serde(default, skip_serializing_if = "Along::is_sketch_normal")]
     pub along: Along,
 }
 
-/// Which way [`ProjectCurve`] projects a sketch's curves onto a face.
+/// Which way [`SplitFace`] projects a sketch's curves onto a face.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Along {
@@ -94,57 +95,52 @@ impl Along {
     ];
 }
 
-part_operation!(ProjectCurve(ProjectCurveArgs));
+part_operation!(SplitFace(SplitFaceArgs));
 
-impl PartOperation for ProjectCurve {
-    const KIND: &'static str = "project_curve";
+impl PartOperation for SplitFace {
+    const KIND: &'static str = "split_face";
     const INFO: OperationInfo = OperationInfo::new(
-        "Project curve",
-        "Project a sketch's curves onto a face, along the sketch's normal or the face's, dividing the face along them.",
-        OperationGroup::Surface,
+        "Split face",
+        "Divide a face along a sketch's curves, projected onto it, leaving the solid's shape as it is.",
+        OperationGroup::Bodies,
         OperationTier::Menu,
     )
-    .experimental()
-    .icon(crate::icons::PROJECT_CURVE);
-    type Args = ProjectCurveArgs;
+    .icon(crate::icons::SPLIT_FACE);
+    type Args = SplitFaceArgs;
     type Session = ();
 
-    /// The newest sketch, onto no face yet: no face has the empty name.
-    fn new_args(context: &Context) -> ProjectCurveArgs {
+    /// No face yet, which a click picks, and the newest sketch.
+    fn new_args(context: &Context) -> SplitFaceArgs {
         let newest = context.before.targets_of::<PlacedSketch>().pop();
-        ProjectCurveArgs {
-            sketch: SketchRef::whole(newest.unwrap_or_else(|| geop_ops_model::sketch::sketch(""))),
-            face: ElementReference::new(model(), ""),
+        SplitFaceArgs {
+            face: None,
+            sketch: SketchRef::whole(newest.unwrap_or_else(|| sketch(""))),
             along: Along::SketchNormal,
         }
     }
 
-    fn run(ctx: &mut StepContext, args: &ProjectCurveArgs) -> GeopResult<()> {
+    fn run(ctx: &mut StepContext, args: &SplitFaceArgs) -> GeopResult<()> {
         let _step = ctx.step();
         build_model::<Self>(ctx, args)
     }
 
-    /// The sketch and the face, picked, and which way to project.
+    /// The face and the sketch, picked, and which way to project.
     fn form<'a>(
         context: &'a Context<'a>,
-        args: &ProjectCurveArgs,
+        args: &SplitFaceArgs,
         _: &FormState<()>,
-    ) -> EditForm<'a, ProjectCurveArgs> {
+    ) -> EditForm<'a, SplitFaceArgs> {
         let before = &context.before;
-        let mut f = EditForm::<ProjectCurveArgs>::default();
-        f.pick_one(
+        let mut f = EditForm::<SplitFaceArgs>::default();
+        f.pick_one("face", "face", before, args.face.as_ref(), |edit, face| {
+            edit.args.face = Some(face)
+        })
+        .pick_one(
             "sketch",
             "sketch",
             before,
             Some(&args.sketch),
             |edit, sketch| edit.args.sketch = sketch,
-        )
-        .pick_one(
-            "face",
-            "onto face",
-            before,
-            Some(&args.face),
-            |edit, face| edit.args.face = face,
         );
         let (way, options) = choices(&Along::OPTIONS, &args.along);
         f.select("along", "along", way, options, false, |edit, way| {
@@ -156,48 +152,64 @@ impl PartOperation for ProjectCurve {
     }
 }
 
-impl ModelOperation for ProjectCurve {
+impl ModelOperation for SplitFace {
     fn build(
         model: &mut NamedModel,
         reader: &Reader,
         step: &str,
-        args: &ProjectCurveArgs,
+        args: &SplitFaceArgs,
     ) -> GeopResult<()> {
-        let namer = Namer::new("project", step)?;
+        let namer = Namer::new("split_face", step)?;
+        let Some(face_ref) = &args.face else {
+            return Err(GeopError::new("pick the face to divide").concerning("face"));
+        };
         let placed = reader.retrieve_element(&args.sketch).concerning("sketch")?;
-        let face = model.face_id(args.face.name())?;
-        let sketch = &placed.sketch;
-        let geometry = sketch.enclose()?;
-        let shape = sketch.shape()?;
-        let loops: Vec<_> = (shape_profiles(&placed.name, sketch, &geometry, shape)?.into_iter())
-            .map(SweepLoop::plain)
-            .collect();
+        let face = reader.retrieve_element(face_ref).concerning("face")?.id;
+        let runs = placed.runs().concerning("sketch")?;
+        if runs.is_empty() {
+            return Err(GeopError::new(format!(
+                "the sketch {:?} has no curve to divide the face {:?} along: construction curves do not divide",
+                placed.name,
+                face_ref.name()
+            ))
+            .concerning("sketch"));
+        }
+        let plane = &placed.plane;
         let shells = match args.along {
             Along::SketchNormal => {
-                let (from, to) = reach_across(model, face, &placed.plane)?;
-                let (from, to) = (Scalar::from_f64(from), Scalar::from_f64(to));
-                extrude(model, &namer, None, &placed.plane, &[from, to], &loops)?.shells
+                let (from, to) = reach_across(model, face, plane)?;
+                let heights = [Scalar::from_f64(from), Scalar::from_f64(to)];
+                let mut shells = Vec::with_capacity(runs.len());
+                for run in runs {
+                    let lp = [SweepLoop::plain(run)];
+                    shells.extend(extrude(model, &namer, None, plane, &heights, &lp)?.shells);
+                }
+                shells
             }
             Along::FaceNormal => {
-                let plane = &placed.plane;
-                let mut chains = Vec::with_capacity(loops.len());
-                for lp in &loops {
-                    let curves = (lp.profile.curves.iter())
+                let mut chains = Vec::with_capacity(runs.len());
+                for run in runs {
+                    let curves = (run.curves.iter())
                         .map(|c| c.embed(plane.origin(), plane.u(), plane.v()))
                         .collect::<GeopResult<_>>()?;
                     chains.push(Chain {
-                        name: lp.profile.name.clone(),
+                        name: run.name,
                         curves,
-                        curve_names: lp.profile.curve_names.clone(),
-                        joint_names: lp.profile.joint_names.clone(),
+                        curve_names: run.curve_names,
+                        joint_names: run.joint_names,
                     });
                 }
                 normal_sheets(model, &namer, face, &chains)?
             }
         };
-        let params = RemeshParams::default();
         let tools: Vec<Body> = shells.into_iter().map(Body::Sheet).collect();
-        imprint_on_face(model, &namer, face, &tools, params)?;
+        imprint_on_face(model, &namer, face, &tools, RemeshParams::default()).with_context(
+            with_context!(
+                "dividing the face {:?} along the sketch {:?}",
+                face_ref.name(),
+                placed.name
+            ),
+        )?;
         Ok(())
     }
 }
@@ -422,15 +434,17 @@ fn rail_miss(
                 .prod_scalar(span);
             let over = surface.foot_moving(&at(stretch)?, &moving, seed)?;
             let here = surface.foot_moving(&at(middle)?, &Vector3::zero(), seed)?;
-            let (Some(over), Some(here)) = (over, here) else {
+            let (Some(over), Some(here)) = (&over, &here) else {
                 if depth < MOST_HALVINGS {
                     stack.push((middle, hi, depth + 1));
                     stack.push((lo, middle, depth + 1));
                     continue;
                 }
                 return Err(GeopError::new(format!(
-                    "no foot point on the face proven for the curve's points at {:?} of its domain",
-                    stretch
+                    "no foot point on the face proven for the curve's points at {stretch:?} of its domain: projected along the face's normal, a curve has to stay over the face's surface (the points {:?}, from a foot at {seed:?}, proven {} over them and {} at their middle)",
+                    at(stretch)?,
+                    if over.is_some() { "" } else { "none" },
+                    if here.is_some() { "" } else { "none" },
                 )));
             };
             seed = (here.at.0.midpoint(), here.at.1.midpoint());
