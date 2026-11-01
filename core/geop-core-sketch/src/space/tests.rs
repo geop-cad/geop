@@ -415,3 +415,107 @@ fn check_wire_refuses_undrawn_meetings() {
         "{message}"
     );
 }
+
+/// A helix's end follows from the rest of it, however it is changed: its
+/// axis taken up, and it arrives higher; a whole number of turns comes back
+/// over its start, a part of a turn beside it, the way it turns.
+#[test]
+fn a_helix_ends_where_its_axis_and_turns_say() {
+    let at_end = |turns: f64, left: bool, height: f64| {
+        let mut s = Sketch3d::new();
+        let start = s.add_point(v(10.0, 0.0, 0.0));
+        let base = s.add_point(v(0.0, 0.0, 0.0));
+        let top = s.add_point(v(0.0, 0.0, 1.0));
+        fix(&mut s, start, [10.0, 0.0, 0.0]);
+        fix(&mut s, base, [0.0, 0.0, 0.0]);
+        fix(&mut s, top, [0.0, 0.0, height]);
+        let helix = s
+            .add_helix(start, base, top, Scalar::from_f64(turns), left)
+            .unwrap();
+        s.validate().unwrap();
+        s.solve().unwrap();
+        let geometry = s.enclose().unwrap();
+        let (_, end) = s.curves[&helix].endpoints().unwrap();
+        let curve = &s.curve_nurbs(helix, &geometry).unwrap()[0];
+        let (_, last) = curve.domain();
+        let arrives = curve.evaluate(last).unwrap().to_array().map(|x| x.to_f64());
+        assert!(
+            close(&s.points[&end].at, arrives),
+            "the curve ends at its end point"
+        );
+        s.points[&end].at
+    };
+    assert!(close(&at_end(3.0, false, 20.0), [10.0, 0.0, 20.0]));
+    assert!(close(&at_end(2.0, false, 7.0), [10.0, 0.0, 7.0]));
+    assert!(close(&at_end(0.25, false, 5.0), [0.0, 10.0, 5.0]));
+    assert!(close(&at_end(0.25, true, 5.0), [0.0, -10.0, 5.0]));
+    assert!(close(&at_end(2.5, false, 5.0), [-10.0, 0.0, 5.0]));
+}
+
+/// A helix changed moves its end, not what the end follows from: its turns
+/// told anew, or the top of its axis dragged, its start and the bottom of
+/// its axis stay where they are.
+#[test]
+fn changing_a_helix_moves_only_its_end() {
+    let mut s = Sketch3d::new();
+    let start = s.add_point(v(10.0, 0.0, 0.0));
+    let base = s.add_point(v(0.0, 0.0, 0.0));
+    let top = s.add_point(v(0.0, 0.0, 20.0));
+    let helix = s
+        .add_helix(start, base, top, Scalar::from_f64(3.0), false)
+        .unwrap();
+    let (_, end) = s.curves[&helix].endpoints().unwrap();
+    s.solve().unwrap();
+    assert!(close(&s.points[&end].at, [10.0, 0.0, 20.0]));
+
+    if let Some(CurveKind3d::Helix { turns, .. }) =
+        s.curves.get_mut(&helix).map(|curve| &mut curve.kind)
+    {
+        *turns = Scalar::from_f64(2.5);
+    }
+    s.solve().unwrap();
+    assert!(close(&s.points[&start].at, [10.0, 0.0, 0.0]));
+    assert!(close(&s.points[&end].at, [-10.0, 0.0, 20.0]));
+
+    s.solve_with_drag(&[(top, v(0.0, 0.0, 30.0))]).unwrap();
+    assert!(close(&s.points[&top].at, [0.0, 0.0, 30.0]));
+    assert!(
+        close(&s.points[&start].at, [10.0, 0.0, 0.0]),
+        "{:?}",
+        s.points[&start].at
+    );
+    assert!(
+        close(&s.points[&base].at, [0.0, 0.0, 0.0]),
+        "{:?}",
+        s.points[&base].at
+    );
+    assert!(
+        close(&s.points[&end].at, [-10.0, 0.0, 30.0]),
+        "{:?}",
+        s.points[&end].at
+    );
+}
+
+/// A helix has nothing to go on smoothly from, and no point lies on it:
+/// refused, by name, rather than solved wrong.
+#[test]
+fn a_helix_takes_no_tangent_and_no_point_on_it() {
+    let mut s = Sketch3d::new();
+    let start = s.add_point(v(10.0, 0.0, 0.0));
+    let base = s.add_point(v(0.0, 0.0, 0.0));
+    let top = s.add_point(v(0.0, 0.0, 20.0));
+    let helix = s
+        .add_helix(start, base, top, Scalar::from_f64(3.0), false)
+        .unwrap();
+    let away = s.add_point(v(20.0, 0.0, 0.0));
+    let line = s.add_line(start, away);
+    s.validate().unwrap();
+    s.constrain(Constraint3d::Tangent { a: helix, b: line });
+    let said = s.validate().unwrap_err().to_string();
+    assert!(said.contains("helix"), "{said}");
+    let mut s = Sketch3d::new();
+    let start = s.add_point(v(10.0, 0.0, 0.0));
+    let base = s.add_point(v(0.0, 0.0, 0.0));
+    let helix = s.add_helix(start, base, base, Scalar::from_f64(3.0), false);
+    assert!(helix.is_err(), "an axis of no length has no direction");
+}

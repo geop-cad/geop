@@ -3,16 +3,20 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use geop_core_geometry::nurb_curve::{NurbCurve, NurbCurve3D};
+use geop_core_geometry::nurb_curve::{Handedness, Helix, NurbCurve, NurbCurve3D};
 use geop_core_math::{
     geop_error::{GeopError, GeopResult, WithContext},
+    primitives::CoordinateSystem,
     scalars::Scalar,
     solvers::walk::{Walked, walk_by},
     vector::Vector3,
     with_context,
 };
 
-use super::{Constraint3d, Curve3d, CurveKind3d, Enclosure3d, End, Sketch3d, geometry::Arc3};
+use super::{
+    Constraint3d, Curve3d, CurveKind3d, Enclosure3d, End, Sketch3d,
+    geometry::{Arc3, Helix3},
+};
 use crate::{CurveId, PointId, ProfileEdge, ProfileJoint};
 
 /// One NURBS piece of a chain, on `[0, 1]`, named as a planar sketch's
@@ -155,6 +159,42 @@ impl Sketch3d {
                     .with_context(ctx)?;
                 Ok(vec![
                     NurbCurve::cubic_spline(&through, start, end).with_context(ctx)?,
+                ])
+            }
+            CurveKind3d::Helix {
+                start,
+                base,
+                top,
+                turns,
+                left,
+                ..
+            } => {
+                let helix = Helix3 {
+                    start: at(start),
+                    base: at(base),
+                    top: at(top),
+                    turns: *turns,
+                    left: *left,
+                };
+                let (w, out) = helix.axes().with_context(ctx)?;
+                let radius = out.try_norm().with_context(ctx)?;
+                let u = out.normalize().with_context(ctx)?;
+                let foot = helix.start.sub(&out);
+                let frame =
+                    CoordinateSystem::try_new(foot, u, w.prod_cross(&u), w).with_context(ctx)?;
+                let rise = helix.top.sub(&helix.base).try_norm().with_context(ctx)?;
+                let handedness = if *left {
+                    Handedness::Left
+                } else {
+                    Handedness::Right
+                };
+                let motion = Helix::new(
+                    rise.div(*turns).with_context(ctx)?,
+                    turns.to_f64(),
+                    handedness,
+                );
+                Ok(vec![
+                    NurbCurve3D::helix(&frame, radius, &motion).with_context(ctx)?,
                 ])
             }
             CurveKind3d::Reference => Err(GeopError::new(format!(

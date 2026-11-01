@@ -696,3 +696,54 @@ fn a_tools_key_is_the_same_typed_in_capitals() {
         );
     }
 }
+
+/// A helix drawn as a user draws it: `h`, how it turns in the dialog, then
+/// the bottom and top of its axis and where it starts. Selected, its turns
+/// change, and its end goes with them; undone with the step, nothing stays.
+#[test]
+fn a_helix_is_drawn_by_its_axis_and_its_start() {
+    let mut e = Editor::on(false);
+    e.key("h");
+    let asks = |e: &Editor| {
+        serde_json::to_string(&e.presentation.dialog)
+            .unwrap()
+            .contains("helix_turns")
+    };
+    assert!(asks(&e), "the tool asks how it turns");
+    e.dialog("helix_turns", Value::Number(3.0));
+    for at in [[0.0, 0.0, 0.0], [0.0, 0.0, 20.0], [10.0, 0.0, 0.0]] {
+        for (key, value) in ["x", "y", "z"].into_iter().zip(at) {
+            e.dialog(key, Value::Number(value));
+        }
+        e.act("place", "place");
+    }
+    let sketch = e.sketch();
+    let (&id, helix) = (sketch.curves.iter())
+        .find(|(_, c)| matches!(c.kind, CurveKind3d::Helix { .. }))
+        .expect("a helix");
+    let CurveKind3d::Helix {
+        end, turns, left, ..
+    } = helix.kind
+    else {
+        unreachable!()
+    };
+    assert_eq!((turns.to_f64(), left), (3.0, false));
+    assert!(close(&e.at(end), [10.0, 0.0, 20.0]), "{:?}", e.at(end));
+    assert!(
+        sketch.chains().unwrap().len() == 1,
+        "one chain, for a sweep"
+    );
+
+    e.key("Escape");
+    // Seen down its axis it is a circle: a quarter turn on, it is selected.
+    e.click(pointer([0.0, 10.0, 30.0], [0.0, 0.0, -1.0]));
+    assert_eq!(e.editing().selection, [id.to_string()]);
+    assert!(asks(&e), "a helix selected says how it turns");
+    e.dialog("helix_turns", Value::Number(2.5));
+    assert!(close(&e.at(end), [-10.0, 0.0, 20.0]), "{:?}", e.at(end));
+    e.dialog("helix_left", Value::Bool(true));
+    let CurveKind3d::Helix { left, .. } = e.sketch().curves[&id].kind else {
+        unreachable!()
+    };
+    assert!(left);
+}

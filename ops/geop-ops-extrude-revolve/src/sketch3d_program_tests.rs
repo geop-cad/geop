@@ -7,7 +7,7 @@ use geop_core_program::{operation_registry::OperationRegistry, program::Program}
 use geop_core_sketch::space::End;
 use geop_lib_sweep::Orientation;
 use geop_ops_model::sketch::{
-    figures::{disc, n, on_origin},
+    figures::{disc, n, on_origin, rectangle_outline},
     whole_sketch,
 };
 use geop_ops_model::sketch3d::{Constraint3d, Sketch3d, sketch3d_path};
@@ -73,6 +73,69 @@ fn piped(r: f64, route: Sketch3d) -> Program {
 
 /// Along a spline through space: one wall per quarter of the circle, two
 /// caps, the far one around the spline's end, square to it.
+/// A helix round the `z` axis, of radius 10 and `turns` turns, 20 tall,
+/// from `(10, 0, 0)`.
+fn coil(turns: f64, left: bool) -> Sketch3d {
+    let mut s = Sketch3d::new();
+    let start = s.add_point(v([10.0, 0.0, 0.0]));
+    let base = s.add_point(v([0.0, 0.0, 0.0]));
+    let top = s.add_point(v([0.0, 0.0, 20.0]));
+    s.add_helix(start, base, top, n(turns), left).unwrap();
+    s
+}
+
+/// A rectangle swept along a helix is a coil: valid, and as heavy as its
+/// section times how far its middle goes (Pappus), whichever way it turns.
+#[test]
+fn a_rectangle_is_swept_along_a_helix() {
+    for left in [false, true] {
+        let (turns, radius, rise) = (3.0_f64, 10.0_f64, 20.0_f64);
+        let mut program = Program::new();
+        program.push(
+            "section",
+            AddSketchArgs::on(
+                on_origin(FrameAxis::Y),
+                rectangle_outline(9.0, -1.0, 11.0, 1.0),
+            ),
+        );
+        program.push(
+            "route",
+            AddSketch3dArgs {
+                sketch: coil(turns, left),
+                references: Vec::new(),
+            },
+        );
+        program.push(
+            "coil",
+            SweepArgs {
+                profile: whole_sketch("section"),
+                path: Some(PathRef::Sketch3d(sketch3d_path("route"))),
+                orientation: Orientation::FollowPath,
+                twist: 0.0,
+                end_scale: 1.0,
+                rails: Vec::new(),
+                output: Output::Solid(Combine::NewBody),
+            },
+        );
+        let part = program.build_model(registry).unwrap();
+        assert_valid(&part);
+        let length =
+            turns * ((std::f64::consts::TAU * radius).powi(2) + (rise / turns).powi(2)).sqrt();
+        let solid = *part.topology().solids.keys().next().unwrap();
+        let volume = part
+            .topology()
+            .mass_properties(solid)
+            .unwrap()
+            .volume
+            .to_f64();
+        assert!(
+            (volume - 4.0 * length).abs() < 0.02 * 4.0 * length,
+            "left {left}: volume {volume}, expected about {}",
+            4.0 * length
+        );
+    }
+}
+
 #[test]
 fn sweep_along_a_3d_spline() {
     let end = [5.0, 0.0, 3.0];

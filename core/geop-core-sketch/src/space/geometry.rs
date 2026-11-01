@@ -8,11 +8,47 @@
 //! sine `|a x b| / (|a| |b|)` — the angle the arc makes at `m` is the
 //! inscribed angle over the chord `se`.
 
+use geop_core_geometry::nurb_curve::cos_sin;
 use geop_core_math::{
     geop_error::GeopResult,
     scalars::{Number, Scalar},
     vector::Vector3,
 };
+
+/// The helix round the axis from `base` to `top` from `start`, as far up
+/// the axis as `top` is from `base`, in `turns` turns (see
+/// [`super::CurveKind3d::Helix`]).
+#[derive(Clone, Copy, Debug)]
+pub struct Helix3<T: Number> {
+    pub start: Vector3<T>,
+    pub base: Vector3<T>,
+    pub top: Vector3<T>,
+    pub turns: Scalar,
+    pub left: bool,
+}
+
+impl<T: Number> Helix3<T> {
+    /// The unit axis, and the way from the axis to its start, square to it.
+    pub fn axes(&self) -> GeopResult<(Vector3<T>, Vector3<T>)> {
+        let w = self.top.sub(&self.base).normalize()?;
+        let off = self.start.sub(&self.base);
+        Ok((w, off.sub(&w.prod_scalar(off.prod_dot(&w)))))
+    }
+
+    /// Where it arrives: its start, up the axis, turned about it. The turn
+    /// is design data, so its cosine and sine are constants. A whole number
+    /// of turns comes back exactly to where it started, seen down the axis.
+    pub fn end(&self) -> GeopResult<Vector3<T>> {
+        let (w, out) = self.axes()?;
+        let degrees = 360.0 * self.turns.to_f64() * if self.left { -1.0 } else { 1.0 };
+        let (cos, sin) = cos_sin(degrees);
+        Ok(self
+            .start
+            .add(&self.top.sub(&self.base))
+            .add(&out.prod_scalar(T::from_f64(cos - 1.0)))
+            .add(&w.prod_cross(&out).prod_scalar(T::from_f64(sin))))
+    }
+}
 
 /// The circular arc from `s` through `m` to `e`.
 #[derive(Clone, Copy, Debug)]
