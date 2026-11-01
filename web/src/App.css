@@ -1390,9 +1390,9 @@ button.inline {
    or double-clicked. */
 .viewport-no-graphics {
   position: absolute;
-  top: 50%;
+  top: 3.5rem;
   left: 50%;
-  transform: translate(-50%, -50%);
+  transform: translateX(-50%);
   z-index: 5;
   width: min(26rem, calc(100% - 2rem));
   padding: 1rem 1.25rem;

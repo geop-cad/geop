@@ -1,6 +1,5 @@
 # A name AGENTS.md quotes from code since gone.
 EntityRef::lies_in
 # About to land on main; remove after it does.
-docs/desktop.md
 # A name in a demo of this book.
 denseOps
