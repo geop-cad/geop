@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import {
   AgentError,
+  EARLIER_PICTURE,
   answer,
   describeTool,
   postTurn,
@@ -190,4 +191,35 @@ test("a tool's card says what it did, and what failed", () => {
     ),
     "Added step `b`: no sketch",
   );
+});
+
+test("a tool's pictures reach the model, and only the latest is sent again", async () => {
+  const model = server([
+    uses(["a", "look", { view: "iso" }]),
+    uses(["b", "look", { view: "top" }]),
+    said("Done."),
+  ]);
+  const pictures = ["first", "second"];
+  await answer(
+    withPrompt([], "show me"),
+    {
+      turn: model.turn,
+      runTool: async () => ({
+        text: "{}",
+        isError: false,
+        images: [{ media_type: "image/png", data: pictures.shift()! }],
+      }),
+    },
+    new AbortController().signal,
+  );
+  const sentPictures = (messages: MessageParam[]) =>
+    messages.flatMap((m) =>
+      m.content.flatMap((b) =>
+        b.type === "tool_result" && typeof b.content !== "string"
+          ? b.content.map((part) => (part.type === "image" ? part.source.data : part.text))
+          : [],
+      ),
+    );
+  assert.deepEqual(sentPictures(model.sent[1]), ["{}", "first"]);
+  assert.deepEqual(sentPictures(model.sent[2]), ["{}", EARLIER_PICTURE, "{}", "second"]);
 });

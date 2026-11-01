@@ -4,7 +4,9 @@
 [Model Context Protocol](https://modelcontextprotocol.io) server over
 stdio, so an agent can model parts: start or load a program, add and change
 steps, see where they fail, find the names of faces and edges for the next
-step's references, weigh and measure the part, and export or save it.
+step's references, look at the part, edit a step as a user does (draw a
+sketch by clicking, drag a placed part), weigh and measure the part, and
+export or save it.
 
 ## Setup
 
@@ -45,9 +47,36 @@ JSON-RPC 2.0, one message per line, newline-delimited, no framing headers.
 | `inspect` | `mass_properties` (volume, area and centroid per solid and in all; mass and inertia (`inertial`) only of solids whose part has a material, set by the `properties` step — `null` otherwise), `interference` (which solids overlap), or `measure` of one or two `elements` (`{kind, name}`). |
 | `export` | Write the part to `path`: `stl`, `step`, `svg`/`dxf` (drawings, flat patterns), `csv` (bill of materials), `zip` (URDF); the format from the extension unless `format` says otherwise; `options` are the exporter's own. |
 | `save` | Write the program to `path` as `.geop`, and edit it there from then on. |
+| `look` | A PNG picture of the part as the editor draws it — placed parts, what is lit, what the open step draws — from a named view (`iso`, `front` (from +z), `back`, `right` (from +x), `left`, `top` (from +y), `bottom`) or along `look` with `up`; `width`, `height` in pixels (800 × 600). With none, as last seen, or facing the plane the open step works in (a sketch's). Answers with the camera: what `step_event`'s pixels are in. |
+| `undo`, `redo` | Go back one edit of the program — while a step is open, one edit of the step — or forward again. |
+| `open_step` | Open the step `id`, or a new step of the operation `kind` (of the placed part `placed`, edited where it is placed), and keep it open across calls. Answers with what the editor shows of it: its form, what it still needs picked, what a click picks now, its error. |
+| `step_event` | Do something to the open step as a user does — or, with none open, with the tool in hand (by default the drag tool: dragging a placed part moves it as far as its mates let it). `event.type`: `dialog` (`key`, `value`), `click` (`pointer`, `double`, `shift`), `hover` (`pointer`), `drag` (`from`, `to`, `steps`), `select_box` (pixels `from`, `to`: left to right takes what lies inside, right to left what it touches; `add`), `key` (`l`, `Escape`, `Enter`, `Delete`, …) or `leave`. A pointer is `{"pixel": [x, y]}` in the last picture, or `{"at": [x, y, z]}` seen along its view; `cycle` means the n-th of what lies under it. |
+| `commit_step`, `cancel_step` | Put the open step into the program (refused unless it builds), or close it leaving the program as it was. |
+| `take_tool` | Take a tool in hand (`pick:measure`, …) or put it down; `run` lists them. |
+| `panel` | What a panel shows (an assembly's `joints`: each joint's value and how free each part is; `motion`; `configurations`), or, given `payload` (`{"command": …}`), something done in it first. `run` lists them. |
 
-Every tool is one transaction on the editor: no step is left open between
-calls. A tool that fails answers an error result (`isError: true`) whose
+Most tools are one transaction on the editor. `open_step` is the one that
+leaves something open: until `commit_step` or `cancel_step`, the tools
+that change the program (`add_step`, `edit_step`, …) are refused, so an
+agent never loses a step half drawn. A sketch is drawn this way: add the
+step with its plane, `open_step` it, press `l` for lines, click at points
+of the plane (`{"at": [x, y, 0]}`), `Escape`, `commit_step` — the
+sketcher's snapping and constraints are those a user gets.
+
+## Resources and prompts
+
+| resource | what it holds |
+|---|---|
+| `geop://program` | The program as a `.geop` file holds it. |
+| `geop://status` | Every step's status, the step open, the tool in hand, the tools and panels. |
+| `geop://elements` | The part's elements by name, as `list_elements`. |
+| `geop://operations`, `geop://operations/{kind}` | The operations, or one in full, as `list_operations`. |
+| `geop://examples`, `geop://examples/{name}` | The examples' names, or one example program (for one of several files, each file by path): whole parts to learn from. |
+| `geop://picture` | The part as `look` last saw it, as a PNG. |
+
+The prompts `model_part` (`description`), `fix_failing_steps` and
+`review_part` start those tasks with the workflow above and, for the last
+two, the program's status. A tool that fails answers an error result (`isError: true`) whose
 text names what went wrong, with the kernel's context — the step, the
 operation, the argument. A step that is added but does not build is not an
 error of the tool: it is in the status every tool returns, under its id,
@@ -77,7 +106,7 @@ one as a `.geop` file.
 
 ```jsonc
 → {"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"x","version":"0"}}}
-← {"jsonrpc":"2.0","id":1,"result":{"protocolVersion":"2025-06-18","capabilities":{"tools":{}},"serverInfo":{"name":"geop","version":"0.1.0"},"instructions":"..."}}
+← {"jsonrpc":"2.0","id":1,"result":{"protocolVersion":"2025-06-18","capabilities":{"tools":{},"resources":{},"prompts":{}},"serverInfo":{"name":"geop","version":"0.1.0"},"instructions":"..."}}
 → {"jsonrpc":"2.0","method":"notifications/initialized"}
 → {"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"new_part","arguments":{}}}
 → {"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"add_step","arguments":{"id":"outline","kind":"add_sketch","args":{...}}}}

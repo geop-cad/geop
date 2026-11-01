@@ -9,7 +9,9 @@
 //!
 //! The handful of methods MCP needs are written out here rather than
 //! taken from a crate: `initialize`, `ping`, `tools/list` and `tools/call`,
-//! and notifications, which are not answered. See `docs/mcp.md`.
+//! `resources/list`, `resources/templates/list` and `resources/read`,
+//! `prompts/list` and `prompts/get`, and notifications, which are not
+//! answered. See `docs/mcp.md`.
 
 use std::{
     collections::BTreeMap,
@@ -18,7 +20,9 @@ use std::{
 };
 
 use geop_cad_base::editor;
-use geop_core_editor::agent::{Files, Session, tools};
+use geop_core_editor::agent::{
+    AgentResource, Contents, Files, Session, prompts, resource_templates, resources, tools,
+};
 use geop_core_math::geop_error::{GeopError, GeopResult};
 use serde_json::{Value, json};
 
@@ -31,12 +35,16 @@ operation with arguments; steps refer to what earlier steps built by stable name
 `extrude(box)` (the solid the step `box` extruded) or `extrude(box,end)` (its end cap). Start \
 with `new_part` or `load_program`, see what operations there are with `list_operations` and how \
 one's arguments look with `list_operations` given its `kind`, add steps with `add_step`, check \
-`run` for errors, find names for references with `list_elements`, and finish with `export` or \
-`save`. A sketch is drawn on a plane such as `{\"datum\": \"origin:xy\"}` (or `origin:yz`, \
-`origin:zx`). A step names what another step built by its target, `/:<target>:<step id>`: the \
-sketch the step `base` drew is `{\"target\": \"/:sketch:base\"}`, and a reference left blank in \
-`default_args` (`/:sketch:`) has to be filled in. A step that names a target no step before it \
-produces says which targets there are.";
+`run` for errors, find names for references with `list_elements`, `look` at the part to see it, \
+and finish with `export` or `save`. A sketch is drawn on a plane such as \
+`{\"datum\": \"origin:xy\"}` (or `origin:yz`, `origin:zx`). A step names what another step \
+built by its target, `/:<target>:<step id>`: the sketch the step `base` drew is \
+`{\"target\": \"/:sketch:base\"}`, and a reference left blank in `default_args` (`/:sketch:`) \
+has to be filled in. A step that names a target no step before it produces says which targets \
+there are. What is easier done than written — drawing a sketch, dragging a placed part — is done \
+as a user does it: `open_step`, then `step_event` (clicks at pixels of the last `look`, or at \
+points of the world, keys), then `commit_step`; `undo` takes an edit back. The resources \
+`geop://examples/{name}` are whole example programs.";
 
 /// The JSON-RPC error `code` with `message`.
 fn rpc_error(id: Value, code: i64, message: impl Into<String>) -> Value {
@@ -113,7 +121,7 @@ impl McpServer {
         let result = match method {
             "initialize" => Ok(json!({
                 "protocolVersion": params.get("protocolVersion").cloned().unwrap_or_else(|| json!(PROTOCOL_VERSION)),
-                "capabilities": { "tools": {} },
+                "capabilities": { "tools": {}, "resources": {}, "prompts": {} },
                 "serverInfo": { "name": "geop", "version": env!("CARGO_PKG_VERSION") },
                 "instructions": INSTRUCTIONS,
             })),
@@ -125,6 +133,52 @@ impl McpServer {
                 let name = params.get("name").and_then(Value::as_str).unwrap_or("");
                 let arguments = params.get("arguments").cloned().unwrap_or(json!({}));
                 Ok(self.call(name, &arguments))
+            }
+            "resources/list" => Ok(
+                json!({ "resources": resources().iter().map(|r| described(r, "uri")).collect::<Vec<_>>() }),
+            ),
+            "resources/templates/list" => Ok(json!({
+                "resourceTemplates": resource_templates().iter().map(|r| described(r, "uriTemplate")).collect::<Vec<_>>(),
+            })),
+            "resources/read" => {
+                let uri = params
+                    .get("uri")
+                    .and_then(Value::as_str)
+                    .unwrap_or("")
+                    .to_string();
+                match self.guarded(&uri, |session| session.read_resource(&uri)) {
+                    Ok((Contents::Text(text), media_type)) => Ok(json!({
+                        "contents": [{ "uri": uri, "mimeType": media_type, "text": text }],
+                    })),
+                    Ok((Contents::Image(image), media_type)) => Ok(json!({
+                        "contents": [{ "uri": uri, "mimeType": media_type, "blob": image.base64() }],
+                    })),
+                    Err(message) => Err(rpc_error(id.clone(), -32002, message)),
+                }
+            }
+            "prompts/list" => Ok(json!({
+                "prompts": prompts().iter().map(|p| json!({
+                    "name": p.name,
+                    "description": p.description,
+                    "arguments": p.arguments.iter().map(|(name, description, required)| json!({
+                        "name": name, "description": description, "required": required,
+                    })).collect::<Vec<_>>(),
+                })).collect::<Vec<_>>(),
+            })),
+            "prompts/get" => {
+                let name = params
+                    .get("name")
+                    .and_then(Value::as_str)
+                    .unwrap_or("")
+                    .to_string();
+                let arguments = params.get("arguments").cloned().unwrap_or(json!({}));
+                match self.guarded(&name, |session| session.prompt(&name, &arguments)) {
+                    Ok((description, text)) => Ok(json!({
+                        "description": description,
+                        "messages": [{ "role": "user", "content": { "type": "text", "text": text } }],
+                    })),
+                    Err(message) => Err(rpc_error(id.clone(), -32602, message)),
+                }
             }
             _ => Err(rpc_error(
                 id.clone(),
@@ -143,29 +197,56 @@ impl McpServer {
     /// panics leaves the editor in an unknown state: a fresh one takes
     /// over, with the program as it was before the call.
     fn call(&mut self, name: &str, arguments: &Value) -> Value {
-        let answer = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            self.session.call(name, arguments, Some(&mut Disk))
+        let answer = self.guarded(name, |session| {
+            Ok(session.call(name, arguments, Some(&mut Disk)))
+        });
+        let (text, is_error, images) = match answer {
+            Ok(answer) => (answer.text, answer.is_error, answer.images),
+            Err(crashed) => (crashed, true, Vec::new()),
+        };
+        let mut content = vec![json!({ "type": "text", "text": text })];
+        content.extend(images.iter().map(|image| {
+            json!({ "type": "image", "data": image.base64(), "mimeType": image.media_type })
         }));
-        let (text, is_error) = match answer {
-            Ok(answer) => (answer.text, answer.is_error),
+        json!({ "content": content, "isError": is_error })
+    }
+
+    /// `f` on the session, or why it failed. A kernel that panics leaves
+    /// the editor in an unknown state: a fresh one takes over, with the
+    /// program as it was before, and the panic is told as what `what` did.
+    fn guarded<T>(
+        &mut self,
+        what: &str,
+        f: impl FnOnce(&mut Session) -> GeopResult<T>,
+    ) -> Result<T, String> {
+        let answer =
+            std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| f(&mut self.session)));
+        match answer {
+            Ok(answer) => answer.map_err(|e| e.to_string()),
             Err(panic) => {
-                let what = panic
+                let panic = panic
                     .downcast_ref::<String>()
                     .cloned()
                     .or_else(|| panic.downcast_ref::<&str>().map(|s| s.to_string()))
                     .unwrap_or_else(|| "unknown panic".to_string());
                 self.session.restart(editor());
-                (
-                    format!(
-                        "{name} crashed the kernel ({what}); the editor was restarted with the \
-                         program as it was before the call"
-                    ),
-                    true,
-                )
+                Err(format!(
+                    "{what} crashed the kernel ({panic}); the editor was restarted with the \
+                     program as it was before"
+                ))
             }
-        };
-        json!({ "content": [{ "type": "text", "text": text }], "isError": is_error })
+        }
     }
+}
+
+/// A resource as `resources/list` describes it, its URI under `uri`.
+fn described(resource: &AgentResource, uri: &str) -> Value {
+    json!({
+        uri: resource.uri,
+        "name": resource.name,
+        "description": resource.description,
+        "mimeType": resource.media_type,
+    })
 }
 
 /// Runs the server until stdin closes: one JSON-RPC message per line in,

@@ -1028,6 +1028,8 @@ export interface ToolAnswer {
   text: string;
   is_error: boolean;
   updates: Update[];
+  /** The pictures it answered with (`look`), as base64. */
+  images: { media_type: "image/png"; data: string }[];
 }
 
 /** Run the agent's tool `name` with `input` on the kernel's editor. */

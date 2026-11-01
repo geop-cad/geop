@@ -107,6 +107,8 @@ fn a_block_with_a_hole_is_modelled_inspected_exported_and_saved() {
     assert_eq!(init["result"]["serverInfo"]["name"], "geop", "{init}");
     assert_eq!(init["result"]["protocolVersion"], "2025-06-18");
     assert!(init["result"]["capabilities"]["tools"].is_object());
+    assert!(init["result"]["capabilities"]["resources"].is_object());
+    assert!(init["result"]["capabilities"]["prompts"].is_object());
     server.notify("notifications/initialized");
     assert_eq!(server.request("ping", json!({}))["result"], json!({}));
 
@@ -131,6 +133,15 @@ fn a_block_with_a_hole_is_modelled_inspected_exported_and_saved() {
             "inspect",
             "export",
             "save",
+            "look",
+            "undo",
+            "redo",
+            "open_step",
+            "step_event",
+            "commit_step",
+            "cancel_step",
+            "take_tool",
+            "panel",
         ]
     );
     for tool in tools["result"]["tools"].as_array().unwrap() {
@@ -315,4 +326,83 @@ fn a_step_is_added_before_another_and_a_wrong_target_names_the_right_ones() {
     assert!(is_error && text.contains("nothing"), "{text}");
     let (text, is_error) = server.call("list_operations", json!({ "kind": "nothing" }));
     assert!(is_error && text.contains("extrude"), "{text}");
+}
+
+/// What an agent reads besides the tools: the resources, a picture among
+/// them, and a prompt filled in; and `look`'s picture, as MCP's image
+/// content.
+#[test]
+fn resources_prompts_and_pictures_are_served() {
+    let mut server = Server::start();
+    server.request(
+        "initialize",
+        json!({ "protocolVersion": "2025-06-18", "capabilities": {}, "clientInfo": { "name": "test", "version": "0" } }),
+    );
+    for step in drilled_box().steps {
+        server.ok(
+            "add_step",
+            json!({ "kind": step.operation, "args": step.args, "id": step.id }),
+        );
+    }
+
+    let listed = server.request("resources/list", json!({}));
+    let uris: Vec<&str> = (listed["result"]["resources"].as_array().unwrap().iter())
+        .map(|r| r["uri"].as_str().unwrap())
+        .collect();
+    assert!(
+        uris.contains(&"geop://program") && uris.contains(&"geop://picture"),
+        "{listed}"
+    );
+    let templates = server.request("resources/templates/list", json!({}));
+    assert_eq!(
+        templates["result"]["resourceTemplates"][0]["uriTemplate"], "geop://operations/{kind}",
+        "{templates}"
+    );
+    let program = server.request("resources/read", json!({ "uri": "geop://program" }));
+    let contents = &program["result"]["contents"][0];
+    assert_eq!(contents["mimeType"], "application/json", "{program}");
+    assert!(contents["text"].as_str().unwrap().contains("\"hole\""));
+    let picture = server.request("resources/read", json!({ "uri": "geop://picture" }));
+    let blob = picture["result"]["contents"][0]["blob"].as_str().unwrap();
+    assert!(
+        blob.starts_with("iVBORw0KGgo"),
+        "a PNG, as base64: {}",
+        &blob[..16]
+    );
+    let missing = server.request("resources/read", json!({ "uri": "geop://nothing" }));
+    assert!(
+        missing["error"]["message"]
+            .as_str()
+            .unwrap()
+            .contains("geop://program"),
+        "{missing}"
+    );
+
+    let prompts = server.request("prompts/list", json!({}));
+    assert_eq!(
+        prompts["result"]["prompts"][0]["name"], "model_part",
+        "{prompts}"
+    );
+    let prompt = server.request(
+        "prompts/get",
+        json!({ "name": "model_part", "arguments": { "description": "a hinge" } }),
+    );
+    let text = prompt["result"]["messages"][0]["content"]["text"]
+        .as_str()
+        .unwrap();
+    assert!(text.contains("a hinge"), "{prompt}");
+
+    let looked = server.request(
+        "tools/call",
+        json!({ "name": "look", "arguments": { "view": "iso" } }),
+    );
+    let content = looked["result"]["content"].as_array().unwrap();
+    assert_eq!(content[1]["type"], "image", "{looked}");
+    assert_eq!(content[1]["mimeType"], "image/png");
+    assert!(
+        content[1]["data"]
+            .as_str()
+            .unwrap()
+            .starts_with("iVBORw0KGgo")
+    );
 }

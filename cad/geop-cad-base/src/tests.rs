@@ -1168,6 +1168,7 @@ mod agent {
             text,
             is_error,
             updates,
+            ..
         } = session.call(name, &input, None);
         assert!(!is_error, "{name} failed: {text}");
         let answer = serde_json::from_str(&text)
@@ -1191,7 +1192,16 @@ mod agent {
                 "delete_step",
                 "run",
                 "list_elements",
-                "inspect"
+                "inspect",
+                "look",
+                "undo",
+                "redo",
+                "open_step",
+                "step_event",
+                "commit_step",
+                "cancel_step",
+                "take_tool",
+                "panel"
             ]
         );
         let mut session = Session::new(crate::editor());
@@ -1288,5 +1298,247 @@ mod agent {
         let (status, _) = ok(&mut session, "delete_step", json!({ "id": "hole" }));
         assert_eq!(status["solids"], json!(["extrude(box)"]), "{status}");
         assert_eq!(session.editor().program().steps.len(), 3);
+
+        let (status, _) = ok(&mut session, "undo", json!({}));
+        assert_eq!(
+            status["status"]["solids"],
+            json!(["extrude(hole)"]),
+            "{status}"
+        );
+        let (status, _) = ok(&mut session, "redo", json!({}));
+        assert_eq!(
+            status["status"]["solids"],
+            json!(["extrude(box)"]),
+            "{status}"
+        );
+    }
+
+    /// A sketch drawn as a user draws it: opened, lines taken with `l`
+    /// and clicked at points of its plane, put down with Escape and
+    /// committed; then extruded. While it is open, the program is not
+    /// changed under it.
+    #[test]
+    fn a_sketch_is_drawn_by_clicking_at_points_of_its_plane() {
+        let mut session = Session::new(crate::editor());
+        ok(&mut session, "new_part", json!({}));
+        let (sketch, _) = ok(
+            &mut session,
+            "list_operations",
+            json!({ "kind": "add_sketch" }),
+        );
+        let mut args = sketch["default_args"].clone();
+        args["plane"] = json!({ "datum": "origin:xy" });
+        ok(
+            &mut session,
+            "add_step",
+            json!({ "kind": "add_sketch", "args": args, "id": "outline" }),
+        );
+
+        let (opened, _) = ok(&mut session, "open_step", json!({ "id": "outline" }));
+        assert_eq!(opened["open"]["kind"], "add_sketch", "{opened}");
+        let refused = session.call("add_step", &json!({ "kind": "extrude", "args": {} }), None);
+        assert!(
+            refused.is_error && refused.text.contains("commit_step"),
+            "{}",
+            refused.text
+        );
+        let event = |event: Value| json!({ "event": event });
+        ok(
+            &mut session,
+            "step_event",
+            event(json!({ "type": "key", "key": "l" })),
+        );
+        for [x, y] in [[0.0, 0.0], [2.0, 0.0], [2.0, 1.0], [0.0, 1.0], [0.0, 0.0]] {
+            ok(
+                &mut session,
+                "step_event",
+                event(json!({ "type": "click", "pointer": { "at": [x, y, 0.0] } })),
+            );
+        }
+        ok(
+            &mut session,
+            "step_event",
+            event(json!({ "type": "key", "key": "Escape" })),
+        );
+        let (committed, _) = ok(&mut session, "commit_step", json!({}));
+        assert!(committed["open"].is_null(), "{committed}");
+        let curves = &session.editor().program().step("outline").unwrap().args;
+        assert_eq!(
+            curves.to_string().matches("\"line\"").count(),
+            4,
+            "four lines: {curves}"
+        );
+
+        let (extrude, _) = ok(
+            &mut session,
+            "list_operations",
+            json!({ "kind": "extrude" }),
+        );
+        let mut args = extrude["default_args"].clone();
+        args["sketch"] = json!({ "target": "/:sketch:outline" });
+        let (status, _) = ok(
+            &mut session,
+            "add_step",
+            json!({ "kind": "extrude", "args": args, "id": "plate" }),
+        );
+        assert_eq!(status["failed"], 0, "{status}");
+        let (mass, _) = ok(
+            &mut session,
+            "inspect",
+            json!({ "inspector": "mass_properties" }),
+        );
+        let area = mass["total"]["area"]["value"].as_f64().unwrap();
+        assert!(area > 4.0, "the plate is 2 by 1: area {area}");
+    }
+
+    /// What a session offers to read: the program, its status, the
+    /// operations, an example; and its prompts, filled in.
+    #[test]
+    fn a_session_reads_its_resources_and_fills_in_its_prompts() {
+        use geop_core_editor::agent::{Contents, prompts, resource_templates, resources};
+        let mut session = Session::new(crate::editor());
+        for step in drilled_box().steps {
+            ok(
+                &mut session,
+                "add_step",
+                json!({ "kind": step.operation, "args": step.args, "id": step.id }),
+            );
+        }
+        let text = |session: &mut Session, uri: &str| match session.read_resource(uri) {
+            Ok((Contents::Text(text), "application/json")) => text,
+            other => panic!("{uri}: {other:?}"),
+        };
+        assert!(text(&mut session, "geop://program").contains("\"hole\""));
+        assert!(text(&mut session, "geop://status").contains("extrude(hole)"));
+        assert!(text(&mut session, "geop://elements").contains("extrude(box,end)"));
+        assert!(text(&mut session, "geop://operations/extrude").contains("default_args"));
+        let examples: Value = serde_json::from_str(&text(&mut session, "geop://examples")).unwrap();
+        let name = examples["examples"][0].as_str().unwrap().to_string();
+        assert!(text(&mut session, &format!("geop://examples/{name}")).contains("steps"));
+        match session.read_resource("geop://picture") {
+            Ok((Contents::Image(image), "image/png")) => {
+                assert_eq!(&image.data[1..4], b"PNG")
+            }
+            other => panic!("geop://picture: {other:?}"),
+        }
+        let wrong = session
+            .read_resource("geop://nothing")
+            .unwrap_err()
+            .to_string();
+        assert!(wrong.contains("geop://program"), "{wrong}");
+        assert_eq!(resources().len(), 6);
+        assert_eq!(resource_templates().len(), 2);
+
+        let (_, text) = session
+            .prompt("model_part", &json!({ "description": "a bracket" }))
+            .unwrap();
+        assert!(
+            text.contains("a bracket") && text.contains("add_step"),
+            "{text}"
+        );
+        let (_, text) = session.prompt("fix_failing_steps", &json!({})).unwrap();
+        assert!(
+            text.contains("extrude(hole)"),
+            "the status is in it: {text}"
+        );
+        assert!(session.prompt("model_part", &json!({})).is_err());
+        assert_eq!(prompts().len(), 3);
+    }
+
+    /// A placed part of the press dragged as an agent drags it: looked at,
+    /// hovered across the picture until the drag tool offers a grab, and
+    /// dragged from there; the parts move, as far as the mates let them,
+    /// and undo puts them back. The joints panel says how they stand.
+    #[test]
+    fn a_placed_part_is_dragged_by_the_pixels_of_a_picture() {
+        let mut session = Session::new(crate::editor());
+        let loaded = session.handle(geop_core_editor::editor::Command::LoadWorkspaceExample {
+            name: "press".into(),
+            folder: None,
+        });
+        assert!(loaded.error.is_none(), "{:?}", loaded.error);
+        let (status, _) = ok(&mut session, "run", json!({}));
+        assert!(
+            status["panels"]
+                .as_array()
+                .unwrap()
+                .contains(&json!("joints")),
+            "{status}"
+        );
+        let (joints, _) = ok(&mut session, "panel", json!({ "key": "joints" }));
+        assert!(joints["shows"].is_object(), "{joints}");
+        let wrong = session.call(
+            "panel",
+            &json!({ "key": "joints", "payload": { "command": "spin" } }),
+            None,
+        );
+        assert!(
+            wrong.is_error && wrong.text.contains("set"),
+            "says what it takes: {}",
+            wrong.text
+        );
+
+        let (width, height) = (160, 120);
+        ok(
+            &mut session,
+            "look",
+            json!({ "view": "iso", "width": width, "height": height }),
+        );
+        let before = session.editor().program().state.clone();
+        let grabbed = (0..12)
+            .flat_map(|j| (0..16).map(move |i| [i as f64 * 10.0 + 5.0, j as f64 * 10.0 + 5.0]))
+            .find(|&pixel| {
+                let (shown, _) = ok(
+                    &mut session,
+                    "step_event",
+                    json!({ "event": { "type": "hover", "pointer": { "pixel": pixel } } }),
+                );
+                shown["tool_shows"]["grab"] == json!(true)
+            })
+            .expect("some pixel of the press grabs a part");
+        let to = [grabbed[0] + 30.0, grabbed[1] - 20.0];
+        let (dragged, _) = ok(
+            &mut session,
+            "step_event",
+            json!({ "event": { "type": "drag", "from": { "pixel": grabbed }, "to": { "pixel": to } } }),
+        );
+        assert!(dragged["can_undo"] == json!(true), "{dragged}");
+        assert_ne!(
+            session.editor().program().state,
+            before,
+            "the drag moved the press"
+        );
+        ok(&mut session, "undo", json!({}));
+        assert_eq!(
+            session.editor().program().state,
+            before,
+            "undo puts it back"
+        );
+    }
+
+    /// `look` answers with a picture, and the camera its pixels are in.
+    #[test]
+    fn look_answers_with_a_picture_of_the_part() {
+        let mut session = Session::new(crate::editor());
+        for step in drilled_box().steps {
+            ok(
+                &mut session,
+                "add_step",
+                json!({ "kind": step.operation, "args": step.args, "id": step.id }),
+            );
+        }
+        let answer = session.call(
+            "look",
+            &json!({ "view": "top", "width": 320, "height": 240 }),
+            None,
+        );
+        assert!(!answer.is_error, "{}", answer.text);
+        assert_eq!(answer.images.len(), 1);
+        assert_eq!(&answer.images[0].data[1..4], b"PNG");
+        let seen: Value = serde_json::from_str(&answer.text).unwrap();
+        assert_eq!(seen["camera"]["width"], 320, "{seen}");
+        assert_eq!(seen["camera"]["look"], json!([0.0, -1.0, 0.0]), "{seen}");
+        let wrong = session.call("look", &json!({ "view": "sideways" }), None);
+        assert!(wrong.is_error, "{}", wrong.text);
     }
 }

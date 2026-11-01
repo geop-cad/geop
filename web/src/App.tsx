@@ -299,7 +299,7 @@ function App() {
     try {
       const answer = await runTool(name, input);
       for (const update of answer.updates) show(update, "agent");
-      return { text: answer.text, isError: answer.is_error };
+      return { text: answer.text, isError: answer.is_error, images: answer.images };
     } catch (e) {
       if (e instanceof KernelCrashed) {
         await dispatch({ command: "show" });
