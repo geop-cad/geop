@@ -923,16 +923,21 @@ mod examples {
     /// last bits, and its side face lies `8e-15` off the line of sight. Its
     /// edges, `1e-13` apart on the paper, ran the searches for where they
     /// cross out of nodes (see `geop_ops_drawing`'s
-    /// `box_seen_a_hair_off_its_front`).
+    /// `box_seen_a_hair_off_its_front`). From the right, its left ankle's
+    /// round end is seen `4e-14` off its axis, and the silhouette's
+    /// corrector reached past the face's domain (see
+    /// `quarter_cylinder_seen_a_hair_off_its_axis`).
     #[test]
-    fn duck_draws_from_the_front() {
+    fn duck_draws_from_the_front_and_the_right() {
         let (_, built) = example_assembly("duck");
         let scene = Scene::of(&built.current()).unwrap();
-        let frame = ViewKind::Front.frame().unwrap();
-        let view = scene
-            .project(&frame, &ViewOptions::default())
-            .unwrap_or_else(|e| panic!("{e}"));
-        assert!(view.lines.iter().any(|l| l.visible));
+        for kind in [ViewKind::Front, ViewKind::Right] {
+            let frame = kind.frame().unwrap();
+            let view = scene
+                .project(&frame, &ViewOptions::default())
+                .unwrap_or_else(|e| panic!("{} view: {e}", kind.name()));
+            assert!(view.lines.iter().any(|l| l.visible));
+        }
     }
 
     /// Every example assembly draws: its default sheet with the bill of

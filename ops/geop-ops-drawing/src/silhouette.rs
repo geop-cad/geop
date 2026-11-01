@@ -127,7 +127,10 @@ fn sign(surface: &NurbSurface3D, d: &Vector3, u: Scalar, v: Scalar) -> Option<bo
 /// the seeds only cycle round it, the last step as wide as it came out, if
 /// `g` could vanish over it. A start outside the domain — a sharpened foot
 /// point on its boundary can land a hair past it — is clamped into it
-/// first, as every iterate is.
+/// first, as every iterate is. The answer is cut to the domain: the
+/// silhouette sought is on the patch, and an answer as wide as a noisy `g`
+/// leaves it reaches past the patch's ends, where the surface is no
+/// surface and its rows' weights are no weights.
 fn correct(
     surface: &NurbSurface3D,
     d: &Vector3,
@@ -136,6 +139,8 @@ fn correct(
     let (u_lo, u_hi) = surface.domain_u();
     let (v_lo, v_hi) = surface.domain_v();
     let seed = (start.0.clamped(u_lo, u_hi), start.1.clamped(v_lo, v_hi));
+    let on_domain =
+        |(u, v): (Scalar, Scalar)| (u.intersect(u_lo.union(u_hi)), v.intersect(v_lo.union(v_hi)));
     let mut last = None;
     let corrected = iterate(
         seed,
@@ -168,13 +173,13 @@ fn correct(
         let Ok(scale) = g.div(gu.mul(gu).add(gv.mul(gv))) else {
             return Ok((u, v));
         };
-        return Ok((u.sub(gu.mul(scale)), v.sub(gv.mul(scale))));
+        return Ok(on_domain((u.sub(gu.mul(scale)), v.sub(gv.mul(scale)))));
     }
     // No sharp seed lands where `g`, rounded, could vanish — the steps
     // cycle in the last bits around it. The last step's answer, as wide
     // as the step left it, may still hold the silhouette: then it is the
     // point, as precisely as the arithmetic pins it down.
-    let (u, v) = corrected.answer;
+    let (u, v) = on_domain(corrected.answer);
     if contour(surface, d, u, v)?.0.could_be_equal(Scalar::ZERO) {
         return Ok((u, v));
     }
@@ -731,6 +736,16 @@ fn extent(surface: &NurbSurface3D) -> Scalar {
 /// directions — an extruded or turned cylinder seen end on — so that its
 /// normal is perpendicular to `d` everywhere and the whole face is seen
 /// edge on: then its outline is its edges, and it has no silhouette curve.
+///
+/// Swept along `d` to the sheet's resolution ([`COARSE_SUBDIVISION`]) is
+/// swept along it: every control point of a row, of one weight, lies on
+/// the paper within it of the row's first, so the face lies within it of
+/// the curve its first points span, which its edges draw — and so do its
+/// silhouettes. A cylinder in a part placed by a pose rounded in its last
+/// bits is seen `4e-14` off its axis: its silhouette is a generator that
+/// projects to a point, and `g`, a rounding off zero all over the face,
+/// put the corrector's answer for it anywhere round the arc, `150`
+/// wide in a domain of `1`.
 fn swept_along(surface: &NurbSurface3D, d: &Vector3) -> bool {
     let (nu, nv) = (surface.num_u, surface.num_v);
     let point = |i: usize, j: usize| surface.control_points[i * nv + j];
@@ -746,10 +761,12 @@ fn swept_along(surface: &NurbSurface3D, d: &Vector3) -> bool {
         let (Some(pa), Some(pb)) = (cartesian(a), cartesian(b)) else {
             return false;
         };
-        a[3].could_be_equal(b[3]) && pb.sub(&pa).prod_cross(d).could_be_equal(&Vector3::zero())
+        a[3].could_be_equal(b[3])
+            && !(pb.sub(&pa).prod_cross(d).norm())
+                .definitely_greater(Scalar::from_f64(COARSE_SUBDIVISION))
     };
-    let along_v = (0..nu).all(|i| (1..nv).all(|j| along(point(i, j - 1), point(i, j))));
-    let along_u = (0..nv).all(|j| (1..nu).all(|i| along(point(i - 1, j), point(i, j))));
+    let along_v = (0..nu).all(|i| (1..nv).all(|j| along(point(i, 0), point(i, j))));
+    let along_u = (0..nv).all(|j| (1..nu).all(|i| along(point(0, j), point(i, j))));
     along_u || along_v
 }
 
@@ -881,12 +898,20 @@ pub fn face_silhouettes(
             } else {
                 step
             };
-            traces.push(trace(surface, d, start, step, &mut lines).with_context(&ctx)?);
+            let traced = trace(surface, d, start, step, &mut lines).map_err(|e| {
+                e.with_context(format!(
+                    "tracing the silhouette of {surface:?} from {start:?} in steps of {step:?}"
+                ))
+            });
+            traces.push(traced.with_context(&ctx)?);
         }
     }
     let mut silhouettes = Vec::new();
     for points in traces {
-        silhouettes.extend(trim(model, face_id, d, &points).with_context(&ctx)?);
+        let trimmed = trim(model, face_id, d, &points).map_err(|e| {
+            e.with_context(format!("trimming the silhouette traced through {points:?}"))
+        });
+        silhouettes.extend(trimmed.with_context(&ctx)?);
     }
     Ok(silhouettes)
 }
