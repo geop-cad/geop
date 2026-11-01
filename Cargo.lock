@@ -961,7 +961,7 @@ dependencies = [
 
 [[package]]
 name = "geop"
-version = "0.13.0"
+version = "0.14.0"
 dependencies = [
  "console_error_panic_hook",
  "geop-cad-base",
@@ -974,7 +974,7 @@ dependencies = [
 
 [[package]]
 name = "geop-cad-base"
-version = "0.13.0"
+version = "0.14.0"
 dependencies = [
  "geop-core-editor",
  "geop-core-geometry",
@@ -1010,7 +1010,7 @@ dependencies = [
 
 [[package]]
 name = "geop-cad-cli"
-version = "0.13.0"
+version = "0.14.0"
 dependencies = [
  "clap",
  "geop-cad-base",
@@ -1037,7 +1037,7 @@ dependencies = [
 
 [[package]]
 name = "geop-core-editor"
-version = "0.13.0"
+version = "0.14.0"
 dependencies = [
  "base64 0.22.1",
  "geop-core-math",
@@ -1049,7 +1049,7 @@ dependencies = [
 
 [[package]]
 name = "geop-core-geometry"
-version = "0.13.0"
+version = "0.14.0"
 dependencies = [
  "geop-core-math",
  "serde",
@@ -1057,7 +1057,7 @@ dependencies = [
 
 [[package]]
 name = "geop-core-math"
-version = "0.13.0"
+version = "0.14.0"
 dependencies = [
  "serde",
  "serde_json",
@@ -1065,7 +1065,7 @@ dependencies = [
 
 [[package]]
 name = "geop-core-program"
-version = "0.13.0"
+version = "0.14.0"
 dependencies = [
  "geop-core-math",
  "serde",
@@ -1074,7 +1074,7 @@ dependencies = [
 
 [[package]]
 name = "geop-core-rasterize"
-version = "0.13.0"
+version = "0.14.0"
 dependencies = [
  "geop-core-geometry",
  "geop-core-math",
@@ -1083,7 +1083,7 @@ dependencies = [
 
 [[package]]
 name = "geop-core-sketch"
-version = "0.13.0"
+version = "0.14.0"
 dependencies = [
  "geop-core-geometry",
  "geop-core-math",
@@ -1094,7 +1094,7 @@ dependencies = [
 
 [[package]]
 name = "geop-core-topology"
-version = "0.13.0"
+version = "0.14.0"
 dependencies = [
  "geop-core-geometry",
  "geop-core-math",
@@ -1104,7 +1104,7 @@ dependencies = [
 
 [[package]]
 name = "geop-lib-booleans"
-version = "0.13.0"
+version = "0.14.0"
 dependencies = [
  "geop-core-geometry",
  "geop-core-math",
@@ -1117,7 +1117,7 @@ dependencies = [
 
 [[package]]
 name = "geop-lib-constraints"
-version = "0.13.0"
+version = "0.14.0"
 dependencies = [
  "geop-core-math",
  "geop-core-program",
@@ -1126,7 +1126,7 @@ dependencies = [
 
 [[package]]
 name = "geop-lib-fixtures"
-version = "0.13.0"
+version = "0.14.0"
 dependencies = [
  "geop-core-editor",
  "geop-core-geometry",
@@ -1141,7 +1141,7 @@ dependencies = [
 
 [[package]]
 name = "geop-lib-sheet"
-version = "0.13.0"
+version = "0.14.0"
 dependencies = [
  "geop-core-geometry",
  "geop-core-math",
@@ -1150,7 +1150,7 @@ dependencies = [
 
 [[package]]
 name = "geop-lib-shell"
-version = "0.13.0"
+version = "0.14.0"
 dependencies = [
  "geop-core-geometry",
  "geop-core-math",
@@ -1162,7 +1162,7 @@ dependencies = [
 
 [[package]]
 name = "geop-lib-stdlib"
-version = "0.13.0"
+version = "0.14.0"
 dependencies = [
  "geop-core-editor",
  "geop-core-geometry",
@@ -1180,7 +1180,7 @@ dependencies = [
 
 [[package]]
 name = "geop-lib-sweep"
-version = "0.13.0"
+version = "0.14.0"
 dependencies = [
  "geop-core-geometry",
  "geop-core-math",
@@ -1192,7 +1192,7 @@ dependencies = [
 
 [[package]]
 name = "geop-ops-assembly"
-version = "0.13.0"
+version = "0.14.0"
 dependencies = [
  "geop-core-editor",
  "geop-core-geometry",
@@ -1220,7 +1220,7 @@ dependencies = [
 
 [[package]]
 name = "geop-ops-bom"
-version = "0.13.0"
+version = "0.14.0"
 dependencies = [
  "geop-core-editor",
  "geop-core-math",
@@ -1240,7 +1240,7 @@ dependencies = [
 
 [[package]]
 name = "geop-ops-boolean"
-version = "0.13.0"
+version = "0.14.0"
 dependencies = [
  "geop-core-editor",
  "geop-core-geometry",
@@ -1261,7 +1261,7 @@ dependencies = [
 
 [[package]]
 name = "geop-ops-drawing"
-version = "0.13.0"
+version = "0.14.0"
 dependencies = [
  "geop-core-editor",
  "geop-core-geometry",
@@ -1290,7 +1290,7 @@ dependencies = [
 
 [[package]]
 name = "geop-ops-edit"
-version = "0.13.0"
+version = "0.14.0"
 dependencies = [
  "geop-core-editor",
  "geop-core-geometry",
@@ -1307,7 +1307,7 @@ dependencies = [
 
 [[package]]
 name = "geop-ops-extrude-revolve"
-version = "0.13.0"
+version = "0.14.0"
 dependencies = [
  "geop-core-editor",
  "geop-core-geometry",
@@ -1330,7 +1330,7 @@ dependencies = [
 
 [[package]]
 name = "geop-ops-fillet"
-version = "0.13.0"
+version = "0.14.0"
 dependencies = [
  "geop-core-editor",
  "geop-core-geometry",
@@ -1354,7 +1354,7 @@ dependencies = [
 
 [[package]]
 name = "geop-ops-harness"
-version = "0.13.0"
+version = "0.14.0"
 dependencies = [
  "geop-core-editor",
  "geop-core-geometry",
@@ -1374,7 +1374,7 @@ dependencies = [
 
 [[package]]
 name = "geop-ops-hole"
-version = "0.13.0"
+version = "0.14.0"
 dependencies = [
  "geop-core-editor",
  "geop-core-geometry",
@@ -1395,7 +1395,7 @@ dependencies = [
 
 [[package]]
 name = "geop-ops-inspect"
-version = "0.13.0"
+version = "0.14.0"
 dependencies = [
  "geop-core-editor",
  "geop-core-geometry",
@@ -1418,7 +1418,7 @@ dependencies = [
 
 [[package]]
 name = "geop-ops-model"
-version = "0.13.0"
+version = "0.14.0"
 dependencies = [
  "geop-core-editor",
  "geop-core-geometry",
@@ -1435,7 +1435,7 @@ dependencies = [
 
 [[package]]
 name = "geop-ops-pattern"
-version = "0.13.0"
+version = "0.14.0"
 dependencies = [
  "geop-core-editor",
  "geop-core-geometry",
@@ -1457,7 +1457,7 @@ dependencies = [
 
 [[package]]
 name = "geop-ops-plastic"
-version = "0.13.0"
+version = "0.14.0"
 dependencies = [
  "geop-core-editor",
  "geop-core-geometry",
@@ -1479,7 +1479,7 @@ dependencies = [
 
 [[package]]
 name = "geop-ops-reference-geometry"
-version = "0.13.0"
+version = "0.14.0"
 dependencies = [
  "geop-core-editor",
  "geop-core-geometry",
@@ -1499,7 +1499,7 @@ dependencies = [
 
 [[package]]
 name = "geop-ops-sheetmetal"
-version = "0.13.0"
+version = "0.14.0"
 dependencies = [
  "geop-core-editor",
  "geop-core-geometry",
@@ -1517,7 +1517,7 @@ dependencies = [
 
 [[package]]
 name = "geop-ops-shell"
-version = "0.13.0"
+version = "0.14.0"
 dependencies = [
  "geop-core-editor",
  "geop-core-math",
@@ -1533,7 +1533,7 @@ dependencies = [
 
 [[package]]
 name = "geop-ops-sketch"
-version = "0.13.0"
+version = "0.14.0"
 dependencies = [
  "geop-core-editor",
  "geop-core-geometry",
@@ -1551,7 +1551,7 @@ dependencies = [
 
 [[package]]
 name = "geop-ops-sketch3d"
-version = "0.13.0"
+version = "0.14.0"
 dependencies = [
  "geop-core-editor",
  "geop-core-geometry",
@@ -1568,7 +1568,7 @@ dependencies = [
 
 [[package]]
 name = "geop-ops-step"
-version = "0.13.0"
+version = "0.14.0"
 dependencies = [
  "geop-core-editor",
  "geop-core-geometry",
@@ -1592,7 +1592,7 @@ dependencies = [
 
 [[package]]
 name = "geop-ops-subd"
-version = "0.13.0"
+version = "0.14.0"
 dependencies = [
  "geop-core-editor",
  "geop-core-geometry",
@@ -1608,7 +1608,7 @@ dependencies = [
 
 [[package]]
 name = "geop-ops-surface"
-version = "0.13.0"
+version = "0.14.0"
 dependencies = [
  "geop-core-editor",
  "geop-core-geometry",
