@@ -1,0 +1,57 @@
+/* What the lectures add to mdBook's theme: math, exercises, and the demos. */
+
+.gb-math-inline { white-space: normal; }
+.gb-math-display { display: block; overflow-x: auto; overflow-y: hidden; padding: 0.25em 0; }
+
+/* Learning goals, recap, and "in the kernel" boxes. */
+.goals, .recap, .kernel {
+  border-left: 4px solid var(--links);
+  background: var(--quote-bg);
+  padding: 0.25em 1em;
+  margin: 1.25em 0;
+  border-radius: 0 4px 4px 0;
+}
+.recap { border-left-color: var(--inline-code-color, var(--links)); }
+.kernel { border-left-color: var(--sidebar-active, var(--links)); }
+.goals > :first-child, .recap > :first-child, .kernel > :first-child { margin-top: 0.5em; }
+.goals > :last-child, .recap > :last-child, .kernel > :last-child { margin-bottom: 0.5em; }
+
+/* Exercises and their solutions. */
+details.solution { margin: 0.5em 0 1em; padding: 0.25em 0.75em; border: 1px solid var(--quote-bg); border-radius: 4px; }
+details.solution > summary { cursor: pointer; font-weight: 600; }
+details.solution[open] { background: var(--quote-bg); }
+
+/* A demo: a figure with a stage, controls and a caption. */
+figure.demo {
+  margin: 1.5em 0;
+  padding: 0.5em;
+  border: 1px solid var(--table-border-color, var(--quote-bg));
+  border-radius: 6px;
+  max-width: 100%;
+  box-sizing: border-box;
+  overflow: hidden;
+}
+figure.demo figcaption { font-size: 0.875em; margin-top: 0.5em; opacity: 0.9; }
+figure.demo .gb-stage { display: block; width: 100%; }
+figure.demo canvas { display: block; width: 100%; touch-action: manipulation; border-radius: 4px; background: var(--bg); }
+figure.demo canvas:focus-visible { outline: 2px solid var(--links); outline-offset: 1px; }
+figure.demo .gb-controls { display: flex; flex-wrap: wrap; gap: 0.35em 0.9em; align-items: center; margin-top: 0.5em; font-size: 0.875em; }
+figure.demo .gb-controls label { display: inline-flex; align-items: center; gap: 0.4em; flex: 1 1 11em; min-width: 0; }
+figure.demo .gb-controls label.gb-compact { flex: 0 1 auto; }
+figure.demo .gb-controls input[type=range] { flex: 1 1 4em; min-width: 3em; width: 100%; accent-color: var(--links); }
+figure.demo .gb-controls .gb-value { font-family: var(--mono-font); min-width: 3.2em; text-align: right; }
+figure.demo .gb-controls select, figure.demo .gb-controls button, figure.demo .gb-controls input[type=number] {
+  font: inherit; color: var(--fg); background: var(--quote-bg);
+  border: 1px solid var(--table-border-color, var(--icons)); border-radius: 4px; padding: 0.15em 0.6em;
+}
+figure.demo .gb-controls button { cursor: pointer; min-height: 2em; }
+figure.demo .gb-controls button:hover { border-color: var(--links); }
+figure.demo .gb-controls button[aria-pressed=true] { background: var(--links); color: var(--bg); }
+figure.demo .gb-readout { font-family: var(--mono-font); font-size: 0.8em; white-space: pre-wrap; overflow-wrap: anywhere; margin-top: 0.5em; line-height: 1.45; }
+figure.demo .gb-error { color: #c0392b; font-family: var(--mono-font); font-size: 0.8em; white-space: pre-wrap; }
+figure.demo .gb-pending { min-height: 8em; display: flex; align-items: center; justify-content: center; opacity: 0.6; font-size: 0.875em; }
+
+/* Tables of the wider lectures scroll rather than widen the page. */
+.content table { display: block; overflow-x: auto; max-width: 100%; }
+.content img { max-width: 100%; height: auto; }
+@media print { figure.demo .gb-controls { display: none; } }

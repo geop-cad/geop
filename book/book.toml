@@ -1,9 +1,18 @@
 [book]
-title = "Geop CAD Kernel"
+title = "Building a CAD Kernel"
 authors = ["Tobias Jacob"]
-description = "A crate-by-crate tour of the Geop CAD kernel."
+description = "A lecture series on how to build a modern CAD kernel, from floating point to assemblies, taught through the Geop kernel."
 src = "src"
 language = "en"
 
 [build]
 build-dir = "dist"
+
+[output.html]
+default-theme = "light"
+preferred-dark-theme = "navy"
+additional-css = ["theme/geop-book.css"]
+additional-js = ["theme/katex.min.js", "theme/geop-book.js"]
+
+[output.html.search]
+limit-results = 30
