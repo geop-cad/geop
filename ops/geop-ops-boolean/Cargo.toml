@@ -8,7 +8,11 @@ license.workspace = true
 geop-core-program.workspace = true
 geop-core-editor.workspace = true
 geop-core-math.workspace = true
+geop-core-geometry.workspace = true
+geop-core-topology.workspace = true
 geop-lib-booleans.workspace = true
+# Sweeping a sketch's curves across a face to split it.
+geop-lib-sweep.workspace = true
 geop-ops-model.workspace = true
 serde.workspace = true
 # Only for `examples`.
@@ -25,13 +29,17 @@ examples = ["dep:geop-ops-extrude-revolve", "dep:geop-ops-sketch"]
 geop-core-program = { workspace = true, features = ["testing"] }
 # The tests driving an editor as a front end does.
 geop-core-editor = { workspace = true, features = ["testing"] }
-geop-core-topology.workspace = true
 geop-ops-model = { workspace = true, features = ["testing"] }
+# The basic solids the tests divide faces of.
+geop-lib-sweep = { workspace = true, features = ["testing"] }
 # The given solids the tests unite and split.
 geop-lib-fixtures.workspace = true
 # The examples, and the tests of extruding and revolving up to the next
 # face of a united solid, are written in sketches and extrusions.
 geop-ops-extrude-revolve = { workspace = true, features = ["testing"] }
 geop-ops-sketch.workspace = true
+# The tests round and draft the pieces of a face split.
+geop-ops-fillet.workspace = true
+geop-ops-plastic.workspace = true
 # The tests split solids with faces extracted from them.
 geop-ops-edit.workspace = true

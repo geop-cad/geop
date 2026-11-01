@@ -1,5 +1,5 @@
-//! Imprint and section set up as the front end sets them up: the body,
-//! the tool and the face picked by clicks.
+//! Imprint, section and split face set up as the front end sets them up:
+//! the body, the tool, the face and the sketch picked by clicks.
 
 use geop_core_editor::{
     editing::Value,
@@ -7,16 +7,24 @@ use geop_core_editor::{
     registry::Registry,
     testing::{click_at, dialog, editor_with, from_above, handled, pointer},
 };
+use geop_core_math::{primitives::FrameAxis, scalars::Scalar};
 use geop_core_program::{program::Program, testing::args};
 use geop_lib_fixtures::PrimitiveArgs;
 use geop_ops_model::element;
+use geop_ops_model::sketch::{
+    Sketch,
+    figures::{n, on_origin},
+    whole_sketch,
+};
+use geop_ops_sketch::AddSketchArgs;
 
-use crate::{ImprintArgs, SectionArgs, SectionWith};
+use crate::{ImprintArgs, SectionArgs, SectionWith, SplitFaceArgs};
 
 /// What these tests edit: given blocks, and this crate's operations.
 fn registry() -> Registry {
     (geop_ops_model::register(Registry::default()))
         .and_then(geop_lib_fixtures::register)
+        .and_then(geop_ops_sketch::register)
         .and_then(crate::register)
         .expect("the operations each have a name of their own")
 }
@@ -85,4 +93,131 @@ fn section_picks_the_body_to_cut_with() {
     let args: SectionArgs = args(editor.program().steps.last().unwrap());
     assert_eq!(args.body, element("block(b)"));
     assert_eq!(args.with, SectionWith::Body(element("block(a)")));
+}
+
+/// An editor on a block `[-1, 1]^2 x [1, 2]` over the plane `z = 0`, and the
+/// two sketches on that plane: a circle `disc`, then a line `across`.
+fn on_a_block_and_sketches() -> Editor {
+    let mut program = Program::new();
+    program.push(
+        "block",
+        PrimitiveArgs::block([-1.0, -1.0, 1.0], [1.0, 1.0, 2.0]),
+    );
+    let mut disc = Sketch::new();
+    let centre = disc.add_point(n(0.25), n(0.25));
+    disc.add_circle(centre, n(0.4));
+    program.push("disc", AddSketchArgs::on(on_origin(FrameAxis::Z), disc));
+    let mut across = Sketch::new();
+    let (a, b) = (
+        across.add_point(n(-0.5), n(-2.0)),
+        across.add_point(n(-0.5), n(2.0)),
+    );
+    across.add_line(a, b);
+    program.push("across", AddSketchArgs::on(on_origin(FrameAxis::Z), across));
+    editor_with(registry(), program)
+}
+
+/// A new split takes the newest sketch; a click from above on the block's
+/// top takes the face it still waits for. The line is then an edge of the
+/// view, between the piece and what kept the name, and the block is whole.
+#[test]
+fn split_face_picks_the_face_and_takes_the_newest_sketch() {
+    let mut editor = on_a_block_and_sketches();
+    handled(
+        &mut editor,
+        Command::New {
+            kind: "split_face".into(),
+        },
+    );
+    handled(&mut editor, click_at(from_above(0.25, 0.25)));
+    committed(&mut editor);
+    let args: SplitFaceArgs = args(editor.program().steps.last().unwrap());
+    assert_eq!(args.sketch, whole_sketch("across"));
+    let top = args.face.expect("a face picked").name().to_string();
+    assert!(top.starts_with("block(block,"), "{top}");
+
+    let scene = (editor.handle(Command::Show).scene).expect("the scene is sent");
+    assert_eq!(scene.part.solids.len(), 1, "{:?}", scene.part.solids);
+    let step = &editor.program().steps.last().unwrap().id;
+    let edge = (scene.part.edges.iter())
+        .find(|edge| edge.name.starts_with(&format!("split_face({step},across,")))
+        .expect("the line is an edge of the view");
+    let piece = format!("split_face({step},{top},across,c2)");
+    let mut faces = edge.faces.clone();
+    faces.sort();
+    let mut expected = vec![piece.clone(), top.clone()];
+    expected.sort();
+    assert_eq!(faces, expected);
+    assert!(edge.polyline.len() >= 2);
+    // It runs along the line, over the block's top.
+    for p in &edge.polyline {
+        assert!(p[0].could_be_equal(Scalar::from_f64(-0.5)), "{p:?}");
+        assert!(p[2].could_be_equal(Scalar::from_f64(2.0)), "{p:?}");
+    }
+    assert!((scene.part.faces.iter()).any(|face| face.name == piece));
+}
+
+/// The older sketch is picked by a click on it, from below, where it lies
+/// clear of the block: a disc is cut out of the top, and the piece can be
+/// picked by a click on it.
+#[test]
+fn split_face_picks_another_sketch_and_the_piece_is_picked() {
+    let mut editor = on_a_block_and_sketches();
+    handled(
+        &mut editor,
+        Command::New {
+            kind: "split_face".into(),
+        },
+    );
+    handled(&mut editor, click_at(from_above(0.25, 0.25)));
+    handled(&mut editor, dialog("sketch", Value::Press));
+    handled(
+        &mut editor,
+        click_at(pointer([0.25, 0.25, -10.0], [0.0, 0.0, 1.0])),
+    );
+    committed(&mut editor);
+    let picked: SplitFaceArgs = args(editor.program().steps.last().unwrap());
+    assert_eq!(picked.sketch, whole_sketch("disc"));
+
+    // The disc is a face: a new split takes it by a click inside it.
+    handled(
+        &mut editor,
+        Command::New {
+            kind: "split_face".into(),
+        },
+    );
+    handled(&mut editor, click_at(from_above(0.25, 0.25)));
+    let again: SplitFaceArgs = args(editor.editing().expect("a step is edited"));
+    let again = again.face.expect("a face picked");
+    assert!(again.name().starts_with("split_face("), "{again:?}");
+}
+
+/// A refusal reaches the user on the step, naming the sketch and the face,
+/// and beside its field.
+#[test]
+fn split_face_says_why_it_refuses() {
+    let mut program = Program::new();
+    program.push(
+        "block",
+        PrimitiveArgs::block([-1.0, -1.0, 1.0], [1.0, 1.0, 2.0]),
+    );
+    let mut beside = Sketch::new();
+    let (a, b) = (
+        beside.add_point(n(5.0), n(-2.0)),
+        beside.add_point(n(5.0), n(2.0)),
+    );
+    beside.add_line(a, b);
+    program.push("beside", AddSketchArgs::on(on_origin(FrameAxis::Z), beside));
+    let mut editor = editor_with(registry(), program);
+    handled(
+        &mut editor,
+        Command::New {
+            kind: "split_face".into(),
+        },
+    );
+    let update = editor.handle(click_at(from_above(0.25, 0.25)));
+    let step = update.step.expect("the step is still edited");
+    let error = step.error.expect("the step says why");
+    assert!(error.contains("nothing crosses"), "{error}");
+    assert!(error.contains("beside"), "{error}");
 }

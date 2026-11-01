@@ -12,6 +12,8 @@ use geop_ops_model::{
 
 use crate::{Boolean, BooleanArgs};
 
+mod split_face;
+
 /// The operations these programs are written in: given solids, combined.
 fn registry() -> GeopResult<OperationRegistry> {
     geop_lib_fixtures::registry()?.with(Boolean)

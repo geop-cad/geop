@@ -233,6 +233,15 @@ impl Namer {
         name
     }
 
+    /// What follows the operation in `name`, one of this namer's: `X` for
+    /// `kind(operation,X)`. None, for a name of another.
+    pub fn arguments_of<'a>(&self, name: &'a str) -> Option<&'a str> {
+        let root = self.root();
+        name.strip_prefix(root.strip_suffix(')')?)?
+            .strip_prefix(',')?
+            .strip_suffix(')')
+    }
+
     /// `kind(operation,origin,at)`: a piece split off the entity named
     /// `origin` at — or along — the entity named `at`. A piece is named
     /// after what it was split off first of all, so that [`origin_of`]

@@ -36,7 +36,7 @@ use geop_core_math::{
     vector::Vector2,
     with_context,
 };
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 /// Budgets for the ray casts in [`loop_contains`]: how many crossings one
 /// ray may find with one curve, how hard a single search tries, and the
@@ -213,6 +213,82 @@ impl Sketch {
             )));
         }
         Ok(Chain { edges, closed })
+    }
+
+    /// Every run of the sketch's non-construction curves, in the order of
+    /// their ids: each closed curve, each contour of a text, and each stretch
+    /// of curves joined end to end, broken where three or more meet. Unlike
+    /// [`Sketch::shape`], which is what the sketch sweeps as one profile,
+    /// nothing is left out and nothing has to enclose anything: every line of
+    /// the sketch is in one run.
+    pub fn runs(&self) -> GeopResult<Vec<Chain>> {
+        self.validate()?;
+        let class = self.point_classes();
+        let lone = |curve, contour| Chain {
+            edges: vec![ProfileEdge {
+                curve,
+                reversed: false,
+                contour,
+            }],
+            closed: true,
+        };
+        let mut runs = Vec::new();
+        // The curves between two points: the edges of a graph on the point
+        // classes. A curve ending where it starts is a run by itself.
+        let mut open: BTreeMap<CurveId, (PointId, PointId)> = BTreeMap::new();
+        let mut at: BTreeMap<PointId, Vec<CurveId>> = BTreeMap::new();
+        for (&id, curve) in self.curves.iter().filter(|(_, c)| !c.construction) {
+            match (curve.endpoints(), &curve.kind) {
+                (None, CurveKind::Text { text, .. }) => {
+                    runs.extend((0..text::outlines(text)?.len()).map(|k| lone(id, k)));
+                }
+                (Some((s, e)), _) if class[&s] != class[&e] => {
+                    open.insert(id, (class[&s], class[&e]));
+                    at.entry(class[&s]).or_default().push(id);
+                    at.entry(class[&e]).or_default().push(id);
+                }
+                (Some(_), kind) if !matches!(kind, CurveKind::Spline { .. }) => {
+                    return Err(GeopError::new(format!(
+                        "curve {id} starts and ends at the same point"
+                    )));
+                }
+                _ => runs.push(lone(id, 0)),
+            }
+        }
+        // From `start`, along `first`, on through each point where only two
+        // curves meet, as far as a curve not taken yet goes on.
+        let mut left: BTreeSet<CurveId> = open.keys().copied().collect();
+        let mut walk = |start: PointId, first: CurveId| {
+            let (mut point, mut next, mut edges) = (start, Some(first), Vec::new());
+            while let Some(curve) = next.filter(|c| left.remove(c)) {
+                let (s, e) = open[&curve];
+                edges.push(ProfileEdge {
+                    curve,
+                    reversed: s != point,
+                    contour: 0,
+                });
+                point = if s == point { e } else { s };
+                next = match &at[&point][..] {
+                    [a, b] => Some(if *a == curve { *b } else { *a }),
+                    _ => None,
+                };
+            }
+            Chain {
+                closed: !edges.is_empty() && point == start,
+                edges,
+            }
+        };
+        // Out from the points that end a run, then round what is left: loops.
+        for (&point, curves) in at.iter().filter(|(_, curves)| curves.len() != 2) {
+            for &curve in curves {
+                runs.push(walk(point, curve));
+            }
+        }
+        for &curve in open.keys() {
+            runs.push(walk(open[&curve].0, curve));
+        }
+        runs.retain(|run| !run.edges.is_empty());
+        Ok(runs)
     }
 
     /// The chain through `curve`: it, and on from each of its ends the

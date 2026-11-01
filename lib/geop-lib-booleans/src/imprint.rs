@@ -16,7 +16,7 @@
 //! curves end on them, and each curve is spliced into the piece of the face
 //! it lies in.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 
 use geop_core_math::{
     geop_error::{GeopError, GeopResult, WithContext},
@@ -27,7 +27,7 @@ use geop_core_topology::{
     Body, EdgeId, FaceId, Model, VertexId,
     contains::face::{PointClassification, face_contains},
 };
-use geop_ops_model::{NamedModel, Namer};
+use geop_ops_model::{NamedModel, Namer, origin_of};
 
 use crate::{
     naming::BooleanNaming,
@@ -63,6 +63,28 @@ pub(crate) fn shared_edges(model: &NamedModel, a: Body, b: Body) -> GeopResult<V
         .collect::<GeopResult<_>>()?;
     shared.sort();
     Ok(shared.into_iter().map(|(_, e)| e).collect())
+}
+
+/// The face of the tools the curve `edge` runs along, as an argument of a
+/// name of `namer`: `X` for a face named `N(X)`. The least of them, if it
+/// runs along two, where the tool's faces meet.
+fn tool_face_of(
+    model: &NamedModel,
+    namer: &Namer,
+    edge: EdgeId,
+    tool_faces: &HashSet<FaceId>,
+) -> GeopResult<String> {
+    let topology = model.topology();
+    let mut names = Vec::new();
+    for coedge in topology.coedges_of_edge(edge) {
+        let on = topology.get_coedge(coedge)?.face;
+        if tool_faces.contains(&on) {
+            let name = model.name(on)?;
+            names.push(namer.arguments_of(name).unwrap_or(name).to_string());
+        }
+    }
+    (names.into_iter().min())
+        .ok_or_else(|| GeopError::new(format!("the curve {edge} runs along no face of the tools")))
 }
 
 /// Imprints the bodies `a` and `b` onto each other: every face of each is
@@ -112,15 +134,18 @@ pub fn imprint(
 /// of the face's body changes but the boundary edges of the face being
 /// split where a curve ends on them.
 ///
-/// Named by `namer` as a boolean names what it creates (see
-/// `naming`): the copy of the face's entity `X` is `N(copy,X)`, a
-/// curve is named after the copy's face and the tool's face it is traced
-/// along, and the face's pieces and its boundary edges' pieces after the
-/// face, the edge and the curves.
+/// Named by `namer` as a boolean names what it creates (see `naming`), but
+/// for the curves and the face's pieces: a curve along the tool's face
+/// `N(X)` takes that name, the tool's face being gone, and is `N(X,k)` for
+/// its `k`-th stretch if the face crosses this one several times. A piece
+/// split off the face `F` along it is `N(F,X)` or `N(F,X,k)`, and the other
+/// piece keeps the name `F`. So what the user reads of a curve is what made
+/// it, not where it happened to end.
 ///
 /// Fails, leaving the part with the face's copy and the tools in it, if no
-/// tool crosses the face, or a curve ends inside it: a curve has to run
-/// from boundary to boundary of the face, or close on itself, to divide it.
+/// tool crosses the face, a curve runs along one of its edges, a curve ends
+/// inside it, or a curve only joins two of its boundaries: each curve has to
+/// have a piece of the face on either side.
 pub fn imprint_on_face(
     model: &mut NamedModel,
     namer: &Namer,
@@ -173,10 +198,45 @@ pub fn imprint_on_face(
         curves.push((model.name(edge).map(str::to_string)?, edge, middle));
     }
     curves.sort_by(|a, b| a.0.cmp(&b.0));
+    let face_name = model.name(face).map(str::to_string)?;
+    let tool_faces: HashSet<FaceId> = (tools.iter())
+        .map(|&tool| topology.body_faces(tool))
+        .collect::<GeopResult<Vec<_>>>()
+        .with_context(&ctx)?
+        .into_iter()
+        .flatten()
+        .collect();
     if curves.is_empty() {
         return Err(ctx(GeopError::new(format!(
-            "imprint: nothing crosses the face {:?}",
-            model.name(face).map(str::to_string)?
+            "nothing crosses the face {face_name:?}: what divides it has to run across it"
+        ))));
+    }
+
+    // An edge of the copy has a face of the copy on both sides, unless it
+    // is on the copy's boundary: a curve there runs along an edge of the
+    // face, and has nothing to divide.
+    let on_boundary = |edge: EdgeId| {
+        let of_copy = (topology.coedges_of_edge(edge).into_iter()).filter(|&c| {
+            (topology.get_coedge(c))
+                .is_ok_and(|c| topology.body_of_face(c.face).is_ok_and(|b| b == copy))
+        });
+        of_copy.count() < 2
+    };
+    let mut along: Vec<&str> = (curves.iter())
+        .filter(|(_, edge, _)| on_boundary(*edge))
+        .map(|(name, _, _)| {
+            // The face's own edge: what this one is a copy, or a piece of a
+            // copy, of.
+            let copy = origin_of(name).unwrap_or(name);
+            let arguments = namer.arguments_of(copy).unwrap_or(copy);
+            arguments.strip_prefix("copy,").unwrap_or(arguments)
+        })
+        .collect();
+    if !along.is_empty() {
+        along.sort();
+        along.dedup();
+        return Err(ctx(GeopError::new(format!(
+            "what divides the face {face_name:?} runs along its edge {along:?}, which already bounds it: draw it clear of the edge"
         ))));
     }
 
@@ -196,16 +256,19 @@ pub fn imprint_on_face(
         *ends.entry(edge.start_vertex).or_default() += 1;
         *ends.entry(edge.end_vertex).or_default() += 1;
     }
-    let mut loose: Vec<String> = ends
-        .iter()
-        .filter(|&(v, &count)| count == 1 && !boundary.contains(v))
-        .map(|(&v, _)| model.name(v).map(str::to_string))
-        .collect::<GeopResult<_>>()?;
-    if !loose.is_empty() {
-        loose.sort();
+    let loose = |v: VertexId| ends[&v] == 1 && !boundary.contains(&v);
+    let mut dangling = Vec::new();
+    for (_, edge, _) in &curves {
+        let at = topology.get_edge(*edge)?;
+        if loose(at.start_vertex) || loose(at.end_vertex) {
+            dangling.push(tool_face_of(model, namer, *edge, &tool_faces)?);
+        }
+    }
+    if !dangling.is_empty() {
+        dangling.sort();
+        dangling.dedup();
         return Err(ctx(GeopError::new(format!(
-            "imprint: the curves end inside the face {:?}, at {loose:?}; to divide it, they have to cross it or close on themselves",
-            model.name(face).map(str::to_string)?
+            "{dangling:?} ends inside the face {face_name:?}, and a dangling edge divides nothing: to divide it, a curve has to cross it or close on itself"
         ))));
     }
 
@@ -221,6 +284,7 @@ pub fn imprint_on_face(
         remesh_vertices_x_edges(model, &mut naming, body, tool, &params).with_context(&ctx)?;
     }
     let mut pieces = vec![face];
+    let mut split_along: Vec<(FaceId, EdgeId)> = Vec::new();
     for (curve_name, edge, middle) in &curves {
         let mut target = None;
         for &piece in &pieces {
@@ -255,9 +319,52 @@ pub fn imprint_on_face(
             .with_context(&ctx)?;
         naming.face_split(target, *edge, split)?;
         pieces.extend(split);
+        split_along.extend(split.map(|piece| (piece, *edge)));
     }
     naming.finish(model).with_context(&ctx)?;
+    // A curve with one piece of the face on both of its sides joined two of
+    // the face's boundaries, and divides nothing.
+    let topology = model.topology();
+    let mut joining = Vec::new();
+    for (_, edge, _) in &curves {
+        let mut sides = HashSet::new();
+        for coedge in topology.coedges_of_edge(*edge) {
+            let side = topology.get_coedge(coedge)?.face;
+            if pieces.contains(&side) && !sides.insert(side) {
+                joining.push(tool_face_of(model, namer, *edge, &tool_faces)?);
+                break;
+            }
+        }
+    }
+    if !joining.is_empty() {
+        joining.sort();
+        joining.dedup();
+        return Err(ctx(GeopError::new(format!(
+            "{joining:?} only joins two of the boundaries of the face {face_name:?}, as a line from its outside to a hole does, and a piece of it on both sides divides nothing: to divide it, a curve has to have another piece on its other side"
+        ))));
+    }
+
+    // The curves after what made them, the pieces after the curves.
+    let mut stretches: BTreeMap<String, Vec<EdgeId>> = BTreeMap::new();
+    for (_, edge, _) in &curves {
+        let made_by = tool_face_of(model, namer, *edge, &tool_faces).with_context(&ctx)?;
+        stretches.entry(made_by).or_default().push(*edge);
+    }
     model.delete_bodies(tools).with_context(&ctx)?;
+    for (made_by, edges) in stretches {
+        for (k, &edge) in edges.iter().enumerate() {
+            let at = match edges.len() {
+                1 => made_by.clone(),
+                _ => format!("{made_by},{k}"),
+            };
+            model.rename(edge, namer.name(&[&at])).with_context(&ctx)?;
+            for &(piece, _) in split_along.iter().filter(|&&(_, e)| e == edge) {
+                model
+                    .rename(piece, namer.piece(&face_name, &at))
+                    .with_context(&ctx)?;
+            }
+        }
+    }
     Ok(curves.into_iter().map(|(_, edge, _)| edge).collect())
 }
 
@@ -405,7 +512,7 @@ mod tests {
     fn a_line_ending_inside_the_face_is_refused() {
         let error =
             imprint_swept(cube, TOP, chain(&[[0.3, -1.0], [0.3, 0.5]])).expect_err("refused");
-        assert!(error.root_message().contains("end inside"), "{error:?}");
+        assert!(error.root_message().contains("ends inside"), "{error:?}");
     }
 
     /// A line beside the face misses it, and is refused.

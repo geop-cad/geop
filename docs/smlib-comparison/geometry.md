@@ -120,7 +120,7 @@ Verdicts:
 | Box, cylinder, cone, sphere, torus primitives; partial angles; cylindrical box; sphere without poles | `CreateBox:270`, `CreateCylindricalBox:424`, `CreateCone:647`, `:738`, `CreateSphere:854`, `:894`, `CreateTorus:992`, `:1038`, `CreateSphereNoPole:6911`, `CreateConeEllipticEnds:7235` | `lib/geop-lib-sweep/src/shapes` (test helpers), `geop_lib_fixtures::Primitive` (test-only). Users build them from sketches | par: a feature modeller does not need them |
 | A 3-D curve from two 2-D views (cross curves) | `SmBrep::CreateFromCrossCurves` `SmBrep.cpp:3247` | none | missing |
 | Planar faces from unordered 3-D curves, with holes and several regions | `CreatePlanarFacesWith3DCurves` `SmBrep.cpp:3733` | `boundary.rs` flat fill of one closed loop | worse |
-| Faces from curves on a surface | `CreateFacesWithCurves` (`inc/SmBrep.h:435`) | `trim.rs`, `project_curve`, imprint | par |
+| Faces from curves on a surface | `CreateFacesWithCurves` (`inc/SmBrep.h:435`) | `trim.rs`, `split_face`, imprint | par |
 
 ### 1.4 Queries: projection, sections, silhouettes, inversion
 

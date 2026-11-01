@@ -14,12 +14,12 @@ use geop_ops_model::sketch::{
 use geop_ops_model::{Combine, element, solid};
 use geop_ops_sketch::AddSketchArgs;
 
-use crate::SplitArgs;
+use crate::{Along, SplitArgs, SplitFaceArgs};
 
 /// The examples of this crate, as an editor offers them.
 pub fn set() -> ExampleSet {
     ExampleSet {
-        programs: vec![("split_plate", split_plate)],
+        programs: vec![("split_plate", split_plate), ("badge", badge)],
         workspaces: Vec::new(),
     }
 }
@@ -96,6 +96,50 @@ pub fn split_plate() -> Program {
         SplitArgs {
             solid: solid("extrude(plate)"),
             face: element(format!("extrude(cut,cut_sketch,{line})")),
+        },
+    );
+    program
+}
+
+/// A plate with a disc on its top, ready to colour or to pick on its own: the
+/// plate extruded from its sketch (`plate`), a circle sketched on the plane
+/// under it (`mark`), and the top divided along it (`disc`) into the disc,
+/// `split_face(disc,extrude(plate,end),...)`, and the rest of the top, which
+/// keeps its name. The solid is as it was.
+pub fn badge() -> Program {
+    let mut program = Program::new();
+    let mut plate = Sketch::new();
+    rectangle(&mut plate, [0.0, 0.0], 4.0, 2.0);
+    program.push(
+        "plate_sketch",
+        AddSketchArgs::on(on_origin(FrameAxis::Z), solved(plate)),
+    );
+    program.push(
+        "plate",
+        ExtrudeArgs {
+            sketch: whole_sketch("plate_sketch"),
+            extent: Extents {
+                side1: Extent::blind(0.5),
+                symmetric: false,
+                side2: None,
+                reversed: false,
+            },
+            output: Output::Solid(Combine::NewBody),
+            draft: 0.0,
+        },
+    );
+    let mut mark = Sketch::new();
+    circle(&mut mark, [2.0, 1.0], 0.6);
+    program.push(
+        "mark",
+        AddSketchArgs::on(on_origin(FrameAxis::Z), solved(mark)),
+    );
+    program.push(
+        "disc",
+        SplitFaceArgs {
+            face: Some(element("extrude(plate,end)")),
+            sketch: whole_sketch("mark"),
+            along: Along::SketchNormal,
         },
     );
     program

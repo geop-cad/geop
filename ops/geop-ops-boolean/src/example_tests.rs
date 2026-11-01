@@ -4,7 +4,7 @@
 
 use std::rc::Rc;
 
-use geop_core_math::geop_error::GeopResult;
+use geop_core_math::{geop_error::GeopResult, scalars::Scalar};
 use geop_core_program::{
     operation_registry::OperationRegistry,
     testing::{assert_incremental, assert_round_trips, edit_sequence},
@@ -15,11 +15,16 @@ use geop_ops_model::{
     testing::{check_valid, classify, model_of},
 };
 
-use crate::{Split, examples::split_plate};
+use crate::{
+    Split, SplitFace,
+    examples::{badge, split_plate},
+};
 
 /// The operations the examples are written in.
 fn registry() -> GeopResult<OperationRegistry> {
-    geop_ops_extrude_revolve::testing::registry()?.with(Split)
+    geop_ops_extrude_revolve::testing::registry()?
+        .with(Split)?
+        .with(SplitFace)
 }
 
 #[test]
@@ -52,5 +57,25 @@ fn split_plate_round_trips() {
 #[test]
 fn split_plate_builds_incrementally() {
     let programs = edit_sequence(&split_plate());
+    assert_incremental(Rc::new(registry().unwrap()), None, &programs);
+}
+
+#[test]
+fn badge_round_trips() {
+    let built = assert_round_trips(Rc::new(registry().unwrap()), None, &badge());
+    let part = model_of(&built);
+    if let Err(report) = check_valid(&part) {
+        panic!("badge: {report}");
+    }
+    let solid = part.solid_id("extrude(plate)").unwrap();
+    // The plate's six faces, and the disc.
+    assert_eq!(part.topology().solid_faces(solid).unwrap().len(), 7);
+    let volume = part.topology().mass_properties(solid).unwrap().volume;
+    assert!(volume.could_be_equal(Scalar::from_f64(4.0)), "{volume:?}");
+}
+
+#[test]
+fn badge_builds_incrementally() {
+    let programs = edit_sequence(&badge());
     assert_incremental(Rc::new(registry().unwrap()), None, &programs);
 }

@@ -11,18 +11,14 @@ geop-core-math.workspace = true
 geop-core-geometry.workspace = true
 geop-core-topology.workspace = true
 geop-ops-model.workspace = true
-geop-lib-booleans.workspace = true
 # Rebuilding a solid around faces put on new surfaces.
 geop-lib-shell.workspace = true
-geop-lib-sweep.workspace = true
 serde.workspace = true
 
 [dev-dependencies]
 geop-ops-model = { workspace = true, features = ["testing"] }
-# The block the tests project onto.
+# The blocks the tests extract and delete.
 geop-lib-sweep = { workspace = true, features = ["testing"] }
-geop-core-sketch.workspace = true
-geop-ops-sketch.workspace = true
 # The bodies the direct edits are run on, as steps of a program.
 geop-lib-fixtures.workspace = true
 geop-core-program = { workspace = true, features = ["testing"] }
