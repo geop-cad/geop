@@ -270,7 +270,7 @@ The `build` of an operation that can only use the part's own reads with `retriev
 
 <div class="kernel">
 
-**In the kernel.** Read `ops/geop-ops-boolean/src/operation.rs` in full next: 433 lines, four operations (`Boolean`, `Split`, `Imprint`, `Section`). Its `ModelOperation::build` for `Boolean` is six lines: a `Namer`, two ids, one call to `geop_lib_booleans::boolean`. An operation is mostly form and references. The algorithm is the library's.
+**In the kernel.** Read `ops/geop-ops-boolean/src/operation.rs` in full next: 433 lines, four operations (`Boolean`, `Split`, `Imprint`, `Section`). Its `ModelOperation::build` for `Boolean` is five lines: a `Namer`, two ids, one call to `geop_lib_booleans::boolean`. An operation is mostly form and references. The algorithm is the library's.
 
 </div>
 
@@ -383,7 +383,7 @@ committed(&mut editor);
 
 ### Regression tests: a real bug's program, for ever
 
-When a user reports a failure, the first job is to rebuild their case in Rust, in the `regression_tests.rs` of the crate whose operation failed. Never commit a `.geop` file as a fixture: a format change breaks old files, and the rule then is to delete them rather than add a compatibility reader. Confirm that the Rust version still fails without the fix. The doc comment is the permanent record of what was learned. Read the top of `ops/geop-ops-boolean/src/regression_tests.rs`: its comment on `cylinder_cut_from_a_block_far_from_the_origin` states the coordinates, the exact error text, which placements failed and which did not, and the root cause, in a dozen lines. We read that whole story in [Lecture 42](./42-case-studies.md).
+When a user reports a failure, the first job is to rebuild their case in Rust, in the `regression_tests.rs` of the crate whose operation failed. Never commit a `.geop` file as a fixture: a format change breaks old files, and the rule then is to delete them rather than add a compatibility reader. Confirm that the Rust version still fails without the fix. The doc comment is the permanent record of what was learned. Read the top of `ops/geop-ops-boolean/src/regression_tests.rs`: its comment on `cylinder_cut_from_a_block_far_from_the_origin` states the coordinates, the exact error text, which placements failed and which did not, and the root cause, in some thirty lines. We read that whole story in [Lecture 42](./42-case-studies.md).
 
 ### Stress tests: sweep the space
 

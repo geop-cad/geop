@@ -89,7 +89,7 @@ A vertex moves to the point nearest where it was that lies on the smooth surface
 
 Each iteration computes the residual of every condition, and takes the *shortest* step that corrects them all to first order (`shortest_solution`). A step's rows are the normals at the foot points.
 
-**A worked example.** A box `$[0,2]\times[0,1]\times[0,1]$`, whose top is moved to `$z=1.5$`. The vertex `$(0,0,1)$` sits on planes `$x=0$`, `$y=0$`, `$z=1.5$`, with residuals `$0,0,-0.5$` measured along outward normals. The linear system is square and nonsingular: the step is `$(0,0,+0.5)$`, and one iteration lands on `$(0,0,1.5)$` exactly. With fewer than three conditions, say a vertex at the end of a seam between two pieces of one smooth surface, the system is underdetermined, and the shortest step keeps it as near as possible: "the point slides along where they meet, by no more than it has to".
+**A worked example.** A box `$[0,2]\times[0,1]\times[0,1]$`, whose top is moved to `$z=1.5$`. The vertex `$(0,0,1)$` sits on planes `$x=0$`, `$y=0$`, `$z=1.5$`, with residuals `$0,0,-0.5$` measured along outward normals. The linear system is square and nonsingular: the step is `$(0,0,+0.5)$`, and one iteration lands on `$(0,0,1.5)$` exactly. With fewer than three conditions the system is underdetermined, and the shortest step keeps it as near as possible: "the point slides along where they meet, by no more than it has to". The rebuild falls back on that only for a vertex on a sheet's free border. A vertex at the end of a seam between two pieces of one smooth surface stays on the seam: it goes where the seam's curve, carried on, crosses the other surface (`on_seam`).
 
 ### One smooth surface, one condition
 

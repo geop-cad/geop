@@ -78,7 +78,7 @@ A file's numbers do not agree with each other. A vertex's `CARTESIAN_POINT`, the
 
 ### A trap at the last bit
 
-[Lecture 11](./11-evaluate-locally.md) explains why curves evaluate relative to a control point of the span. A STEP file showed the other side of it. An edge lay `2e-31` above its plane face (AGENTS.md, *Evaluate relative to the patch*). Evaluated relative to a control point `1.8e-15` up, its enclosure took in the plane, because the relative evaluation adds that point back with one rounding of about `1e-31`. So the importer measured no gap and did not widen the edge. Validation's clipping, which reads control points, found the face's points off it.
+[Lecture 11](./11-evaluate-locally.md) explains why curves evaluate relative to a control point of the span. A STEP file showed the other side of it. An edge lay `2e-31` above its plane face (AGENTS.md, *Evaluate relative to the patch*). Evaluated relative to a control point `1.8e-15` up, its enclosure took in the plane, because the relative evaluation adds that point back with one rounding, and an ulp at `1.8e-15` is about `4e-31`. So the importer measured no gap and did not widen the edge. Validation's clipping, which reads control points, found the face's points off it.
 
 Neither computation was wrong. Each is a true enclosure, and each is the tighter one somewhere. So `NurbCurve::evaluate` (`core/geop-core-geometry/src/nurb_curve/evaluate.rs`) computes both, absolute and relative, and `intersect`s them. Two enclosures of one value with different numerical strengths: their intersection is still a true enclosure. That rule is from [Lecture 5](./05-honest-numerics.md), and it took a real file's `2e-31` to need it.
 

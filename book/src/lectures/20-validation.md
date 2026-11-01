@@ -59,7 +59,7 @@ So "manifold" here is a generous notion: the validator allows a solid to touch i
 
 ### Interference within a body
 
-Three checks look for places the topology failed to record where things meet. They are limited to entities *of one body*, because separate bodies may overlap as they please (the two halves of a split, a new body extruded into another). `body_groups` in `core/geop-core-topology/src/validation/mod.rs` does the grouping.
+Four checks look for places the topology failed to record where things meet. They are limited to entities *of one body*, because separate bodies may overlap as they please (the two halves of a split, a new body extruded into another). `body_groups` in `core/geop-core-topology/src/validation/mod.rs` does the grouping.
 
 **Vertices are disjoint** (`disjointness_check.rs`, `check_vertices_disjoint`). No two distinct vertices of a body could overlap. "A shared position should be represented by reusing the same `VertexId`, not by two coincident ones."
 

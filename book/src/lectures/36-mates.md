@@ -100,8 +100,8 @@ A `Mate` holds a `MateKind` between `MateEntity`s (`ops/geop-ops-assembly/src/ma
 
 - **Constraints** (`Kind`): `Coincident`, `Concentric`, `Parallel`, `Perpendicular`, `Distance`, `Angle`, `Tangent`, `Path`. Each takes a point, a line or a plane of each entity, where its part puts it.
 - **Joints** (`JointKind`, `Joint`): how the second frame may move on the first. Revolute, slider, cylindrical, planar, pin in slot, ball, universal, fastened.
-- **Couplings** (`CouplingKind`): a coordinate of one joint tied to one of another by a factor and an offset: gear, belt, rack and pinion, screw. They are presets of one linear relation.
-- **Fixed** (`Anchor::Fixed`): in an `add_part` step and with no entity. The part never moves in a solve.
+- **Couplings** (`CouplingKind`): a coordinate of one joint tied to one of another by a factor and an offset: gear, belt, rack and pinion, screw, linear. They are presets of one linear relation.
+- **Fixed** (`Anchor::Fixed`): of one entity, or, in an `add_part` step, of none, meaning the part that step places. The part never moves in a solve.
 
 Each is residuals. Take `residuals` in `ops/geop-ops-assembly/src/residuals.rs`, with everything computed in dual numbers so every residual carries its derivatives:
 

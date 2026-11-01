@@ -32,7 +32,7 @@ The demo does all four, one dimension down. Choose an operator and drag the vert
 
 `classify_face` in `lib/geop-lib-booleans/src/boolean.rs` returns a `FaceClassification`: `Inside`, `Outside`, `OnSameNormal` or `OnOppositeNormal`. It works in three steps.
 
-**Find interior points.** `face_interior_point_where` ([Lecture 19](./19-classification.md)) offers points strictly inside the face's trim, in turn, up to one per outer coedge.
+**Find interior points.** `face_interior_point_where` ([Lecture 19](./19-classification.md)) offers points strictly inside the face's trim, in turn, up to two per outer coedge.
 
 **Classify each by `solid_contains`.** `Inside` or `Outside` goes in `decided`. A point *on* the other solid's boundary (`OnFace`, `OnEdge`, `OnVertex`) goes in `on_boundary`. Such a point decides nothing by itself. The face may lie along that boundary over an area, or may merely touch it at a point or along a curve: "a cube face resting on a sphere's pole, say, where the sphere has no normal at all". So it is set aside and the next interior point tried. Any point off the other solid's boundary classifies the whole face, by the remesh's guarantee.
 

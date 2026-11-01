@@ -11,7 +11,7 @@ The rules between the tiers are checked by `scripts/check-layering.sh`, and are 
 | `core/geop-core-math` | the interval scalar and the number trait it shares with dual numbers, linear algebra, errors, frames, rays, datums, poses, solvers | [page](../core/geop-core-math.md) | [4](../lectures/04-intervals.md), [5](../lectures/05-honest-numerics.md), [24](../lectures/24-rank-and-proof.md), [37](../lectures/37-assembly-solver.md) |
 | `core/geop-core-geometry` | NURBS curves and surfaces, their constructors, compatible curves, Coons and Gordon patches, containment and intersection | [page](../core/geop-core-geometry.md) | [6](../lectures/06-bezier.md) to [16](../lectures/16-tracing-and-pcurves.md) |
 | `core/geop-core-topology` | the B-rep, building, editing and validation, wires | [page](../core/geop-core-topology.md) | [17](../lectures/17-brep.md) to [20](../lectures/20-validation.md) |
-| `core/geop-core-rasterize` | a model as a triangle mesh, STL, debug renderings | [page](../core/geop-core-rasterize.md) | [39](../lectures/39-editor.md), [42](../lectures/42-case-studies.md) |
+| `core/geop-core-rasterize` | a model as a triangle mesh, STL, debug renderings | [page](../core/geop-core-rasterize.md) | [35](../lectures/35-step-and-drawings.md), [42](../lectures/42-case-studies.md) |
 | `core/geop-core-sketch` | 2-D constraint sketches: entities, constraints as residuals, profiles, dimensions in a plane | [page](../core/geop-core-sketch.md) | [23](../lectures/23-sketch-solver.md) to [25](../lectures/25-sketch-features.md) |
 | `core/geop-core-program` | a program, its values and the part it builds: a memo table of nodes, placed parts, the runner, the workspace and the cache | [page](../core/geop-core-program.md) | [2](../lectures/02-programs-of-steps.md), [38](../lectures/38-runner.md) |
 | `core/geop-core-editor` | what an operation is and how it is edited, what an editor draws, exporters and inspectors, the editor over a registry | [page](../core/geop-core-editor.md) | [39](../lectures/39-editor.md), [40](../lectures/40-writing-an-operation.md) |
@@ -25,7 +25,7 @@ The rules between the tiers are checked by `scripts/check-layering.sh`, and are 
 | `lib/geop-lib-sweep` | extrude, revolve, screw, sweeps along paths, lofts, the skinned grid blends share | [page](../lib/geop-lib-sweep.md) | [26](../lectures/26-sweeps.md) to [28](../lectures/28-lofts-and-fills.md) |
 | `lib/geop-lib-shell` | rebuilding a solid face by face, shelling, thickening and offsetting faces | [page](../lib/geop-lib-shell.md) | [30](../lectures/30-one-rebuild.md), [31](../lectures/31-offsets.md) |
 | `lib/geop-lib-fixtures` | test-only steps: a solid or a datum at given coordinates; the stress sweeps' bodies | [page](../lib/geop-lib-fixtures.md) | [40](../lectures/40-writing-an-operation.md) |
-| `lib/geop-lib-stdlib` | the standard parts, one program per family, and the store that puts them beside a workspace's files | [page](../lib/geop-lib-stdlib.md) | [38](../lectures/38-runner.md) |
+| `lib/geop-lib-stdlib` | the standard parts, one program per family, and the store that puts them beside a workspace's files | [page](../lib/geop-lib-stdlib.md) | [32](../lectures/32-patterns-holes-threads.md), [38](../lectures/38-runner.md) |
 | `lib/geop-lib-constraints` | the constraints and unknowns of a part's state, and the solver over them | [page](../lib/geop-lib-constraints.md) | [37](../lectures/37-assembly-solver.md) |
 
 ## `ops/`: one crate per family of operations

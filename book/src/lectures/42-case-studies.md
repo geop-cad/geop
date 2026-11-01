@@ -74,7 +74,7 @@ Now the cases. The first one is the one that gave rule 4 its name.
 
 ## Case 2: The blowup in curve-curve intersection
 
-**Symptom.** A `curve_curve_intersect` blowup: the search hung, or exhausted its node budget.
+**Symptom.** A `curve_curve_intersect` blowup.
 
 **What looked like a fix.** Trimming the curves near a shared vertex. It worked, but only because it avoided the region where the bug lived.
 
@@ -138,8 +138,10 @@ Now the cases. The first one is the one that gave rule 4 its name.
 
 **Chain.** Two silent causes.
 
-- A dropped condition. Two quarters of one sphere meet at its pole, one smooth surface, so one condition. The code compared normals at foot points each patch clamps to its own domain; those differed a little, the quarters counted as two nearly equal conditions, and the system went singular. Now surfaces are grouped by tangency once, at the vertex (`tangent_groups`).
+- A dropped condition, which `AGENTS.md` names without more detail.
 - A projection that never moved. `NurbSurface::project` skipped any Newton step whose Jacobian could be singular. From a seed on the pole every step is singular, so it returned the pole for every target. At a pole only the collapsed parameter stops moving the point; the other one still moves it. So it steps along that one, down the meridian that heads most towards the target and leads into the domain (`off_pole`).
+
+**A neighbouring bug at the same pole.** Two quarters of one sphere meet there, one smooth surface, so one condition. The code compared normals at foot points each patch clamps to its own domain; those differed a little, the quarters counted as two nearly equal conditions, and the system went singular. Now surfaces are grouped by tangency once, at the vertex (`tangent_groups`).
 
 **Fix that made it findable.** Check the returned point against every surface it was asked to lie on. That turned the bug into an error at the source, naming the surface it missed, with the numbers.
 
@@ -275,7 +277,7 @@ Now the cases. The first one is the one that gave rule 4 its name.
 
 **Chain.** A body's turn was the quaternion `(1, w / 2)` normalized, which reaches a half turn only as `$|w|$` goes to infinity. A link that had to turn nearly half way round ran its variables off to hundreds, each step turning it less.
 
-**Fix.** A pose is stepped by a twist in its own frame, through the exponential map (`Pose::exp`, `State::retract`). Every step of the solve is taken from where the body is, so no turn is ever far from the variables' origin.
+**Fix.** A pose is stepped by a twist in its own frame, through the exponential map (`Pose::exp`, `Variable::retract`). Every step of the solve is taken from where the body is, so no turn is ever far from the variables' origin.
 
 **Lesson.** Degenerate parametrizations are not only in surfaces. When a solve stalls, check that its variables can reach the answer at a finite, well-conditioned value ([Lecture 36](./36-mates.md)).
 

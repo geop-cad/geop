@@ -128,7 +128,7 @@ Terms as this book and the kernel use them, with the lecture that teaches each. 
 
 **Gauss-Newton.** Newton's method with the second derivatives dropped. Over a curved surface it overshoots. [Lecture 14](../lectures/14-newton.md).
 
-**Gizmo.** The handle every operation offers for a drag in 3-D: arrows, planes, rings. [Lecture 39](../lectures/39-editor.md).
+**Gizmo.** A handle a step being edited can show for a drag in 3-D (`core/geop-core-editor/src/editing/gizmo.rs`). [Lecture 39](../lectures/39-editor.md).
 
 **Green's theorem.** Turns an area integral into a line integral around the boundary, for signed area and mass properties. [Lecture 19](../lectures/19-classification.md).
 
@@ -228,7 +228,7 @@ Terms as this book and the kernel use them, with the lecture that teaches each. 
 
 **Rational.** A ratio of polynomials. What lets a spline draw a circle exactly. [Lecture 8](../lectures/08-nurbs.md).
 
-**Rasterizer.** What turns a B-rep into triangles for a viewer (`core/geop-core-rasterize`). [Lecture 39](../lectures/39-editor.md).
+**Rasterizer.** What turns a B-rep into triangles for a viewer (`core/geop-core-rasterize`). [Lecture 35](../lectures/35-step-and-drawings.md).
 
 **Reach.** How far from a pointer's ray counts as under it. [Lecture 39](../lectures/39-editor.md).
 

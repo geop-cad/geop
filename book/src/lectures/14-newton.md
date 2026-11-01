@@ -188,7 +188,7 @@ pub fn refine<const N: usize>(
 
 Read the design choices, each of which comes from a rule.
 
-- **It returns a value, not a `Result`.** Refinement is infallible: a singular Jacobian at a tangential crossing or a pole, an iterate leaving the domain, or a refined box disjoint from the start all return the incoming box unchanged. "Refinement may only tighten, never fail, or callers start needing fallbacks of their own" (AGENTS.md).
+- **It returns a value, not a `Result`.** Refinement is infallible: a singular Jacobian at a tangential crossing or a pole, or a refined box disjoint from the start, returns the incoming box unchanged, and an iterate leaving the domain is clamped back into it, since a foot point can step outside on its way in. "Refinement may only tighten, never fail, or callers start needing fallbacks of their own" (AGENTS.md).
 - **The result is `start.intersect(x)`.** The search proved the root lies in `start`, and Newton computed another enclosure of the same root. Both hold, so their intersection is valid and tighter than either: exactly the case [Lecture 5](./05-honest-numerics.md) says intersection is for.
 - **Disjoint means reject.** If Newton ended somewhere that does not overlap the proved box, it wandered off, and `start` is the answer.
 - **Clamp after sharpening.** Clamping an interval that straddles a domain bound leaves it straddling, because its three-valued comparisons have no answer. Clamping a sharp value is exact.
@@ -280,7 +280,7 @@ The note `core/geop-core-geometry/src/intersection/curve_surface.md`, section 4,
 
 <details class="solution"><summary>Solution</summary>
 
-With `$T$` at angle `$\theta$`: `$r=T-C$`, `$r\cdot C'=T\cdot C'$`, since `$C\cdot C'=0$`, and that is `$R\rho\sin(\theta-t)=R\rho\sin e$`. And `$r\cdot C''=T\cdot C''-C\cdot C''=-R\rho\cos e+R^2$`, so `$C'\cdot C'-r\cdot C''=R\rho\cos e$`. The ratio is `$\tan e$`. Using `$\tan e=e+e^3/3+\dots$` gives the expansion. On the ellipse with target `$(2.5,1.2)$` the demo's algorithm gives errors `$3.0\times10^{-1}$`, `$3.7\times10^{-2}$`, `$7.6\times10^{-4}$`, `$3.3\times10^{-7}$`, `$6.1\times10^{-14}$`. The ratios `$e_{k+1}/e_k^2$` are about `$0.42$`, `$0.55$`, `$0.56$`, `$0.57$`: a constant, as for quadratic convergence.
+With `$T$` at angle `$\theta$`: `$r=T-C$`, `$r\cdot C'=T\cdot C'$`, since `$C\cdot C'=0$`, and that is `$R\rho\sin(\theta-t)=R\rho\sin e$`. And `$r\cdot C''=T\cdot C''-C\cdot C''=-R\rho\cos e+R^2$`, so `$C'\cdot C'-r\cdot C''=R\rho\cos e$`. The ratio is `$\tan e$`. Using `$\tan e=e+e^3/3+\dots$` gives the expansion. On the ellipse with target `$(2.5,1.2)$` the demo's algorithm gives errors `$3.0\times10^{-1}$`, `$3.7\times10^{-2}$`, `$7.6\times10^{-4}$`, `$3.3\times10^{-7}$`, `$6.1\times10^{-14}$`. The ratios `$e_{k+1}/e_k^2$` are about `$0.42$`, `$0.55$`, `$0.56$`, `$0.56$`: a constant, as for quadratic convergence.
 
 </details>
 

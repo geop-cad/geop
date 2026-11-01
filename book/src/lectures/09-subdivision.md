@@ -108,7 +108,7 @@ Before the fix, then, a width of `0.08` on an arc that started at `3e-15`, with 
 <figcaption>A real computation in outward-rounded interval arithmetic, in your browser: a quarter arc of radius 4 is cut at evenly spaced points, keeping the far piece each time, as a rim is cut by slots. Each parameter comes from Newton on the piece, with the last step unsharpened. In red the piece is cut at that whole enclosure; in blue at its sharp middle. The plot is the widest coordinate of any control point. Simplified from the kernel: one Bézier span, its own Newton, so its numbers are of the same kind but not the kernel's. When the width grows so far that the denominator could be zero, the red line stops: the computation has broken down.</figcaption>
 </figure>
 
-With the default settings you can read the growth off the plot. In this simplified setting we measured a factor between 3 and 4 per cut, reaching `0.05` by the 25th cut, after which the division fails. The blue line stays below `1e-13` all the way to forty cuts. So the demo shows the same phenomenon as the AGENTS.md record, and it reproduces the *rate*, though not the same numbers. A real test in the kernel, `a_rim_cut_many_times_stays_as_narrow_as_cut_once` in `core/geop-core-geometry/src/nurb_curve/split.rs`, cuts an arc forty times and asserts that the widest control point stays under `1e-13`.
+With the default settings you can read the growth off the plot. In this simplified setting we measured a factor between 3 and 4 per cut, reaching `0.05` by the 25th cut, and two cuts later the division fails. The blue line stays below `1e-13` all the way to forty cuts. So the demo shows the same phenomenon as the AGENTS.md record, and it reproduces the *rate*, though not the same numbers. A real test in the kernel, `a_rim_cut_many_times_stays_as_narrow_as_cut_once` in `core/geop-core-geometry/src/nurb_curve/split.rs`, cuts an arc forty times and asserts that the widest control point stays under `1e-13`.
 
 ## Where to cut is a free choice
 
@@ -204,7 +204,7 @@ The range `$k-p<i\le k$` has `$p$` values. For them `$u_i\le u_k\le\bar t$` and 
 
 <details class="solution"><summary>Hint</summary>
 
-We measured for a quarter arc, forty cuts: with sharp cuts, `a + α(b−a)` alone climbs to about `2e-11`, while the other stays near `4e-14`; with wide cuts, `(1−α)a + αb` alone breaks down earliest, by about 20 cuts. Sharp `$\alpha$` with wide-ish control points favours the second formula, as `$a$` is not counted twice. Wide `$\alpha$` favours the first, since `$b-a$` is small and it does not split `$\alpha$` into two independent factors. Intersected, you get the best of both.
+We measured for a quarter arc, forty cuts: with sharp cuts, `a + α(b−a)` alone climbs to about `2e-11`, while the other stays near `4e-14`; with wide cuts, `(1−α)a + αb` alone breaks down earliest, at the 17th cut. Sharp `$\alpha$` with wide-ish control points favours the second formula, as `$a$` is not counted twice. Wide `$\alpha$` favours the first, since `$b-a$` is small and it does not split `$\alpha$` into two independent factors. Intersected, you get the best of both.
 
 </details>
 

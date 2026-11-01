@@ -29,6 +29,7 @@ These are the books and papers the lectures draw on, with what each is for. The 
 - **Wenping Wang, Bert Jüttler, Dayue Zheng, Yang Liu**, "Computation of rotation minimizing frames", *ACM Transactions on Graphics* 27(1), 2008. The double reflection method. For [Lecture 27](../lectures/27-path-sweep.md).
 - **Edwin Catmull, Jim Clark**, "Recursively generated B-spline surfaces on arbitrary topological meshes", *Computer-Aided Design* 10(6), 1978. For [Lecture 34](../lectures/34-subd.md).
 - **Jos Stam**, "Exact evaluation of Catmull-Clark subdivision surfaces at arbitrary parameter values", *SIGGRAPH* 1998. For [Lecture 34](../lectures/34-subd.md).
+- **Charles Loop, Scott Schaefer**, "Approximating Catmull-Clark subdivision surfaces with bicubic patches", *ACM Transactions on Graphics* 27(1), 2008. For [Lecture 34](../lectures/34-subd.md).
 
 ## In this repository
 

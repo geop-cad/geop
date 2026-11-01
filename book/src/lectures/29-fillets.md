@@ -216,6 +216,6 @@ A side "through the contacts" lands on the other tool's contact by symmetry of t
 
 <details class="solution"><summary>Solution</summary>
 
-The demo gives about `$1.1\times10^{-2}$`, `$8.2\times10^{-5}$`, `$1.5\times10^{-5}$` and `$6.7\times10^{-7}$`. The last ratio, 22, is near the fourth-order 16; the first halving is much bigger, since six spans barely resolve the wave in the data. The number of stretches through the face does not fall: 4, 12, 20, 19. The dips get shallower, not fewer. So refining alone never leaves the face alone; only a tilt larger than the error does.
+The demo gives about `$1.1\times10^{-2}$`, `$8.2\times10^{-5}$`, `$1.5\times10^{-5}$` and `$6.7\times10^{-7}$`. The last ratio, 22, is near the fourth-order 16; the first halving is much bigger, since six spans barely resolve the wave in the data. The number of stretches through the face does not fall: 4, 12, 12, 15. The dips get shallower, not fewer. So refining alone never leaves the face alone; only a tilt larger than the error does.
 
 </details>

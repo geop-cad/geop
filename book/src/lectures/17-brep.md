@@ -107,7 +107,7 @@ Geometry is owned by the entity it belongs to, with no arena of its own: nothing
 
 Which side of a face is outside? In many kernels, a face carries a boolean, "the normal is reversed". Geop has no such flag. The material side follows from the surface alone: the normal is `$S_u\times S_v$`, and the convention is that it points *out of* the solid. A face that has to be turned around has its surface turned around.
 
-The conventions, all of which are checked (`core/geop-core-topology/src/validation/face_orientation.rs`):
+The conventions, all of which are checked (`core/geop-core-topology/src/validation/face_orientation.rs`, and the third by `validation/manifold_check.rs`):
 
 1. The normal `$S_u\times S_v$` points out of the material.
 2. In the `(u, v)` plane, an outer loop runs counter-clockwise and a hole runs clockwise. Equivalently, **the material lies to the left of every coedge**, for outer loops and holes alike.
@@ -175,7 +175,7 @@ This is a worthwhile design to imitate. A construction builds a description, the
 
 <div class="kernel">
 
-**In the kernel.** To see the structure in use, start at `core/geop-core-topology/src/test_fixtures.rs` (`test_cube_solid`, the smallest whole solid) and `lib/geop-lib-sweep/src/shapes/sphere.rs` (`FaceSpec::on_unit_square` with `CoedgeOn::Vertex`, a sphere as eight faces). For reading: `Model::iterate_loop_coedges`, `Model::iterate_face_coedges`, `Model::coedges_of_edge`, `Model::face_corners`, `Model::body_faces` (`core/geop-core-topology/src/model/iterate.rs`). `face_corners` is what error messages print: each loop, as the vertices it runs through.
+**In the kernel.** To see the structure in use, start at `core/geop-core-topology/src/test_fixtures.rs` (`test_cube_solid`, the smallest whole solid) and `lib/geop-lib-sweep/src/shapes/sphere.rs` (`BodySpec::square_face` with `CoedgeOn::Vertex`, a sphere as eight faces). For reading: `Model::iterate_loop_coedges`, `Model::iterate_face_coedges`, `Model::coedges_of_edge`, `Model::face_corners`, `Model::body_faces` (`core/geop-core-topology/src/model/iterate.rs`). `face_corners` is what error messages print: each loop, as the vertices it runs through.
 
 </div>
 

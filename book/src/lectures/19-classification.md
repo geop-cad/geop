@@ -75,7 +75,7 @@ Classifying a *face* against another solid needs a point in it. It is harder tha
 
 The candidate is sharp: any point inside the face will do, which makes it a free choice.
 
-The same function has a second lesson. `accept` lets the caller refuse a candidate and take the next. One coedge per candidate gives "two genuinely different points" even when one area of the face is awkward. A boolean uses that ([Lecture 22](./22-boolean.md)): a point on the other solid's boundary says nothing, so it asks for another.
+The same function has a second lesson. `accept` lets the caller refuse a candidate and take the next. Each coedge offers up to two candidates, the second from a shorter step, which gives "two genuinely different points" even where stepping in from every side of a symmetric face lands on one centre. A boolean uses that ([Lecture 22](./22-boolean.md)): a point on the other solid's boundary says nothing, so it asks for another.
 
 ## Classifying against a solid
 

@@ -145,11 +145,11 @@ You could imagine building a sweep incrementally, adding a vertex here, an edge 
 - every loop closes up, each coedge ending where the next starts;
 - every face is in exactly one shell;
 - every edge and vertex is used;
-- an edge is used at most twice, then in opposite senses, and, for a solid, exactly twice.
+- an edge is used twice, in opposite senses, or, where two lumps of a solid touch along it, four times or more, as often one way as the other; only an edge of a sheet may be used once.
 
 Only then does `Model::build_body` insert it. `NamedModel::build_body` adds the names. So an error in a sweep's topology is an error at the source that mentions a loop and a coedge, not a validation failure two operations later.
 
-The "exactly twice" clause is the test in the demo too: `book/scripts/demo_tests/sweep-grid.test.mjs` checks it over hundreds of configurations of the same rules.
+"Used twice" is the test in the demo too: `book/scripts/demo_tests/sweep-grid.test.mjs` checks it over hundreds of configurations of the same rules.
 
 <div class="kernel">
 

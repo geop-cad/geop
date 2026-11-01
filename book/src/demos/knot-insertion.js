@@ -202,13 +202,19 @@
 
     function curveDistance() {
       // Greatest distance from a control point of the refined polygon to the curve:
-      // a sampled measure, for the readout only.
+      // a sampled measure, for the readout only: to the chords between the samples,
+      // since the samples themselves lie further apart than a refined polygon does
+      // from the curve.
       var curve = [], i;
       for (i = 0; i <= 400; i++) curve.push(evalSpline(p, state.knots, state.points, i / 400));
       var worst = 0;
       state.points.forEach(function (q) {
         var best = 1e30;
-        curve.forEach(function (c) { best = Math.min(best, Math.hypot(c[0] - q[0], c[1] - q[1])); });
+        for (var s = 0; s < 400; s++) {
+          var a = curve[s], dx = curve[s + 1][0] - a[0], dy = curve[s + 1][1] - a[1], len = dx * dx + dy * dy;
+          var f = len > 0 ? Math.max(0, Math.min(1, ((q[0] - a[0]) * dx + (q[1] - a[1]) * dy) / len)) : 0;
+          best = Math.min(best, Math.hypot(a[0] + f * dx - q[0], a[1] + f * dy - q[1]));
+        }
         worst = Math.max(worst, best);
       });
       return worst;

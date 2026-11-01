@@ -230,7 +230,7 @@ Put the arc in its plane, with the chord along `$x$` and the bisector along `$y$
 
 <details class="solution"><summary>Hint</summary>
 
-The cap of colatitude `$\beta$` has area `$2\pi(1-\cos\beta)=\pi$` for `$\beta=60°$`, so the mismatch would be `$2\pi-\pi=\pi$`. But a closed curve has `$\oint T\,ds=0$`, so its indicatrix cannot lie in an open hemisphere, and this small circle does. No closed curve has it. For a real case, take two half circles sharing a diameter, in planes at an angle `$\gamma$`. The indicatrix is two great half-circles, enclosing a lune of area `$2\gamma$`, so the mismatch is `$2\pi-2\gamma$`. When the curve is planar, `$\gamma=\pi$` and the mismatch is zero.
+The cap of colatitude `$\beta$` has area `$2\pi(1-\cos\beta)=\pi$` for `$\beta=60°$`, so the mismatch would be `$2\pi-\pi=\pi$`. But a closed curve has `$\oint T\,ds=0$`, so its indicatrix cannot lie in an open hemisphere, and this small circle does. No closed curve has it. Two half circles sharing a diameter, in planes at an angle, are no real case either: unless they lie in one plane their tangents jump at both ends of the diameter, and with the frame turned the shortest way at each jump, the two turns cancel and the mismatch is zero. For a real case, take a coil closed on itself round a ring, `$((3+\cos5t)\cos t,\ (3+\cos5t)\sin t,\ \sin5t)$`: double reflection measures a mismatch of about `$155°$`, the integral of its torsion modulo a full turn.
 
 </details>
 

@@ -66,7 +66,7 @@ Here `RemeshParams::curve_curve_min_subdivision_size` is used, deliberately loos
 
 ### 4. Edges against faces (`remesh_edges_x_faces`)
 
-All of the hard work is here, in five sub-steps, in the order of `remesh_edges_x_faces` in `lib/geop-lib-booleans/src/remesh/remesh_edges_x_faces.rs`.
+All of the hard work is here, in six sub-steps, in the order of `remesh_edges_x_faces` in `lib/geop-lib-booleans/src/remesh/remesh_edges_x_faces.rs`.
 
 **(a) Split at piercings: `split_piercing_crossings`.** For each edge of one body against each face of the other, in both directions, run to a fixed point. `curve_surface_intersect` finds where the edge crosses the face's surface, and the edge is split there at a new vertex, or at one already at that point. Three things are not a piercing. A coincidence belongs to the next sub-step. A crossing at the edge's own end is a shared corner. And a crossing where the curve runs along the surface's tangent plane is a touch: `find_piercing_crossing` asks that over the box the search proved, not at Newton's answer, because at a tangential contact Newton "stops beside the contact". (Two spheres touching at a point once had each meridian through the contact "pierce" the other sphere `1e-8` from it.) A curve tangent at an inflection really does cross, and `odd_crossing` keeps that case, by finding a bracket on whose ends the curve lies definitely on different sides.
 
@@ -145,7 +145,7 @@ The total: the shaft's 18 vertices plus 8 makes 26. The result has 50 edges and 
 
 Check the first number by the geometry: the rim's height at a bore seam at `$x=\pm0.25$` is 2.2, and at a seam at `$x=0$` is `$2.2\pm0.25$`, as the vertices `$(0,0.6,2.45)$` report. The cross-check agrees with the kernel's output.
 
-Notice what kind of work was involved: this model has a line crossing a line, a line piercing a surface and a curve of two cylinders, in all, and no special case. "No pair of surface kinds is special-cased": a plane crossing a cylinder and two cylinders crossing go through the one path. See AGENTS.md's *Everything is a NURBS curve or surface*.
+Notice what kind of work was involved: this model has a line crossing a line, a line piercing a surface and a curve of two cylinders, in all, and no special case. No pair of surface kinds is special-cased: a plane crossing a cylinder and two cylinders crossing go through the one path. See AGENTS.md's *Everything is a NURBS curve or surface*.
 
 ## What grows with every cut
 

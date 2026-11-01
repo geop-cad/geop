@@ -36,7 +36,7 @@ Recall that a Bézier curve lies in the convex hull of its control points, and t
 
 Read how much this says. It holds for all the infinitely many points of both pieces. It uses `$O(n)$` numbers. And with interval coordinates it remains a proof: two boxes are "definitely disjoint" only if the comparison says so, and rounding is already enclosed.
 
-The converse is false. Overlapping boxes do not mean the pieces meet, only that we have not yet ruled it out. So the test has three possible readings: *no*, or *maybe*. There is no *yes*, which is why the kernel's containment functions are named `curve_could_contain` and `surface_could_contain`. The word "could" is part of the contract.
+The converse is false. Overlapping boxes do not mean the pieces meet, only that we have not yet ruled it out. So the test has two possible readings: *no*, or *maybe*. There is no *yes*, which is why the kernel's containment functions are named `curve_could_contain` and `surface_could_contain`. The word "could" is part of the contract.
 
 This is what splitting is for. A "maybe" is resolved by cutting the piece in two and asking each half again. The hull of a piece hugs the piece more closely the shorter it gets: for a piece of parameter width `$h$`, the distance from the curve to the chord between its ends is `$O(h^2)$`. So every "maybe" that is really a "no" turns into a "no" after a finite number of cuts, provided the two curves are a positive distance apart there.
 
@@ -150,7 +150,7 @@ pub fn subdivide<T, E>(
 ) -> Result<Searched, E>
 ```
 
-This is branch and bound stripped to its skeleton. Which pieces hold nothing, when one is small enough and how to cut it are the caller's `visit`; the driver promises only completeness, or says otherwise. `Searched` is `#[must_use]`, and every caller turns `Exhausted` into an error. In `curve_curve_crossings`, for example:
+This is branch and bound stripped to its skeleton. Which pieces hold nothing, when one is small enough and how to cut it are the caller's `visit`; the driver promises only completeness, or says otherwise. `Searched` is `#[must_use]`, and every caller with a budget it can run out of turns `Exhausted` into an error. In `curve_curve_crossings`, for example:
 
 ```text
 curve_curve_crossings: exhausted max_nodes=... with ... pairs pending; the result would be incomplete
@@ -158,7 +158,7 @@ curve_curve_crossings: exhausted max_nodes=... with ... pairs pending; the resul
 
 This is the rule from AGENTS.md's "Never use epsilons": `max_nodes` and `min_subdivision_size` "are the only tunables allowed to affect *how hard the search tries*". Change either, and the running time changes, and how wide an answer is; what a converged answer *means* stays the same. Their defaults live in `core/geop-core-geometry/src/search.rs`: `MAX_NODES` is 20 000, `MIN_SUBDIVISION_SIZE` is `$10^{-7}$`. The boolean's `RemeshParams` (`lib/geop-lib-booleans/src/remesh/mod.rs`) gives its pairwise searches a looser `curve_curve_min_subdivision_size` of `$10^{-4}$`, as it documents, because a pairwise search empirically needs that to converge within its budget at all.
 
-The default order is breadth first (`Order::BreadthFirst`), level by level. That spends the budget evenly over the region, so one difficult corner does not eat the budget before the rest has been looked at.
+The usual order is breadth first (`Order::BreadthFirst`), level by level. That spends the budget evenly over the region, so one difficult corner does not eat the budget before the rest has been looked at.
 
 ## The question of containment
 

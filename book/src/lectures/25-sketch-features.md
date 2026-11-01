@@ -169,7 +169,7 @@ Line: `$b-(e+(a-s))=b-(a+(3,1))$`, so the first copy is at `$(4,2)$`, then `$(7,
 
 <details class="solution"><summary>Hint</summary>
 
-The notch is `$0.6$` wide, so half of that is `$0.3$`. Below it, the walls' two offsets no longer cross inside the notch and they run down its sides and round its bottom, since these runs are now at a distance `$\ge d$` from every part of the chain. Above it, the two walls' offsets cross; the runs below the crossing are nearer the opposite wall than `$d$`, and dropped.
+The notch is `$0.6$` wide, so half of that is `$0.3$`. Below it, the arcs round the notch's two lips no longer cross and the offset runs down its sides and along its bottom, since these runs are now at a distance `$\ge d$` from every part of the chain. Above it, the two arcs cross over the notch; the runs below that crossing are nearer the opposite wall than `$d$`, and dropped.
 
 </details>
 

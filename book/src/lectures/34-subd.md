@@ -128,7 +128,7 @@ So **be exact about what is claimed**. The kernel's surface is:
 - correct at extraordinary vertices' positions (corner points are true limit positions);
 - not the limit near an extraordinary vertex, by some small amount, and only `$G^0$` across the edges leaving it, with the normal turning a few degrees.
 
-There is **no** fill, tilt, or N-sided patch construction of the kind in [Lecture 28](./28-lofts-and-fills.md) and [Lecture 29](./29-fillets.md) involved. A subd body in Geop is simply this set of bicubic patches. Whether a designer sees those few degrees depends on the view. A renderer would hide it with Loop and Schaefer's separate normal patches; the kernel, which has to be honest about geometry, just has the surface it has.
+There is **no** fill, tilt, or N-sided patch construction of the kind in [Lecture 28](./28-lofts-and-fills.md) and [Lecture 29](./29-fillets.md) involved. A subd body in Geop is simply this set of bicubic patches. Whether a designer sees those few degrees depends on the view. A renderer would hide it with Loop and Schaefer's separate tangent patches; the kernel, which has to be honest about geometry, just has the surface it has.
 
 What is gained is that everything downstream works. A subd's body is an ordinary B-rep of NURBS. A fillet, a boolean, a shell or a draft takes it without a line of special code. No branch anywhere says "if subd". That is why "Everything is a NURBS" pushes this design.
 
