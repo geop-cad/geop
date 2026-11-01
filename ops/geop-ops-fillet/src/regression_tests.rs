@@ -2161,7 +2161,6 @@ fn a_thread_edge_runs_in_one_chain_of_its_quarters() {
     let part = square_thread(1.5, 10.0)
         .build_model(thread_registry)
         .unwrap();
-    let t = part.topology();
     let chain = |name: &str| tangent_chain(&part, part.edge_id(name).unwrap()).unwrap();
     let outer = chain("sweep(thread,section,p2,route,c4.q3)");
     assert_eq!((outer.links.len(), outer.closed), (6, false));
