@@ -8,14 +8,15 @@ use geop_core_math::{
 };
 use geop_core_program::element::ElementReference;
 use geop_core_topology::Model;
+use geop_lib_booleans::{RemeshParams, boolean};
 use geop_lib_fixtures::{
     GivenDatum, GivenDatumArgs,
     bodies::{block_drilled, one_solid},
 };
-use geop_lib_sweep::shapes::{block_part, revolved_cylinder, sphere_solid, v3};
+use geop_lib_sweep::shapes::{block_part, cube_solid, revolved_cylinder, sphere_solid, v3};
 use geop_ops_fillet::{Fillet, FilletArgs};
 use geop_ops_model::{
-    NamedModel, model,
+    BooleanOp, NamedModel, Namer, model,
     sketch::{
         Sketch, SketchPlane,
         figures::{n, on_face, on_origin, polygon},
@@ -889,4 +890,46 @@ fn a_draft_of_a_piece_of_a_wall_about_the_parting_line() {
         after.topology().faces.len(),
         block.topology().faces.len() + 1
     );
+}
+
+/// A face divided on purpose stays divided: a boolean elsewhere on the body,
+/// which makes one the faces it itself leaves in two, leaves its pieces be.
+/// Each piece is still found by its name.
+#[test]
+fn a_boolean_elsewhere_keeps_the_pieces_of_a_split_face() {
+    let mut mark = Sketch::new();
+    line(&mut mark, [0.0, -2.0], [0.0, 2.0]);
+    let mut part = top_divided(mark, 1);
+    // The faces on the top's surface, by name.
+    let on_top = |part: &NamedModel| -> Vec<String> {
+        let p = v3(0.5, 0.0, 1.0);
+        let mut names: Vec<String> = (part.topology().faces.iter())
+            .filter(|(_, face)| {
+                let (_, _, foot) = face.surface.closest_point(&p).unwrap();
+                foot.sub(&p).norm().to_f64() < 1e-3
+            })
+            .map(|(&id, _)| part.name_of(id).unwrap().to_string())
+            .collect();
+        names.sort();
+        names
+    };
+    let pieces = on_top(&part);
+    assert_eq!(pieces.len(), 2, "{pieces:?}");
+
+    let target = part.solid_id("cube(b)").unwrap();
+    let tool = cube_solid(&mut part, "notch", v3(0.9, -0.2, 0.2), v3(1.5, 0.2, 0.6)).unwrap();
+    let namer = Namer::new("cut", "notch").unwrap();
+    let solid = boolean(
+        &mut part,
+        &namer,
+        target,
+        tool,
+        BooleanOp::Difference,
+        RemeshParams::default(),
+    )
+    .unwrap()
+    .unwrap();
+    part.rename(solid, "cube(b)").unwrap();
+    assert_valid(&part);
+    assert_eq!(on_top(&part), pieces, "the two pieces are still two");
 }
