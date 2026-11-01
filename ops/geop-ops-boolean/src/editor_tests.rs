@@ -53,7 +53,7 @@ fn imprint_picks_the_face_to_divide() {
             kind: "imprint".into(),
         },
     );
-    handled(&mut editor, dialog("face", Value::Press));
+    // The face is what it still waits for: a click takes it.
     handled(&mut editor, click_at(from_above(0.25, 0.25)));
     committed(&mut editor);
     let args: ImprintArgs = args(editor.program().steps.last().unwrap());

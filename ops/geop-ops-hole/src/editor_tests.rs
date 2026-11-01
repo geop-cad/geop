@@ -31,8 +31,8 @@ fn new_hole_from_the_dialog() {
         kind: "hole".into(),
     });
     let above = |x: f64, y: f64| pointer([x, y, 50.0], [0.0, 0.0, -1.0]);
+    // The face, and with it picked, the points are what wait for a click.
     handled(&mut editor, click_at(above(40.0, 30.0)));
-    editor.handle(dialog("points", Value::Press));
     handled(&mut editor, click_at(above(20.0, 20.0)));
     editor.handle(dialog("kind", Value::Choice("counterbore".into())));
     editor.handle(dialog("size", Value::Choice("M5".into())));
@@ -94,8 +94,8 @@ fn npt_hole_from_the_dialog() {
         kind: "hole".into(),
     });
     let above = |x: f64, y: f64| pointer([x, y, 50.0], [0.0, 0.0, -1.0]);
+    // The face, and with it picked, the points are what wait for a click.
     handled(&mut editor, click_at(above(40.0, 30.0)));
-    editor.handle(dialog("points", Value::Press));
     handled(&mut editor, click_at(above(20.0, 20.0)));
     editor.handle(dialog("standard", Value::Choice("npt".into())));
     let update = editor.handle(dialog("size", Value::Choice("1/8".into())));

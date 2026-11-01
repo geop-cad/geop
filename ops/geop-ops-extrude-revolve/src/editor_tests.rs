@@ -515,7 +515,9 @@ fn a_draft_typed_into_the_dialog_tapers_the_hole() {
 }
 
 /// A revolve picks its axis in the viewport, like anything else it builds
-/// on: any line in the sketch's plane — here the origin's y axis.
+/// on: any line in the sketch's plane — here the origin's y axis. None is
+/// chosen for the user, of a sketch with lines to choose from or of one
+/// without: the step says it needs one, and nothing is built until it has.
 #[test]
 fn revolve_axes_are_picked() {
     let (mut editor, _) = editor();
@@ -526,16 +528,27 @@ fn revolve_axes_are_picked() {
     let Some(Control::Reference(axis)) = presentation.dialog.get("axis") else {
         panic!("the axis is picked");
     };
-    assert!(
-        axis.value.is_empty(),
-        "the newest sketch, a circle, has no line to default to"
-    );
+    assert!(axis.value.is_empty(), "no axis is chosen");
+    assert!(axis.armed, "the sketch is chosen: a click picks the axis");
     // Left apart from the box: joining the two is a boolean of its own.
     editor.handle(dialog("combine", Value::Choice("new_body".into())));
-    // From below: the outline's square, under the box.
+    // From below: the outline's square, under the box, with lines of its
+    // own: none of them is taken for the axis either, and the axis waits on.
     let below = |x: f64, y: f64| pointer([x, y, -10.0], [0.0, 0.0, 1.0]);
-    editor.handle(click_at(below(1.0, 0.5)));
-    editor.handle(dialog("axis", Value::Press));
+    editor.handle(dialog("sketch", Value::Press));
+    let update = editor.handle(click_at(below(1.0, 0.5)));
+    let step = update.step.unwrap();
+    let Some(Control::Reference(axis)) = step.presentation.dialog.get("axis") else {
+        panic!("the axis is picked");
+    };
+    assert!(axis.value.is_empty(), "no line of it is taken for the axis");
+    assert!(axis.armed, "the axis is what a click picks next");
+    assert!(
+        step.missing.iter().any(|m| m == "axis"),
+        "{:?}",
+        step.missing
+    );
+    assert!(step.error.is_none(), "needing an axis is no error yet");
     // The origin's y axis, ten reaches of 0.009 long, from below.
     let update = editor.handle(click_at(below(0.0, 0.06)));
     let presentation = update.step.unwrap().presentation;

@@ -28,7 +28,7 @@ use geop_core_sketch::{
 };
 use geop_core_topology::build::BuiltBody;
 use geop_ops_model::datums::Datums;
-use geop_ops_model::sketch::{PlacedSketch, SketchRef, chain_of_pieces, sketch_element};
+use geop_ops_model::sketch::{PlacedSketch, SketchRef, chain_of_pieces};
 use geop_ops_model::{Extent, Line, ModelOperation, NamedModel, Namer, build_model, read_model};
 use serde::{Deserialize, Serialize};
 
@@ -99,24 +99,6 @@ pub struct RevolveArgs {
     /// A solid, kept as a new body or combined with another, or faces.
     #[serde(default)]
     pub output: Output,
-}
-
-/// The line of `sketch` to revolve around by default: its first
-/// construction line — what an axis is usually drawn as — else its first
-/// line; none, for a sketch with no line.
-fn default_axis(reader: &Reader, sketch: &SketchRef) -> Option<RevolveAxis> {
-    let placed = reader.retrieve_element(sketch).ok()?;
-    let lines: Vec<_> = placed
-        .sketch
-        .curves
-        .iter()
-        .filter(|(_, c)| matches!(c.kind, CurveKind::Line { .. }))
-        .collect();
-    let (curve, _) = lines
-        .iter()
-        .find(|(_, c)| c.construction)
-        .or(lines.first())?;
-    Some(RevolveAxis::Sketch(sketch_element(&placed.name, curve)))
 }
 
 /// The axis in the sketch's own coordinates.
@@ -201,14 +183,15 @@ impl PartOperation for Revolve {
     type Args = RevolveArgs;
     type Session = ();
 
-    /// The newest sketch a full turn around its axis line, joined to the
-    /// newest solid if there is one.
+    /// The newest sketch a full turn, joined to the newest solid if there is
+    /// one. Which line it turns around is the user's to pick: a guess at one
+    /// shows a part they did not ask for, and leaves the question unasked.
     fn new_args(context: &Context) -> RevolveArgs {
         let before = &context.before;
         let newest = before.targets_of::<PlacedSketch>().pop();
         let sketch = SketchRef::whole(newest.unwrap_or_else(|| geop_ops_model::sketch::sketch("")));
         RevolveArgs {
-            axis: default_axis(before, &sketch),
+            axis: None,
             sketch,
             extent: Extents::blind(360.0),
             output: Output::new_for(&read_model(before).unwrap_or_default()),
@@ -221,8 +204,8 @@ impl PartOperation for Revolve {
     }
 
     /// The sketch and the axis, picked; how far; whether a face; and how to
-    /// combine. Another sketch picked brings an axis that was a line of the
-    /// old one back to the new one's default.
+    /// combine. Another sketch picked leaves no axis that was a line of the
+    /// old one: the new one's is to be picked.
     fn form<'a>(
         context: &'a Context<'a>,
         args: &RevolveArgs,
@@ -238,13 +221,10 @@ impl PartOperation for Revolve {
             move |edit, picked| {
                 let args = edit.args;
                 let old = std::mem::replace(&mut args.sketch, picked);
-                let of_old = match &args.axis {
-                    None => true,
-                    Some(RevolveAxis::Sketch(line)) => line.target() == old.target(),
-                    Some(_) => false,
-                };
-                if of_old {
-                    args.axis = default_axis(before, &args.sketch);
+                if let Some(RevolveAxis::Sketch(line)) = &args.axis
+                    && line.target() == old.target()
+                {
+                    args.axis = None;
                 }
             },
         );

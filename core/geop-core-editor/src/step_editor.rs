@@ -238,11 +238,7 @@ impl StepEditor {
         let armed = match new {
             true => {
                 let form = editors.presentation(runner, part, program, step, &*editing)?;
-                let first =
-                    (form.dialog.0.iter()).find(|f| matches!(f.control, Control::Reference(_)));
-                first
-                    .filter(|f| matches!(&f.control, Control::Reference(r) if r.waiting()))
-                    .map(|f| f.key.clone())
+                waiting(&form).next().map(str::to_string)
             }
             false => None,
         };
@@ -604,7 +600,14 @@ impl StepEditor {
                         self.armed = None;
                     }
                     let (key, value) = (key.to_string(), Value::Elements(elements));
-                    return self.send(e, Event::Field { key, value });
+                    self.send(e, Event::Field { key, value })?;
+                    // Picked and done: what the step needs next waits for
+                    // the next click, as it did when the step was started.
+                    if self.armed.is_none() {
+                        let form = self.form(e.editors, e.runner, e.part.clone(), e.program)?;
+                        self.armed = waiting(&form).next().map(str::to_string);
+                    }
+                    return Ok(());
                 }
             }
             StepEditEvent::Key { key } if key == "Escape" => {
