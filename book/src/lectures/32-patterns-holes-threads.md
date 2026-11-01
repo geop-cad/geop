@@ -151,6 +151,12 @@ Three details of the construction are each a lesson from an earlier lecture.
 
 The path is `Helix` (`core/geop-core-geometry/src/nurb_curve/helix.rs`), built in spans of at most a quarter turn of rational quadratics: seen down the axis it is exactly the kernel's circle, and only the height is approximate. Its module comment gives the error: at most 0.53% of the pitch for quarter-turn spans, 5 µm on an M6. So a modelled thread is not exactly a helicoid, but it is closer than the thread's own tolerance; the figure is measured by a test in that file. `Helix::tapered` moves the profile outward as it rises, for NPT. The sweep itself is the subject of [Lecture 27](./27-path-sweep.md).
 
+A thread can also be drawn rather than taken from a table: a section on the wall, a helix in a 3-D sketch, and a sweep along it, which the kernel carries by the same screw motion, a quarter turn at a time (`cut_helices`). The example `square_thread` is that: a rectangle standing on a revolved cylinder, swept five turns and joined to it, the wall it stands on lying in the cylinder's. It also found a bug. Where the helix met the cylinder's rim, the two edges run about three degrees apart, and validation called them coincident; [Lecture 15](./15-tangency-and-overlap.md) tells that story.
+
+<figure class="demo" data-demo="model-viewer" data-args='{"model":"square_thread","example":"square_thread"}'>
+<figcaption>The example <code>square_thread</code>, as the kernel meshed it. Drag to turn it.</figcaption>
+</figure>
+
 <figure class="demo" data-demo="model-viewer" data-args='{"model":"cross_drilled_shaft","example":"cross_drilled_shaft"}'>
 <figcaption>A stepped shaft revolved about its axis, with a circle extruded through both sides and cut away, as the kernel meshes it. The tool crosses the shaft's wall in a curve neither surface knows about: a traced intersection, from Lecture 16.</figcaption>
 </figure>

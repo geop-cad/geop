@@ -169,7 +169,7 @@ A joint measures its turns from a direction square to its axis, chosen from the 
 
 **In the kernel.** Poses: `core/geop-core-math/src/primitives/pose.rs` (`Pose::exp`, `Pose::exp_differential`, `impl Variable for Pose`). Mates: `ops/geop-ops-assembly/src/mates.rs`, `ops/geop-ops-assembly/src/joints.rs`, `ops/geop-ops-assembly/src/residuals.rs`. What a mate's steps declare: `ops/geop-ops-assembly/src/mechanism.rs` (constraints through `define_constraints`, unknowns through `declare_unknowns`). Elements: `MateEntity` in `ops/geop-ops-model/src/mate_entity.rs`. Limits are constraints of their own, `Bound::AtMost`.
 
-Not implemented: the solver knows nothing of collision. Parts pass through each other unless mates forbid it. `MotionPanel` plays a motion study and can ask the interference inspector about every frame ([Lecture 37](./37-assembly-solver.md)), but no contact is solved other than a `Tangent` or `Path` mate.
+Not implemented: the solver knows nothing of collision. Parts pass through each other unless mates forbid it. `MotionPanel` plays a motion study and can ask the interference inspector about every frame ([Lecture 37](./37-assembly-solver.md)), but no contact is solved other than a `Tangent` or `Path` mate. Interference on a whole assembly can be asked of some parts only (`Scope` in `ops/geop-ops-inspect/src/scope.rs`), and asks `could_touch` of each pair rather than the least distance; stopped part way, the answer says how far it got (`Stopped`), since what was not looked at is unknown.
 
 </div>
 

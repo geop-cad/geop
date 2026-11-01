@@ -1,11 +1,6 @@
 # A name AGENTS.md quotes from code since gone.
 EntityRef::lies_in
-# MCP tools on main (ef92f545) ahead of this branch's base (df280dc9); the v0.12.0
-# binary the session in Lecture 39 ran answers them. Remove these after a merge.
-open_step
-step_event
-commit_step
-cancel_step
-take_tool
+# About to land on main; remove after it does.
+docs/desktop.md
 # A name in a demo of this book.
 denseOps

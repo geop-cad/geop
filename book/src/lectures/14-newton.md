@@ -188,7 +188,7 @@ pub fn refine<const N: usize>(
 
 Read the design choices, each of which comes from a rule.
 
-- **It returns a value, not a `Result`.** Refinement is infallible: a singular Jacobian at a tangential crossing or a pole, or a refined box disjoint from the start, returns the incoming box unchanged, and an iterate leaving the domain is clamped back into it, since a foot point can step outside on its way in. "Refinement may only tighten, never fail, or callers start needing fallbacks of their own" (AGENTS.md).
+- **It returns a value, not a `Result`.** Refinement is infallible: a singular Jacobian at a tangential crossing or a pole, a step that comes back non-finite (over a singular Jacobian a step can be everything, and its middle is no number), or a refined box disjoint from the start, returns the incoming box unchanged, and an iterate leaving the domain is clamped back into it, since a foot point can step outside on its way in. "Refinement may only tighten, never fail, or callers start needing fallbacks of their own" (AGENTS.md).
 - **The result is `start.intersect(x)`.** The search proved the root lies in `start`, and Newton computed another enclosure of the same root. Both hold, so their intersection is valid and tighter than either: exactly the case [Lecture 5](./05-honest-numerics.md) says intersection is for.
 - **Disjoint means reject.** If Newton ended somewhere that does not overlap the proved box, it wandered off, and `start` is the answer.
 - **Clamp after sharpening.** Clamping an interval that straddles a domain bound leaves it straddling, because its three-valued comparisons have no answer. Clamping a sharp value is exact.

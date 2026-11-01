@@ -430,10 +430,11 @@ It turns what the user did — a `StepEditEvent` (see
   or taking it out) for a field of several. Taking one out, or all, is the
   editor's too, as is saying what each element held is used as, or why it
   cannot be. The operation is only ever sent what the field holds now. A
-  new step whose first reference field is still empty starts with it
-  armed: what it is built on is what it needs first. One that already holds
-  something — an extrude's newest sketch — waits for no click, so its
-  handles can be dragged straight away. So does a field that appears empty
+  new step starts with its first reference field still waiting armed: what
+  it is built on is what it needs first. A single pick arms the next one
+  waiting, as a new revolve's axis waits once it has its sketch. One that
+  already holds something — an extrude's newest sketch — waits for no click,
+  so its handles can be dragged straight away. So does a field that appears empty
   as the step is edited — a mate just added waits for its entities — and a
   field that goes away stops waiting. While a field waits for a pick, the
   part is shown as it stands, not the plane the step works in. Picks test

@@ -98,7 +98,10 @@ built: an open chain from pole to pole, or a ring clear of the axis.
 path — a rotation-minimizing frame, which for a planar path keeps the
 path's plane normal fixed. Every joint of the path is a station, every curve
 a span: a line moves the profile straight on and an arc turns it about the
-arc's axis, both exactly; any other curve is approximated by sections at
+arc's axis, both exactly; a helix is cut into pieces of at most a quarter
+turn (`cut_helices`), spans `c8.q0`, `c8.q1`, ..., each carried as an arc
+with a rise (`Kind::Arc`), a screw motion that keeps every point of the
+profile on a cylinder of its own; any other curve is approximated by sections at
 samples along it — frames carried by the double reflection method —
 skinned by cubic Hermite interpolation of the frames. Where two lines meet
 at an angle the profile is mitred, projected onto the plane bisecting the

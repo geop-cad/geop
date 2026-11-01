@@ -113,7 +113,7 @@ The counts become, with `$p=2$` poles and one curve on the axis:
 
 where `$\epsilon$` is 1 with caps and 0 without, and `$c$` the number of caps. For a full turn, `$s=m$`, `$\epsilon=c=0$`, and `$V-E+F=(n-2)m+2-(n-1)m-(n-2)m+(n-1)m=2$`. It is a sphere topologically, as it should be: the profile closes against the axis, and a solid cylinder is such a body. For a half-disc of two quarter arcs and a side on the axis, `$n=3,\ m=4$` gives `$F=8$`, the sphere's eight octants. `sphere_solid` in `lib/geop-lib-sweep/src/shapes/sphere.rs` writes that same body out directly: "2 rows (north pole to equator, and equator to south pole) x 4 quadrants".
 
-Which flags apply is the caller's business: `SweepLoop` carries `poles` and `on_axis`, one flag per joint and per curve. The grid obeys them.
+Which flags apply is the caller's business: `SweepLoop` carries `poles` and `on_axis`, one flag per joint and per curve. The grid obeys them. The revolve operation (`ops/geop-ops-extrude-revolve/src/revolve.rs`) measures them from the solved geometry too: a point is on the axis if the constraints say so, or if the solved sketch cannot tell it from the axis, since a corner there is a pole however it got there.
 
 ### Holes, voids and shells
 

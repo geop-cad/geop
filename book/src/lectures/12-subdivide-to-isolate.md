@@ -197,7 +197,7 @@ The whole curve's box is `$[0,4]\times[0,2]$`, which contains `$q$`: maybe. Spli
 
 ## The nearest point: branch and bound with a bound on the answer
 
-The same skeleton answers a different question, and seeing it in that form is instructive. *What is the least distance between two sets?* It is what `closest_point` and the interference check need, and it was the second of the two AGENTS.md stories above. The answer now comes from `least_distance` in `core/geop-core-geometry/src/nearest.rs`.
+The same skeleton answers a different question, and seeing it in that form is instructive. *What is the least distance between two sets?* It is what `closest_point` and the interference check need, and it was the second of the two AGENTS.md stories above. The answer now comes from `least_distance` in `core/geop-core-geometry/src/nearest.rs`. (A question that needs no least distance takes less: `could_come_within` in that file drops a pair definitely beyond `reach` before anything is asked of it, and the first points attained within it end the search. `could_touch` in `core/geop-core-topology/src/distance.rs` is that for a reach of zero. What the search cannot tell apart, at the handoff or at `max_nodes`, could be within it.)
 
 Branch and bound over pairs of pieces (a span of a curve, a patch of a surface, a point) keeps two bounds.
 

@@ -104,10 +104,10 @@ Which frame is right for a coil spring? They differ. Combine the rate of Frenet 
 
 So **per full turn, a rotation-minimizing frame rolls `$360°\sin\alpha$` against the screw frame**. Take a spring of radius 10 rising `$20/3$` per turn: `$c=1.061$`, `$\sin\alpha=0.1055$`, so `$38.0°$` per turn. Over three turns the section would have rolled `$114°$` against the coil's own axis.
 
-For a round wire that does not matter: a circle rolling about its centre is the same circle, though the surface parametrization does change. For a square-section coil it is very visible. With an RMF, the square's sides gradually turn away from the axis, and with a screw frame they stay facing it. A designer drawing a square-section spring means the screw frame, whereas a designer routing a rectangular duct round a bend means the rotation-minimizing one.
+For a round wire that does not matter: a circle rolling about its centre is the same circle, though the surface parametrization does change. For a square-section coil it is very visible. With an RMF, the square's sides gradually turn away from the axis, and with a screw frame they stay facing it. A designer drawing a square-section spring means the screw frame, and that is what the kernel gives a sweep along a helix, as we shall see: the profile keeps facing the axis the way it was drawn.
 
 <figure class="demo" data-demo="helix-frames">
-<figcaption>Each frame is computed. The ribbon is what one frame axis sweeps. Choose "rotation-minimizing": the orange axis drifts against the coil, and the plot shows the double-reflection twist (orange) on top of the torsion's integral (green); the readout gives both, and how many steps it took. Lower the steps to watch them part. Choose "Frenet" on the curve with an inflection to see the flip. This is the mathematics of frames; what the kernel does on a helix path is described below and may differ.</figcaption>
+<figcaption>Each frame is computed. The ribbon is what one frame axis sweeps. Choose "rotation-minimizing": the orange axis drifts against the coil, and the plot shows the double-reflection twist (orange) on top of the torsion's integral (green); the readout gives both, and how many steps it took. Lower the steps to watch them part. Choose "Frenet" on the curve with an inflection to see the flip. This is the mathematics of frames. The kernel's own sweep along a helix is the screw motion, the frame called "screw" here; other curves go by the rotation-minimizing frame.</figcaption>
 </figure>
 
 ## Closing a path
@@ -124,7 +124,7 @@ For a nonplanar closed path, a frame computed by the RMF rule generally arrives 
 
 <div class="kernel">
 
-**In the kernel.** As of this writing, `followed` in `lib/geop-lib-sweep/src/path_sweep.rs` carries the frame along a closed chain and takes the last span's end row from the first station, with nothing done about a mismatch; the closed sweeps the test module of that file builds are planar (a torus round a circle, and a frame round a square). A helix given as a path curve of several spans goes the general way too: `kind` sees no single arc in it, so it is carried as any spline is, by the rotation-minimizing frame. `Control` refuses twist, scale and rails on a closed path ("a closed path sweeps a ring, which a twist, a scale or a rail would not close"). **What the kernel does for a nonplanar closed path is the part of this lecture most likely to change**: the file is being worked on as this is written, so check the source.
+**In the kernel.** As of this writing, `followed` in `lib/geop-lib-sweep/src/path_sweep.rs` carries the frame along a closed chain and takes the last span's end row from the first station, with nothing done about a mismatch; the closed sweeps the test module of that file builds are planar (a torus round a circle, and a frame round a square). `Control` refuses twist, scale and rails on a closed path ("a closed path sweeps a ring, which a twist, a scale or a rail would not close"). So what a nonplanar closed path does with the mismatch is not decided by anything in the code: check the source before relying on one.
 
 </div>
 
@@ -138,6 +138,12 @@ A frame at each of a finite number of stations does not yet give a surface. Cons
 
 So a path of lines and arcs yields an entirely exact sweep, and for such a path the rotation-minimizing frame is also exact: on a line nothing turns, and on an arc the frame turns about the arc's axis.
 
+**A helix** turns the profile about the helix's axis as it rises: a screw motion. The kernel's helix is a chain of rational quadratics of at most a quarter turn each, at double knots (`helix_rows`, below). `cut_helices` cuts such a curve into those pieces, its own control points three to a piece, not cut anew, which would round them, and each piece is then a span of its own, named after the curve: `c8.q0`, `c8.q1`, and so on, so that face names gain `c8.q3`. Each piece is carried as an arc that rises: `Kind::Arc` has a `rise` along the axis, zero for an arc in a plane, and `Span::arc` builds the wall. Every point of the profile stays on a cylinder of its own, so it keeps facing the axis as it was drawn. No rotation-minimizing frame and no skinned spline is involved. Only the height runs off the true helix between the span ends, by the same small amount as the path itself (below). As the module's comment records, carried by a rotation-minimizing frame the profile "rolled over turn by turn, and its walls left their cylinders".
+
+One piece alone cannot be told from a helix or an arc: its legs fit a helix turning either way about one of two axes. Two can. `screw_between` looks at two neighbouring pieces, and uses that `$P_0+P_2-2P_1$` lies square to the axis whatever the rise, and points where the piece is turning: two of them span the plane it turns in, which gives the axis. They must also have one middle weight and rise alike. `kinds` asks this of each piece and its neighbour. Where two pieces of a helix meet, no corner is treated: they go on into each other, to the last bit or not, since the rows they share were rounded each where it lies.
+
+This holds for a plain sweep. A profile that twists, scales or follows rails is sampled on every span, as a spline's is (`Control`), and one kept facing the way it was drawn (`Orientation::FixedNormal`) has every point travelling a copy of the path.
+
 **Any other curve** has no swept surface that is a NURBS in general: the frame's trigonometry is not rational in the curve's parameter. So it is approximated: sections of the profile are placed at several parameters, and the frames between them are interpolated by cubic Hermite interpolation of the frames (`hermite`), giving a `Span::Curve` of degree 3 whose middle rows are frames a third of a step along the derivatives at the sections. Because a row is linear in the profile coordinates (`$p=o+xe_1+ye_2$`), interpolating the frames interpolates every profile point at once with the same degrees and knots, and so the grid of Lecture 26 is unchanged.
 
 That leaves "is this curve a line, an arc or something else?". `kind` in `path_sweep.rs` asks that on the control points: an arc is a rational quadratic Bézier with legs of one length and a middle weight the cosine of half the turn, with those checked by `could_be_equal`, "so a curve that could be one is taken as one".
@@ -146,7 +152,7 @@ Note the tension with AGENTS.md's *Everything is a NURBS curve or surface*: isn'
 
 ### The screw sweep
 
-There is a second way to sweep along a helix, and it does not use the frames above at all. `screw` in `lib/geop-lib-sweep/src/revolve.rs` sweeps a profile drawn in `$(r,z)$`, a half-plane through the axis. `screw_path` gives stations with `$e_1$` radial and `$e_2$` the axis itself: the profile is not square to the helix but contains the axis, and it moves by the screw motion. That is what a thread is defined by, and thread standards give the tooth's section in an axial plane.
+There is a second way to sweep along a helix, and the difference is where the profile is drawn. A path sweep takes the profile as you drew it, and the path is a curve of a 3-D sketch. `screw` in `lib/geop-lib-sweep/src/revolve.rs` sweeps a profile drawn in `$(r,z)$`, a half-plane through the axis. `screw_path` gives stations with `$e_1$` radial and `$e_2$` the axis itself: the profile is not square to the helix but contains the axis, and it moves by the screw motion. That is what a thread is defined by, and thread standards give the tooth's section in an axial plane.
 
 The rows come from `helix_rows` in `core/geop-core-geometry/src/nurb_curve/helix.rs`: a helix is not a rational curve, since its height grows linearly with the angle, and no rational parametrization of a circle turns at a constant rate. So it is approximated, one rational quadratic per quarter turn at most, with the circle part *exact*:
 
@@ -154,10 +160,10 @@ The rows come from `helix_rows` in `core/geop-core-geometry/src/nurb_curve/helix
 
 The module quotes a measured `$5.3\times10^{-3}$` times the pitch, tested there, and points out that for an ISO metric M6 thread (pitch 1 mm) that is 5 µm, well inside the thread's own tolerance.
 
-`NurbCurve3D::helix` builds the helix as a curve from the same rows, which is why its projection down the axis is exact.
+`NurbCurve3D::helix` builds the helix as a curve from the same rows, which is why its projection down the axis is exact. A helix of a 3-D sketch is such a curve ([Lecture 25](./25-sketch-features.md)), and it is what `cut_helices` recognizes.
 
 <figure class="demo" data-demo="model-viewer" data-args='{"model":"coil_spring","example":"coil_spring"}'>
-<figcaption>A coil of square section, radius 10, swept through three turns, as the kernel meshed it. Its section lies in the zx plane, drawn square to the path only approximately, and the program is a sketch, a 3-D sketch of a helix, and a sweep with orientation <code>follow_path</code>.</figcaption>
+<figcaption>A coil of square section, radius 10, swept through three turns, as the kernel meshed it. Its section lies in the zx plane, drawn square to the path only approximately, and the program is a sketch, a 3-D sketch of a helix, and a sweep with orientation <code>follow_path</code>. The section is 2 wide about radius 10, and in the mesh written for this figure every vertex lies at a distance of 9, 10 or 11 from the axis, to the STL's single precision: the screw motion keeps each point on its cylinder.</figcaption>
 </figure>
 
 ## Corners
@@ -186,7 +192,7 @@ The example `horn` in `ops/geop-ops-extrude-revolve/src/examples.rs` is a circle
 - The Frenet frame is canonical, but undefined at inflections and on lines, and it follows the torsion.
 - A rotation-minimizing frame has angular velocity `$\kappa B$`, is defined everywhere, and rolls against Frenet at the rate of the torsion.
 - Double reflection carries it: two reflections, exactly orthonormal, fourth order.
-- On a helix an RMF rolls `$360°\sin\alpha$` per turn against the screw frame. A screw motion is what a thread and a square coil usually mean.
+- On a helix an RMF rolls `$360°\sin\alpha$` per turn against the screw frame. A screw motion is what a thread and a square coil usually mean, and it is what the kernel carries a profile by along a helix: quarter-turn pieces (`cut_helices`), each an arc with a rise.
 - On a closed path, an RMF mismatches by the area its tangent indicatrix encloses.
 - Lines and arcs sweep exactly. Other curves are skinned through sections, frames interpolated, and this keeps the grid.
 
@@ -210,7 +216,7 @@ The example `horn` in `ops/geop-ops-extrude-revolve/src/examples.rs` is a circle
 
 </details>
 
-**3.** A rectangular duct (not a circle) is swept along a helix of radius 40 and pitch 50 by an RMF over two turns. By how much has the section rolled against the coil axis at the end?
+**3.** Suppose a rectangular duct (not a circle) were swept along a helix of radius 40 and pitch 50 by an RMF over two turns, which the kernel does not do. By how much has the section rolled against the coil axis at the end?
 
 <details class="solution"><summary>Solution</summary>
 

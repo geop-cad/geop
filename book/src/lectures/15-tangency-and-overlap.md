@@ -108,6 +108,14 @@ The result is the variant of `Intersections` we saw: `Found` (no overlap, isolat
 
 The module's documentation is honest about the limit: "The midpoint probe is the one place this is a test rather than a proof: a curve touching the other object exactly at two candidates *and* the midpoint between them, while leaving it in between, is read as an overlap." Note how little that leaves. It is one specific algebraic coincidence, stated in the code, not a tolerance.
 
+### Overlap needs the same direction
+
+The test of the midpoint, as stated, asks whether a point lies on the other curve. Enclosures can answer yes to that for two curves that plainly cross. A helix met a cylinder's rim at about three degrees, in the example `square_thread`, and validation called the two edges coincident along an arc. Each carried the width its construction left it, each end was found on the other curve at a parameter of its own, and those two ends lay no further apart than a shared vertex's width. Probed between them, on so short a stretch, one curve "lies on" the other at any angle, as far as enclosures tell.
+
+The geometry has more to say: two curves lying on each other run the same way. So `curve_curve_overlaps` also asks that the tangents could be parallel there, `same_way`, every 2-by-2 minor of the two tangents' components having to enclose zero. A caller who gave a `reach` above zero is exempt, since a curve within `reach` of another counts as one with it whichever way it runs. The test `edges_meeting_at_a_shallow_angle_do_not_overlap` in `curve_curve.rs` states what must hold, with two straight edges `1e-10` wide meeting at three degrees, and two lying on each other for comparison. `curve_surface_overlaps` has no such test.
+
+Note the shape of this fix. It adds no tolerance: it checks another condition an overlap has to meet, in the same three-valued arithmetic.
+
 ### Asking the right question about membership
 
 After a boolean starts to split faces, one more trap appears. Splitting a face leaves both halves on one surface, so "this edge lies on this face's surface" no longer means it belongs to this face. An edge already imprinted into one half still lies on the surface of the half it does not belong to, and an earlier `find_coincident_pair` re-imprinted it, splitting again, forever. The fix is to ask the question about the *face's trim*, whether the edge lies inside it (`face_contains`, [Lecture 19](./19-classification.md)), and to first rule out the exact topological case, `edge_is_boundary_of_face`. AGENTS.md tells this story in "Make the invariant a type, not a convention".

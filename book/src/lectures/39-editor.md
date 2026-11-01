@@ -18,7 +18,7 @@ This lecture follows one idea: the front end knows keys, not operations.
 
 ## Why put the editor in the kernel?
 
-Geop has several front ends for one editor: the web app running the kernel as WebAssembly, the same page served by `geop open` with the kernel as a native process, the VS Code extension, `geop app` (a window of its own), and an agent over MCP. If each one interpreted a click, they would diverge, and each would need its own tests. If the logic is in the kernel, then:
+Geop has several front ends for one editor: the web app running the kernel as WebAssembly, the same page served by `geop open` with the kernel as a native process, the VS Code extension, `geop app` (a window of its own), a click-to-open desktop app (`docs/desktop.md`, feature `desktop`), and an agent over MCP. If each one interpreted a click, they would diverge, and each would need its own tests. If the logic is in the kernel, then:
 
 - all of them behave alike (the rule is stated in `docs/ux.md`: "a front end only draws what it is sent and sends what the user did");
 - a test of user behaviour needs only Rust (`geop_core_editor::testing`, in the next lecture);
@@ -215,7 +215,7 @@ A panic in the kernel is a bug, but a CAD session is hours of a person's work. S
 
 ## An agent is a front end
 
-MCP deserves a remark, because it is a very different user. The instructions the server sends say in a paragraph what a part is. The tools (`docs/mcp.md`) are `new_part`, `load_program`, `list_operations`, `add_step`, `edit_step`, `delete_step`, `run`, `list_elements`, `inspect`, `export` and `save`, plus `look` to see the part, `undo` and `redo`, and those that go through the editor as a person does (`open_step`, `step_event`, `commit_step`, `cancel_step`, `take_tool`, `panel`). This list is the one the v0.12.0 server answered to `tools/list`. `list_operations` given a `kind` returns its `default_args`, the JSON `add_step` takes, so an agent learns an operation's arguments the way a person learns a dialog: by opening it. What is easier done than written, such as drawing a sketch, is done through events, as a user does.
+MCP deserves a remark, because it is a very different user. The instructions the server sends say in a paragraph what a part is. The tools (`docs/mcp.md`) are `new_part`, `load_program`, `list_operations`, `add_step`, `edit_step`, `delete_step`, `run`, `list_elements`, `inspect`, `export` and `save`, plus `look` to see the part, `undo` and `redo`, and those that go through the editor as a person does (`open_step`, `step_event`, `commit_step`, `cancel_step`, `take_tool`, `panel`). This list is the one `docs/mcp.md` gives. The server reads its input on a thread of its own, so a client can cancel a long `inspect`, which answers with what it found so far, and is told how far it is (`Long checks` in that file; [Lecture 38](./38-runner.md) has what lies under it). `list_operations` given a `kind` returns its `default_args`, the JSON `add_step` takes, so an agent learns an operation's arguments the way a person learns a dialog: by opening it. What is easier done than written, such as drawing a sketch, is done through events, as a user does.
 
 Everything this lecture stressed helps an agent as much as a front end: stable names rather than ids, errors that name their argument and the valid alternatives, a program that is plain data so an edit can be undone or diffed, and one source of truth.
 

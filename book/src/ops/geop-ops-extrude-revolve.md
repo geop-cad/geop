@@ -69,9 +69,10 @@ next face of a solid picked for it is trimmed where it meets it
 Editing one, the sketch is picked in the viewport and the extrude's lengths
 are handles. A revolve's axis is any line in the sketch's plane — a line of
 the sketch, a datum axis, a frame's axis, a straight edge: the area,
-holes and all, lies on one side of it, and touches it only where the
-constraints put it on it, which needs the axis to be a line of the sketch
-itself. Dragging or typing the first length across the sketch plane turns a
+holes and all, lies on one side of it, and touches it only at points of the
+sketch on it: where the constraints put them, or where the solved sketch
+cannot tell them from the axis. A new revolve has no axis: the field waits
+for a click. Dragging or typing the first length across the sketch plane turns a
 join into a cut and back; on either side, how to combine stays what was
 chosen — an extrude may cut upwards into a solid above its sketch. Both
 take a `Combine` from [geop-ops-model](./geop-ops-model.md): keep the

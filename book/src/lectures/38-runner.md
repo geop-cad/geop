@@ -186,6 +186,10 @@ All of the above assumes that a make is a function of its inputs. A subtle way t
 
 So wherever an order reaches the result, sort by the ids, which are given in creation order. The pattern is worth remembering, since the failure looks nondeterministic: when two runs of the same input differ, look for a hash map first.
 
+## Whoever waits for it
+
+A long computation can tell whoever waits how far it is (`core/geop-core-program/src/watch.rs`). A front end that waits on a thread of its own, as `geop mcp` does, sets a watcher (`watching`). A loop that can stop part way and say so asks `go_on`; one whose answer is nothing unless whole calls `checkpoint`, which fails; one that must finish, a build, calls `report`. The module's rule is the rule of budgets from [Lecture 5](./05-honest-numerics.md): a watcher decides how much of a question is asked, never what the answer means. A report stopped part way says how far it got.
+
 ## What the tests prove
 
 Reuse is an optimization that must not be observable. How can you test that for every operation, past and future, without knowing how any of them reuses anything? By comparing with the definition. `core/geop-core-program/src/testing.rs` provides:
