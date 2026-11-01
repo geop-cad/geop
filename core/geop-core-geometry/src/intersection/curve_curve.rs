@@ -271,7 +271,27 @@ where
             candidates.push(Hit { t: s, partner: t });
         }
     }
-    coincidence::find_overlaps(candidates, |s| on(b, a, s))
+    // Two curves lying on each other run the same way. Probed where two ends
+    // are found apart by no more than a shared vertex's width, a curve "lies
+    // on" another crossing it at any angle, as far as enclosures tell; its
+    // tangent tells. A curve within `reach` of another is taken as one with
+    // it whichever way it runs.
+    let same_way = |s: Scalar, t: Scalar| -> GeopResult<bool> {
+        if reach.definitely_greater(Scalar::ZERO) {
+            return Ok(true);
+        }
+        let (along_a, along_b) = (a.tangent_cartesian(s)?, b.tangent_cartesian(t)?);
+        Ok((0..C).all(|i| {
+            (i + 1..C).all(|j| {
+                (along_a[i].mul(along_b[j]))
+                    .sub(along_a[j].mul(along_b[i]))
+                    .could_be_equal(Scalar::ZERO)
+            })
+        }))
+    };
+    coincidence::find_overlaps(candidates, |s| {
+        Ok(on(b, a, s)?.filter(|&t| same_way(s, t).unwrap_or(true)))
+    })
 }
 
 /// What [`curve_curve_overlaps_and_crossings`] finds: the overlaps, and the
@@ -421,13 +441,48 @@ where
 
 #[cfg(test)]
 mod tests {
-    use super::curve_curve_crossings;
+    use super::{curve_curve_crossings, curve_curve_intersect};
     use crate::nurb_curve::NurbCurve;
     use crate::test_fixtures::{knots, line, weighted};
-    use geop_core_math::scalars::Scalar;
+    use geop_core_math::{scalars::Scalar, vector::Vector4};
 
     const MAX: usize = 5000;
     const MIN_SUBDIVISION_SIZE: f64 = 1e-6;
+
+    /// Two edges meeting at a vertex at a shallow angle, each carrying the
+    /// width its construction left it: each end is found on the other curve
+    /// at a parameter of its own, and the stretch between them lies on the
+    /// other curve, as far as enclosures tell. It is no overlap: the two run
+    /// three degrees apart. A helix met a cylinder's rim so, and validation
+    /// called the edges coincident along an arc; the example `square_thread`
+    /// is what reproduces that, these lines only say what should hold.
+    #[test]
+    fn edges_meeting_at_a_shallow_angle_do_not_overlap() {
+        let width = 1e-10;
+        let edge = |from: [f64; 3], to: [f64; 3]| {
+            let wide = |p: [f64; 3]| {
+                let mut at = p.map(|x| Scalar::new(x - width, x + width)).to_vec();
+                at.push(Scalar::ONE);
+                Vector4::from_array([at[0], at[1], at[2], at[3]])
+            };
+            NurbCurve::try_new(1, vec![wide(from), wide(to)], knots(&[0.0, 0.0, 1.0, 1.0])).unwrap()
+        };
+        let (sin, cos) = 3f64.to_radians().sin_cos();
+        let a = edge([0.0, 0.0, 0.0], [1.0, 0.0, 0.0]);
+        let b = edge([1.0 - 5e-10, 0.0, 0.0], [1.0 + cos, sin, 0.0]);
+        let found =
+            curve_curve_intersect::<4, 3>(&a, &b, 8, MAX, Scalar::from_f64(MIN_SUBDIVISION_SIZE))
+                .unwrap();
+        assert!(!found.is_coincident(), "{found:?}");
+        assert!(!found.into_vec().is_empty(), "they do meet");
+
+        // Lying on each other, tangents parallel, they do.
+        let c = edge([0.5, 0.0, 0.0], [2.0, 0.0, 0.0]);
+        let found =
+            curve_curve_intersect::<4, 3>(&a, &c, 8, MAX, Scalar::from_f64(MIN_SUBDIVISION_SIZE))
+                .unwrap();
+        assert!(found.is_coincident(), "{found:?}");
+    }
 
     /// Exact rational quarter circle of radius 1 in the xy-plane.
     fn quarter_circle() -> NurbCurve<4> {
@@ -516,7 +571,6 @@ mod tests {
 
     // ── The coincidence-handling wrapper ─────────────────────────────────────
 
-    use super::curve_curve_intersect;
     use crate::intersection::Intersections;
 
     fn wrap(a: &NurbCurve<4>, b: &NurbCurve<4>) -> Intersections<(Scalar, Scalar)> {

@@ -55,6 +55,7 @@ pub fn set() -> ExampleSet {
             ("edge_part", edge_part),
             ("name_plate", name_plate),
             ("coil_spring", coil_spring),
+            ("square_thread", square_thread),
         ],
         workspaces: Vec::new(),
     }
@@ -894,6 +895,15 @@ pub fn motor_flange() -> Program {
         },
     );
     program
+}
+
+/// A square thread, as drawn in the editor: a rectangle standing on a
+/// revolved cylinder, swept five turns along a helix in a 3-D sketch and
+/// joined to it, the wall it stands on lying in the cylinder's. Kept as the
+/// program it saved, as [`edge_part`] is.
+pub fn square_thread() -> Program {
+    Program::from_json(include_str!("drawn/square_thread.geop"))
+        .expect("a drawn example is a program")
 }
 
 /// Three outlines sketched on the origin's three planes, each extruded and

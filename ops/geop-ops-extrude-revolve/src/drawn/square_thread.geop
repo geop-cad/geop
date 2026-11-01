@@ -1,0 +1,379 @@
+{
+  "steps": [
+    {
+      "id": "3-d_sketch1",
+      "operation": "add_sketch3d",
+      "args": {
+        "references": [
+          {
+            "from": {
+              "datum": "origin"
+            },
+            "point": 0,
+            "target": "point"
+          }
+        ],
+        "sketch": {
+          "constraints": {
+            "9": {
+              "helix": 8,
+              "type": "HelixEnd"
+            }
+          },
+          "curves": {
+            "8": {
+              "base": 0,
+              "end": 7,
+              "start": 4,
+              "top": 1,
+              "turns": 5,
+              "type": "Helix"
+            }
+          },
+          "next_id": 10,
+          "points": {
+            "0": {
+              "at": [
+                0,
+                0,
+                0
+              ],
+              "fixed": true
+            },
+            "1": {
+              "at": [
+                0,
+                48.418982846502615,
+                0
+              ]
+            },
+            "4": {
+              "at": [
+                29.458436663535007,
+                0,
+                0
+              ]
+            },
+            "7": {
+              "at": [
+                29.458436663535007,
+                48.418982846502615,
+                0
+              ]
+            }
+          }
+        }
+      }
+    },
+    {
+      "id": "sketch1",
+      "operation": "add_sketch",
+      "args": {
+        "plane": {
+          "datum": "origin:xy"
+        },
+        "references": [
+          {
+            "curves": {
+              "x": 3,
+              "y": 4
+            },
+            "points": {
+              "origin": 0,
+              "x": 1,
+              "y": 2
+            },
+            "type": "frame"
+          },
+          {
+            "curves": {},
+            "entity": {
+              "vertex": "sketch3d(3-d_sketch1,p4)"
+            },
+            "points": {
+              "sketch3d(3-d_sketch1,p4)": 27
+            },
+            "type": "projection"
+          }
+        ],
+        "sketch": {
+          "constraints": {
+            "29": {
+              "curve": 4,
+              "point": 28,
+              "type": "PointOnCurve"
+            },
+            "36": {
+              "line": 32,
+              "type": "Horizontal"
+            },
+            "37": {
+              "line": 33,
+              "type": "Vertical"
+            },
+            "38": {
+              "line": 34,
+              "type": "Horizontal"
+            },
+            "39": {
+              "line": 35,
+              "type": "Vertical"
+            }
+          },
+          "curves": {
+            "3": {
+              "construction": true,
+              "end": 1,
+              "fixed": true,
+              "start": 0,
+              "type": "Line"
+            },
+            "4": {
+              "construction": true,
+              "end": 2,
+              "fixed": true,
+              "start": 0,
+              "type": "Line"
+            },
+            "32": {
+              "construction": false,
+              "end": 30,
+              "start": 27,
+              "type": "Line"
+            },
+            "33": {
+              "construction": false,
+              "end": 28,
+              "start": 30,
+              "type": "Line"
+            },
+            "34": {
+              "construction": false,
+              "end": 31,
+              "start": 28,
+              "type": "Line"
+            },
+            "35": {
+              "construction": false,
+              "end": 27,
+              "start": 31,
+              "type": "Line"
+            }
+          },
+          "next_id": 40,
+          "points": {
+            "0": {
+              "fixed": true,
+              "x": 0,
+              "y": 0
+            },
+            "1": {
+              "fixed": true,
+              "x": 1,
+              "y": 0
+            },
+            "2": {
+              "fixed": true,
+              "x": 0,
+              "y": 1
+            },
+            "27": {
+              "fixed": true,
+              "x": 29.458436663535004,
+              "y": 0
+            },
+            "28": {
+              "x": 1.942890293094024e-16,
+              "y": 38.54318130590188
+            },
+            "30": {
+              "x": 1.942890293094024e-16,
+              "y": 0
+            },
+            "31": {
+              "x": 29.458436663535004,
+              "y": 38.54318130590188
+            }
+          }
+        }
+      }
+    },
+    {
+      "id": "revolve1",
+      "operation": "revolve",
+      "args": {
+        "axis": {
+          "sketch": {
+            "name": "c33",
+            "target": "/:sketch:sketch1"
+          }
+        },
+        "extent": {
+          "reversed": false,
+          "side1": {
+            "blind": 360
+          },
+          "symmetric": false
+        },
+        "output": {
+          "solid": {
+            "mode": "new_body"
+          }
+        },
+        "sketch": {
+          "target": "/:sketch:sketch1"
+        }
+      }
+    },
+    {
+      "id": "sketch2",
+      "operation": "add_sketch",
+      "args": {
+        "plane": {
+          "datum": "origin:xy"
+        },
+        "references": [
+          {
+            "curves": {
+              "x": 3,
+              "y": 4
+            },
+            "points": {
+              "origin": 0,
+              "x": 1,
+              "y": 2
+            },
+            "type": "frame"
+          },
+          {
+            "curves": {},
+            "entity": {
+              "vertex": "sketch3d(3-d_sketch1,p4)"
+            },
+            "points": {
+              "sketch3d(3-d_sketch1,p4)": 23
+            },
+            "type": "projection"
+          }
+        ],
+        "sketch": {
+          "constraints": {
+            "31": {
+              "line": 27,
+              "type": "Horizontal"
+            },
+            "32": {
+              "line": 28,
+              "type": "Vertical"
+            },
+            "33": {
+              "line": 29,
+              "type": "Horizontal"
+            },
+            "34": {
+              "line": 30,
+              "type": "Vertical"
+            }
+          },
+          "curves": {
+            "3": {
+              "construction": true,
+              "end": 1,
+              "fixed": true,
+              "start": 0,
+              "type": "Line"
+            },
+            "4": {
+              "construction": true,
+              "end": 2,
+              "fixed": true,
+              "start": 0,
+              "type": "Line"
+            },
+            "27": {
+              "construction": false,
+              "end": 25,
+              "start": 23,
+              "type": "Line"
+            },
+            "28": {
+              "construction": false,
+              "end": 24,
+              "start": 25,
+              "type": "Line"
+            },
+            "29": {
+              "construction": false,
+              "end": 26,
+              "start": 24,
+              "type": "Line"
+            },
+            "30": {
+              "construction": false,
+              "end": 23,
+              "start": 26,
+              "type": "Line"
+            }
+          },
+          "next_id": 35,
+          "points": {
+            "0": {
+              "fixed": true,
+              "x": 0,
+              "y": 0
+            },
+            "1": {
+              "fixed": true,
+              "x": 1,
+              "y": 0
+            },
+            "2": {
+              "fixed": true,
+              "x": 0,
+              "y": 1
+            },
+            "23": {
+              "fixed": true,
+              "x": 29.458436663535004,
+              "y": 0
+            },
+            "24": {
+              "x": 35.97113966062063,
+              "y": -3.4504680468347324
+            },
+            "25": {
+              "x": 35.97113966062063,
+              "y": 0
+            },
+            "26": {
+              "x": 29.458436663535004,
+              "y": -3.4504680468347324
+            }
+          }
+        }
+      }
+    },
+    {
+      "id": "sweep1",
+      "operation": "sweep",
+      "args": {
+        "orientation": "follow_path",
+        "output": {
+          "solid": {
+            "mode": "with",
+            "op": "union",
+            "target": "revolve(revolve1)"
+          }
+        },
+        "path": {
+          "sketch3d": {
+            "target": "/:sketch3d:3-d_sketch1"
+          }
+        },
+        "profile": {
+          "target": "/:sketch:sketch2"
+        }
+      }
+    }
+  ]
+}

@@ -31,7 +31,7 @@ use crate::{
     examples::{
         box_with_drill_hole, bracket, coil_spring, cross_drilled_shaft, edge_part,
         handle_with_hole, horn, luggage_tag, motor_flange, name_plate, parametric_plate, pipe,
-        pipe_route, revolved_cone_on_box,
+        pipe_route, revolved_cone_on_box, square_thread,
     },
 };
 
@@ -179,6 +179,23 @@ fn handle_with_hole_round_trips() {
 #[test]
 fn handle_with_hole_builds_incrementally() {
     assert_edits_incremental(&handle_with_hole());
+}
+
+/// One solid: the thread's rectangle, swept round five turns, adds what it
+/// sweeps to the cylinder, the two sharing no volume.
+#[test]
+fn square_thread_round_trips() {
+    let part = build_and_round_trip("square_thread", &square_thread());
+    let model = part.topology();
+    assert_eq!(model.solids.len(), 1);
+    let solid = *model.solids.keys().next().unwrap();
+    let volume = model.mass_properties(solid).unwrap().volume.to_f64();
+    assert!((volume - 128175.03).abs() < 0.1, "{volume}");
+}
+
+#[test]
+fn square_thread_builds_incrementally() {
+    assert_edits_incremental(&square_thread());
 }
 
 /// The example drawn in the editor builds a valid part and round-trips, as

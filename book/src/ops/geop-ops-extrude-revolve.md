@@ -16,7 +16,7 @@ dependencies of theirs: the crate itself depends on no other operation.
 Its `examples` — `box_with_drill_hole`, `bracket`, `cross_drilled_shaft`,
 `handle_with_hole`, `luggage_tag`, `revolved_cone_on_box`,
 `parametric_plate`, `pipe`, `name_plate` (a word embossed on a plate),
-and `edge_part`, drawn in the editor and kept
+and `edge_part` and `square_thread`, drawn in the editor and kept
 as the `.geop` text it saved (`src/drawn/`) — are registered with its
 operations when the feature `examples` is on; each is
 tested to round-trip and to build incrementally (`example_tests.rs`). The
