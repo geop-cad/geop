@@ -135,15 +135,18 @@ impl Drawer for ModelDrawer {
 }
 
 /// How far apart, as the sine of the angle, the faces either side of an edge
-/// may lie for it to show no crease, and how far apart, as a share of the
-/// larger, their curvatures across it. What they decide is only what is
-/// drawn: a blend tilted a millionth of a radian off its face is smooth to
-/// the eye, and to no other question.
+/// may lie for it to show no crease, and how far apart their curvatures across
+/// it, as how much further one turns than the other over the larger face, in
+/// radians. A helix's flank jumps in curvature at each quarter turn, by 0.13
+/// radians over the quarter on a square thread; a fillet turns through its
+/// whole angle. What they decide is only what is drawn: a blend tilted a
+/// millionth of a radian off its face is smooth to the eye, and to no other
+/// question.
 const CREASE: f64 = 0.0175;
-const CURVATURE: f64 = 1e-3;
+const TURN: f64 = 0.25;
 
 /// Whether `edge` lies within one smooth surface, its faces pieces of it: they
-/// are tangent where looked at, and curve alike across it. So a cylinder's
+/// are tangent where looked at, and curve nearly alike across it. So a cylinder's
 /// seam has no line, and where a fillet leaves a flat face, tangent to it but
 /// curving where the face does not, keeps one. A line is drawn by samples
 /// anyway, so that is what this asks of too; an edge it cannot tell about is
@@ -156,6 +159,18 @@ fn within_a_surface(model: &Model, edge: EdgeId) -> bool {
         };
         let curve = &model.get_edge(edge)?.curve;
         let (t0, t1) = curve.domain();
+        let size = |coedge: CoedgeId| -> GeopResult<f64> {
+            let boxed = model
+                .get_face(model.get_coedge(coedge)?.face)?
+                .surface
+                .aabb();
+            Ok(boxed
+                .iter()
+                .map(|x| x.width().to_f64().powi(2))
+                .sum::<f64>()
+                .sqrt())
+        };
+        let across_faces = size(*a)?.max(size(*b)?);
         // The face's surface at `point`: its unit normal, and how it curves
         // towards the side the edge does not run along.
         let side =
@@ -179,7 +194,7 @@ fn within_a_surface(model: &Model, edge: EdgeId) -> bool {
             }
             // Curvature is signed by the normal, and the two may point apart.
             let l = if n.prod_dot(&m).to_f64() < 0.0 { -l } else { l };
-            if (k - l).abs() > CURVATURE * k.abs().max(l.abs()) {
+            if (k - l).abs() * across_faces > TURN {
                 return Ok(false);
             }
         }
