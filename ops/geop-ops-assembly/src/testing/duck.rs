@@ -65,15 +65,17 @@ fn part(id: &str, solid: PrimitiveArgs, frames: &[(&str, [f64; 3])]) -> Program 
 /// the one before, which is that far below its origin.
 const LEG: [(&str, f64); 4] = [("hip", 10.0), ("knee", 15.0), ("ankle", 8.0), ("foot", 3.0)];
 
-/// A leg: the hip placed free — the duck turns it on its body — the knee,
-/// the ankle and the foot each turning on the one before.
-fn leg() -> Program {
+/// A leg: the hip placed free, or `fixed` in the leg as the user's right
+/// leg has it — the duck turns it on its body either way — the knee, the
+/// ankle and the foot each turning on the one before.
+fn leg(fixed: bool) -> Program {
     let mut program = Program::new();
     let mut state = StateValues::new();
     let mut below = 0.0;
     for (k, (id, length)) in LEG.into_iter().enumerate() {
         let file = format!("{id}.geop");
         let mates = match k {
+            0 if fixed => vec![Mate::fixed_here()],
             0 => Vec::new(),
             _ => vec![revolute(
                 datum_of(LEG[k - 1].0, "far"),
@@ -145,7 +147,7 @@ pub fn duck() -> BTreeMap<String, String> {
             state.insert(format!("/{id}:{}", pose_state(part)), saved(at));
             below += length;
         }
-        add(&format!("{id}.geop"), leg());
+        add(&format!("{id}.geop"), leg(side == "right"));
     }
     duck.state = state;
     add(DUCK, duck);

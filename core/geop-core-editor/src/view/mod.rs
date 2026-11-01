@@ -721,8 +721,9 @@ impl PartView {
     /// The placed part a drag at `pointer` moves, and how far along the ray
     /// it is hit: the one whose face the ray enters first — or, for a part
     /// placed in one placed rigid, the innermost one around it whose pose is
-    /// a state of the part drawn: what moves it. None for a fixed one: no
-    /// drag moves it.
+    /// a state of the part drawn and not fixed: what moves it. A part fixed
+    /// in a sub-assembly moves with the sub-assembly, so a drag of it moves
+    /// that. None where every part around it is fixed: no drag moves it.
     pub fn part_to_drag(
         &self,
         pointer: &Pointer,
@@ -739,14 +740,14 @@ impl PartView {
         let moved = self
             .instances
             .iter()
-            .filter(|i| i.state.is_some())
+            .filter(|i| i.state.is_some() && !i.fixed)
             .filter(|i| {
                 i.name == hit
                     || (hit.strip_prefix(&i.name))
                         .is_some_and(|r| r.starts_with(INSTANCE_SEPARATOR))
             })
             .max_by_key(|i| i.name.len())?;
-        (!moved.fixed).then_some((moved, t))
+        Some((moved, t))
     }
 
     /// How far along `pointer`'s ray it first enters the placed part

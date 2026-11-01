@@ -1204,6 +1204,49 @@ fn duck_editor() -> Editor {
     editor_of(duck(), DUCK, Cache::new())
 }
 
+/// The duck's right hip is fixed in its leg, as the user's is: the hip
+/// stays where the leg has it, and the leg, a part of the duck, turns on
+/// the body by the joint the duck makes into the hip. Grabbed, the hip
+/// drags the leg, as the left hip, free in its leg, drags itself, and the
+/// joints panel says it turns one way. Fixed in the leg was taken for
+/// fixed in the world: the hip could not be grabbed, and was shown fixed.
+#[test]
+fn a_part_fixed_in_its_sub_assembly_drags_the_sub_assembly() {
+    let mut editor = duck_editor();
+    for side in ["left", "right"] {
+        let hip = format!("{side}_leg/hip");
+        let y = if side == "left" { -2.5 } else { 2.5 };
+        // Beside the body, half way down the hip.
+        let grabbed = [0.0, y, -5.0];
+        let before = locate(&editor.part(), &hip).unwrap().world;
+        let costs = drag_part(&mut editor, &hip, grabbed, &[[2.0, 0.0], [4.0, 0.0]]);
+        let last = costs.last().unwrap();
+        assert!(last.report.converged, "{side}: {:?}", last.report.failed);
+        let after = locate(&editor.part(), &hip).unwrap().world;
+        let at = |pose: &Pose| {
+            let p = pose.apply(&Vector3::from_array(grabbed.map(Scalar::from_f64)));
+            [0, 1, 2].map(|k| p[k].to_f64())
+        };
+        let moved = (0..3).map(|k| (at(&after)[k] - at(&before)[k]).abs());
+        assert!(
+            moved.fold(0.0, f64::max) > 1.0,
+            "{side}: the hip did not move"
+        );
+        let program = last
+            .update
+            .program
+            .as_ref()
+            .expect("a drag let go sends the program");
+        let freedom = &program.panels
+            [<crate::JointsPanel as geop_core_editor::registry::Panel>::KEY]["freedom"]["parts"];
+        // The left leg has no part fixed in it: its frame and its hip move
+        // against each other, and every part of it counts six ways.
+        if side == "right" {
+            assert_eq!(freedom[&hip], 1, "{side}: {freedom}");
+        }
+    }
+}
+
 /// Dragging the duck's mouth — placed in the head, placed in the neck —
 /// meshes no face and sends no component again: the mouth moves, and is
 /// all that is sent. A placed part's drawing drew the parts placed in it

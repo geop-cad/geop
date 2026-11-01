@@ -16,6 +16,7 @@
 
 use geop_core_program::{
     element::{ElementReference, HasElements, Kind, whole},
+    placed::INSTANCE_SEPARATOR,
     reader::Reader,
     target::{Target, TargetReference},
     values::{StateValue, StateValues, pose_state},
@@ -702,12 +703,26 @@ pub fn freedom(
 ) -> GeopResult<Freedom> {
     let (start, problem) = every_value(rerun, state, held)?;
     let freedom = solve::freedom(run(rerun), &start, &problem)?;
-    let parts = (placed_parts(&rerun.reader())?.into_iter())
+    let placed = placed_parts(&rerun.reader())?;
+    let states: BTreeMap<&str, &str> = (placed.iter())
+        .filter_map(|p| Some((p.name.as_str(), p.located.state.as_deref()?)))
+        .collect();
+    // A part fixed in a sub-assembly moves as the sub-assembly does: the
+    // first pose round it the solve frees, from the part outwards.
+    let parts = (placed.iter())
         .map(|placed| {
-            let dof = (placed.located.state)
-                .and_then(|p| freedom.states.get(&p).copied())
-                .unwrap_or(0);
-            (placed.name, dof)
+            let mut path = placed.name.as_str();
+            let dof = loop {
+                let free = (states.get(path)).and_then(|s| freedom.states.get(*s));
+                if let Some(&dof) = free {
+                    break dof;
+                }
+                match path.rsplit_once(INSTANCE_SEPARATOR) {
+                    Some((outer, _)) => path = outer,
+                    None => break 0,
+                }
+            };
+            (placed.name.clone(), dof)
         })
         .collect();
     Ok(Freedom {
