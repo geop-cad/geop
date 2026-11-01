@@ -1461,6 +1461,41 @@ fillet needs of the third face — a plane, square to the edge — is true of
 both. `tool_end` counts faces of one plane as one wall. A refusal says which
 faces meet where (`corners_of`), so the next corner it cannot take is named.
 
+## A chain of many pieces: what meets at its ends, and what grows with it
+
+A square thread is a helix cut in quarter turns, its inner corner lying on
+the cylinder it stands on, starting on the cylinder's rim. A round along it
+is one tangent chain of twenty links, and three things that hold for a few
+links and a corner of three faces did not:
+
+- **Every pair of the chain's faces.** At a joint, a section square to the
+  helix puts the ball's contact on the wall a hair into the next quarter, so
+  its own faces do not hold it. It was then tried on every pair of faces
+  along the chain, each from a nearest point: 218012 nearest points for 853
+  balls in 300 s, and that was the first of the refinements. Faces out of the
+  ball's reach are not asked.
+- **Who ends the blend.** Seven faces meet at the rim vertex the thread
+  starts on, and four where its corner leaves the cylinder's top, and they
+  were refused as "not a corner of three". The faces the blend touches say
+  what stops it (`faces_ending`): the flank ends in the start cap while the
+  wall goes on across its seam; the wall ends in the top while the flank goes
+  on along the very edge. Ask which faces end the chain's faces, not how many
+  faces meet.
+- **A fit's legs.** Past the top the arc's contact on the flank is `3°` off
+  the plane cutting it: their curve is an ellipse nineteen times as long as it
+  is wide, its tip of radius `5e-3`, marched in legs of `1e-2`. Halving every
+  leg ran into the cap on the legs at once and it was left `5.8e-4` wide.
+  Halving those that drift (`fit_enclosing`) took four more legs.
+
+What is cut off decides nothing either: a contact run on past the third face
+crosses the seams of faces the blend never reaches, and its crossing of a
+tangent seam was refused (`Rolled::dropped`). And a merge asked of a face with
+a pole: its loop leaves that vertex twice, along the row and on from it, and
+two pieces of a disc's quarter could not be one (`merge.rs`, `loops`). Where
+the flush cap is left a face of its own, its outline lying in the top's plane
+touches the rim tangentially, and validation exhausts its search on an edge
+lying on a surface it does not bound.
+
 ## A face is a piece of a wall
 
 A cam swept along a sketched circle is four faces, a quarter each, and a

@@ -538,6 +538,35 @@ impl NurbCurve<4> {
         interpolate::<3, 4>(points, Some(between), degree)
     }
 
+    /// How far the true points `between` of each interval stick out of the
+    /// interpolant [`Self::interpolate_enclosing`] fits through `points`,
+    /// before it is widened, in the coordinate they stick out most: what
+    /// each interval asks of the one width the whole curve is then given.
+    pub fn drift_by_interval(
+        points: &[Vector3],
+        between: &[Vec<Vector3>],
+        degree: usize,
+    ) -> GeopResult<Vec<f64>> {
+        let centres: Vec<Vector3> = points.iter().map(|q| q.sharpen()).collect();
+        let p = degree.max(1).min(centres.len() - 1);
+        let t = chord_length_params(&centres);
+        let knots = averaging_knots(&t, p);
+        let control_points =
+            with_unit_weights(solve_interpolation_system(&t, &knots, p, &centres)?);
+        let curve = NurbCurve::<4>::try_new(p, control_points, knots)?;
+        let mut drifts = Vec::with_capacity(between.len());
+        for (w, qs) in t.windows(2).zip(between) {
+            let mut checks = Vec::with_capacity(qs.len());
+            for (j, &q) in qs.iter().enumerate() {
+                let frac = Scalar::from_ratio(j as i64 + 1, qs.len() as i64 + 1)?;
+                checks.push((Scalar::interpolate(w[0], w[1], frac).sharpen(), q));
+            }
+            let pad = enclosing_pad::<3, 4>(&curve, &checks)?;
+            drifts.push(pad.iter().map(|d| d.upper().to_f64()).fold(0.0, f64::max));
+        }
+        Ok(drifts)
+    }
+
     /// How far, per coordinate, this curve has to be widened (see
     /// [`Self::widen`]) to enclose every check's point: `(t, q)`, the true
     /// point `q`, near the curve at about `t` — exactly as

@@ -1345,6 +1345,7 @@ dependencies = [
  "geop-ops-reference-geometry",
  "geop-ops-shell",
  "geop-ops-sketch",
+ "geop-ops-sketch3d",
  "geop-ops-subd",
  "serde",
  "serde_json",

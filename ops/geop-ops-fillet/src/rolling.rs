@@ -69,9 +69,9 @@
 //! vertices, where its edges, and the faces either side, are only tangent
 //! (see [`turns`]).
 //!
-//! **Ends.** A closed chain has none. An open one ends at a corner of
-//! exactly three faces (see [`crate::blend::tool_end`]), decided at each
-//! vertex on its own by the third face there:
+//! **Ends.** A closed chain has none. An open one ends where its faces
+//! end (see [`crate::blend::tool_end`]), decided at each vertex on its own
+//! by the third face there, the one that ends them:
 //!
 //! - a plane its section at the corner lies in — the faces either side
 //!   standing square to it where the ball touches them: the tool crosses
@@ -85,8 +85,8 @@
 //!   running into it, or a fill, is cut off by it — the tool split along a
 //!   sheet on the face carried on, round the vertex (see
 //!   [`Rolled::trims`]) — so that it meets the face where the face is. A
-//!   fill up to a face it leaves the solid through, an outward corner, is
-//!   refused: its end would lie on the corner's other edge.
+//!   fill up to a curved face it leaves the solid through, an outward
+//!   corner, is refused: its end would lie on the corner's other edge.
 //!
 //! Where the faces either side meet tangentially at the vertex — two equal
 //! pipes joined, where they touch — there is no corner left to blend, and
@@ -136,7 +136,7 @@ use geop_core_topology::{EdgeId, FaceId, Model, VertexId};
 use geop_lib_booleans::RemeshParams;
 use geop_ops_model::NamedModel;
 
-use crate::blend::{Bend, Crossing, End, bend, check_contacts, run_out_length, tool_end};
+use crate::blend::{Bend, Crossing, End, bend, check_contacts, run_out_length, side_of, tool_end};
 use crate::tool::{Cap, Tool, ToolSpan, ToolStation, embed, flatten, flatten_point, wall_surface};
 use geop_ops_model::tangent::{Link, TangentChain as Chain};
 
@@ -504,17 +504,43 @@ fn place(
     let unit = [normals[0].normalize()?, normals[1].normalize()?];
     fits(own.faces, own_surfaces, at_edge, unit, sr)?;
     let tangent = own.tangent(normals, &along, &p)?;
-    let sides = sides(chain);
-    // The pairs of faces to try: the link's own first.
+    let scale = sr.abs().upper().to_f64();
+    // The pairs of faces to try: the link's own first, then any others
+    // along each side the ball can reach from here. A chain of many links
+    // has that many faces a side, and a ball of the size of its stations
+    // touches the few next to it: every pair of them, each sought from a
+    // nearest point, at every joint, was a square in the links. Its reach:
+    // twice as far as it touches two planes through the point, curved faces
+    // holding it further out — how hard to look, a free choice. Faces
+    // opposite each other hold it nowhere, and it may touch any.
+    let to_center = (unit[0].add(&unit[1]).norm())
+        .div(Scalar::ONE.add(unit[0].prod_dot(&unit[1])))
+        .map_or(f64::INFINITY, |d| d.upper().to_f64());
+    let reach = 2.0 * scale * (1.0 + to_center);
+    let within_reach = |face: FaceId| -> GeopResult<bool> {
+        let aabb = model.get_face(face)?.surface.aabb();
+        Ok((0..3).all(|k| {
+            let gap = (aabb[k].lower().to_f64() - p[k].upper().to_f64())
+                .max(p[k].lower().to_f64() - aabb[k].upper().to_f64());
+            gap <= reach
+        }))
+    };
+    let mut near_sides = [Vec::new(), Vec::new()];
+    for (k, side) in sides(chain).iter().enumerate() {
+        for &face in side {
+            if face == own.faces[k] || within_reach(face)? {
+                near_sides[k].push(face);
+            }
+        }
+    }
     let mut pairs = vec![own.faces];
-    for &a in &sides[0] {
-        for &b in &sides[1] {
+    for &a in &near_sides[0] {
+        for &b in &near_sides[1] {
             if !pairs.contains(&[a, b]) {
                 pairs.push([a, b]);
             }
         }
     }
-    let scale = sr.abs().upper().to_f64();
     let mut best: Option<(f64, Station)> = None;
     let mut tried: Vec<([FaceId; 2], String)> = Vec::new();
     let attempt =
@@ -2421,6 +2447,20 @@ pub(crate) struct Rolled {
 }
 
 impl Rolled {
+    /// What is cut off at its ends: each surface of [`Rolled::trims`], and
+    /// the side of it the tool's end run on past it lies on.
+    pub(crate) fn dropped(&self) -> GeopResult<Vec<(NurbSurface3D, Option<bool>)>> {
+        let stations = &self.tool.stations;
+        let ends = [&stations[0], stations.last().expect("stations")];
+        let mut dropped = Vec::new();
+        for (surface, end) in self.trims.iter().zip(ends) {
+            if let Some(surface) = surface {
+                dropped.push((surface.clone(), side_of(surface, &end.vertices[2])?));
+            }
+        }
+        Ok(dropped)
+    }
+
     /// How wide its tool is, as a plain number: the farthest any of its
     /// stations' vertices lies from another — how far the faces it is
     /// cut off by are carried on (see [`crate::blend::cuts`]).
@@ -3832,5 +3872,6 @@ pub(crate) fn check_touches(model: &Model, rolled: &Rolled) -> GeopResult<Vec<Cr
         &rolled.middles,
         &ends,
         &chain.edges(),
+        &rolled.dropped()?,
     )
 }

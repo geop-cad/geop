@@ -35,11 +35,11 @@
 //! [`crate::rolling`]); bevelled alike, its sections the chords. Where the
 //! section is carried along the edge unchanged — a straight edge between
 //! planes, a circle between faces turning round its axis — the skinned
-//! tool is that section swept along it, exactly. A chain ends at corners
-//! of exactly one more face (see [`tool_end`]): run out past it where the
-//! edge leaves the solid through it and the blend cuts, flush with it
-//! otherwise — or vanishes, narrowing into the vertex, where its two faces
-//! meet tangentially.
+//! tool is that section swept along it, exactly. A chain ends at the one
+//! face that ends its faces there, whatever else meets at the vertex (see
+//! [`tool_end`]): run out past it where the edge leaves the solid through
+//! it and the blend cuts, flush with it otherwise — or vanishes, narrowing
+//! into the vertex, where its two faces meet tangentially.
 //!
 //! A blend has to meet both faces inside them — checked along the whole of
 //! where it touches them (see [`check_contacts`]) — so one too large for
@@ -99,7 +99,7 @@ use geop_ops_model::{NamedModel, Namer};
 use crate::corner;
 use crate::rolling::{self, Radii, Rolled};
 use crate::tool::{self, Corner, CornerEnd, Tool};
-use geop_ops_model::tangent::{TangentChain as Chain, tangent_chain, vanishes_at};
+use geop_ops_model::tangent::{Link, TangentChain as Chain, tangent_chain, vanishes_at};
 
 /// What a blend replaces an edge's corner with (see the module docs).
 #[derive(Clone, Debug, PartialEq)]
@@ -227,8 +227,10 @@ pub(crate) fn bend(bend: Scalar) -> GeopResult<Bend> {
 /// Anything else, and a tool along the edge would cut or fill what it
 /// should not: it is said `unless`, for a rolled tool to run on through the
 /// face and be cut off by it. The end, and that third face. Where more
-/// faces meet, only a cut leaving the solid through all of them runs out
-/// past them; anything else is refused.
+/// faces meet, a cut leaving the solid through all of them runs out past
+/// them; anything else ends at the one face that ends `faces` there (see
+/// [`faces_ending`]), which is its third face, or is refused where that is
+/// not one.
 ///
 /// Where `faces` meet tangentially at the vertex, the blend vanishes there
 /// ([`End::Vanish`]), whatever else meets there: it has no third face.
@@ -255,36 +257,10 @@ pub(crate) fn tool_end(
     // In id order, not the coedges' hash-map order: of two flush faces the
     // first is the wall's, and it is what the end is measured against.
     others.sort_by_key(|f| f.0);
-    // A face a union left in two — a plate standing flush with the side of
-    // what it stands on — is one wall: what is told of the third face is
-    // told of the plane they share.
-    let mut walls: Vec<FaceId> = Vec::new();
-    for &face in &others {
-        let plane = model.get_face(face)?.surface.as_plane()?;
-        let flush = |wall: &FaceId| -> GeopResult<bool> {
-            let (Some(a), Some(b)) = (&plane, model.get_face(*wall)?.surface.as_plane()?) else {
-                return Ok(false);
-            };
-            let (na, nb) = (a.normal.normalize()?, b.normal.normalize()?);
-            Ok(na.prod_dot(&nb).definitely_greater(Scalar::ZERO)
-                && na.prod_cross(&nb).norm_sq().could_be_equal(Scalar::ZERO)
-                && a.signed_distance(&b.point).could_be_equal(Scalar::ZERO))
-        };
-        let mut flush_with_one = false;
-        for wall in &walls {
-            if flush(wall)? {
-                flush_with_one = true;
-                break;
-            }
-        }
-        if !flush_with_one {
-            walls.push(face);
-        }
-    }
-    let others = walls;
+    let others = one_per_wall(model, &others)?;
     let unsupported = |why: &str| {
         Err(GeopError::new(format!(
-            "the edge ends at vertex {vertex}, where {why}: a blend ends only at a corner of exactly three faces — or a plane in two flush faces — run out through the third face where the edge leaves the solid through it, flush with it where it runs into it, and filled up to it only where it is a plane square to the edge"
+            "the edge ends at vertex {vertex}, where {why}: a blend ends only at one face that ends the faces either side of it — or a plane in two flush faces — run out through it where the edge leaves the solid through it, flush with it where it runs into it, and filled up to it only where it is a plane"
         )))
     };
     // Out of the solid through every other face there — a pyramid's apex
@@ -314,10 +290,19 @@ pub(crate) fn tool_end(
             return Ok((End::RunOut, Some(face)));
         }
     }
-    let [other] = others.as_slice() else {
+    // Where more faces meet, what stops the blend is what ends its faces
+    // there: past the rest, the faces it touches still go on.
+    let stopping = if others.len() > 1 {
+        faces_ending(model, vertex, faces, leaving)?
+    } else {
+        others.clone()
+    };
+    let stopping = one_per_wall(model, &stopping)?;
+    let [other] = stopping.as_slice() else {
         return unsupported(&format!(
-            "{} more faces meet, and the edge does not leave the solid through every one of them, a cut",
-            others.len()
+            "{} more faces meet, and the edge does not leave the solid through every one of them, a cut, and its faces end there at {} faces, not one",
+            others.len(),
+            stopping.len()
         ));
     };
     let plane = model.get_face(*other)?.surface.as_plane()?;
@@ -357,11 +342,15 @@ pub(crate) fn tool_end(
     // Filled in up to a face the edge leaves the solid through — an outward
     // corner — the fill ends flush with it, touching the corner's other
     // edge, the one between that face and the face the fill runs along. In
-    // the plane of a face square to the edge, that is the face's own
-    // business; anywhere else, the end would be a face of its own ending on
-    // that edge, the very place no boolean can cut (a blade's root, filled
-    // round to its sharp trailing edge, ended in a notch along the edge).
-    if leaves && let Some(why) = why {
+    // the plane of a face, at any angle, that is the face's own business: the
+    // end lies in the face, and is made one with it. On a curved face the
+    // end would be a face of its own ending on that edge, the very place no
+    // boolean can cut (a blade's root, filled round to its sharp trailing
+    // edge, ended in a notch along the edge).
+    if leaves
+        && plane.is_none()
+        && let Some(why) = why
+    {
         return unsupported(&format!(
             "{why}, and the edge leaves the solid there, an outward corner: a fill up to it would end on the corner's edge between the third face and the face it is filled along"
         ));
@@ -380,6 +369,81 @@ pub(crate) fn tool_end(
         )
     });
     Ok((End::Wall { unless }, Some(*other)))
+}
+
+/// `faces` with those of one plane as one, the first of them: a face a
+/// union left in two — a plate standing flush with the side of what it
+/// stands on — is one wall, and what is told of the third face is told of
+/// the plane they share.
+fn one_per_wall(model: &Model, faces: &[FaceId]) -> GeopResult<Vec<FaceId>> {
+    let mut walls: Vec<FaceId> = Vec::new();
+    for &face in faces {
+        let plane = model.get_face(face)?.surface.as_plane()?;
+        let flush = |wall: &FaceId| -> GeopResult<bool> {
+            let (Some(a), Some(b)) = (&plane, model.get_face(*wall)?.surface.as_plane()?) else {
+                return Ok(false);
+            };
+            let (na, nb) = (a.normal.normalize()?, b.normal.normalize()?);
+            Ok(na.prod_dot(&nb).definitely_greater(Scalar::ZERO)
+                && na.prod_cross(&nb).norm_sq().could_be_equal(Scalar::ZERO)
+                && a.signed_distance(&b.point).could_be_equal(Scalar::ZERO))
+        };
+        let mut flush_with_one = false;
+        for wall in &walls {
+            if flush(wall)? {
+                flush_with_one = true;
+                break;
+            }
+        }
+        if !flush_with_one {
+            walls.push(face);
+        }
+    }
+    Ok(walls)
+}
+
+/// The faces at `vertex` where `faces`, either side of a chain ending
+/// there, end: for each, the face across its other edge at the vertex —
+/// unless the face goes on there, tangent to what is across that edge (two
+/// quarters of one wall), or along that edge, which runs straight on the
+/// way the chain does, `leaving`. A thread's flank goes on past where the
+/// cylinder's wall beside it ends in the cylinder's top: the top is what
+/// stops a blend between them, not the wall on the far side of the flank.
+/// Sorted by id, each once.
+fn faces_ending(
+    model: &Model,
+    vertex: VertexId,
+    faces: [FaceId; 2],
+    leaving: &Vector3,
+) -> GeopResult<Vec<FaceId>> {
+    let mut ending = Vec::new();
+    for edge in model.edges_at_vertex(vertex) {
+        let Some(pair) = model.faces_of_edge(edge) else {
+            continue;
+        };
+        // Which of the chain's faces this edge bounds, other than the
+        // edge between the two, and the face across it.
+        let (own, across) = match (faces.contains(&pair[0]), faces.contains(&pair[1])) {
+            (true, false) => (pair[0], pair[1]),
+            (false, true) => (pair[1], pair[0]),
+            _ => continue,
+        };
+        if vanishes_at(model, vertex, [own, across])? {
+            continue;
+        }
+        let forward = model.get_edge(edge)?.start_vertex == vertex;
+        let (_, along) = Link::new(model, edge, forward)?.at(model, Scalar::ZERO)?;
+        if along.could_be_parallel(leaving)
+            && along.prod_dot(leaving).definitely_greater(Scalar::ZERO)
+        {
+            continue;
+        }
+        if !ending.contains(&across) {
+            ending.push(across);
+        }
+    }
+    ending.sort_by_key(|f| f.0);
+    Ok(ending)
 }
 
 /// Seed of the ray casting behind `face_contains` here, whose answer does
@@ -423,6 +487,10 @@ pub(crate) struct Crossing {
 /// of the blend a point of its contact on either side within it, has to
 /// lie on a face of its side — inside it, or on an edge it may meet. One
 /// wholly beyond its faces, too large for them, is refused.
+///
+/// What is cut off at an end decides nothing: the side of each surface of
+/// `dropped` it names (see [`crate::rolling::Rolled::dropped`]), where a contact run on past
+/// the end goes on over the seams of faces the blend does not reach.
 pub(crate) fn check_contacts(
     model: &Model,
     sides: &[Vec<FaceId>; 2],
@@ -430,6 +498,7 @@ pub(crate) fn check_contacts(
     middles: &[[Vector3; 2]],
     ends: &[VertexId],
     own: &[EdgeId],
+    dropped: &[(NurbSurface3D, Option<bool>)],
 ) -> GeopResult<Vec<Crossing>> {
     let size = RemeshParams::default().curve_curve_min_subdivision_size;
     let mut crossings: Vec<Crossing> = Vec::new();
@@ -464,19 +533,23 @@ pub(crate) fn check_contacts(
                         .with_context(ctx)?;
                 let mut at = Vec::new();
                 for &(t, _) in hits.as_slice() {
-                    at.push(contact[k].evaluate(t)?);
-                    params.push(t);
-                }
-                let found = match hits {
-                    Intersections::Found(found) => found,
-                    Intersections::Coincident(_) => {
-                        return Err(GeopError::new(format!(
-                            "the blend is too large for its faces: where it touches faces {faces:?} it runs exactly along edge {edge}, at {:?}",
-                            at.first()
-                        )));
+                    let p = contact[k].evaluate(t)?;
+                    let mut kept = true;
+                    for (surface, past) in dropped {
+                        kept &= side_of(surface, &p)?.is_none_or(|side| Some(side) != *past);
                     }
-                };
-                if found.is_empty() {
+                    if kept {
+                        at.push(p);
+                        params.push(t);
+                    }
+                }
+                if matches!(hits, Intersections::Coincident(_)) {
+                    return Err(GeopError::new(format!(
+                        "the blend is too large for its faces: where it touches faces {faces:?} it runs exactly along edge {edge}, at {:?}",
+                        at.first()
+                    )));
+                }
+                if at.is_empty() {
                     continue;
                 }
                 let crossing = crossing_at(model, faces, edge, at).with_context(ctx)?;
@@ -642,7 +715,7 @@ pub(crate) fn cuts(model: &Model, crossings: &[Crossing], reach: f64) -> GeopRes
 /// Which side of `surface` the point `p` lies on, along the normal at its
 /// nearest point: `true` in front, `false` behind, none if it could lie on
 /// it.
-fn side_of(surface: &NurbSurface3D, p: &Vector3) -> GeopResult<Option<bool>> {
+pub(crate) fn side_of(surface: &NurbSurface3D, p: &Vector3) -> GeopResult<Option<bool>> {
     let (u, v, q) = surface.closest_point(p)?;
     let off = p.sub(&q).prod_dot(&surface.normal(u, v)?);
     Ok(if off.definitely_greater(Scalar::ZERO) {
@@ -1138,7 +1211,9 @@ fn blend_once(
                 for cut in &all_cuts[component[0]] {
                     tool = cut_off(model, &scope, tool, cut).with_context(ctx)?;
                 }
-                target = apply_tool(model, &scope, target, tool, rolled.bend).with_context(ctx)?;
+                let flush = rolled.bend == Bend::Concave || rolled.trims[k].is_some();
+                target = apply_tool(model, &scope, target, tool, rolled.bend, flush)
+                    .with_context(ctx)?;
             }
             continue;
         }
@@ -1170,13 +1245,16 @@ fn blend_once(
             }
         }
         let bend = tools.bend(component[0]);
-        target = apply_tool(model, &scope, target, tool, bend).with_context(ctx)?;
+        let flush = bend == Bend::Concave
+            || (component.iter()).any(|&i| tools.rolled[i].1.trims.iter().any(Option::is_some));
+        target = apply_tool(model, &scope, target, tool, bend, flush).with_context(ctx)?;
     }
     // The inward corners, each cut by its two tools run on past it.
     for (scope, ctx, runs) in mitres {
         let ctx = with_context!("{ctx}");
         if let Some(tool) = mitre(model, &scope, &runs).with_context(ctx)? {
-            target = apply_tool(model, &scope, target, tool, Bend::Convex).with_context(ctx)?;
+            target =
+                apply_tool(model, &scope, target, tool, Bend::Convex, false).with_context(ctx)?;
         }
     }
     model.rename(target, namer.root())
@@ -1493,16 +1571,19 @@ fn section_contacts(
 /// its tool kept, keeps its own name (see the naming of
 /// `geop_lib_booleans`).
 ///
-/// A fill capped flush with a face it ends at — a pocket's upright edge
-/// filled up to the top — leaves its cap a face of its own in that face's
-/// surface, and the edges between them on the solid, where nothing bends:
-/// each such piece of the tool is made one with the face beside it.
+/// A tool `flush` with a face it ends at — a pocket's upright edge filled up
+/// to the top, a cut cut off by the face it runs into — leaves its cap a face
+/// of its own in that face's surface, and the edges between them on the
+/// solid, where nothing bends:
+/// each such piece of the tool is made one with the face beside it, and the
+/// pieces the cap's outline leaves of that face with each other.
 fn apply_tool(
     model: &mut NamedModel,
     scope: &Namer,
     target: SolidId,
     tool: SolidId,
     bend: Bend,
+    flush: bool,
 ) -> GeopResult<SolidId> {
     let tool_faces: Vec<String> = (model.topology().solid_faces(tool)?.into_iter())
         .filter_map(|f| model.name_of(f).map(str::to_string))
@@ -1516,7 +1597,7 @@ fn apply_tool(
         RemeshParams::default(),
     )?
     .ok_or_else(|| GeopError::new("the blend cut the whole solid away"))?;
-    if bend == Bend::Convex {
+    if !flush {
         return Ok(solid);
     }
     let from_tool: Vec<FaceId> = (model.topology().solid_faces(solid)?.into_iter())
@@ -1528,9 +1609,22 @@ fn apply_tool(
             })
         })
         .collect();
+    // A cap flush with a face overlaps it where the tool reaches into the
+    // solid, and leaves the face cut along the cap's outline, where nothing
+    // bends either: its pieces are made one again too.
+    let names: Vec<(FaceId, String)> = (model.topology().solid_faces(solid)?.into_iter())
+        .filter_map(|f| Some((f, model.name_of(f)?.to_string())))
+        .collect();
+    let name_of = |f: FaceId| names.iter().find(|(g, _)| *g == f).map(|(_, n)| n.as_str());
+    let pieces_of_one = |f: FaceId, g: FaceId| {
+        let (Some(a), Some(b)) = (name_of(f), name_of(g)) else {
+            return false;
+        };
+        scope.is_piece_of(a, b) || scope.is_piece_of(b, a)
+    };
     match model
         .merge_faces_on_one_surface(solid.into(), |f, g| {
-            from_tool.contains(&f) != from_tool.contains(&g)
+            from_tool.contains(&f) != from_tool.contains(&g) || pieces_of_one(f, g)
         })
         .with_context(with_context!(
             "making the fill's faces one with those beside them in one surface"

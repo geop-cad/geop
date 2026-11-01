@@ -184,7 +184,7 @@ pub fn edge_crosses_face(
     edge_id: EdgeId,
     face_id: FaceId,
 ) -> GeopResult<Option<Vector3>> {
-    let ctx = |e: GeopError| e.with_context(format!("edge {} x face {}", edge_id.0, face_id.0));
+    let ctx = |e: GeopError| e.with_context(format!("edge {edge_id} x face {face_id}"));
     let (edge, face) = (&model.edges[&edge_id], &model.faces[&face_id]);
     if model.face_edges(face_id).any(|e| e == edge_id) {
         return Ok(None);
