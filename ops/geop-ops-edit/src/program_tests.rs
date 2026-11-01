@@ -655,8 +655,9 @@ mod merge_faces {
         program.build_model(registry).unwrap()
     }
 
-    /// Two blocks united flush: one box, six faces, twelve edges, eight
-    /// corners — and the names of the faces made part of others still find
+    /// Two blocks united flush are one box already, six faces, twelve
+    /// edges, eight corners: the union made them one, and the step finds
+    /// nothing more. The names of the faces made part of others still find
     /// them.
     #[test]
     fn blocks_united_flush_are_one_box() {
@@ -669,7 +670,7 @@ mod merge_faces {
         );
         let joined = program.build_model(registry).unwrap();
         let solid = joined.solid_names()[0].clone();
-        assert!(joined.topology().faces.len() > 6);
+        assert_eq!(joined.topology().faces.len(), 6);
         let part = merged(program, &solid);
         assert_valid(&part);
         let model = part.topology();

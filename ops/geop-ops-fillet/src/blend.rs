@@ -1491,12 +1491,9 @@ fn section_contacts(
 /// Cuts `tool` away from `target`, or fills it in, as `bend` says — named
 /// by `scope`: the solid that is left. The blend face, the one piece of
 /// its tool kept, keeps its own name (see the naming of
-/// `geop_lib_booleans`).
-///
-/// A fill capped flush with a face it ends at — a pocket's upright edge
-/// filled up to the top — leaves its cap a face of its own in that face's
-/// surface, and the edges between them on the solid, where nothing bends:
-/// each such piece of the tool is made one with the face beside it.
+/// `geop_lib_booleans`). A fill capped flush with a face it ends at, a
+/// pocket's upright edge filled up to the top, is made one with that face by
+/// the boolean.
 fn apply_tool(
     model: &mut NamedModel,
     scope: &Namer,
@@ -1504,10 +1501,7 @@ fn apply_tool(
     tool: SolidId,
     bend: Bend,
 ) -> GeopResult<SolidId> {
-    let tool_faces: Vec<String> = (model.topology().solid_faces(tool)?.into_iter())
-        .filter_map(|f| model.name_of(f).map(str::to_string))
-        .collect();
-    let solid = boolean(
+    boolean(
         model,
         scope,
         target,
@@ -1515,29 +1509,5 @@ fn apply_tool(
         bend.op(),
         RemeshParams::default(),
     )?
-    .ok_or_else(|| GeopError::new("the blend cut the whole solid away"))?;
-    if bend == Bend::Convex {
-        return Ok(solid);
-    }
-    let from_tool: Vec<FaceId> = (model.topology().solid_faces(solid)?.into_iter())
-        .filter(|&f| {
-            model.name_of(f).is_some_and(|name| {
-                tool_faces
-                    .iter()
-                    .any(|t| name == t || scope.is_piece_of(name, t))
-            })
-        })
-        .collect();
-    match model
-        .merge_faces_on_one_surface(solid.into(), |f, g| {
-            from_tool.contains(&f) != from_tool.contains(&g)
-        })
-        .with_context(with_context!(
-            "making the fill's faces one with those beside them in one surface"
-        ))? {
-        Body::Solid(solid) => Ok(solid),
-        Body::Sheet(_) => Err(GeopError::new(
-            "making the fill's faces one with those beside them left no solid",
-        )),
-    }
+    .ok_or_else(|| GeopError::new("the blend cut the whole solid away"))
 }

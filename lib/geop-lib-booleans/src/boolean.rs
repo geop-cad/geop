@@ -30,7 +30,7 @@ use geop_core_math::{
     with_context,
 };
 use geop_core_topology::{
-    EdgeId, FaceId, Model, SolidId,
+    EdgeId, FaceId, Model, SolidId, VertexId,
     contains::{
         face::face_interior_point_where,
         shell::{Classified, PointClassification as ShellPoint, solid_contains, solid_face_at},
@@ -39,7 +39,7 @@ use geop_core_topology::{
 use geop_ops_model::{BooleanOp, NamedModel, Namer};
 
 use crate::naming::{name_lone_pieces, origins_by_name};
-use crate::remesh::{RemeshParams, remesh};
+use crate::remesh::{Origins, RemeshParams, remesh};
 
 /// Where one solid's face sits relative to the *other* solid.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -284,6 +284,7 @@ fn combine(
         "boolean(name={}, solid_a={solid_a}, solid_b={solid_b}, op={op:?}, up_to_next={up_to_next:?})",
         namer.root()
     );
+    let (parted, between_two) = given_topology(model, &[solid_a, solid_b]).with_context(&ctx)?;
 
     // A remesh error names entities by id, and ids say nothing of what the
     // entities are: name them, as they are where it failed.
@@ -431,25 +432,99 @@ fn combine(
     else {
         return Ok(Reach::Stopped(None));
     };
-    // Pieces of one face that end up side by side — split along an edge of
-    // the other solid that is no edge of the result — are made one again:
-    // they lie on the very surface they were cut from.
+    // What the boolean left in two is made one where it lies on one surface:
+    // pieces of one face side by side, split along an edge of the other
+    // solid that is no edge of the result, and a face of each solid running
+    // on into the other's. What the operands already had stays as they were
+    // given: an edge that parted the same two faces there, a cylinder's
+    // quarters or a face a step split on purpose, and a vertex that was
+    // already only between two edges.
     let by_name = origins_by_name(model, &origins, solid).with_context(&ctx)?;
-    let origin = |f: FaceId| origins.faces.get(&f);
+    let stays = edges_parting_as_given(model, solid, &origins, &parted).with_context(&ctx)?;
     let merged = model
-        .merge_faces_on_one_surface(solid.into(), |f, g| {
-            origin(f).is_some() && origin(f) == origin(g)
-        })
+        .merge_faces_on_one_surface(
+            solid.into(),
+            |e| !stays.contains(&e),
+            |v| !between_two.contains(&v),
+        )
         .with_context(&ctx)?;
     match merged {
         geop_core_topology::Body::Solid(solid) => {
-            name_lone_pieces(model, &by_name, solid).with_context(&ctx)?;
+            name_lone_pieces(model, &by_name).with_context(&ctx)?;
             Ok(Reach::Stopped(Some(solid)))
         }
         geop_core_topology::Body::Sheet(_) => Err(ctx(GeopError::new(
             "merging the faces of the result on one surface left no solid",
         ))),
     }
+}
+
+/// See [`given_topology`].
+type GivenTopology = (HashMap<String, [String; 2]>, HashSet<VertexId>);
+
+/// What of `solids` a boolean leaves as it was given: per edge, by name, the
+/// names of the two faces it parts, sorted; and the vertices only two edges
+/// meet at.
+fn given_topology(model: &NamedModel, solids: &[SolidId]) -> GeopResult<GivenTopology> {
+    let topology = model.topology();
+    let mut parted: HashMap<String, Vec<String>> = HashMap::new();
+    let mut edges_at: HashMap<VertexId, HashSet<EdgeId>> = HashMap::new();
+    for &solid in solids {
+        for face in topology.solid_faces(solid)? {
+            let name = model.name(face)?;
+            for edge in topology.face_edges(face) {
+                parted
+                    .entry(model.name(edge)?.to_string())
+                    .or_default()
+                    .push(name.to_string());
+                let e = topology.get_edge(edge)?;
+                for v in [e.start_vertex, e.end_vertex] {
+                    edges_at.entry(v).or_default().insert(edge);
+                }
+            }
+        }
+    }
+    let parted = (parted.into_iter())
+        .filter_map(|(edge, mut faces)| {
+            faces.sort();
+            let [f, g] = <[String; 2]>::try_from(faces).ok()?;
+            Some((edge, [f, g]))
+        })
+        .collect();
+    let between_two = (edges_at.into_iter())
+        .filter(|(_, edges)| edges.len() == 2)
+        .map(|(v, _)| v)
+        .collect();
+    Ok((parted, between_two))
+}
+
+/// The edges of `solid`, a boolean's result, that part pieces of the two
+/// faces the edge they are a piece of parted in the operands (`parted`, see
+/// [`given_topology`]): an edge the operands had between those faces, which
+/// the boolean did not make. An edge of one operand that now parts a face
+/// of each is the boolean's seam, whatever curve it runs along.
+fn edges_parting_as_given(
+    model: &NamedModel,
+    solid: SolidId,
+    origins: &Origins,
+    parted: &HashMap<String, [String; 2]>,
+) -> GeopResult<HashSet<EdgeId>> {
+    let topology = model.topology();
+    let mut faces_of: HashMap<EdgeId, Vec<&String>> = HashMap::new();
+    for face in topology.solid_faces(solid)? {
+        if let Some(origin) = origins.faces.get(&face) {
+            for edge in topology.face_edges(face) {
+                faces_of.entry(edge).or_default().push(origin);
+            }
+        }
+    }
+    Ok((faces_of.into_iter())
+        .filter_map(|(edge, mut faces)| {
+            let given = parted.get(origins.edges.get(&edge)?)?;
+            faces.sort();
+            (faces.len() == 2 && *faces[0] == given[0] && *faces[1] == given[1]).then_some(edge)
+        })
+        .collect())
 }
 
 /// Narrows `decisions` down to the piece of the tool (the faces `tool`) that

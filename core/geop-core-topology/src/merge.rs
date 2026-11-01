@@ -25,6 +25,17 @@ use crate::{
     build::{BodySpec, CoedgeOn, CoedgeSpec, EdgeSpec, FaceSpec},
 };
 
+thread_local! {
+    static SURFACES_COMPARED: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
+/// How many pairs of faces this thread has asked whether they lie on one
+/// surface, ever: what merging costs grows with this, so a test can bound
+/// the work of a cut by the faces it touches rather than time it.
+pub fn surfaces_compared() -> usize {
+    SURFACES_COMPARED.get()
+}
+
 /// Where the entities of a [`BodySpec`] went in [`BodySpec::merged`]'s
 /// result, index for index.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -47,17 +58,19 @@ impl BodySpec {
     /// the two edges made one, the first in order. Also says where each
     /// entity went.
     ///
-    /// Only faces `may_merge` lets — asked of the two faces of the original
-    /// that first stand for them — are asked whether they lie on one
-    /// surface: a boolean asks only of faces cut from one face, which it
-    /// knows; an edit, of all.
+    /// Two faces are asked whether they lie on one surface only if
+    /// `edge_may_go` lets every edge between them go, and two edges are
+    /// joined only if `vertex_may_go` lets the vertex between them go. A
+    /// boolean lets go what it left behind itself, so that an edge a step
+    /// drew on purpose stays; an edit lets go all.
     pub fn merged(
         &self,
-        may_merge: impl Fn(usize, usize) -> bool,
+        edge_may_go: impl Fn(usize) -> bool,
+        vertex_may_go: impl Fn(usize) -> bool,
     ) -> GeopResult<(BodySpec, Merged)> {
         let mut work = Work::new(self);
-        while work.merge_one_pair(&may_merge)? {}
-        while work.join_one_pair()? {}
+        while work.merge_one_pair(&edge_may_go)? {}
+        while work.join_one_pair(&vertex_may_go)? {}
         work.compacted()
     }
 }
@@ -125,15 +138,23 @@ impl<'a> Work<'a> {
 
     /// Makes one pair of faces across an edge, on one surface, one face.
     /// Whether it found one.
-    fn merge_one_pair(&mut self, may_merge: &impl Fn(usize, usize) -> bool) -> GeopResult<bool> {
+    fn merge_one_pair(&mut self, edge_may_go: &impl Fn(usize) -> bool) -> GeopResult<bool> {
         let uses = self.uses();
+        let pair = |f: usize, g: usize| (f.min(g), f.max(g));
+        // Faces with an edge between them that has to stay.
+        let held: std::collections::HashSet<(usize, usize)> = (uses.iter().enumerate())
+            .filter_map(|(e, faces)| match faces.as_slice() {
+                [f, g] if !edge_may_go(e) => Some(pair(*f, *g)),
+                _ => None,
+            })
+            .collect();
         for faces in &uses {
             let [f, g] = faces.as_slice() else { continue };
             if f == g {
                 continue;
             }
-            let (keep, gone) = ((*f).min(*g), (*f).max(*g));
-            if !may_merge(keep, gone) || self.apart.contains(&(keep, gone)) {
+            let (keep, gone) = pair(*f, *g);
+            if held.contains(&(keep, gone)) || self.apart.contains(&(keep, gone)) {
                 continue;
             }
             let Some(face) = self.merged_face(keep, gone, &uses)? else {
@@ -169,6 +190,7 @@ impl<'a> Work<'a> {
         gone: usize,
         uses: &[Vec<usize>],
     ) -> GeopResult<Option<FaceSpec>> {
+        SURFACES_COMPARED.set(SURFACES_COMPARED.get() + 1);
         let (a, b) = (
             self.faces[keep].as_ref().expect("live"),
             self.faces[gone].as_ref().expect("live"),
@@ -273,7 +295,7 @@ impl<'a> Work<'a> {
 
     /// Makes one pair of edges that only meet each other at a vertex, and
     /// run between the same two faces, one edge. Whether it found one.
-    fn join_one_pair(&mut self) -> GeopResult<bool> {
+    fn join_one_pair(&mut self, vertex_may_go: &impl Fn(usize) -> bool) -> GeopResult<bool> {
         let uses = self.uses();
         let n = self.spec.vertices.len();
         let mut at_vertex: Vec<Vec<usize>> = vec![Vec::new(); n];
@@ -295,7 +317,7 @@ impl<'a> Work<'a> {
                 continue;
             };
             let (e1, e2) = ((*e1).min(*e2), (*e1).max(*e2));
-            if e1 == e2 || pole[v] {
+            if e1 == e2 || pole[v] || !vertex_may_go(v) {
                 continue;
             }
             let (one, two) = (
@@ -520,7 +542,7 @@ mod tests {
         let solid = test_cube_solid(&mut model);
         let faces = model.solid_faces(solid).unwrap();
         let (spec, _) = model.body_spec(&faces, true).unwrap();
-        let (merged, map) = spec.merged(|_, _| true).unwrap();
+        let (merged, map) = spec.merged(|_| true, |_| true).unwrap();
         assert_eq!(merged.faces.len(), 6);
         assert_eq!(merged.edges.len(), 12);
         assert_eq!(merged.vertices.len(), 8);

@@ -1240,6 +1240,26 @@ name back (`name_lone_pieces`), its piece's name standing for it too. A
 fillet rolled instead of extruded split the box's bottom along its tool
 the other way round, and the draft about the bottom no longer found it.
 
+## A boolean makes one what it left in two, and only that
+
+Two faces of a boolean's result that are one surface
+(`NurbSurface3D::carrying`) are made one across an edge the boolean left
+there: pieces of one face its imprint cut, and a face of each operand running
+on into the other's. An edge that parted the same two faces in an operand
+stays (`edges_parting_as_given`), whatever surface they lie on: a cylinder's
+quarters, and a face a step divided on purpose. "Did this curve exist before?"
+is the wrong question: the seam of two blocks standing flush runs along an edge
+of each, and the boolean made it a seam, parting a face of each where it had
+parted a top from an end. Ask what the edge parts.
+
+What is made one keeps the oldest's name, and the others' names stand for it.
+A piece's name is then an alias, so asking `name_lone_pieces` only of the
+names faces still have lost the wall of a duck's hip: its one kept piece had
+run into the mirrored flange's wall, and the sketch on it found nothing.
+Whatever keeps something by a face's name (a colour, a reference) looks it up
+with `id_of`, from the name to the face; going from the face to its `name_of`
+misses every alias.
+
 ## A hash map's order is no order
 
 `Model`'s entities live in `HashMap`s, whose iteration order differs between

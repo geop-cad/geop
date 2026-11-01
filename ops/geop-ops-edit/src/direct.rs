@@ -475,7 +475,7 @@ impl ModelOperation for MergeFaces {
         args: &MergeFacesArgs,
     ) -> GeopResult<()> {
         for body in resolve_bodies(reader, &args.bodies)? {
-            model.merge_faces_on_one_surface(body, |_, _| true)?;
+            model.merge_faces_on_one_surface(body, |_| true, |_| true)?;
         }
         Ok(())
     }

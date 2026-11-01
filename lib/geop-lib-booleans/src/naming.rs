@@ -15,6 +15,10 @@
 //! | edge traced along faces `F1 < F2` from vertex `P` to `Q` (`P < Q`) | `N(F1,F2,P,Q)`, with a trailing `,k` only if several such edges join the same `P` and `Q` |
 //! | piece of face `F` split off along edge `E` | `N(F,E)` ([`Namer::piece`]) — the other piece keeps the name `F` |
 //!
+//! What the boolean leaves in two on one surface it makes one: the oldest's
+//! name stays, the others' stand for it, and an edge between them is gone
+//! with its name.
+//!
 //! Where the boolean keeps only one piece of an edge or a face — a face
 //! trimmed, a corner cut off it — that piece is the edge or face, cut
 //! back, and keeps its name ([`name_lone_pieces`]), whichever piece the
@@ -32,7 +36,7 @@
 //! boolean runs, remembers what each entity was made from, and
 //! [`BooleanNaming::finish`] settles all names at once when it is done.
 
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, HashMap, HashSet};
 
 use geop_core_math::{
     geop_error::{GeopError, GeopResult},
@@ -380,35 +384,37 @@ pub fn origins_by_name(
     Ok(by_name)
 }
 
-/// Gives the one piece of an edge or a face that `solid`, a boolean's
-/// result, kept the name of what it is a piece of, where nothing has that
-/// name any more: the boolean kept it trimmed, and which piece the splits
-/// left the name on (see the module docs) was the splicing's choice, not a
-/// fact about the result. Its piece's name stands for it too. `origins`
-/// says what each piece came from, by name (see [`origins_by_name`]).
+/// Gives the one piece of an edge or a face that a boolean's result kept
+/// the name of what it is a piece of, where nothing has that name any more:
+/// the boolean kept it trimmed, and which piece the splits left the name on
+/// (see the module docs) was the splicing's choice, not a fact about the
+/// result. Its piece's name stands for it too. `origins` says what each
+/// piece came from, by name (see [`origins_by_name`]).
+///
+/// Pieces made one count as one piece. A piece made part of another face or
+/// edge, running on into the other solid's on one surface, is that one now,
+/// which keeps its own name if it is no piece of this origin; the origin's
+/// name then only stands for it.
 pub fn name_lone_pieces(
     model: &mut NamedModel,
     origins: &HashMap<String, String>,
-    solid: SolidId,
 ) -> GeopResult<()> {
-    let topology = model.topology();
-    let faces = topology.solid_faces(solid)?;
-    let mut ids: Vec<RefId> = faces.iter().map(|&f| f.into()).collect();
-    let mut edges: Vec<EdgeId> = faces.iter().flat_map(|&f| topology.face_edges(f)).collect();
-    edges.sort_by_key(|e| e.0);
-    edges.dedup();
-    ids.extend(edges.into_iter().map(RefId::from));
-    let mut lone: BTreeMap<String, Vec<RefId>> = BTreeMap::new();
-    for id in ids {
-        if let Some(origin) = model.name_of(id).and_then(|name| origins.get(name)) {
-            lone.entry(origin.clone()).or_default().push(id);
+    let mut pieces: BTreeMap<&str, HashSet<RefId>> = BTreeMap::new();
+    for (name, origin) in origins {
+        if let Some(id) = model.id_of(name) {
+            pieces.entry(origin).or_default().insert(id);
         }
     }
-    for (origin, pieces) in lone {
-        if let [piece] = pieces[..]
-            && model.id_of(&origin).is_none()
+    for (origin, pieces) in pieces {
+        let mut pieces = pieces.into_iter();
+        if let (Some(piece), None) = (pieces.next(), pieces.next())
+            && model.id_of(origin).is_none()
         {
-            model.restore_name(piece, &origin)?;
+            if origins.get(model.name(piece)?).is_some_and(|o| o == origin) {
+                model.restore_name(piece, origin)?;
+            } else {
+                model.stand_for(piece, origin)?;
+            }
         }
     }
     Ok(())

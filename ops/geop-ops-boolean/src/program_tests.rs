@@ -504,3 +504,42 @@ fn section_of_a_cylinder_by_a_datum_plane() {
     let error = above.build_model(registry).unwrap_err();
     assert!(error.root_message().contains("do not meet"), "{error:?}");
 }
+
+/// Two blocks united flush are one box, and a step drawing on the top by the
+/// second block's name for it finds the one top: built again from the saved
+/// program, and step by step, it is the same.
+#[test]
+fn a_sketch_on_a_face_made_one_by_a_union_finds_it() {
+    let mut program = Program::new();
+    program.push("a", PrimitiveArgs::block([0.0; 3], [1.0, 1.0, 1.0]));
+    program.push(
+        "b",
+        PrimitiveArgs::block([1.0, 0.0, 0.0], [2.0, 1.0, 1.0]).combined(Combine::join("block(a)")),
+    );
+    let before = program.clone();
+    let part = program.build_model(registry).unwrap();
+    assert_eq!(part.topology().faces.len(), 6);
+    assert_eq!(
+        part.face_id("block(a,end)").unwrap(),
+        part.face_id("block(b,end)").unwrap()
+    );
+    let mut post = Sketch::new();
+    let c = post.add_point(n(1.5), n(0.5));
+    post.add_circle(c, n(0.2));
+    program.push(
+        "post_sketch",
+        AddSketchArgs::on(on_face("block(b,end)"), post),
+    );
+    program.push(
+        "post",
+        ExtrudeArgs {
+            output: Output::Solid(Combine::join("block(b)")),
+            ..extrude("post_sketch", 1.0, false)
+        },
+    );
+    let part = program.build_model(registry).unwrap();
+    assert_valid(&part);
+    let registry = std::rc::Rc::new(registry().unwrap());
+    geop_core_program::testing::assert_round_trips(registry.clone(), None, &program);
+    geop_core_program::testing::assert_incremental(registry, None, &[before, program]);
+}
