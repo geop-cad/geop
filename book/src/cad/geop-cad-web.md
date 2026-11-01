@@ -1,6 +1,6 @@
 # geop-cad-web
 
-> Brief overview only — full documentation is coming later.
+> This page is a reference to the crate; the protocol and the front ends are taught in [Lecture 39](../lectures/39-editor.md).
 
 The WebAssembly bindings the web app loads, published as crate `geop`.
 Compiled with `wasm-pack` and consumed by the React front end in `web/`.

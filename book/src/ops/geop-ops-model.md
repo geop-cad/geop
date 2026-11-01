@@ -1,6 +1,6 @@
 # geop-ops-model
 
-> Brief overview only — full documentation is coming later.
+> This page is a reference to the crate; how an operation uses this vocabulary is in [Lecture 40](../lectures/40-writing-an-operation.md).
 
 The vocabulary every operation shares, and the one `ops/` crate an
 operation depends on: every target a step of one operation reads of
@@ -165,8 +165,8 @@ depends on it alone.
 ### The target
 
 All of a part's datums are one target, `datums()`, a `Datums` that the
-steps adding datums revise, each adding its own by its step's id. The given
-step of a run defines it (`define_datums`), so `ORIGIN` — the coordinate
+steps adding datums revise, each adding its own by its step's id. A part no step
+added any to reads the default (`read_datums`), so `ORIGIN` — the coordinate
 system `origin`, the world's origin and axes, which no step adds — is there
 before any step. A datum stays where it was when its step ran, whatever
 later steps do to what it was built from. `read_datums(&reader)?.get(name)`

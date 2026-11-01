@@ -1,6 +1,6 @@
 # geop-ops-boolean
 
-> Brief overview only — full documentation is coming later.
+> This page is a reference to the crate; the algorithm is taught in [Lecture 22](../lectures/22-boolean.md), and this crate is read as an example in [Lecture 40](../lectures/40-writing-an-operation.md).
 
 The operations a program combines and cuts solids with (see
 [geop-core-editor](../core/geop-core-editor.md#an-operation-partoperation)),

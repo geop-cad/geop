@@ -253,10 +253,7 @@ formula names — the target a step of the program defines for it
 (`parameter`, a `ParameterValue`: a number, or a text — the row a table
 looked up; a table's columns are parameters of their own, `size.d`;
 `read_parameter`) — so a change to one of them rebuilds the step
-and a change to any other does not. Saved, a formula is told apart from
-every other value in a step's arguments (`formulas_in`,
-`rename_parameter_in`), so what reads a parameter is found, and renamed,
-without asking the operation. `ParameterValues` is every parameter as it
+and a change to any other does not. `ParameterValues` is every parameter as it
 came to, a chain every step defining parameters adds to
 (`read_parameter_values`: none, for a part defining none). What
 defines parameters is an operation of

@@ -1,6 +1,6 @@
 # geop-lib-fixtures
 
-> Brief overview only — full documentation is coming later.
+> This page is a reference to the crate; how tests use it is in [Lecture 40](../lectures/40-writing-an-operation.md).
 
 Test-only steps that give a program what an operation's tests build on,
 without sketching and extruding it: `Primitive`, a solid at given

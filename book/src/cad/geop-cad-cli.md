@@ -1,6 +1,6 @@
 # geop-cad-cli
 
-> Brief overview only — full documentation is coming later.
+> This page is a reference to the crate; a session with it is in [Lecture 39](../lectures/39-editor.md).
 
 The `geop` command-line tool: compiles a part program to STL — or any
 format an exporter of the editor writes — from the terminal.

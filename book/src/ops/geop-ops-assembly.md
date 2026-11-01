@@ -1,6 +1,6 @@
 # geop-ops-assembly
 
-> Brief overview only — full documentation is coming later.
+> This page is a reference to the crate; mates are taught in [Lecture 36](../lectures/36-mates.md) and the solver in [Lecture 37](../lectures/37-assembly-solver.md).
 
 Assemblies: parts placed in a part — another program file's part, loaded
 through the runner and placed by `AddPart` at a pose its program's state
@@ -34,7 +34,7 @@ an element `on` — a `Selected` of
 datum (`{"datum": "origin:xy"}`) or a sketch's point or curve — of the part
 itself, which is ground, or of a part placed in it, its target behind the
 part's path: `pin/model`, or `asm/pin/model` for one placed in a placed
-part (see [geop-core-program](../core/geop-core-program.md#instances)). Any
+part (see [geop-core-program](../core/geop-core-program.md#placed-parts)). Any
 other step's reference takes an element of a placed part the same way: a
 datum on a placed part's face, a pattern round a placed part's hole. Where the
 part goes is not an argument but the program's state `pin.pose` — a
@@ -45,7 +45,7 @@ adds its mates; it solves nothing. So a later step's mates that move it
 move it for every step.
 
 The part placed is an instance of the part (see
-[geop-core-program](../core/geop-core-program.md#instances)): the part
+[geop-core-program](../core/geop-core-program.md#placed-parts)): the part
 another file's program builds, loaded by the runner of the step from its
 workspace (see [geop-cad-base](../cad/geop-cad-base.md#the-workspace)),
 its parameters set to the step's `parameters` as its inputs, and run with

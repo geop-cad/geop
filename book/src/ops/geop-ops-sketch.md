@@ -1,6 +1,6 @@
 # geop-ops-sketch
 
-> Brief overview only — full documentation is coming later.
+> This page is a reference to the crate; sketches are taught from [Lecture 23](../lectures/23-sketch-solver.md).
 
 Sketches as an operation (see
 [geop-core-editor](../core/geop-core-editor.md#an-operation-partoperation)).

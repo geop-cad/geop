@@ -1,6 +1,6 @@
 # geop-lib-sweep
 
-> Brief overview only — full documentation is coming later.
+> This page is a reference to the crate; sweeps are taught from [Lecture 26](../lectures/26-sweeps.md).
 
 The sweep algorithms: extrude, revolve, screw, sweep along a path and
 loft, and the skinned grid all of them (and a blend's tool) are built as;

@@ -1,6 +1,6 @@
 # geop-core-rasterize
 
-> Brief overview only — full documentation is coming later.
+> This page is a reference to the crate; how a mesh is sent to a viewer is in [Lecture 39](../lectures/39-editor.md), and one of the rasterizer's bugs in [Lecture 42](../lectures/42-case-studies.md).
 
 Turns a `Model` into a triangle mesh, writes it out as an STL file, and
 renders it for debugging.
@@ -40,7 +40,7 @@ surface:
    curvature needs.
 3. For each cell, clip the outer loop to it (`clip::clip_to_rect`), subtract
    each hole (`clip::subtract_convex`), and ear-clip what is left
-   (`polygon_triangulate`).
+   (`triangulate_polygon`).
 
 Both clipping operations are Sutherland–Hodgman half-plane clipping and are
 computed directly from the boundary's own edges. No edge is reconstructed,
@@ -68,11 +68,8 @@ it independently. The mesh is only as watertight as those samplings agree.
 
 The `debug` module renders models for a person to look at. A
 `PrimitiveScene` collects points, lines, triangles, labels and sampled NURBS
-curves and surfaces, and saves them as an interactive HTML file;
-`PrimitiveSceneRecorder` records a sequence of them, for example one per
-iteration of a search. Attached to an error (see
-[geop-core-math](../core/geop-core-math.md)), a scene is rendered when the
-error is printed. `RasterizedModel::scene` draws a rasterized model, each
+curves and surfaces, and saves them as an interactive HTML file
+(`PrimitiveScene::save_to_file`). `RasterizedModel::scene` draws a rasterized model, each
 face in a color of the caller's choice. The `*_viz` examples render
 curve-curve and curve-surface intersections.
 

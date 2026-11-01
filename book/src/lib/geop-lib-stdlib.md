@@ -1,6 +1,6 @@
 # geop-lib-stdlib
 
-> Brief overview only — full documentation is coming later.
+> This page is a reference to the crate; how a program places such parts is in [Lecture 38](../lectures/38-runner.md).
 
 The standard parts — ISO screws, nuts, washers, dowel pins, standoffs,
 ball bearings, T-slot extrusions, a NEMA 17 motor, involute spur gears and

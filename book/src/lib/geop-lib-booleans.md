@@ -1,6 +1,6 @@
 # geop-lib-booleans
 
-> Brief overview only — full documentation is coming later.
+> This page is a reference to the crate; booleans are taught in [Lecture 21](../lectures/21-remesh.md) and [Lecture 22](../lectures/22-boolean.md).
 
 3-D boolean operations — union, intersection, and difference — on B-rep
 solids.

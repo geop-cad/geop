@@ -1,6 +1,6 @@
 # geop-lib-sheet
 
-> Brief overview only — full documentation is coming later.
+> This page is a reference to the crate; drawings are taught in [Lecture 35](../lectures/35-step-and-drawings.md).
 
 Files of paper — drawings, flat patterns — are laid out on a
 `Sheet`: plain 2-D strokes and labels in millimetres with `y` up,

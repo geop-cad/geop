@@ -1,6 +1,6 @@
 # geop-ops-reference-geometry
 
-> Brief overview only — full documentation is coming later.
+> This page is a reference to the crate; how an operation is built is in [Lecture 40](../lectures/40-writing-an-operation.md).
 
 Reference geometry as an operation (see
 [geop-core-editor](../core/geop-core-editor.md#an-operation-partoperation)).

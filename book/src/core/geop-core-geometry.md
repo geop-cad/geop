@@ -1,6 +1,6 @@
 # geop-core-geometry
 
-> Brief overview only — full documentation is coming later.
+> This page is a reference to the crate; its curves and surfaces are taught from [Lecture 6](../lectures/06-bezier.md), its intersections from [Lecture 12](../lectures/12-subdivide-to-isolate.md).
 
 NURBS curves and surfaces, containment queries, and curve/surface
 intersection, built on the interval-bounded scalars from

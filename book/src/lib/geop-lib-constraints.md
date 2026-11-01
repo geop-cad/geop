@@ -1,10 +1,10 @@
 # geop-lib-constraints
 
-> Brief overview only — full documentation is coming later.
+> This page is a reference to the crate; the solver is taught in [Lecture 37](../lectures/37-assembly-solver.md).
 
 Constraints on a part's state, and the solver that moves the state until
 they hold. Nothing here knows what the constraints are: mates and joints
-are [geop-ops-assembly](./geop-ops-assembly.md)'s, which defines them
+are [geop-ops-assembly](../ops/geop-ops-assembly.md)'s, which defines them
 through this crate.
 
 ## What the steps declare
@@ -29,7 +29,7 @@ alone:
   Declared with `unknown::declare_unknowns`.
 
 Both come up through the instances placed in a part (see
-[geop-core-program](../core/geop-core-program.md#instances)): a constraint
+[geop-core-program](../core/geop-core-program.md#placed-parts)): a constraint
 `c` of the instance `bolt` is the part's `bolt/c`, its derivatives by the
 state `bolt/s` where the instance's are by `s`, and its residuals as they
 are — a length within the instance, wherever it is. An instance's unknowns
@@ -72,4 +72,4 @@ step writes the state.
 
 What an editor does with these, the same for every program — dragging,
 setting a joint, listing what can be set — is `geop_ops_assembly::solving`
-(see [geop-ops-assembly](./geop-ops-assembly.md#solving-the-state)).
+(see [geop-ops-assembly](../ops/geop-ops-assembly.md#solving-the-state)).

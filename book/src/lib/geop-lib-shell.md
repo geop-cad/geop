@@ -1,6 +1,6 @@
 # geop-lib-shell
 
-> Brief overview only — full documentation is coming later.
+> This page is a reference to the crate; its rebuild is taught in [Lecture 30](../lectures/30-one-rebuild.md) and offsets in [Lecture 31](../lectures/31-offsets.md).
 
 Shelling, built directly rather than cut out by a boolean: `shell` hollows
 a solid of a `NamedModel` out to walls of one thickness, open where the

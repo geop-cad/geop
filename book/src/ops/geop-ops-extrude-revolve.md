@@ -1,6 +1,6 @@
 # geop-ops-extrude-revolve
 
-> Brief overview only — full documentation is coming later.
+> This page is a reference to the crate; these operations are taught in [Lecture 26](../lectures/26-sweeps.md) to [Lecture 28](../lectures/28-lofts-and-fills.md).
 
 Extrude, revolve, sweep and loft operations. They resolve what their
 arguments refer to — the sketch's areas as profiles

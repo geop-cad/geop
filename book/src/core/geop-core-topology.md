@@ -1,6 +1,6 @@
 # geop-core-topology
 
-> Brief overview only — full documentation is coming later.
+> This page is a reference to the crate; the B-rep is taught from [Lecture 17](../lectures/17-brep.md), its checks in [Lecture 20](../lectures/20-validation.md).
 
 B-rep (boundary representation) data structures, building, editing and
 validation for solids built from

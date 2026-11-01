@@ -1,6 +1,6 @@
 # geop-cad-base
 
-> Brief overview only — full documentation is coming later.
+> This page is a reference to the crate; the composition and the editor are taught in [Lecture 39](../lectures/39-editor.md).
 
 The CAD application, composed: what its editor offers, one line per crate,
 an editor of all of it, and the workspace its programs place parts from

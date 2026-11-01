@@ -1,6 +1,6 @@
 # geop-core-sketch
 
-> Brief overview only — full documentation is coming later.
+> This page is a reference to the crate; sketches are taught from [Lecture 23](../lectures/23-sketch-solver.md).
 
 2-D constraint sketches: entities, constraints solved by the engine every
 system shares ([geop-core-math](./geop-core-math.md)), and
@@ -8,9 +8,12 @@ profile extraction. Sketches are what get extruded or revolved into solids.
 
 ## Entities and constraints
 
-A `Sketch` is plain `f64` design data, serializable with serde, so a part
-program stores it verbatim and the web app sends it as is. Positions are
-`point::P2` (`[x, y]`), with the arithmetic on them in the same module.
+A `Sketch` is design data, serializable with serde, so a part program stores
+it verbatim and the web app sends it as is. Its numbers are `Scalar`s, saved
+as plain numbers (`as_f64`, `core/geop-core-sketch/src/sketch.rs`). Where a
+tool places what it builds and where the pointer meets the sketch are in
+plain numbers (`core/geop-core-sketch/src/plain.rs`): only ever a free
+choice, which the solver then makes exact.
 
 Points are the only entities with positions of their own. Curves refer to
 points by `PointId`, so two curves sharing an endpoint share the *same*

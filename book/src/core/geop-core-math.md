@@ -1,6 +1,6 @@
 # geop-core-math
 
-> Brief overview only — full documentation is coming later.
+> This page is a reference to the crate; the interval scalar is taught in [Lecture 4](../lectures/04-intervals.md) and [Lecture 5](../lectures/05-honest-numerics.md), the solvers in [Lecture 24](../lectures/24-rank-and-proof.md).
 
 Scalars, interval arithmetic, linear algebra, convex hulls, the kernel's
 shared error type, and geometric primitives. Every other crate in the workspace
@@ -190,11 +190,6 @@ Print numeric state with `{:?}`. On an interval scalar, `{}` shows only the
 midpoint to three decimals, which hides exactly the width you are trying to
 diagnose.
 
-A frame can also carry any `DebugContext` through `with_scene`. A
-`PrimitiveScene` (from `geop-core-rasterize`'s `debug` module) attached this
-way is rendered to an HTML file under `/tmp`
-when the error is printed, and the chain links to it, so a failure in a
-geometric search comes with a 3-D picture of what the search was looking at.
 
 ## Primitives
 
