@@ -1,0 +1,2 @@
+# A test of the book's demos, not of the kernel.
+converges_at_fourth_order
