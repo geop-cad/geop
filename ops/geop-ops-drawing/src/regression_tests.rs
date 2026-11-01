@@ -285,3 +285,91 @@ fn box_seen_a_hair_off_its_front() {
         "{lines:#?}"
     );
 }
+
+/// The duck's left ankle (`left_ankle.geop`, placed as `part2/part3` of the
+/// left leg) from the right: a D-shaped profile on the `yz` plane extruded
+/// 15 along `x`, its round end two quarter cylinders. The right view looks
+/// along `-x`, but in the ankle's frame, through the poses of the leg's
+/// parts, along `(-1, -8.1e-15, 3.9e-14)`. The lower quarter (face 37,
+/// degree 1 along `x` and a rational quadratic round the arc, its control
+/// points as the sketch's solve left them, `1e-13` wide) is then not swept
+/// along the line of sight to the last bit, and `g` is a rounding off zero
+/// all over it: the corrector put a seed on its start edge `150` wide round
+/// the arc, in a domain of `1`, and the trace evaluated the arc there,
+/// where its weight could be zero. Seen `4e-14` off its axis, the face's
+/// silhouette is a generator that projects to a point: swept along the
+/// view to the sheet's resolution, the face has none.
+#[test]
+fn quarter_cylinder_seen_a_hair_off_its_axis() {
+    use crate::silhouette::face_silhouettes;
+    use geop_core_geometry::nurb_surface::NurbSurface3D;
+    use geop_core_math::{
+        scalars::Scalar,
+        vector::{Vector3, Vector4},
+    };
+    use geop_core_topology::{Model, build::BodySpec};
+
+    let s = Scalar::new;
+    let point = |p: [(f64, f64); 4]| Vector4::from_array(p.map(|(lo, hi)| s(lo, hi)));
+    // Homogeneous, `x` along the extrusion, as the face has them.
+    let control_points = vec![
+        point([
+            (-3.5e-323, 3.5e-323),
+            (-9.491564322258283, -9.491564322258272),
+            (-7.071028856074874, -7.071028856074869),
+            (1.0, 1.0),
+        ]),
+        point([
+            (-3e-323, 3e-323),
+            (-11.158022385020994, -11.158022385020855),
+            (-4.999972454096353, -4.999972454096244),
+            (0.7071067811865468, 0.7071067811865481),
+        ]),
+        point([
+            (-3.5e-323, 3.5e-323),
+            (-15.779826586159206, -15.779826586159151),
+            (-0.7827665921739958, -0.7827665921739448),
+            (1.0, 1.0),
+        ]),
+        point([
+            (14.999999999999991, 15.000000000000009),
+            (-9.491564322258283, -9.491564322258272),
+            (-7.071028856074874, -7.071028856074869),
+            (1.0, 1.0),
+        ]),
+        point([
+            (10.606601717798194, 10.60660171779823),
+            (-11.158022385020994, -11.158022385020855),
+            (-4.999972454096353, -4.999972454096244),
+            (0.7071067811865468, 0.7071067811865481),
+        ]),
+        point([
+            (14.999999999999991, 15.000000000000009),
+            (-15.779826586159206, -15.779826586159151),
+            (-0.7827665921739958, -0.7827665921739448),
+            (1.0, 1.0),
+        ]),
+    ];
+    let zero = s(-1.1102230246251568e-16, 2.2204460492503136e-16);
+    let one = s(0.9999999999999998, 1.0000000000000004);
+    let surface = NurbSurface3D::try_new(
+        1,
+        2,
+        control_points,
+        vec![Scalar::ZERO, Scalar::ZERO, Scalar::ONE, Scalar::ONE],
+        vec![zero, zero, zero, one, one, one],
+    )
+    .unwrap();
+    let mut model = Model::new();
+    let face = model
+        .build_body(BodySpec::sheet_on(surface).unwrap())
+        .unwrap()
+        .faces[0];
+    let d = Vector3::from_array([
+        s(-1.0000000000000009, -0.9999999999999996),
+        s(-8.126925144334504e-15, -8.126925144334184e-15),
+        s(3.943093686336867e-14, 3.9430936863369674e-14),
+    ]);
+    let pieces = face_silhouettes(&model, face, &d).unwrap_or_else(|e| panic!("{e}"));
+    assert!(pieces.is_empty(), "{pieces:?}");
+}

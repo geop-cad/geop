@@ -109,7 +109,12 @@ impl NurbSurface<4> {
 
         let w = hw[3];
         if w.could_be_equal(Scalar::ZERO) {
-            return Err(GeopError::new("weight is zero at evaluation point"));
+            return Err(GeopError::new(format!(
+                "weight is zero at evaluation point (u, v) = ({u:?}, {v:?}) in the domain \
+                 {:?} x {:?} (homogeneous point {hw:?})",
+                self.domain_u(),
+                self.domain_v()
+            )));
         }
         let inv_w = Scalar::ONE.div(w)?;
         let mut result = Vector3::zero();
