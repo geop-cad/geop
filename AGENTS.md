@@ -1525,6 +1525,19 @@ parameter along which the joined wall closes on itself wraps round instead
 of ending. Where a pick names a piece of something the geometry continues,
 ask whether the operation means the piece or the whole.
 
+## A step can name what comes after it, if it reads none of it
+
+The properties come first in most programs, and a colour of a face names a
+face later steps make. Reading it would make the step depend on steps after
+it, and a colour change rebuild the model; the step holds the name and reads
+nothing, and the viewer asks for a face's colour by the face's name. So a
+name no face has any more draws nothing and fails nothing: it is told in the
+open dialog (`not_drawn`), not asked of in a list of steps. What the step's
+order hid is the pick: `OperationInfo::picks_whole` edits it with the whole
+program built and picks there, which costs a walk of the program, nothing
+made. Held faces are not lit: the colour says they are held, and lit they
+would hide it. A colour a placed part is drawn in stays over all of them.
+
 ## A reference direction is not left to noise
 
 A joint measures its turns from a direction square to its axis, chosen from

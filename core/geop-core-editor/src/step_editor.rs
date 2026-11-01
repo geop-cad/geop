@@ -621,20 +621,21 @@ impl StepEditor {
 
     /// The part the step's picks are made in, and what they are read
     /// through: what the step builds, for an operation that picks in that
-    /// (see [`crate::editable::OperationInfo::picks_built`]); else the part
-    /// before the step.
+    /// (see [`crate::editable::OperationInfo::picks_built`]); the whole
+    /// part, for one that picks in that
+    /// ([`crate::editable::OperationInfo::picks_whole`]); else the part before
+    /// the step.
     fn picked_in<'a>(
         &self,
         editors: &Editors,
         part: Against<'a>,
         program: &Program,
     ) -> GeopResult<Reader<'a>> {
-        let picks_built = (program.step(&self.step).ok())
-            .and_then(|step| editors.info(&step.operation))
-            .is_some_and(|listed| listed.info.picks_built);
-        match picks_built {
-            true => Ok(part.after(&self.step)),
-            false => part.before(program, &self.step),
+        let info = (program.step(&self.step).ok()).and_then(|step| editors.info(&step.operation));
+        match info.map(|listed| (listed.info.picks_whole, listed.info.picks_built)) {
+            Some((true, _)) => Ok(part.current()),
+            Some((_, true)) => Ok(part.after(&self.step)),
+            _ => part.before(program, &self.step),
         }
     }
 

@@ -29,13 +29,14 @@ use geop_core_math::{
 use geop_lib_fixtures::{GivenDatumArgs, PrimitiveArgs, Shape, drilled_box};
 use geop_ops_model::datums::{ORIGIN, component_name, datums};
 use geop_ops_model::mate_entity::MateEntity;
+use geop_ops_model::parameters::{FaceColor, PartPropertiesArgs};
 use geop_ops_model::placed::placed_parts;
 use geop_ops_model::selection::Selected;
 use geop_ops_model::{element, testing::assert_close};
 
 use geop_core_editor::{
     editor::Command,
-    testing::{Stepping, dialog, drag_gizmo, from_above, handled, pointer},
+    testing::{Stepping, click_at, dialog, drag_gizmo, from_above, handled, pointer},
 };
 
 /// The unit cube from the origin to `(1, 1, 1)`, as a program.
@@ -2059,4 +2060,133 @@ fn a_placed_part_is_dragged_with_no_tool_taken() {
     let update = handled(&mut editor, Command::Undo);
     assert_eq!(update.program.unwrap().tool, None, "still no tool is taken");
     assert_close(at(&editor), [3.0, 0.0, 0.0], 1e-9);
+}
+
+/// A cube whose properties, its first step, give its top a colour.
+fn cube_with_a_green_top() -> Program {
+    let mut program = Program::new();
+    program.push(
+        "properties",
+        PartPropertiesArgs {
+            face_colors: vec![FaceColor {
+                faces: vec![element("block(c,end)")],
+                color: "#00ff00".into(),
+            }],
+            ..PartPropertiesArgs::default()
+        },
+    );
+    program.steps.extend(cube().steps);
+    program
+}
+
+/// A placed part's own colours of faces come with its drawing; a colour
+/// given to the placed part is said over them, and the file is not touched.
+#[test]
+fn a_placed_parts_colours_of_faces_show_where_it_is_placed() {
+    let mut editor = editor();
+    let cube = cube_with_a_green_top().to_json().unwrap();
+    let files = BTreeMap::from([("cube.geop".to_string(), Some(cube))]);
+    handled(&mut editor, Command::Files { files });
+    let mut program = Program::new();
+    program.push("pin", args(true, &[]));
+    let path = Some("assembly.geop".into());
+    let loaded = handled(&mut editor, Command::Load { program, path });
+    let scene = loaded.scene.expect("drawn");
+    let view = &scene.instances[0].view;
+    assert_eq!(view.face_colors["block(c,end)"], "#00ff00");
+    assert!(
+        scene.part.face_colors.is_empty(),
+        "the file's own, not the assembly's"
+    );
+    assert!(scene.components.values().any(|c| !c.face_colors.is_empty()));
+
+    let over = handled(
+        &mut editor,
+        Command::Appearance {
+            name: "pin".into(),
+            color: Some("#ff8800".into()),
+        },
+    );
+    let scene = over.scene.expect("drawn in the colour given");
+    assert_eq!(scene.instances[0].color.as_deref(), Some("#ff8800"));
+}
+
+/// The properties of a part placed, opened where it is placed: the whole
+/// of that part is built to pick in, its later steps too, and committed,
+/// the file holds the face and the drawing shows it, under a component
+/// sent anew.
+#[test]
+fn a_placed_parts_face_is_coloured_where_it_is_placed() {
+    let mut editor = editor();
+    let mut cube = cube_with_a_green_top();
+    edit_args::<PartPropertiesArgs>(&mut cube.steps[0], |args| args.face_colors.clear());
+    let files = BTreeMap::from([("cube.geop".to_string(), Some(cube.to_json().unwrap()))]);
+    handled(&mut editor, Command::Files { files });
+    let mut program = Program::new();
+    program.push("pin", args(true, &[]));
+    let path = Some("assembly.geop".into());
+    handled(&mut editor, Command::Load { program, path });
+
+    let open = Command::Open {
+        id: "properties".into(),
+        placed: Some("pin".into()),
+    };
+    handled(&mut editor, open);
+    handled(
+        &mut editor,
+        dialog("face_color_add", Value::Choice("add".into())),
+    );
+    let picked = handled(&mut editor, click_at(from_above(0.5, 0.5)));
+    let scene = picked.scene.expect("drawn in the colour");
+    assert_eq!(
+        scene.instances[0].view.face_colors["block(c,end)"],
+        "#d9483b"
+    );
+    let committed = handled(&mut editor, Command::Commit);
+    let written = committed.written.expect("the file is written");
+    let args: PartPropertiesArgs = step_args(&written[0].program.steps[0]);
+    assert_eq!(args.face_colors[0].faces, [element("block(c,end)")]);
+    let shown = handled(&mut editor, Command::Show);
+    let scene = shown.scene.expect("drawn as the file says");
+    assert_eq!(
+        scene.instances[0].view.face_colors["block(c,end)"],
+        "#d9483b"
+    );
+}
+
+/// An assembly's own properties do not colour a face of a part placed in
+/// it: the pick is held and told, by name, and draws nothing, as nothing
+/// could draw it where the part's own drawing is shared by its instances.
+#[test]
+fn a_face_of_a_placed_part_is_refused_by_the_assemblys_properties() {
+    let mut editor = editor();
+    let files = BTreeMap::from([("cube.geop".to_string(), Some(cube().to_json().unwrap()))]);
+    handled(&mut editor, Command::Files { files });
+    let mut program = Program::new();
+    program.push("properties", PartPropertiesArgs::default());
+    program.push("pin", args(true, &[]));
+    let path = Some("assembly.geop".into());
+    handled(&mut editor, Command::Load { program, path });
+    let open = Command::Open {
+        id: "properties".into(),
+        placed: None,
+    };
+    handled(&mut editor, open);
+    handled(
+        &mut editor,
+        dialog("face_color_add", Value::Choice("add".into())),
+    );
+    let picked = handled(&mut editor, click_at(from_above(0.5, 0.5)));
+    let step = picked.step.as_ref().expect("the step is edited");
+    let Some(Control::Reference(faces)) = step.presentation.dialog.get("face_color:0:faces") else {
+        panic!("no field of faces");
+    };
+    assert_eq!(faces.value[0].tone, Tone::Error);
+    let told = faces.value[0].detail.as_deref().unwrap();
+    assert!(told.contains("`pin`"), "{told}");
+    assert!(
+        picked
+            .scene
+            .is_none_or(|scene| scene.part.face_colors.is_empty())
+    );
 }

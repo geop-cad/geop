@@ -326,6 +326,7 @@ fn the_properties_are_edited_in_their_dialog() {
             designation: Some("BR-12".into()),
             color: Some("#336699".into()),
             material: Material::named("Steel"),
+            face_colors: Vec::new(),
         }
     );
 

@@ -187,6 +187,8 @@ export interface PartView {
   extent: Extent;
   /** The part's colour, `#rrggbb`; none for the viewer's own. */
   color: string | null;
+  /** The colours of the faces in one of their own, `#rrggbb`, by the face's name: over `color`, and under a colour its instance is drawn in (`ViewInstance.color`). */
+  face_colors?: Record<string, string>;
 }
 
 // ── programs ─────────────────────────────────────────────────────────────────

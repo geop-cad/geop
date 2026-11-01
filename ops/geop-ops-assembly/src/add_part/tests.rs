@@ -373,6 +373,7 @@ fn a_drag_pulls_the_point_grabbed() {
             runner: &assembly.runner,
             before: assembly.part.before("b"),
             built: Some(assembly.part.after("b")),
+            whole: assembly.part.current(),
             scene: None,
         };
         let drag = |editing: &PartEditing, done: bool| {

@@ -43,7 +43,7 @@ use geop_core_program::{
     placed::{INSTANCE_SEPARATOR, Located, OUTSIDE, PlacedPart},
     program::{Program, ProgramStep},
     reader::{Reader, Seen},
-    runner::Runner,
+    runner::{Counts, Runner},
     values::StateValues,
     workspace::{FileStoreMut, Files, Location, Workspace},
 };
@@ -391,6 +391,11 @@ impl Editor {
         self.build.part.current()
     }
 
+    /// How much work its runs have done: what a test bounds an edit by.
+    pub fn counts(&self) -> Counts {
+        self.build.runner.counts()
+    }
+
     /// The step being edited, with its arguments as they now are.
     pub fn editing(&self) -> Option<&ProgramStep> {
         self.open.as_ref().and_then(|open| open.step().ok())
@@ -460,7 +465,7 @@ impl Editor {
             && let Some(within) = &open.within
         {
             let mut program = open.program.clone();
-            if !whole {
+            if !whole && !self.picks_whole(open) {
                 program.steps.truncate(open.index + 1);
             }
             let text = match edited {
@@ -805,11 +810,15 @@ impl Editor {
         // the part before it, as the last run left it — and with what it
         // builds, if it is previewed.
         self.give();
-        self.build
-            .run(&program, Some(index + usize::from(self.preview)));
+        let whole = self.step_picks_whole(program.step(&id)?);
+        self.build.run(&program, self.runs_to(whole, index));
         let Build { runner, part, .. } = &self.build;
         let editor = StepEditor::new(self.registry.editors(), runner, part, &program, &id, new)?;
-        let view = self.draw(&self.build.view_at(&program, index), &self.build.runner)?;
+        let picks_in = match whole {
+            true => self.build.part.current(),
+            false => self.build.view_at(&program, index),
+        };
+        let view = self.draw(&picks_in, &self.build.runner)?;
         self.open = Some(Open {
             index,
             id,
@@ -872,7 +881,11 @@ impl Editor {
             new,
         )
         .map_err(ctx)?;
-        let view = self.draw(&against.before(&program, &id)?, &runner)?;
+        let picks_in = match self.step_picks_whole(program.step(&id)?) {
+            true => against.current(),
+            false => against.before(&program, &id)?,
+        };
+        let view = self.draw(&picks_in, &runner)?;
         let view = self.beside(&instance, &pose, view);
         self.open = Some(Open {
             index,
@@ -1519,7 +1532,7 @@ impl Editor {
         // Up to the step edited first: what it pulls is known from the part
         // it is applied to.
         self.run_to(match &self.open {
-            Some(open) if open.within.is_none() => Some(self.runs_to(open)),
+            Some(open) if open.within.is_none() => self.runs_to(self.picks_whole(open), open.index),
             _ => None,
         });
         // A step not previewed is not built, and pulls nothing along; nor
@@ -1579,18 +1592,22 @@ impl Editor {
         }
     }
 
-    /// How far the program runs while `open` is edited: through it, if it
-    /// is previewed — otherwise it is not built at all, however long it
-    /// would take, until it is committed or previewed again.
-    fn runs_to(&self, open: &Open) -> usize {
-        open.index + usize::from(self.preview)
+    /// How far the program runs while its step at `index` is edited: through
+    /// it, if it is previewed — otherwise it is not built at all, however
+    /// long it would take, until it is committed or previewed again. A step
+    /// that picks in the `whole` part has as much built as the program shows.
+    fn runs_to(&self, whole: bool, index: usize) -> Option<usize> {
+        match whole {
+            true => self.marker.map(|marker| marker.max(index + 1)),
+            false => Some(index + usize::from(self.preview)),
+        }
     }
 
     /// Runs what is shown: the program up to and including the step being
     /// edited, if it is previewed, or as far as it runs.
     fn rerun(&mut self) {
         self.run_to(match &self.open {
-            Some(open) if open.within.is_none() => Some(self.runs_to(open)),
+            Some(open) if open.within.is_none() => self.runs_to(self.picks_whole(open), open.index),
             _ => self.marker,
         });
         self.run += 1;
@@ -1615,7 +1632,7 @@ impl Editor {
             })
             .collect();
         if let Some(open) = &self.open
-            && self.picks_built(open)
+            && (self.picks_whole(open) || self.picks_built(open))
             && let Ok(view) = self.edit_view(open)
             && let Some(open) = &mut self.open
         {
@@ -1685,7 +1702,7 @@ impl Editor {
     /// then what is drawn is drawn a second time, in the plane.
     fn shown_steps(&self, step: Option<&StepState>) -> usize {
         match (&self.open, step) {
-            (Some(open), Some(step)) if open.within.is_none() => {
+            (Some(open), Some(step)) if open.within.is_none() && !self.picks_whole(open) => {
                 let preview = self.preview
                     && step.missing.is_empty()
                     && step.error.is_none()
@@ -1701,6 +1718,17 @@ impl Editor {
         self.build.view_at(self.current(), steps)
     }
 
+    /// Whether the step `step` picks in the whole part, and is edited with
+    /// it built (see [`crate::editable::OperationInfo::picks_whole`]).
+    fn step_picks_whole(&self, step: &ProgramStep) -> bool {
+        (self.registry.editors().info(&step.operation)).is_some_and(|l| l.info.picks_whole)
+    }
+
+    /// Whether the step `open` picks in the whole part.
+    fn picks_whole(&self, open: &Open) -> bool {
+        open.step().is_ok_and(|step| self.step_picks_whole(step))
+    }
+
     /// Whether the step `open` picks from what it builds (see
     /// [`crate::editable::OperationInfo::picks_built`]), now that it does.
     fn picks_built(&self, open: &Open) -> bool {
@@ -1711,10 +1739,13 @@ impl Editor {
     }
 
     /// The part the step `open` picks from: the part before it — or, for
-    /// one that picks from what it builds, that, once it builds.
+    /// one that picks from what it builds, that, once it builds, and for
+    /// one that picks in the whole part, that.
     fn picks_in<'s>(&'s self, open: &'s Open) -> Reader<'s> {
         let built = self.picks_built(open);
         match &open.within {
+            Some(within) if self.picks_whole(open) => self.placed_against(within).current(),
+            None if self.picks_whole(open) => self.build.part.current(),
             Some(within) if built => self.placed_against(within).after(&open.id),
             Some(within) => {
                 let against = self.placed_against(within);
@@ -2038,7 +2069,7 @@ impl Editor {
     fn program_state(&self) -> GeopResult<ProgramState> {
         let own = self.open.as_ref().filter(|open| open.within.is_none());
         let editing = own.filter(|open| !open.new).map(|open| open.id.as_str());
-        let runs_to = match own {
+        let runs_to = match own.filter(|open| !self.picks_whole(open)) {
             Some(open) => open.index,
             None => self.marker.unwrap_or(self.file.steps.len()),
         };

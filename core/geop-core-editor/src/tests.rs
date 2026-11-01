@@ -559,6 +559,7 @@ fn a_part_operation_is_edited_through_its_form() {
         runner: &runner,
         before: part.current(),
         built: None,
+        whole: part.current(),
         scene: None,
     };
     let editing = FormState::default();

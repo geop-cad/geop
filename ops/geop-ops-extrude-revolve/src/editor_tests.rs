@@ -245,8 +245,10 @@ fn colours_are_picked_without_rebuilding() {
     };
     let before = model(&editor);
     handled(&mut editor, open("properties"));
-    handled(&mut editor, dialog("color", Value::Text("#123456".into())));
-    let update = handled(&mut editor, Command::Commit);
+    // Drawn in it at once: the properties are edited with the whole part
+    // built.
+    let update = handled(&mut editor, dialog("color", Value::Text("#123456".into())));
+    handled(&mut editor, Command::Commit);
     assert_eq!(
         update
             .scene

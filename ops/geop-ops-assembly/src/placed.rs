@@ -55,7 +55,7 @@ pub(crate) fn draw(reader: &Reader) -> GeopResult<PartView> {
             .draw(&name, &mut view)?;
     }
     view.annotations = annotations_of(reader);
-    view.color = read_properties(reader)?.color().map(str::to_string);
+    read_properties(reader)?.draw(&mut view);
     Ok(view.finish())
 }
 

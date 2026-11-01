@@ -66,13 +66,22 @@ pub fn parameters_of(program: &Program) -> Parameters {
 /// the steps that define them, put first where it has none yet — and none,
 /// where there is nothing to define. Each table is a [`LookupTable`] step
 /// of its own, `table_<name>`, before the numbers, whose formulas may read
-/// its columns. The steps check them as they run.
+/// its columns. The steps check them as they run. The colours of faces,
+/// which are no parameters of a part, stay as the program has them.
 pub fn set_parameters(program: &mut Program, parameters: Parameters) {
+    let face_colors = (program
+        .steps
+        .iter()
+        .find(|step| step.operation == PROPERTIES))
+    .and_then(|step| serde_json::from_value::<PartPropertiesArgs>(step.args.clone()).ok())
+    .map(|properties| properties.face_colors)
+    .unwrap_or_default();
     let properties = PartPropertiesArgs {
         title: parameters.title,
         designation: parameters.designation,
         color: parameters.color,
         material: parameters.material,
+        face_colors,
     };
     let mut numbers = Vec::new();
     let mut tables = Vec::new();
